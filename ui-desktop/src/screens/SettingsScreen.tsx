@@ -1,10 +1,12 @@
-import { useState, type KeyboardEvent } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
+import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 
 import type { RoutingMode } from "../api";
 import type { Tenebra } from "../state/useTenebra";
 import { useI18n } from "../i18n/I18nContext";
 import { useTheme } from "../theme/ThemeContext";
 import type { Language } from "../i18n/strings";
+import { getAutoconnect, setAutoconnect } from "../lib/settings";
 
 interface SettingsScreenProps {
   tenebra: Tenebra;
@@ -13,7 +15,56 @@ interface SettingsScreenProps {
 export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   const { t, lang, setLang } = useI18n();
   const { theme, setTheme } = useTheme();
+
+  // Launch-at-login mirrors the OS autostart registration; we read the real
+  // state on mount so the toggle reflects what the system actually has set.
   const [launchAtLogin, setLaunchAtLogin] = useState(false);
+  const [launchBusy, setLaunchBusy] = useState(false);
+  const [autoconnect, setAutoconnectState] = useState(getAutoconnect);
+
+  useEffect(() => {
+    let active = true;
+    isEnabled()
+      .then((on) => {
+        if (active) {
+          setLaunchAtLogin(on);
+        }
+      })
+      .catch(() => {
+        // If the query fails, leave the toggle off rather than guessing on.
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function toggleLaunchAtLogin() {
+    if (launchBusy) {
+      return;
+    }
+    setLaunchBusy(true);
+    const next = !launchAtLogin;
+    try {
+      if (next) {
+        await enable();
+      } else {
+        await disable();
+      }
+      setLaunchAtLogin(next);
+    } catch {
+      // Keep the toggle where it was if the OS rejected the change.
+    } finally {
+      setLaunchBusy(false);
+    }
+  }
+
+  function toggleAutoconnect() {
+    setAutoconnectState((prev) => {
+      const next = !prev;
+      setAutoconnect(next);
+      return next;
+    });
+  }
 
   const routing = tenebra.state.routing ?? "smart";
 
@@ -125,8 +176,25 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             type="button"
             role="switch"
             aria-checked={launchAtLogin}
+            disabled={launchBusy}
             className={`switch${launchAtLogin ? " is-on" : ""}`}
-            onClick={() => setLaunchAtLogin((v) => !v)}
+            onClick={() => void toggleLaunchAtLogin()}
+          >
+            <span className="switch-thumb" aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="setting-row">
+          <span className="setting-text">
+            <span className="setting-name">{t.settings.autoconnect}</span>
+            <span className="setting-hint muted">{t.settings.autoconnectHint}</span>
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autoconnect}
+            className={`switch${autoconnect ? " is-on" : ""}`}
+            onClick={toggleAutoconnect}
           >
             <span className="switch-thumb" aria-hidden="true" />
           </button>

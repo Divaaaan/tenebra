@@ -75,6 +75,11 @@ export const api = {
   leakCheck(): Promise<LeakCheck> {
     return invoke<LeakCheck>("leak_check");
   },
+
+  /** Actually exit the app. Closing the window only hides it to the tray. */
+  quit(): Promise<void> {
+    return invoke<void>("quit_app");
+  },
 };
 
 export interface LeakCheck {
@@ -101,4 +106,16 @@ export function onTraffic(
 
 export function onLog(handler: (e: LogEvent) => void): Promise<UnlistenFn> {
   return listen<LogEvent>("log", (event) => handler(event.payload));
+}
+
+// Tray-originated events. The tray can disconnect on its own, but connecting and
+// showing need the front end (it owns the selected profile and routing), so the
+// Rust tray emits these for the renderer to act on. They carry no payload.
+
+export function onTrayConnect(handler: () => void): Promise<UnlistenFn> {
+  return listen("tray://connect", () => handler());
+}
+
+export function onTrayShow(handler: () => void): Promise<UnlistenFn> {
+  return listen("tray://show", () => handler());
 }
