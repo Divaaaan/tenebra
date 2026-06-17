@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/tenebra-vpn/tenebra/core/profile"
-	"github.com/tenebra-vpn/tenebra/core/singbox"
+	"github.com/Divaaaan/tenebra/core/profile"
+	"github.com/Divaaaan/tenebra/core/singbox"
 )
 
 // trafficPollInterval is how often the daemon polls cumulative byte counters and

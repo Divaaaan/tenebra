@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tenebra-vpn/tenebra/core/model"
+	"github.com/Divaaaan/tenebra/core/model"
 )
 
 // ParseSubscription parses a subscription body into nodes. The body is most

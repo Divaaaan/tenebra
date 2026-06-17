@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tenebra-vpn/tenebra/core/model"
-	"github.com/tenebra-vpn/tenebra/core/profile"
-	"github.com/tenebra-vpn/tenebra/core/subscription"
+	"github.com/Divaaaan/tenebra/core/model"
+	"github.com/Divaaaan/tenebra/core/profile"
+	"github.com/Divaaaan/tenebra/core/subscription"
 )
 
 // fakeFetch is an injectable subscription fetcher keyed by URL. A URL with no

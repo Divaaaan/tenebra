@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/tenebra-vpn/tenebra/core/model"
+	"github.com/Divaaaan/tenebra/core/model"
 )
 
 func mustProfile(t *testing.T, name, source, url string, nodes []model.Node) Profile {

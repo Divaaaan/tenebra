@@ -3,10 +3,10 @@ package control
 import (
 	"testing"
 
-	"github.com/tenebra-vpn/tenebra/core/model"
-	"github.com/tenebra-vpn/tenebra/core/profile"
-	"github.com/tenebra-vpn/tenebra/core/routing"
-	"github.com/tenebra-vpn/tenebra/core/singbox"
+	"github.com/Divaaaan/tenebra/core/model"
+	"github.com/Divaaaan/tenebra/core/profile"
+	"github.com/Divaaaan/tenebra/core/routing"
+	"github.com/Divaaaan/tenebra/core/singbox"
 )
 
 // TestNodesAndTagMatchesBuilder is the invariant that protects node selection:

@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/tenebra-vpn/tenebra/core/model"
+	"github.com/Divaaaan/tenebra/core/model"
 )
 
 // Source distinguishes how a profile's servers were obtained.

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tenebra-vpn/tenebra/core/model"
-	"github.com/tenebra-vpn/tenebra/core/routing"
+	"github.com/Divaaaan/tenebra/core/model"
+	"github.com/Divaaaan/tenebra/core/routing"
 )
 
 // fakeNodes returns one node of every protocol with obviously fake data.

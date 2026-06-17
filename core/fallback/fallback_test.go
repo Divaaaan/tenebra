@@ -3,7 +3,7 @@ package fallback
 import (
 	"testing"
 
-	"github.com/tenebra-vpn/tenebra/core/model"
+	"github.com/Divaaaan/tenebra/core/model"
 )
 
 // node builds an Attempt with the given id and protocol; the rest of the Node is
