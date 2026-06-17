@@ -242,14 +242,73 @@ fn real_core_round_trips() {
     core.send(r#"{"id":6,"cmd":"set_split","mode":"off"}"#);
     let off = core.next_response();
     assert_eq!(off["id"].as_i64(), Some(6), "set_split off id mismatch");
-    assert_eq!(off["ok"].as_bool(), Some(true), "set_split off failed: {off}");
+    assert_eq!(
+        off["ok"].as_bool(),
+        Some(true),
+        "set_split off failed: {off}"
+    );
     assert!(
         off["data"].get("split").is_none(),
         "off should omit split, got {}",
         off["data"]
     );
 
+    // 7) leak_check -> the core runs the IP/DNS probes itself and returns the
+    //    assembled verdict. This proves the command is dispatched (a missing case
+    //    would come back as ok:false "unknown command") and that the result has
+    //    the documented shape SidecarBackend::leak_check deserializes. We assert
+    //    only the structure and the honesty invariants, not the live values: the
+    //    test runs on an idle store, so it is not connected, and whether the
+    //    public-IP/DNS echoes are reachable from CI is irrelevant to correctness.
+    core.send(r#"{"id":7,"cmd":"leak_check"}"#);
+    let leak = core.next_response();
+    assert_eq!(leak["id"].as_i64(), Some(7), "leak_check id mismatch");
+    assert_eq!(
+        leak["ok"].as_bool(),
+        Some(true),
+        "leak_check failed (is it dispatched?): {leak}"
+    );
+    let data = &leak["data"];
+    // Idle store: the core must report not-connected, with no exit verdict.
+    assert_eq!(
+        data["connected"].as_bool(),
+        Some(false),
+        "expected not-connected on an idle store, got {data}"
+    );
+    // The IP finding always carries a verdict from the known set and a message.
+    let ip_verdict = data["ip_verdict"]
+        .as_str()
+        .unwrap_or_else(|| panic!("leak_check has no ip_verdict: {data}"));
+    assert!(
+        ["ok", "warn", "neutral", "error"].contains(&ip_verdict),
+        "unexpected ip_verdict {ip_verdict:?}: {data}"
+    );
+    assert!(
+        data["ip_message"].as_str().is_some_and(|m| !m.is_empty()),
+        "leak_check ip_message missing/empty: {data}"
+    );
+    // The DNS block must be present with a status from the known set and a
+    // message — and it must never be a fabricated pass: on a store with no
+    // tunnel the honest outcomes are inconclusive or unavailable, never "ok".
+    let dns_status = data["dns"]["status"]
+        .as_str()
+        .unwrap_or_else(|| panic!("leak_check dns has no status: {data}"));
+    assert!(
+        ["ok", "leak", "inconclusive", "unavailable"].contains(&dns_status),
+        "unexpected dns status {dns_status:?}: {data}"
+    );
+    assert_ne!(
+        dns_status, "ok",
+        "DNS reported a pass on an idle store — that would be dishonest: {data}"
+    );
+    assert!(
+        data["dns"]["message"]
+            .as_str()
+            .is_some_and(|m| !m.is_empty()),
+        "leak_check dns message missing/empty: {data}"
+    );
+
     eprintln!(
-        "OK: status/import_link/list_profiles/set_split round-tripped against the real core"
+        "OK: status/import_link/list_profiles/set_split/leak_check round-tripped against the real core"
     );
 }

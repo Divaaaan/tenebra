@@ -34,6 +34,7 @@ const (
 	CmdPing               = "ping"
 	CmdSetRouting         = "set_routing"
 	CmdSetSplit           = "set_split"
+	CmdLeakCheck          = "leak_check"
 )
 
 // ConnState is the connection lifecycle state reported in State and state

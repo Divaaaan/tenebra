@@ -78,7 +78,11 @@ export const api = {
     return invoke<State>("set_split", { mode, apps });
   },
 
-  /** Stubbed leak check; the mock returns a canned result. */
+  /**
+   * Run the IP / DNS leak check. The core performs the probes and returns the
+   * assembled verdict (see {@link LeakCheck}); a live tunnel is needed for a
+   * meaningful exit-match result.
+   */
   leakCheck(): Promise<LeakCheck> {
     return invoke<LeakCheck>("leak_check");
   },
@@ -89,11 +93,54 @@ export const api = {
   },
 };
 
+/** The IP-vs-exit comparison outcome. Mirror of the core's `ExitMatch`. */
+export type ExitMatch = "match" | "mismatch" | "unknown";
+
+/**
+ * Severity of a leak-check finding the UI maps to pass/warn styling.
+ * Mirror of the core's `Verdict`.
+ */
+export type LeakVerdict = "ok" | "warn" | "neutral" | "error";
+
+/**
+ * DNS leak assessment outcome. `inconclusive` and `unavailable` are NOT a pass;
+ * the UI must never present them as "safe". Mirror of the core's `DNSStatus`.
+ */
+export type DnsStatus = "ok" | "leak" | "inconclusive" | "unavailable";
+
+export interface DnsResult {
+  status: DnsStatus;
+  /** Observed resolver IPs, if any. Omitted (or empty) when none were seen. */
+  resolvers?: string[];
+  /** Human summary; always present. */
+  message: string;
+}
+
+/**
+ * Result of `leak_check`. Mirror of the core's `LeakCheck`
+ * (docs/control-protocol.md): the observed public IP and a verdict on whether
+ * traffic is leaving through the tunnel exit, plus a best-effort DNS assessment
+ * that is honest about its limits.
+ */
 export interface LeakCheck {
-  ip: string;
-  country: string;
-  /** True when the egress IP differs from the machine's WAN address. */
-  tunneled: boolean;
+  /** Public IP observed; omitted if every echo endpoint failed. */
+  public_ip?: string;
+  /** Best-effort ISO 3166-1 alpha-2 country for `public_ip`. */
+  country?: string;
+  /** The echo endpoint that answered, for transparency. */
+  source?: string;
+  /** Whether a tunnel was active at check time. */
+  connected: boolean;
+  /** The active node's configured exit address; present only when connected. */
+  exit_server?: string;
+  /** Verdict on whether the observed IP is the tunnel exit; omitted when idle. */
+  exit_match?: ExitMatch;
+  /** Overall severity of the IP finding, for styling. Always present. */
+  ip_verdict: LeakVerdict;
+  /** Short human summary of the IP finding. Always present. */
+  ip_message: string;
+  /** Best-effort DNS leak assessment. Always present. */
+  dns: DnsResult;
 }
 
 // Event subscriptions. Each returns the Tauri unlisten handle; callers detach on

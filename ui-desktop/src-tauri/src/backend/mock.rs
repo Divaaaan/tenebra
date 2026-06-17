@@ -9,8 +9,8 @@ use std::thread;
 use std::time::Duration;
 
 use super::{
-    Backend, ConnectionState, EventSink, LeakCheck, Node, PingResult, Profile, Protocol,
-    RoutingMode, Source, SplitMode, State,
+    Backend, ConnectionState, DnsResult, DnsStatus, EventSink, ExitMatch, LeakCheck, Node,
+    PingResult, Profile, Protocol, RoutingMode, Source, SplitMode, State, Verdict,
 };
 
 /// How long the fake "dial" takes before flipping to connected.
@@ -354,7 +354,11 @@ impl Backend for MockBackend {
         // Mirror the core's normalization so the mock behaves like the real
         // thing: trim/lowercase/dedupe/sort, and collapse an empty list to off.
         let apps = normalize_split_apps(apps);
-        let mode = if apps.is_empty() { SplitMode::Off } else { mode };
+        let mode = if apps.is_empty() {
+            SplitMode::Off
+        } else {
+            mode
+        };
 
         let mut inner = self.shared.inner.lock().unwrap();
         if mode == SplitMode::Off {
@@ -371,23 +375,58 @@ impl Backend for MockBackend {
     }
 
     fn leak_check(&self) -> Result<LeakCheck, String> {
-        let tunneled = {
+        // Resolve the demo "exit": the configured server of the connected node,
+        // so a connected check reads as a clean match against it. When idle there
+        // is no exit and the result is neutral. Addresses are documentation-range
+        // (RFC 5737), like the rest of the demo data.
+        let exit = {
             let inner = self.shared.inner.lock().unwrap();
-            inner.state.state == ConnectionState::Connected
+            if inner.state.state != ConnectionState::Connected {
+                None
+            } else {
+                let node = inner.state.node.clone();
+                inner
+                    .profiles
+                    .iter()
+                    .flat_map(|p| &p.nodes)
+                    .find(|n| Some(&n.id) == node.as_ref())
+                    .map(|n| n.server.clone())
+            }
         };
-        // Obviously-fake documentation-range addresses (RFC 5737).
-        Ok(if tunneled {
-            LeakCheck {
-                ip: "198.51.100.24".into(),
-                country: "NL".into(),
-                tunneled: true,
-            }
-        } else {
-            LeakCheck {
-                ip: "192.0.2.7".into(),
-                country: "RU".into(),
-                tunneled: false,
-            }
+
+        // The mock mirrors the core's honesty: a DNS leak/no-leak verdict is out
+        // of scope, so the demo reports it as inconclusive, never a pass.
+        let dns = DnsResult {
+            status: DnsStatus::Inconclusive,
+            resolvers: vec!["198.51.100.53".into()],
+            message: "Observed resolver shown. A reliable DNS leak verdict needs a full test, \
+                      so this is reported as inconclusive rather than a pass."
+                .into(),
+        };
+
+        Ok(match exit {
+            Some(exit) => LeakCheck {
+                public_ip: Some(exit.clone()),
+                country: Some("NL".into()),
+                source: Some("ipify".into()),
+                connected: true,
+                exit_server: Some(exit.clone()),
+                exit_match: Some(ExitMatch::Match),
+                ip_verdict: Verdict::Ok,
+                ip_message: format!("Public IP {exit} matches the tunnel exit."),
+                dns,
+            },
+            None => LeakCheck {
+                public_ip: Some("192.0.2.7".into()),
+                country: Some("RU".into()),
+                source: Some("ipify".into()),
+                connected: false,
+                exit_server: None,
+                exit_match: None,
+                ip_verdict: Verdict::Neutral,
+                ip_message: "Not connected. Current public IP is 192.0.2.7.".into(),
+                dns,
+            },
         })
     }
 }

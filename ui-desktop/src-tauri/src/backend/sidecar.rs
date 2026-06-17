@@ -425,10 +425,11 @@ impl Backend for SidecarBackend {
     }
 
     fn leak_check(&self) -> Result<LeakCheck, String> {
-        // leak_check has no core-side command in this iteration; the protocol
-        // table stops at set_routing. Report it as unsupported rather than
-        // sending a command the core will reject as unknown.
-        Err("leak_check is not supported by the core yet".into())
+        // The core runs the IP/DNS probes itself and returns the assembled
+        // verdict; we just deserialize it. It can touch the network, but the core
+        // bounds each echo request, so the generous request timeout above is
+        // ample.
+        self.inner.request_into("leak_check", obj([]))
     }
 }
 

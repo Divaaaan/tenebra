@@ -1437,22 +1437,89 @@
 
 /* --- logs ------------------------------------------------------------------- */
 
-.leak-result {
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
+/* The leak finding is two stacked blocks (public IP, DNS), each carrying its own
+   tone. They rise in together as one result. */
+.leak-report {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
   animation: rise-in var(--dur-base) var(--ease-out) both;
 }
 
-.leak-result.is-ok {
+.leak-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+/* Tone is driven by a data attribute so the same markup styles all three
+   outcomes. "neutral" intentionally stays uncoloured — an inconclusive or
+   unavailable DNS check (or an idle IP report) must never read as a green pass. */
+.leak-block[data-tone="good"] {
   border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+  border-left-color: var(--ok);
   background: var(--ok-bg);
 }
 
-.leak-result.is-bad {
+.leak-block[data-tone="bad"] {
   border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  border-left-color: var(--danger);
   background: var(--danger-bg);
+}
+
+.leak-block[data-tone="neutral"] {
+  border-left-color: var(--border-strong);
+}
+
+.leak-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.leak-block-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* The status chip echoes the raw verdict word (ok/warn/leak/…) in the block's
+   tone, so the state is legible at a glance and to a screen reader in reading
+   order. */
+.leak-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: var(--bg-inset);
+  color: var(--text-muted);
+}
+
+.leak-tag--good {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.leak-tag--bad {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.leak-tag--neutral {
+  background: var(--bg-inset);
+  color: var(--text-muted);
 }
 
 .leak-headline {
@@ -1460,9 +1527,38 @@
 }
 
 .leak-detail {
-  margin-top: var(--space-1);
   font-size: 13px;
+}
+
+.leak-facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: var(--space-1) 0 0;
+}
+
+.leak-fact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.leak-fact dt {
+  color: var(--text-muted);
+}
+
+.leak-fact dd {
+  margin: 0;
+}
+
+.leak-mono {
   font-family: var(--font-mono);
+  word-break: break-all;
+}
+
+.leak-source {
+  font-family: var(--font-sans, inherit);
 }
 
 .log-panel {
