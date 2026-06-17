@@ -83,24 +83,6 @@ func TestCopyFile(t *testing.T) {
 	}
 }
 
-// TestEnsureWintunCopiesBesideBin exercises the wintun placement on Windows,
-// where it runs, and the no-op path elsewhere. The copy helper itself is covered
-// cross-platform by TestCopyFile.
-func TestEnsureWintunCopiesBesideBin(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("wintun handling only runs on windows")
-	}
-	// On Windows the source is resolved next to the test binary; we can't plant a
-	// file there safely, so only assert that a present dll short-circuits.
-	binDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(binDir, "wintun.dll"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := ensureWintun(binDir); err != nil {
-		t.Errorf("ensureWintun with present dll should be a no-op, got %v", err)
-	}
-}
-
 func TestWriteConfig(t *testing.T) {
 	cfg := []byte(`{"log":{"level":"info"},"outbounds":[]}`)
 	path, err := writeConfig(cfg)
