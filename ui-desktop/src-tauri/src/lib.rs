@@ -6,15 +6,16 @@
 //! the single place to swap in the real sidecar client.
 
 mod backend;
+mod tray;
 
 use std::sync::Arc;
 
 use serde_json::json;
-use tauri::{AppHandle, Emitter, Manager, State as TauriState};
+use tauri::{AppHandle, Emitter, Manager, State as TauriState, WindowEvent};
 
 use backend::{
-    Backend, EventSink, LeakCheck, PingResult, Profile, RoutingMode, State, EVENT_LOG, EVENT_STATE,
-    EVENT_TRAFFIC,
+    Backend, ConnectionState, EventSink, LeakCheck, PingResult, Profile, RoutingMode, State,
+    EVENT_LOG, EVENT_STATE, EVENT_TRAFFIC,
 };
 
 /// Held in Tauri's managed state and shared by every command handler.
@@ -30,6 +31,9 @@ struct TauriSink {
 
 impl EventSink for TauriSink {
     fn state(&self, state: &State) {
+        // The tray tooltip mirrors the live connection state; this is the one
+        // place backend state flows through, so we refresh it here.
+        tray::sync_state(&self.app, state);
         let _ = self.app.emit(EVENT_STATE, state);
     }
 
@@ -187,6 +191,14 @@ fn leak_check(state: TauriState<'_, AppState>) -> Result<LeakCheck, String> {
     state.backend.leak_check()
 }
 
+/// Quit the whole app. Closing the window only hides it (see the close handler
+/// in `run`); this is the explicit "really exit" path the tray's Quit item and
+/// the front end share.
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
 // Response envelopes for the commands the protocol wraps in an object.
 #[derive(serde::Serialize)]
 struct ProfileList {
@@ -211,6 +223,13 @@ struct PingList {
 
 pub fn run() {
     tauri::Builder::default()
+        // Single-instance must be the FIRST plugin so a second launch is caught
+        // before any window or other plugin spins up; it just focuses the window
+        // we already have.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            focus_main_window(app);
+        }))
+        .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -219,7 +238,18 @@ pub fn run() {
             });
             let backend = make_backend(app.handle(), sink);
             app.manage(AppState { backend });
+            tray::create(app.handle())?;
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Close-to-tray: intercept the window's close request and hide it
+            // instead of letting the app exit. Only the tray's Quit item (or the
+            // quit_app command) calls `app.exit`, which is what actually ends the
+            // process.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             status,
@@ -233,7 +263,44 @@ pub fn run() {
             ping,
             set_routing,
             leak_check,
+            quit_app,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tenebra");
+}
+
+/// Bring the main window to the front: unhide, un-minimize, and focus it. Shared
+/// by the tray "Show" action and the single-instance callback.
+fn focus_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+/// Disconnect through the managed backend. Used by the tray, which can tear the
+/// tunnel down without a profile (unlike connect, which the front end drives).
+/// The backend's own state event drives the UI and tray tooltip; on failure we
+/// surface the reason on the log channel the webview already listens to.
+fn disconnect_backend(app: &AppHandle) {
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Err(e) = state.backend.disconnect() {
+            let _ = app.emit(
+                EVENT_LOG,
+                json!({ "level": "error", "msg": format!("disconnect failed: {e}") }),
+            );
+        }
+    }
+}
+
+/// The connection state the tray tooltip should reflect, as plain English.
+/// Pulled out so both the sink and the initial tray build agree on the wording.
+fn tooltip_for(state: ConnectionState) -> &'static str {
+    match state {
+        ConnectionState::Idle => "Tenebra — Disconnected",
+        ConnectionState::Connecting => "Tenebra — Connecting…",
+        ConnectionState::Connected => "Tenebra — Connected",
+        ConnectionState::Error => "Tenebra — Error",
+    }
 }

@@ -91,6 +91,8 @@ export interface Strings {
     startup: string;
     launchAtLogin: string;
     launchAtLoginHint: string;
+    autoconnect: string;
+    autoconnectHint: string;
   };
 
   logs: {
@@ -199,6 +201,8 @@ const en: Strings = {
     startup: "Startup",
     launchAtLogin: "Launch at login",
     launchAtLoginHint: "Start Tenebra when you sign in.",
+    autoconnect: "Connect on launch",
+    autoconnectHint: "Reconnect the last used profile when Tenebra starts.",
   },
   logs: {
     title: "Logs",
@@ -304,6 +308,8 @@ const ru: Strings = {
     startup: "Запуск",
     launchAtLogin: "Запускать при входе",
     launchAtLoginHint: "Открывать Tenebra при входе в систему.",
+    autoconnect: "Подключаться при запуске",
+    autoconnectHint: "Восстанавливать последний профиль при старте Tenebra.",
   },
   logs: {
     title: "Журнал",

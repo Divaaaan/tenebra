@@ -7,6 +7,9 @@
     "core:default",
     "dialog:allow-open",
     "shell:allow-open",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled",
     {
       "identifier": "shell:allow-spawn",
       "allow": [{ "name": "binaries/tenebra-core", "sidecar": true }]
