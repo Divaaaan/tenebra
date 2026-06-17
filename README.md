@@ -1,5 +1,7 @@
 # Tenebra
 
+[![CI](https://github.com/Divaaaan/tenebra/actions/workflows/ci.yml/badge.svg)](https://github.com/Divaaaan/tenebra/actions/workflows/ci.yml)
+
 A cross-platform VPN client built on [sing-box](https://github.com/SagerNet/sing-box).
 Desktop first (Windows), with a shared core meant to extend to macOS, Linux,
 Android and iOS.
