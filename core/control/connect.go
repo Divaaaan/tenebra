@@ -411,6 +411,11 @@ func (d *Daemon) setState(s State) {
 	if s.Routing == "" {
 		s.Routing = d.state.Routing
 	}
+	// The split config is a daemon-wide setting, not a per-connection one, so it
+	// always tracks the live routing options rather than whatever the transient
+	// State value carried. This keeps status reporting the split correctly across
+	// connect/disconnect transitions without every call site restating it.
+	applySplitToState(&s, d.routing)
 	d.state = s
 	emit := d.emit
 	d.mu.Unlock()

@@ -31,7 +31,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
 use super::{
-    Backend, EventSink, LeakCheck, PingResult, Profile, RoutingMode, State, EVENT_LOG,
+    Backend, EventSink, LeakCheck, PingResult, Profile, RoutingMode, SplitMode, State, EVENT_LOG,
     EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
@@ -410,6 +410,18 @@ impl Backend for SidecarBackend {
         };
         self.inner
             .request_into("set_routing", obj([("mode", json!(mode))]))
+    }
+
+    fn set_split(&self, mode: SplitMode, apps: Vec<String>) -> Result<State, String> {
+        let mode = match mode {
+            SplitMode::Off => "off",
+            SplitMode::Exclude => "exclude",
+            SplitMode::Include => "include",
+        };
+        self.inner.request_into(
+            "set_split",
+            obj([("mode", json!(mode)), ("apps", json!(apps))]),
+        )
     }
 
     fn leak_check(&self) -> Result<LeakCheck, String> {

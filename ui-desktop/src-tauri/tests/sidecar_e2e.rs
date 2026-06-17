@@ -193,5 +193,63 @@ fn real_core_round_trips() {
         "list_profiles {ids:?} is missing the imported id {profile_id}"
     );
 
-    eprintln!("OK: status/import_link/list_profiles round-tripped against the real core");
+    // 4) set_split exclude -> the core normalizes the app names (lowercases,
+    //    de-duplicates, sorts) and echoes them back in the State. This is the
+    //    same framing SidecarBackend::set_split uses.
+    let split = serde_json::json!({
+        "id": 4,
+        "cmd": "set_split",
+        "mode": "exclude",
+        "apps": ["Chrome.exe", "steam.exe", "chrome.exe"],
+    });
+    core.send(&serde_json::to_string(&split).unwrap());
+    let split_resp = core.next_response();
+    assert_eq!(split_resp["id"].as_i64(), Some(4), "set_split id mismatch");
+    assert_eq!(
+        split_resp["ok"].as_bool(),
+        Some(true),
+        "set_split failed: {split_resp}"
+    );
+    assert_eq!(
+        split_resp["data"]["split"].as_str(),
+        Some("exclude"),
+        "expected exclude split, got {}",
+        split_resp["data"]
+    );
+    let apps: Vec<&str> = split_resp["data"]["split_apps"]
+        .as_array()
+        .expect("split_apps array")
+        .iter()
+        .filter_map(|a| a.as_str())
+        .collect();
+    assert_eq!(
+        apps,
+        vec!["chrome.exe", "steam.exe"],
+        "split_apps not normalized: {split_resp}"
+    );
+
+    // 5) status -> the split is reflected in the reported state.
+    core.send(r#"{"id":5,"cmd":"status"}"#);
+    let after = core.next_response();
+    assert_eq!(after["id"].as_i64(), Some(5), "status id mismatch");
+    assert_eq!(
+        after["data"]["split"].as_str(),
+        Some("exclude"),
+        "status did not reflect the split: {after}"
+    );
+
+    // 6) set_split off -> the split clears (the fields are omitted entirely).
+    core.send(r#"{"id":6,"cmd":"set_split","mode":"off"}"#);
+    let off = core.next_response();
+    assert_eq!(off["id"].as_i64(), Some(6), "set_split off id mismatch");
+    assert_eq!(off["ok"].as_bool(), Some(true), "set_split off failed: {off}");
+    assert!(
+        off["data"].get("split").is_none(),
+        "off should omit split, got {}",
+        off["data"]
+    );
+
+    eprintln!(
+        "OK: status/import_link/list_profiles/set_split round-tripped against the real core"
+    );
 }

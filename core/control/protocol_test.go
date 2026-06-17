@@ -3,6 +3,7 @@ package control
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -40,7 +41,7 @@ func TestRequestRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("decode: %v", err)
 			}
-			if got != c.want {
+			if !reflect.DeepEqual(got, c.want) {
 				t.Errorf("decode = %+v, want %+v", got, c.want)
 			}
 		})

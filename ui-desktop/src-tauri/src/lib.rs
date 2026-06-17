@@ -14,8 +14,8 @@ use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, State as TauriState, WindowEvent};
 
 use backend::{
-    Backend, ConnectionState, EventSink, LeakCheck, PingResult, Profile, RoutingMode, State,
-    EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
+    Backend, ConnectionState, EventSink, LeakCheck, PingResult, Profile, RoutingMode, SplitMode,
+    State, EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
 /// Held in Tauri's managed state and shared by every command handler.
@@ -192,6 +192,15 @@ fn set_routing(state: TauriState<'_, AppState>, mode: RoutingMode) -> Result<Sta
 }
 
 #[tauri::command]
+fn set_split(
+    state: TauriState<'_, AppState>,
+    mode: SplitMode,
+    apps: Vec<String>,
+) -> Result<State, String> {
+    state.backend.set_split(mode, apps)
+}
+
+#[tauri::command]
 fn leak_check(state: TauriState<'_, AppState>) -> Result<LeakCheck, String> {
     state.backend.leak_check()
 }
@@ -267,6 +276,7 @@ pub fn run() {
             disconnect,
             ping,
             set_routing,
+            set_split,
             leak_check,
             quit_app,
         ])

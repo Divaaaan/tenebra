@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use super::{
     Backend, ConnectionState, EventSink, LeakCheck, Node, PingResult, Profile, Protocol,
-    RoutingMode, Source, State,
+    RoutingMode, Source, SplitMode, State,
 };
 
 /// How long the fake "dial" takes before flipping to connected.
@@ -58,6 +58,8 @@ impl MockBackend {
                 node: None,
                 profile: None,
                 routing: Some(RoutingMode::Smart),
+                split: None,
+                split_apps: None,
                 error: None,
             },
             profiles: demo_profiles(),
@@ -348,6 +350,26 @@ impl Backend for MockBackend {
         Ok(snapshot)
     }
 
+    fn set_split(&self, mode: SplitMode, apps: Vec<String>) -> Result<State, String> {
+        // Mirror the core's normalization so the mock behaves like the real
+        // thing: trim/lowercase/dedupe/sort, and collapse an empty list to off.
+        let apps = normalize_split_apps(apps);
+        let mode = if apps.is_empty() { SplitMode::Off } else { mode };
+
+        let mut inner = self.shared.inner.lock().unwrap();
+        if mode == SplitMode::Off {
+            inner.state.split = None;
+            inner.state.split_apps = None;
+        } else {
+            inner.state.split = Some(mode);
+            inner.state.split_apps = Some(apps);
+        }
+        let snapshot = inner.state.clone();
+        drop(inner);
+        self.shared.emit_state(&snapshot);
+        Ok(snapshot)
+    }
+
     fn leak_check(&self) -> Result<LeakCheck, String> {
         let tunneled = {
             let inner = self.shared.inner.lock().unwrap();
@@ -476,6 +498,19 @@ fn protocol_label(p: Protocol) -> &'static str {
         Protocol::Trojan => "Trojan",
         Protocol::Vmess => "VMess",
     }
+}
+
+/// Trim, lowercase, de-duplicate and sort executable names, matching the core's
+/// split-app normalization so the mock and the real backend agree.
+fn normalize_split_apps(apps: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = apps
+        .into_iter()
+        .map(|a| a.trim().to_ascii_lowercase())
+        .filter(|a| !a.is_empty())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
 fn protocol_from_link(link: &str) -> Protocol {

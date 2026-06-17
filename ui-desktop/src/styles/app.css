@@ -1288,6 +1288,59 @@
   font-size: 12px;
 }
 
+/* A section heading with a one-line subtitle under it (split tunnelling). */
+.settings-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-sub {
+  font-size: 12px;
+}
+
+/* Split tunnelling: the editable app list sits under the mode selector. It is
+   indented under a sub-label so it reads as belonging to the chosen mode. */
+.split-apps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.split-empty {
+  font-size: 12px;
+}
+
+.split-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.split-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+  /* New rows ease in rather than snapping, matching the rest of the app. */
+  animation: rise-in var(--dur-fast) var(--ease-out) both;
+}
+
+.split-item-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .setting-row {
   display: flex;
   align-items: center;

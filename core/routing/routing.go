@@ -8,7 +8,11 @@
 // by sing-box itself, so the client ships no geodata of its own.
 package routing
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
 
 // Mode selects how traffic is split between the proxy and the direct outbound.
 type Mode string
@@ -21,6 +25,22 @@ const (
 	ModeGlobal Mode = "global"
 	// ModeDirect sends everything direct (proxy effectively off).
 	ModeDirect Mode = "direct"
+)
+
+// SplitMode selects per-application split tunnelling on top of the base Mode.
+// Apps are matched by their executable file name (process_name), e.g.
+// "chrome.exe". The default is off, which leaves the base routing untouched.
+type SplitMode string
+
+const (
+	// SplitOff disables per-app split tunnelling; the base Mode decides routing.
+	SplitOff SplitMode = "off"
+	// SplitExclude sends the listed apps direct (out of the tunnel) and lets
+	// everything else follow the normal routing for the base Mode.
+	SplitExclude SplitMode = "exclude"
+	// SplitInclude routes only the listed apps through the proxy and sends
+	// everything else direct.
+	SplitInclude SplitMode = "include"
 )
 
 // Outbound tags the route/dns blocks reference. These must match the tags the
@@ -69,6 +89,12 @@ type Options struct {
 	KillSwitch bool   // drop proxied traffic instead of leaking when tun is down
 	DNSRemote  string // resolver for proxied destinations, e.g. tls://1.1.1.1
 	DNSDirect  string // resolver for direct destinations, e.g. https://77.88.8.8/dns-query
+
+	// SplitMode and SplitApps configure per-application split tunnelling. Apps
+	// are matched on their executable file name (process_name). SplitMode off
+	// (the zero-equivalent after Normalize) leaves base routing untouched.
+	SplitMode SplitMode
+	SplitApps []string // executable names, normalized to lowercase
 }
 
 // Normalize returns a copy with empty fields replaced by sane defaults. Mode
@@ -87,7 +113,46 @@ func (o Options) Normalize() Options {
 	if n.DNSDirect == "" {
 		n.DNSDirect = DefaultDNSDirect
 	}
+	switch n.SplitMode {
+	case SplitExclude, SplitInclude:
+	default:
+		n.SplitMode = SplitOff
+	}
+	n.SplitApps = normalizeApps(n.SplitApps)
+	// An empty app list makes split tunnelling a no-op; collapse it to off so
+	// the rest of the pipeline (and the reported state) stays unambiguous.
+	if len(n.SplitApps) == 0 {
+		n.SplitMode = SplitOff
+	}
 	return n
+}
+
+// normalizeApps lowercases, trims, de-duplicates and sorts executable names so
+// the rule output and persisted state are stable regardless of input order or
+// casing. process_name matching in sing-box is case-insensitive on the file
+// name, so lowercasing here is safe and keeps the config deterministic.
+func normalizeApps(apps []string) []string {
+	if len(apps) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(apps))
+	out := make([]string, 0, len(apps))
+	for _, a := range apps {
+		a = strings.ToLower(strings.TrimSpace(a))
+		if a == "" {
+			continue
+		}
+		if _, dup := seen[a]; dup {
+			continue
+		}
+		seen[a] = struct{}{}
+		out = append(out, a)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Validate reports whether the options can produce a usable config.
@@ -102,6 +167,12 @@ func (o Options) Validate() error {
 	}
 	if o.DNSDirect == "" {
 		return fmt.Errorf("routing: empty direct DNS")
+	}
+	switch o.SplitMode {
+	case "", SplitOff, SplitExclude, SplitInclude:
+		// Empty is the unset zero value and means off; Normalize canonicalizes it.
+	default:
+		return fmt.Errorf("routing: unknown split mode %q", o.SplitMode)
 	}
 	return nil
 }

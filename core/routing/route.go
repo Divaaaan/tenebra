@@ -27,9 +27,19 @@ func (o Options) RouteRuleSets() []map[string]any {
 }
 
 // RouteRules returns the ordered "route".rules. Order matters: DNS hijack and
-// sniffing come first, then the mode-specific split, and the proxy selector is
-// the route "final" (set by the singbox package), so anything unmatched here
-// flows through the proxy.
+// sniffing come first, then per-app split tunnelling, then the mode-specific
+// split, and the proxy selector is the route "final" (set by the singbox
+// package), so anything unmatched here flows through the route final.
+//
+// Split tunnelling sits above the geo split so a per-app decision wins over the
+// smart/global RU rules:
+//   - exclude: listed apps are pinned to direct early; everything else keeps
+//     following the base mode.
+//   - include: listed apps are pinned to the proxy early and the base proxy
+//     split is dropped, because in include mode the route final is direct (see
+//     FinalOutbound) so only the listed apps reach the proxy. The LAN bypass
+//     still applies — it only ever sends traffic direct, which include already
+//     does for everything unlisted, so it stays harmless and consistent.
 func (o Options) RouteRules() []map[string]any {
 	rules := []map[string]any{
 		// Capture DNS queries from the tun and answer them through the dns block
@@ -38,17 +48,41 @@ func (o Options) RouteRules() []map[string]any {
 		{"protocol": "dns", "action": "hijack-dns"},
 	}
 
-	switch o.Mode {
-	case ModeDirect:
-		// Everything direct; nothing else needs a rule, final stays proxy but
-		// the singbox layer points final at direct for this mode.
-	case ModeGlobal:
-		// Everything via proxy; LAN may still be excused below.
-	case ModeSmart:
-		// RU IPs and RU domains go direct.
-		rules = append(rules,
-			route(map[string]any{"rule_set": []string{ruleSetGeoIPRU, ruleSetGeositeRU}}, tagDirect),
-		)
+	// Per-app split tunnelling. process_name matches the executable file name,
+	// e.g. "chrome.exe". Placed before the geo split so an app rule wins.
+	switch o.SplitMode {
+	case SplitExclude:
+		if len(o.SplitApps) > 0 {
+			rules = append(rules,
+				route(map[string]any{"process_name": o.SplitApps}, tagDirect),
+			)
+		}
+	case SplitInclude:
+		if len(o.SplitApps) > 0 {
+			rules = append(rules,
+				route(map[string]any{"process_name": o.SplitApps}, tagProxy),
+			)
+		}
+	}
+
+	// In include mode the route final is direct and only the listed apps are
+	// pinned to the proxy above, so the base proxy split must not run — it would
+	// otherwise hand unlisted traffic to the proxy and defeat "only these apps".
+	includeOnly := o.SplitMode == SplitInclude && len(o.SplitApps) > 0
+
+	if !includeOnly {
+		switch o.Mode {
+		case ModeDirect:
+			// Everything direct; nothing else needs a rule, final stays proxy but
+			// the singbox layer points final at direct for this mode.
+		case ModeGlobal:
+			// Everything via proxy; LAN may still be excused below.
+		case ModeSmart:
+			// RU IPs and RU domains go direct.
+			rules = append(rules,
+				route(map[string]any{"rule_set": []string{ruleSetGeoIPRU, ruleSetGeositeRU}}, tagDirect),
+			)
+		}
 	}
 
 	if o.BypassLAN {
@@ -87,7 +121,14 @@ func (o Options) DefaultDomainResolver() map[string]any {
 // FinalOutbound is the tag the route "final" should point at for this mode.
 // Smart and global default to the proxy; direct sends unmatched traffic out
 // the direct outbound.
+//
+// Include split tunnelling forces the final to direct: only the explicitly
+// listed apps are routed to the proxy (by an early process_name rule), so
+// everything that falls through must go direct to honour "only these apps".
 func (o Options) FinalOutbound() string {
+	if o.SplitMode == SplitInclude && len(o.SplitApps) > 0 {
+		return tagDirect
+	}
 	if o.Mode == ModeDirect {
 		return tagDirect
 	}

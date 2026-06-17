@@ -11,6 +11,7 @@ import {
   type LogLevel,
   type Profile,
   type RoutingMode,
+  type SplitMode,
   type State,
   type TrafficEvent,
 } from "../api";
@@ -45,6 +46,7 @@ export interface Tenebra {
   connect: (profile: string, node?: string) => Promise<void>;
   disconnect: () => Promise<void>;
   setRouting: (mode: RoutingMode) => Promise<void>;
+  setSplit: (mode: SplitMode, apps: string[]) => Promise<void>;
   refreshProfiles: () => Promise<void>;
   clearLogs: () => void;
 }
@@ -164,6 +166,11 @@ export function useTenebra(): Tenebra {
     setState(next);
   }, []);
 
+  const setSplit = useCallback(async (mode: SplitMode, apps: string[]) => {
+    const next = await api.setSplit(mode, apps);
+    setState(next);
+  }, []);
+
   const clearLogs = useCallback(() => setLogs([]), []);
 
   return {
@@ -175,6 +182,7 @@ export function useTenebra(): Tenebra {
     connect,
     disconnect,
     setRouting,
+    setSplit,
     refreshProfiles,
     clearLogs,
   };

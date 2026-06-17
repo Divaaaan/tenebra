@@ -94,6 +94,19 @@ export interface Strings {
     routingGlobalHint: string;
     routingDirect: string;
     routingDirectHint: string;
+    split: string;
+    splitHint: string;
+    splitOff: string;
+    splitOffHint: string;
+    splitExclude: string;
+    splitExcludeHint: string;
+    splitInclude: string;
+    splitIncludeHint: string;
+    splitApps: string;
+    splitAppsEmpty: string;
+    splitAddPlaceholder: string;
+    splitAdd: string;
+    splitRemove: string;
     appearance: string;
     theme: string;
     themeDark: string;
@@ -219,6 +232,19 @@ const en: Strings = {
     routingGlobalHint: "Send all traffic through the tunnel.",
     routingDirect: "Direct",
     routingDirectHint: "No tunnel; traffic goes out untouched.",
+    split: "Split tunneling",
+    splitHint: "Route specific apps differently from the rest, by executable name.",
+    splitOff: "Off",
+    splitOffHint: "Every app follows the routing above.",
+    splitExclude: "Exclude apps",
+    splitExcludeHint: "Listed apps bypass the tunnel; everything else stays routed.",
+    splitInclude: "Only these apps",
+    splitIncludeHint: "Only the listed apps use the tunnel; everything else goes direct.",
+    splitApps: "Apps",
+    splitAppsEmpty: "No apps yet. Add an executable like chrome.exe.",
+    splitAddPlaceholder: "chrome.exe",
+    splitAdd: "Add",
+    splitRemove: "Remove",
     appearance: "Appearance",
     theme: "Theme",
     themeDark: "Dark",
@@ -341,6 +367,19 @@ const ru: Strings = {
     routingGlobalHint: "Весь трафик через туннель.",
     routingDirect: "Прямая",
     routingDirectHint: "Без туннеля; трафик идёт напрямую.",
+    split: "Раздельный туннель",
+    splitHint: "Направлять отдельные приложения иначе, по имени исполняемого файла.",
+    splitOff: "Выкл.",
+    splitOffHint: "Все приложения следуют маршрутизации выше.",
+    splitExclude: "Исключить приложения",
+    splitExcludeHint: "Указанные приложения идут мимо туннеля; остальное — как обычно.",
+    splitInclude: "Только эти приложения",
+    splitIncludeHint: "Через туннель идут только указанные приложения; остальное — напрямую.",
+    splitApps: "Приложения",
+    splitAppsEmpty: "Пока нет приложений. Добавьте исполняемый файл, например chrome.exe.",
+    splitAddPlaceholder: "chrome.exe",
+    splitAdd: "Добавить",
+    splitRemove: "Удалить",
     appearance: "Оформление",
     theme: "Тема",
     themeDark: "Тёмная",

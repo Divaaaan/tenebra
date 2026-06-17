@@ -47,6 +47,14 @@ func run() error {
 	} else {
 		daemon.SetLastGood(lg)
 	}
+	// Persist user routing preferences (the per-app split config) next to the
+	// store so a split choice survives a restart. A failure to open it is
+	// non-fatal: preferences then live only for this session.
+	if st, err := control.OpenFileSettings(dir); err != nil {
+		log.Printf("tenebra-core: persistent settings unavailable (%v); using session defaults", err)
+	} else {
+		daemon.SetSettings(st)
+	}
 	server := control.NewServer(daemon, os.Stdin, os.Stdout)
 
 	// Cancel on Ctrl-C / SIGTERM so the tunnel is torn down cleanly; Serve also
