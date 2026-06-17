@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tenebra-vpn/tenebra/core/model"
+	"github.com/Divaaaan/tenebra/core/model"
 )
 
 // ErrUnsupportedScheme is returned for link schemes we knowingly do not parse,

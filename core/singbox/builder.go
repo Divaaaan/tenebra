@@ -8,8 +8,8 @@ package singbox
 import (
 	"fmt"
 
-	"github.com/tenebra-vpn/tenebra/core/model"
-	"github.com/tenebra-vpn/tenebra/core/routing"
+	"github.com/Divaaaan/tenebra/core/model"
+	"github.com/Divaaaan/tenebra/core/routing"
 )
 
 // Default tun and clash-api settings. The address is a small private /30 unused

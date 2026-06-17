@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tenebra-vpn/tenebra/core/model"
-	"github.com/tenebra-vpn/tenebra/core/profile"
+	"github.com/Divaaaan/tenebra/core/model"
+	"github.com/Divaaaan/tenebra/core/profile"
 )
 
 // harness drives a Server over two pipes with a fake runner, demultiplexing the

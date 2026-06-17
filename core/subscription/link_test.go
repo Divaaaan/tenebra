@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/tenebra-vpn/tenebra/core/model"
+	"github.com/Divaaaan/tenebra/core/model"
 )
 
 func TestParseVLESS(t *testing.T) {

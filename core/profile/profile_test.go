@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tenebra-vpn/tenebra/core/model"
+	"github.com/Divaaaan/tenebra/core/model"
 )
 
 func sampleNodes() []model.Node {

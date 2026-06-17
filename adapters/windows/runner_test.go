@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tenebra-vpn/tenebra/core/control"
+	"github.com/Divaaaan/tenebra/core/control"
 )
 
 // Runner must satisfy the control.Runner contract; this fails to compile if the

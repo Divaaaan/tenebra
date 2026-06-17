@@ -14,9 +14,9 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/tenebra-vpn/tenebra/adapters/windows"
-	"github.com/tenebra-vpn/tenebra/core/control"
-	"github.com/tenebra-vpn/tenebra/core/profile"
+	"github.com/Divaaaan/tenebra/adapters/windows"
+	"github.com/Divaaaan/tenebra/core/control"
+	"github.com/Divaaaan/tenebra/core/profile"
 )
 
 func main() {

@@ -10,12 +10,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tenebra-vpn/tenebra/core/fallback"
-	"github.com/tenebra-vpn/tenebra/core/model"
-	"github.com/tenebra-vpn/tenebra/core/profile"
-	"github.com/tenebra-vpn/tenebra/core/routing"
-	"github.com/tenebra-vpn/tenebra/core/singbox"
-	"github.com/tenebra-vpn/tenebra/core/subscription"
+	"github.com/Divaaaan/tenebra/core/fallback"
+	"github.com/Divaaaan/tenebra/core/model"
+	"github.com/Divaaaan/tenebra/core/profile"
+	"github.com/Divaaaan/tenebra/core/routing"
+	"github.com/Divaaaan/tenebra/core/singbox"
+	"github.com/Divaaaan/tenebra/core/subscription"
 )
 
 // Runner owns one sing-box process. It is defined here, not in an adapter

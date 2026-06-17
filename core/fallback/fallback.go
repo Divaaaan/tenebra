@@ -11,7 +11,7 @@ import (
 	"errors"
 	"sort"
 
-	"github.com/tenebra-vpn/tenebra/core/model"
+	"github.com/Divaaaan/tenebra/core/model"
 )
 
 // ErrExhausted is returned by Next once every candidate has been handed out and

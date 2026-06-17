@@ -3,7 +3,7 @@ package singbox
 import (
 	"fmt"
 
-	"github.com/tenebra-vpn/tenebra/core/model"
+	"github.com/Divaaaan/tenebra/core/model"
 )
 
 // wireguardEndpoint builds a sing-box WireGuard endpoint from a node.
