@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type PingResult, type Profile } from "../api";
 import type { Tenebra } from "../state/useTenebra";
 import { useI18n } from "../i18n/I18nContext";
-import { formatDate, formatTrafficUsage } from "../lib/format";
+import { formatDate, formatExpiry, formatTrafficUsage } from "../lib/format";
 import { PingBadge } from "../components/PingBadge";
 
 interface ProfilesScreenProps {
@@ -96,6 +96,12 @@ function ProfileCard({
 
   const connected = connectedProfileId === profile.id;
   const usage = formatTrafficUsage(profile.trafficUsed, profile.trafficTotal);
+  const expiry = formatExpiry(profile.expiresAt, lang, {
+    in: t.profiles.expiresIn,
+    today: t.profiles.expiresToday,
+    tomorrow: t.profiles.expiresTomorrow,
+    expired: t.profiles.expired,
+  });
 
   const fastest = useMemo(() => {
     const ok = (pings ?? []).filter((r) => r.ok);
@@ -130,8 +136,9 @@ function ProfileCard({
   async function refresh() {
     setBusy(true);
     try {
+      // The core emits a profiles event when the refresh changes stored data,
+      // which reloads the list; no explicit refetch needed here.
       await api.refreshSubscription(profile.id);
-      await tenebra.refreshProfiles();
     } catch {
       // Non-fatal; keep the stale view.
     } finally {
@@ -180,10 +187,10 @@ function ProfileCard({
           <dt>{t.profiles.updated}</dt>
           <dd>{formatDate(profile.updatedAt, lang)}</dd>
         </div>
-        {profile.expiresAt && (
+        {expiry && (
           <div>
             <dt>{t.profiles.expires}</dt>
-            <dd>{formatDate(profile.expiresAt, lang)}</dd>
+            <dd title={formatDate(profile.expiresAt, lang)}>{expiry}</dd>
           </div>
         )}
         {usage && (

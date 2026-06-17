@@ -36,15 +36,22 @@ If `node` is omitted from `connect`, the core picks the lowest-ping node.
 
 ## Events
 
-| event     | fields                                                               |
-|-----------|---------------------------------------------------------------------|
-| `state`   | `state` (`idle`/`connecting`/`connected`/`error`), `node?`, `error?`|
-| `traffic` | `up`, `down` (bytes), `up_rate`, `down_rate` (bytes/s)              |
-| `log`     | `level` (`info`/`warn`/`error`), `msg`                             |
+| event      | fields                                                              |
+|------------|--------------------------------------------------------------------|
+| `state`    | `state` (`idle`/`connecting`/`connected`/`error`), `node?`, `error?`|
+| `traffic`  | `up`, `down` (bytes), `up_rate`, `down_rate` (bytes/s)             |
+| `log`      | `level` (`info`/`warn`/`error`), `msg`                            |
+| `profiles` | none — signal that the stored profile set changed; re-run `list_profiles` |
+
+The `profiles` event is emitted after a profile's stored data changes outside a
+direct request — chiefly the background subscription auto-refresh — so the UI can
+reload usage and node lists without polling. It is also emitted after a manual
+`refresh_subscription` that changed anything.
 
 ```
 {"event":"state","state":"connected","node":"n3"}
 {"event":"traffic","up":10240,"down":51200,"up_rate":2048,"down_rate":8192}
+{"event":"profiles"}
 ```
 
 ## Types

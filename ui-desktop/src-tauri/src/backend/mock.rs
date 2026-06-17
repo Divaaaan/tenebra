@@ -40,6 +40,10 @@ impl Shared {
     fn emit_state(&self, state: &State) {
         self.sink.state(state);
     }
+
+    fn emit_profiles(&self) {
+        self.sink.profiles();
+    }
 }
 
 pub struct MockBackend {
@@ -167,6 +171,7 @@ impl Backend for MockBackend {
         self.shared
             .sink
             .log("info", &format!("imported subscription \"{name}\""));
+        self.shared.emit_profiles();
         Ok(profile)
     }
 
@@ -205,6 +210,7 @@ impl Backend for MockBackend {
         self.shared
             .sink
             .log("info", &format!("imported link \"{name}\""));
+        self.shared.emit_profiles();
         Ok(profile)
     }
 
@@ -224,7 +230,11 @@ impl Backend for MockBackend {
             let snapshot = inner.state.clone();
             drop(inner);
             self.shared.emit_state(&snapshot);
+        } else {
+            drop(inner);
         }
+        // The profile list changed; tell the UI to reload it.
+        self.shared.emit_profiles();
         Ok(())
     }
 
@@ -241,7 +251,10 @@ impl Backend for MockBackend {
         p.updated_at = now_rfc3339();
         p.expires_at = Some(in_days(30));
         p.traffic_used = Some(p.traffic_used.unwrap_or(0) + GIB / 2);
-        Ok(p.clone())
+        let updated = p.clone();
+        drop(inner);
+        self.shared.emit_profiles();
+        Ok(updated)
     }
 
     fn connect(&self, profile: String, node: Option<String>) -> Result<State, String> {

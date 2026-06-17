@@ -44,6 +44,56 @@ export function formatTime(date: Date, lang: Language): string {
   });
 }
 
+/** Localized labels for the relative-expiry phrasing. */
+export interface ExpiryLabels {
+  /** Template with "{days}", e.g. "in {days} days". */
+  in: string;
+  today: string;
+  tomorrow: string;
+  expired: string;
+}
+
+/**
+ * Relative expiry as a short phrase: "today", "tomorrow", "in N days", or
+ * "expired". Returns the absolute localized date instead once the horizon is far
+ * enough out (over a month) that a day count stops being useful. Returns null
+ * for an absent or invalid timestamp so the caller can hide the field.
+ */
+export function formatExpiry(
+  iso: string | undefined,
+  lang: Language,
+  labels: ExpiryLabels,
+): string | null {
+  if (!iso) {
+    return null;
+  }
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  // Day granularity from the start of today, so "in 1 day" doesn't flip on the
+  // hour. Compare calendar days, not raw 24h spans.
+  const startOfDay = (d: Date) =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round(
+    (startOfDay(date) - startOfDay(new Date())) / 86_400_000,
+  );
+
+  if (days < 0) {
+    return labels.expired;
+  }
+  if (days === 0) {
+    return labels.today;
+  }
+  if (days === 1) {
+    return labels.tomorrow;
+  }
+  if (days > 31) {
+    return formatDate(iso, lang);
+  }
+  return labels.in.replace("{days}", String(days));
+}
+
 /** A used/total byte pair as "1.2 GB / 50 GB". Total of 0 means unmetered. */
 export function formatTrafficUsage(
   used: number | undefined,

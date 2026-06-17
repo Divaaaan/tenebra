@@ -15,7 +15,7 @@ use tauri::{AppHandle, Emitter, Manager, State as TauriState, WindowEvent};
 
 use backend::{
     Backend, ConnectionState, EventSink, LeakCheck, PingResult, Profile, RoutingMode, State,
-    EVENT_LOG, EVENT_STATE, EVENT_TRAFFIC,
+    EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
 /// Held in Tauri's managed state and shared by every command handler.
@@ -53,6 +53,11 @@ impl EventSink for TauriSink {
         let _ = self
             .app
             .emit(EVENT_LOG, json!({ "level": level, "msg": msg }));
+    }
+
+    fn profiles(&self) {
+        // Payload-less: the renderer reloads the profile list on receipt.
+        let _ = self.app.emit(EVENT_PROFILES, ());
     }
 }
 

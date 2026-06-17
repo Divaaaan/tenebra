@@ -34,7 +34,24 @@ func NewServer(d *Daemon, r io.Reader, w io.Writer) *Server {
 // cancelled, then tears down any live connection. It returns the scanner's error
 // (nil on clean EOF). Each request is handled synchronously in order; commands
 // that do network I/O (subscription fetch, ping) honour ctx.
+//
+// Serve also owns the daemon's background work: it starts the subscription
+// auto-refresh ticker under a child context and waits for it to stop before
+// returning, so the ticker's lifetime is exactly the serving session.
 func (s *Server) Serve(ctx context.Context) error {
+	bgCtx, stopBg := context.WithCancel(ctx)
+	var bg sync.WaitGroup
+	bg.Add(1)
+	go func() {
+		defer bg.Done()
+		s.daemon.runAutoRefresh(bgCtx)
+	}()
+	// Stop the ticker, then wait for it: deferred LIFO, so stopBg runs before
+	// bg.Wait. The serve loop can return on a clean stdin EOF without ctx being
+	// cancelled, so cancelling bgCtx here is what releases the ticker goroutine.
+	defer bg.Wait()
+	defer stopBg()
+
 	scan := newRequestScanner(s.r)
 
 	// Reading from s.r blocks, so cancellation can't interrupt a blocked Scan

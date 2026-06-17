@@ -31,8 +31,8 @@ use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
 use super::{
-    Backend, EventSink, LeakCheck, PingResult, Profile, RoutingMode, State, EVENT_LOG, EVENT_STATE,
-    EVENT_TRAFFIC,
+    Backend, EventSink, LeakCheck, PingResult, Profile, RoutingMode, State, EVENT_LOG,
+    EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
 /// How long a request waits for its correlated response before giving up. The
@@ -317,6 +317,10 @@ fn forward_event(value: &Value, sink: &dyn EventSink) {
             let level = value.get("level").and_then(Value::as_str).unwrap_or("info");
             let msg = value.get("msg").and_then(Value::as_str).unwrap_or_default();
             sink.log(level, msg);
+        }
+        Some(EVENT_PROFILES) => {
+            // Signal-only: the body (if any) is ignored; the UI re-fetches.
+            sink.profiles();
         }
         _ => {} // unknown event kind: ignore rather than guess
     }
