@@ -48,9 +48,10 @@ const (
 
 // Event names.
 const (
-	EventState   = "state"
-	EventTraffic = "traffic"
-	EventLog     = "log"
+	EventState    = "state"
+	EventTraffic  = "traffic"
+	EventLog      = "log"
+	EventProfiles = "profiles"
 )
 
 // Log levels for log events.

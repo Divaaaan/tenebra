@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -83,6 +84,10 @@ type Daemon struct {
 	// dialer.
 	now  func() time.Time
 	dial func(ctx context.Context, network, address string) (net.Conn, error)
+
+	// fetch retrieves a subscription body. It is injectable so the auto-refresh
+	// logic can be unit-tested offline; production uses subscription.Fetch.
+	fetch func(ctx context.Context, url string) ([]byte, http.Header, error)
 }
 
 // NewDaemon builds a Daemon over a profile store and runner. Routing defaults to
@@ -95,6 +100,7 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 		state:    State{State: StateIdle, Routing: string(routing.ModeSmart)},
 		lastGood: fallback.NewMemLastGood(),
 		now:      time.Now,
+		fetch:    subscription.Fetch,
 	}
 	var dialer net.Dialer
 	d.dial = dialer.DialContext
@@ -177,7 +183,7 @@ func (d *Daemon) handleImportSubscription(ctx context.Context, req Request) Resp
 	if name == "" {
 		name = req.URL
 	}
-	body, header, err := subscription.Fetch(ctx, req.URL)
+	body, header, err := d.fetch(ctx, req.URL)
 	if err != nil {
 		return newError(req.ID, err.Error())
 	}
@@ -255,24 +261,43 @@ func (d *Daemon) handleRefreshSubscription(ctx context.Context, req Request) Res
 		return newError(req.ID, "refresh_subscription: profile is not a subscription")
 	}
 
-	body, header, err := subscription.Fetch(ctx, p.URL)
+	updated, _, err := d.refreshProfile(ctx, p)
 	if err != nil {
 		return newError(req.ID, err.Error())
+	}
+	// A manual refresh changed stored data (servers and/or usage); tell the UI so
+	// any other view of the profile list updates without a poll.
+	d.emitProfiles()
+	return d.profileResult(req.ID, updated)
+}
+
+// refreshProfile fetches and re-parses one subscription profile, grafts the
+// fresh content onto the existing profile so its ID and creation identity
+// persist, folds in the latest usage from the Subscription-Userinfo header, and
+// writes it back through the store. It returns the updated profile and whether
+// the stored profile actually changed (so callers can decide whether to signal
+// the UI). The profile must be a subscription with a non-empty URL; callers
+// guarantee that.
+func (d *Daemon) refreshProfile(ctx context.Context, p profile.Profile) (profile.Profile, bool, error) {
+	body, header, err := d.fetch(ctx, p.URL)
+	if err != nil {
+		return profile.Profile{}, false, err
 	}
 	nodes, _, err := subscription.ParseSubscription(body)
 	if err != nil {
-		return newError(req.ID, err.Error())
+		return profile.Profile{}, false, err
 	}
 	if len(nodes) == 0 {
-		return newError(req.ID, "refresh_subscription: no usable nodes in subscription")
+		return profile.Profile{}, false, fmt.Errorf("refresh: no usable nodes in subscription %q", p.Name)
 	}
 
 	// Rebuild a profile to get fresh, stably-IDed servers, then graft the new
 	// content onto the existing profile so its ID and creation identity persist.
 	rebuilt, err := profile.NewProfile(p.Name, profile.SourceSubscription, p.URL, nodes)
 	if err != nil {
-		return newError(req.ID, err.Error())
+		return profile.Profile{}, false, err
 	}
+	before := p
 	p.Servers = rebuilt.Servers
 	p.UpdatedAt = rebuilt.UpdatedAt
 	p.ExpiresAt = nil
@@ -281,9 +306,59 @@ func (d *Daemon) handleRefreshSubscription(ctx context.Context, req Request) Res
 	applyUserInfo(&p, header.Get("Subscription-Userinfo"))
 
 	if err := d.store.Update(p); err != nil {
-		return newError(req.ID, err.Error())
+		return profile.Profile{}, false, err
 	}
-	return d.profileResult(req.ID, p)
+	return p, profileChanged(before, p), nil
+}
+
+// refreshAllSubscriptions re-fetches every subscription profile that has a URL,
+// reusing the same refresh path as the manual command. A fetch or parse failure
+// on one profile is logged and skipped — it never aborts the sweep or drops the
+// profile's existing data. It returns whether any stored profile changed, so the
+// caller can emit a single profiles event for the batch. With no subscription
+// profiles it returns false without doing any work.
+func (d *Daemon) refreshAllSubscriptions(ctx context.Context) bool {
+	changedAny := false
+	for _, p := range d.store.List() {
+		if p.Source != profile.SourceSubscription || p.URL == "" {
+			continue
+		}
+		_, changed, err := d.refreshProfile(ctx, p)
+		if err != nil {
+			d.emitLog(LogWarn, fmt.Sprintf("auto-refresh of %q failed: %v", p.Name, err))
+			continue
+		}
+		if changed {
+			changedAny = true
+		}
+	}
+	return changedAny
+}
+
+// profileChanged reports whether a refresh produced a profile materially
+// different from the one before it, ignoring the UpdatedAt timestamp (which a
+// refresh always bumps). It drives whether the UI is told to reload: an
+// identical subscription should not churn the list.
+func profileChanged(before, after profile.Profile) bool {
+	if before.TrafficUsed != after.TrafficUsed ||
+		before.TrafficTotal != after.TrafficTotal {
+		return true
+	}
+	if (before.ExpiresAt == nil) != (after.ExpiresAt == nil) {
+		return true
+	}
+	if before.ExpiresAt != nil && !before.ExpiresAt.Equal(*after.ExpiresAt) {
+		return true
+	}
+	if len(before.Servers) != len(after.Servers) {
+		return true
+	}
+	for i := range before.Servers {
+		if before.Servers[i].ID != after.Servers[i].ID {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *Daemon) handleSetRouting(req Request) Response {

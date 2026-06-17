@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 pub const EVENT_STATE: &str = "state";
 pub const EVENT_TRAFFIC: &str = "traffic";
 pub const EVENT_LOG: &str = "log";
+pub const EVENT_PROFILES: &str = "profiles";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -118,6 +119,10 @@ pub trait EventSink: Send + Sync + 'static {
     fn state(&self, state: &State);
     fn traffic(&self, up: u64, down: u64, up_rate: u64, down_rate: u64);
     fn log(&self, level: &str, msg: &str);
+    /// Signal that the stored profile set changed (e.g. a background
+    /// subscription refresh updated usage or node lists). Carries no payload;
+    /// the UI re-fetches the profile list in response.
+    fn profiles(&self);
 }
 
 /// Everything the control protocol exposes. Methods return a plain `Result`

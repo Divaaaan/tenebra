@@ -108,6 +108,13 @@ export function onLog(handler: (e: LogEvent) => void): Promise<UnlistenFn> {
   return listen<LogEvent>("log", (event) => handler(event.payload));
 }
 
+// The core fires this (payload-less) when the stored profile set changes —
+// notably after a background subscription refresh updates usage or node lists.
+// The renderer responds by re-fetching the profile list so the view stays live.
+export function onProfilesChanged(handler: () => void): Promise<UnlistenFn> {
+  return listen("profiles", () => handler());
+}
+
 // Tray-originated events. The tray can disconnect on its own, but connecting and
 // showing need the front end (it owns the selected profile and routing), so the
 // Rust tray emits these for the renderer to act on. They carry no payload.

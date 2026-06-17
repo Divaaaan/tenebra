@@ -50,6 +50,11 @@ export interface Strings {
     pinging: string;
     autoSelect: string;
     expires: string;
+    /** Relative expiry, "{days}" interpolated by the caller. */
+    expiresIn: string;
+    expiresToday: string;
+    expiresTomorrow: string;
+    expired: string;
     traffic: string;
     updated: string;
     source: {
@@ -161,6 +166,10 @@ const en: Strings = {
     pinging: "Pinging…",
     autoSelect: "Auto-select fastest",
     expires: "Expires",
+    expiresIn: "in {days} days",
+    expiresToday: "today",
+    expiresTomorrow: "tomorrow",
+    expired: "expired",
     traffic: "Traffic",
     updated: "Updated",
     source: {
@@ -268,6 +277,10 @@ const ru: Strings = {
     pinging: "Пингую…",
     autoSelect: "Выбрать самый быстрый",
     expires: "Истекает",
+    expiresIn: "через {days} дн.",
+    expiresToday: "сегодня",
+    expiresTomorrow: "завтра",
+    expired: "истёк",
     traffic: "Трафик",
     updated: "Обновлён",
     source: {

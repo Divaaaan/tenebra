@@ -294,6 +294,18 @@ func (d *Daemon) emitLog(level, msg string) {
 	}
 }
 
+// emitProfiles signals that the stored profile set changed so the UI reloads it.
+// The event carries no body — it is a hint to re-run list_profiles, not a
+// snapshot — so it stays cheap and the UI keeps a single source of truth.
+func (d *Daemon) emitProfiles() {
+	d.mu.Lock()
+	emit := d.emit
+	d.mu.Unlock()
+	if emit != nil {
+		emit(EventProfiles, struct{}{})
+	}
+}
+
 // Close tears down any active connection. The server calls it on shutdown.
 func (d *Daemon) Close() error {
 	d.teardown(StateIdle, "", "")

@@ -4,6 +4,7 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   api,
   onLog,
+  onProfilesChanged,
   onState,
   onTraffic,
   type LogEvent,
@@ -124,6 +125,15 @@ export function useTenebra(): Tenebra {
         }),
         onTraffic(applyTraffic),
         onLog(appendLog),
+        // A background (or another window's) refresh changed the stored
+        // profiles; reload so usage and node lists stay live.
+        onProfilesChanged(() => {
+          void api.listProfiles().then((next) => {
+            if (active) {
+              setProfiles(next);
+            }
+          });
+        }),
       ]);
 
       if (!active) {
