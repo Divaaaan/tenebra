@@ -19,6 +19,24 @@ jobs:
       - uses: dominikh/staticcheck-action@v1
         with:
           version: latest
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui-desktop/package-lock.json
+      - name: Install front-end dependencies
+        working-directory: ui-desktop
+        run: npm ci
+      - name: Type-check
+        working-directory: ui-desktop
+        run: npm run typecheck
+      - name: Run front-end tests
+        working-directory: ui-desktop
+        run: npm test
   desktop:
     runs-on: windows-latest
     steps:
@@ -35,6 +53,9 @@ jobs:
         run: powershell -ExecutionPolicy Bypass -File scripts/fetch-resources.ps1
       - name: Build core sidecar
         run: go build -o ui-desktop/src-tauri/binaries/tenebra-core-x86_64-pc-windows-msvc.exe ./cmd/tenebra-core
+      - name: Test the Rust backend
+        working-directory: ui-desktop/src-tauri
+        run: cargo test --all-targets
       - name: Install front-end dependencies
         working-directory: ui-desktop
         run: npm ci

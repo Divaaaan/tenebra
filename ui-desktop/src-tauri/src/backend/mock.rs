@@ -614,3 +614,351 @@ fn rfc3339_from_unix(secs: u64) -> String {
 
     format!("{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}Z")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    /// A recording sink so behavior tests can assert what the backend emitted
+    /// without a Tauri app. Counts the signal-only events and keeps the payloads
+    /// the assertions actually inspect.
+    #[derive(Default)]
+    struct Rec {
+        states: Mutex<Vec<State>>,
+        logs: Mutex<Vec<(String, String)>>,
+        traffic: AtomicUsize,
+        profiles: AtomicUsize,
+    }
+
+    impl Rec {
+        fn last_state(&self) -> Option<State> {
+            self.states.lock().unwrap().last().cloned()
+        }
+        fn profiles_count(&self) -> usize {
+            self.profiles.load(Ordering::SeqCst)
+        }
+        fn state_count(&self) -> usize {
+            self.states.lock().unwrap().len()
+        }
+    }
+
+    impl EventSink for Rec {
+        fn state(&self, state: &State) {
+            self.states.lock().unwrap().push(state.clone());
+        }
+        fn traffic(&self, _up: u64, _down: u64, _up_rate: u64, _down_rate: u64) {
+            self.traffic.fetch_add(1, Ordering::SeqCst);
+        }
+        fn log(&self, level: &str, msg: &str) {
+            self.logs
+                .lock()
+                .unwrap()
+                .push((level.to_string(), msg.to_string()));
+        }
+        fn profiles(&self) {
+            self.profiles.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// A backend plus the sink it reports to, so tests can drive one and inspect
+    /// the other.
+    fn backend() -> (MockBackend, Arc<Rec>) {
+        let sink = Arc::new(Rec::default());
+        let backend = MockBackend::new(sink.clone());
+        (backend, sink)
+    }
+
+    // --- pure helpers ----------------------------------------------------------
+
+    #[test]
+    fn normalize_split_apps_trims_lowercases_dedupes_sorts() {
+        let out = normalize_split_apps(vec![
+            "  Chrome.exe ".into(),
+            "STEAM.exe".into(),
+            "chrome.exe".into(),
+            "".into(),
+            "   ".into(),
+        ]);
+        assert_eq!(out, vec!["chrome.exe", "steam.exe"]);
+    }
+
+    #[test]
+    fn normalize_split_apps_empty_is_empty() {
+        assert!(normalize_split_apps(vec![]).is_empty());
+        assert!(normalize_split_apps(vec!["  ".into(), "".into()]).is_empty());
+    }
+
+    #[test]
+    fn protocol_from_link_maps_known_schemes() {
+        assert_eq!(protocol_from_link("vless://x"), Protocol::Vless);
+        assert_eq!(protocol_from_link("hysteria2://x"), Protocol::Hysteria2);
+        assert_eq!(protocol_from_link("hy2://x"), Protocol::Hysteria2);
+        assert_eq!(protocol_from_link("ss://x"), Protocol::Shadowsocks);
+        assert_eq!(protocol_from_link("trojan://x"), Protocol::Trojan);
+        assert_eq!(protocol_from_link("vmess://x"), Protocol::Vmess);
+        assert_eq!(protocol_from_link("wireguard://x"), Protocol::Amneziawg);
+        assert_eq!(protocol_from_link("amneziawg://x"), Protocol::Amneziawg);
+    }
+
+    #[test]
+    fn protocol_from_link_is_case_insensitive_and_defaults_to_vless() {
+        assert_eq!(protocol_from_link("VLESS://x"), Protocol::Vless);
+        assert_eq!(protocol_from_link("Hysteria2://x"), Protocol::Hysteria2);
+        // Anything unrecognized (including a bare http URL) falls back to vless.
+        assert_eq!(protocol_from_link("http://x"), Protocol::Vless);
+        assert_eq!(protocol_from_link("garbage"), Protocol::Vless);
+    }
+
+    #[test]
+    fn rfc3339_from_unix_anchors() {
+        assert_eq!(rfc3339_from_unix(0), "1970-01-01T00:00:00Z");
+        // A verified non-zero anchor pins the civil-from-days math.
+        assert_eq!(rfc3339_from_unix(1_700_000_000), "2023-11-14T22:13:20Z");
+        // And the shape holds for an arbitrary value.
+        let s = rfc3339_from_unix(1_500_000_123);
+        assert!(regex_like_rfc3339(&s), "unexpected rfc3339 shape: {s}");
+    }
+
+    /// Cheap structural check (no regex crate): `YYYY-MM-DDTHH:MM:SSZ`.
+    fn regex_like_rfc3339(s: &str) -> bool {
+        let b = s.as_bytes();
+        s.len() == 20
+            && b[4] == b'-'
+            && b[7] == b'-'
+            && b[10] == b'T'
+            && b[13] == b':'
+            && b[16] == b':'
+            && b[19] == b'Z'
+            && s.chars()
+                .enumerate()
+                .all(|(i, c)| matches!(i, 4 | 7 | 10 | 13 | 16 | 19) || c.is_ascii_digit())
+    }
+
+    // --- backend behavior ------------------------------------------------------
+
+    #[test]
+    fn status_starts_idle_with_smart_routing() {
+        let (b, _) = backend();
+        let s = b.status().unwrap();
+        assert_eq!(s.state, ConnectionState::Idle);
+        assert_eq!(s.routing, Some(RoutingMode::Smart));
+        assert_eq!(s.node, None);
+        assert_eq!(s.split, None);
+    }
+
+    #[test]
+    fn list_profiles_returns_the_two_demos() {
+        let (b, _) = backend();
+        let profiles = b.list_profiles().unwrap();
+        assert_eq!(profiles.len(), 2);
+
+        let sub = &profiles[0];
+        assert_eq!(sub.id, "demo-sub");
+        assert_eq!(sub.source, Source::Subscription);
+        assert_eq!(sub.nodes.len(), 3);
+
+        let manual = &profiles[1];
+        assert_eq!(manual.id, "demo-manual");
+        assert_eq!(manual.source, Source::Manual);
+        assert_eq!(manual.nodes.len(), 1);
+    }
+
+    #[test]
+    fn set_routing_updates_state_and_emits() {
+        let (b, sink) = backend();
+        let s = b.set_routing(RoutingMode::Global).unwrap();
+        assert_eq!(s.routing, Some(RoutingMode::Global));
+        assert_eq!(
+            sink.last_state().unwrap().routing,
+            Some(RoutingMode::Global)
+        );
+    }
+
+    #[test]
+    fn set_split_normalizes_apps() {
+        let (b, _) = backend();
+        let s = b
+            .set_split(
+                SplitMode::Exclude,
+                vec!["B.exe".into(), "a.exe".into(), "a.exe".into()],
+            )
+            .unwrap();
+        assert_eq!(s.split, Some(SplitMode::Exclude));
+        assert_eq!(s.split_apps, Some(vec!["a.exe".into(), "b.exe".into()]));
+    }
+
+    #[test]
+    fn set_split_empty_list_collapses_to_off() {
+        let (b, _) = backend();
+        // Exclude with an all-whitespace list normalizes to empty, so the mode is
+        // forced off and both split fields clear.
+        let s = b
+            .set_split(SplitMode::Exclude, vec!["   ".into(), "".into()])
+            .unwrap();
+        assert_eq!(s.split, None);
+        assert_eq!(s.split_apps, None);
+    }
+
+    #[test]
+    fn set_split_off_clears_regardless_of_apps() {
+        let (b, _) = backend();
+        let s = b.set_split(SplitMode::Off, vec!["x.exe".into()]).unwrap();
+        assert_eq!(s.split, None);
+        assert_eq!(s.split_apps, None);
+    }
+
+    #[test]
+    fn import_link_creates_manual_profile_and_signals() {
+        let (b, sink) = backend();
+        let before = sink.profiles_count();
+        let p = b.import_link("vless://example".into(), None).unwrap();
+        assert_eq!(p.source, Source::Manual);
+        assert_eq!(p.nodes.len(), 1);
+        assert_eq!(p.nodes[0].protocol, Protocol::Vless);
+        assert_eq!(sink.profiles_count(), before + 1);
+        // The new profile is now listed.
+        assert!(b.list_profiles().unwrap().iter().any(|x| x.id == p.id));
+    }
+
+    #[test]
+    fn import_link_rejects_blank_and_honours_name_and_scheme() {
+        let (b, _) = backend();
+        assert!(b.import_link("".into(), None).is_err());
+        assert!(b.import_link("   ".into(), None).is_err());
+
+        let p = b
+            .import_link("ss://server".into(), Some("My SS".into()))
+            .unwrap();
+        assert_eq!(p.name, "My SS");
+        assert_eq!(p.nodes[0].protocol, Protocol::Shadowsocks);
+    }
+
+    #[test]
+    fn import_subscription_creates_subscription_and_signals() {
+        let (b, sink) = backend();
+        let before = sink.profiles_count();
+        let p = b
+            .import_subscription("https://example.invalid/sub".into(), "Provider".into())
+            .unwrap();
+        assert_eq!(p.source, Source::Subscription);
+        assert_eq!(p.name, "Provider");
+        assert!(!p.nodes.is_empty());
+        assert_eq!(sink.profiles_count(), before + 1);
+    }
+
+    #[test]
+    fn import_subscription_validates_name_and_url() {
+        let (b, _) = backend();
+        assert!(b
+            .import_subscription("https://x".into(), "  ".into())
+            .is_err());
+        assert!(b.import_subscription("   ".into(), "Name".into()).is_err());
+    }
+
+    #[test]
+    fn connect_transitions_to_connecting() {
+        let (b, sink) = backend();
+        let s = b.connect("demo-sub".into(), None).unwrap();
+        assert_eq!(s.state, ConnectionState::Connecting);
+        // Auto node selection picks the head of the list.
+        assert_eq!(s.node, Some("demo-nl".into()));
+        assert_eq!(s.profile, Some("demo-sub".into()));
+        // The synchronous transition was emitted.
+        assert_eq!(
+            sink.last_state().unwrap().state,
+            ConnectionState::Connecting
+        );
+        // Stop the background dial so it can't race a later test's timing.
+        let _ = b.disconnect();
+    }
+
+    #[test]
+    fn connect_honours_an_explicit_node() {
+        let (b, _) = backend();
+        let s = b
+            .connect("demo-sub".into(), Some("demo-de".into()))
+            .unwrap();
+        assert_eq!(s.node, Some("demo-de".into()));
+        let _ = b.disconnect();
+    }
+
+    #[test]
+    fn connect_rejects_unknown_node_and_profile() {
+        let (b, _) = backend();
+        assert!(b.connect("demo-sub".into(), Some("nope".into())).is_err());
+        assert!(b.connect("does-not-exist".into(), None).is_err());
+    }
+
+    #[test]
+    fn disconnect_returns_to_idle() {
+        let (b, _) = backend();
+        let _ = b.connect("demo-sub".into(), None).unwrap();
+        let s = b.disconnect().unwrap();
+        assert_eq!(s.state, ConnectionState::Idle);
+        assert_eq!(s.node, None);
+    }
+
+    #[test]
+    fn remove_profile_drops_it_and_signals() {
+        let (b, sink) = backend();
+        let before = sink.profiles_count();
+        b.remove_profile("demo-manual".into()).unwrap();
+        assert!(!b
+            .list_profiles()
+            .unwrap()
+            .iter()
+            .any(|p| p.id == "demo-manual"));
+        assert_eq!(sink.profiles_count(), before + 1);
+        assert!(b.remove_profile("missing".into()).is_err());
+    }
+
+    #[test]
+    fn refresh_subscription_only_for_subscriptions() {
+        let (b, _) = backend();
+        assert!(b.refresh_subscription("demo-sub".into()).is_ok());
+        // A manual profile can't be refreshed, and a missing one errors.
+        assert!(b.refresh_subscription("demo-manual".into()).is_err());
+        assert!(b.refresh_subscription("missing".into()).is_err());
+    }
+
+    #[test]
+    fn ping_returns_a_result_per_node() {
+        let (b, _) = backend();
+        let results = b.ping("demo-sub".into()).unwrap();
+        assert_eq!(results.len(), 3);
+        let profiles = b.list_profiles().unwrap();
+        let ids: Vec<&str> = profiles[0].nodes.iter().map(|n| n.id.as_str()).collect();
+        for r in &results {
+            assert!(
+                ids.contains(&r.node.as_str()),
+                "ping for unknown node {r:?}"
+            );
+        }
+        assert!(b.ping("missing".into()).is_err());
+    }
+
+    #[test]
+    fn leak_check_idle_is_neutral_and_never_a_dns_pass() {
+        let (b, _) = backend();
+        let leak = b.leak_check().unwrap();
+        assert!(!leak.connected);
+        assert_eq!(leak.exit_match, None);
+        assert_eq!(leak.ip_verdict, Verdict::Neutral);
+        // The honesty invariant: an idle store must not report a DNS pass.
+        assert_eq!(leak.dns.status, DnsStatus::Inconclusive);
+        assert_ne!(leak.dns.status, DnsStatus::Ok);
+    }
+
+    #[test]
+    fn removing_the_active_profile_tears_down_the_tunnel() {
+        let (b, sink) = backend();
+        let _ = b.connect("demo-sub".into(), None).unwrap();
+        let states_before = sink.state_count();
+        b.remove_profile("demo-sub".into()).unwrap();
+        // Removing the connected profile emits an extra idle state event.
+        assert!(sink.state_count() > states_before);
+        assert_eq!(b.status().unwrap().state, ConnectionState::Idle);
+        assert_eq!(b.status().unwrap().profile, None);
+    }
+}
