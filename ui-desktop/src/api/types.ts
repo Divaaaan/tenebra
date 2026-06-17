@@ -6,6 +6,8 @@ export type ConnectionState = "idle" | "connecting" | "connected" | "error";
 
 export type RoutingMode = "smart" | "global" | "direct";
 
+export type SplitMode = "off" | "exclude" | "include";
+
 export type NodeProtocol =
   | "vless"
   | "hysteria2"
@@ -19,6 +21,10 @@ export interface State {
   node?: string;
   profile?: string;
   routing?: RoutingMode;
+  /** Per-app split mode; omitted (treated as "off") when no split is active. */
+  split?: SplitMode;
+  /** Normalized executable names the split applies to; omitted when off. */
+  split_apps?: string[];
   error?: string;
 }
 

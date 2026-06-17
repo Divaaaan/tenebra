@@ -6,6 +6,7 @@ import type {
   PingResult,
   Profile,
   RoutingMode,
+  SplitMode,
   State,
   StateEvent,
   TrafficEvent,
@@ -69,6 +70,12 @@ export const api = {
 
   setRouting(mode: RoutingMode): Promise<State> {
     return invoke<State>("set_routing", { mode });
+  },
+
+  // Per-app split tunnelling. apps are executable file names (e.g. "chrome.exe").
+  // The core normalizes them, so the returned State may reorder/lowercase them.
+  setSplit(mode: SplitMode, apps: string[]): Promise<State> {
+    return invoke<State>("set_split", { mode, apps });
   },
 
   /** Stubbed leak check; the mock returns a canned result. */

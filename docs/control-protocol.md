@@ -25,6 +25,7 @@ Three message kinds flow over the link:
 | `disconnect`           | —                                  | `State`                     |
 | `ping`                 | `profile`                          | `{ results: PingResult[] }` |
 | `set_routing`          | `mode` (`smart`/`global`/`direct`) | `State`                     |
+| `set_split`            | `mode` (`off`/`exclude`/`include`), `apps?` | `State`            |
 
 ```
 request:  {"id":7,"cmd":"connect","profile":"p1","node":"n3"}
@@ -33,6 +34,33 @@ error:    {"id":7,"ok":false,"error":"profile not found"}
 ```
 
 If `node` is omitted from `connect`, the core picks the lowest-ping node.
+
+`set_routing` and `set_split` only record the choice; like a routing change, a
+new split takes effect on the **next connect** (live retuning would require
+restarting sing-box). The returned `State` reflects the stored choice.
+
+### Per-app split tunnelling (`set_split`)
+
+`apps` is a list of executable file names matched case-insensitively against the
+process that owns each connection, e.g. `["chrome.exe", "steam.exe"]`. Names are
+normalized server-side (trimmed, lowercased, de-duplicated, sorted), so the
+`State` echoed back may differ from the input order/casing.
+
+- `off` — no split; the base routing `mode` decides everything. An `exclude`/
+  `include` with an empty (or all-blank) `apps` list collapses to `off`.
+- `exclude` — the listed apps go **direct** (out of the tunnel); everything else
+  follows the normal routing for the current `mode`.
+- `include` — only the listed apps go through the **proxy**; everything else goes
+  direct.
+
+The split config is **persisted** in the core's config directory
+(`settings.json`, written atomically) so it survives a restart and is loaded
+back into the reported `State` on launch.
+
+```
+request:  {"id":8,"cmd":"set_split","mode":"exclude","apps":["Chrome.exe","steam.exe"]}
+response: {"id":8,"ok":true,"data":{"state":"idle","split":"exclude","split_apps":["chrome.exe","steam.exe"]}}
+```
 
 ## Events
 
@@ -62,6 +90,8 @@ type State = {
   node?: string;
   profile?: string;
   routing?: "smart" | "global" | "direct";
+  split?: "exclude" | "include";  // omitted when off
+  split_apps?: string[];          // normalized executable names; omitted when off
   error?: string;
 };
 

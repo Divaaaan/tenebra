@@ -39,6 +39,17 @@ pub enum RoutingMode {
     Direct,
 }
 
+/// Per-app split tunnelling mode. `Off` leaves base routing untouched;
+/// `Exclude` sends the listed apps direct; `Include` routes only the listed
+/// apps through the proxy. Mirrors the core's split mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SplitMode {
+    Off,
+    Exclude,
+    Include,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Protocol {
@@ -66,6 +77,12 @@ pub struct State {
     pub profile: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub routing: Option<RoutingMode>,
+    /// Per-app split mode; absent (treated as off) when no split is active.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split: Option<SplitMode>,
+    /// Executable names the split applies to; absent when off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split_apps: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -139,5 +156,6 @@ pub trait Backend: Send + Sync + 'static {
     fn disconnect(&self) -> Result<State, String>;
     fn ping(&self, profile: String) -> Result<Vec<PingResult>, String>;
     fn set_routing(&self, mode: RoutingMode) -> Result<State, String>;
+    fn set_split(&self, mode: SplitMode, apps: Vec<String>) -> Result<State, String>;
     fn leak_check(&self) -> Result<LeakCheck, String>;
 }

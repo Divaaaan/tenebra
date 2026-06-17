@@ -76,6 +76,12 @@ type Daemon struct {
 	// selection on a connect without an explicit node.
 	lastGood fallback.LastGood
 
+	// settings persists user routing preferences (the split config) so they
+	// survive a restart. nil means no persistence (a bare daemon in a unit test):
+	// preferences then live only for the session. Guarded by mu for writes via
+	// persistSettings, but the store is itself concurrency-safe.
+	settings settingsStore
+
 	// cancel tears down the current connection's goroutines; nil when idle.
 	cancel context.CancelFunc
 	// watching guards against double-starting the lifecycle goroutines and lets
@@ -143,6 +149,37 @@ func (d *Daemon) SetLastGood(lg fallback.LastGood) {
 	d.lastGood = lg
 }
 
+// SetSettings installs a persistent settings store and immediately loads any
+// saved preferences (today: the split config) into the live routing options and
+// the reported state. main wires the disk-backed store here so a split choice
+// survives a restart; tests can install a fake or skip it. Call it before
+// serving — it is not synchronised against an in-flight connect.
+func (d *Daemon) SetSettings(store settingsStore) {
+	d.settings = store
+	ps := store.Load()
+
+	d.mu.Lock()
+	mode, apps := splitFromSettings(ps)
+	d.routing.SplitMode = mode
+	d.routing.SplitApps = apps
+	d.routing = d.routing.Normalize()
+	applySplitToState(&d.state, d.routing)
+	d.mu.Unlock()
+}
+
+// persistSettings saves the split portion of ro through the settings store, if
+// one is installed. Persistence is best-effort: a write failure is logged via
+// the daemon's log event but never fails the originating command, mirroring how
+// last-good tolerates a failed write.
+func (d *Daemon) persistSettings(ro routing.Options) {
+	if d.settings == nil {
+		return
+	}
+	if err := d.settings.Save(settingsFromRouting(ro)); err != nil {
+		d.emitLog(LogWarn, fmt.Sprintf("persist split settings: %v", err))
+	}
+}
+
 // Handle dispatches one request to its command handler and returns the response
 // to send. Unknown commands produce an error response rather than a transport
 // failure. ctx bounds any network work the command performs (subscription
@@ -169,6 +206,8 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handlePing(ctx, req)
 	case CmdSetRouting:
 		return d.handleSetRouting(req)
+	case CmdSetSplit:
+		return d.handleSetSplit(req)
 	default:
 		return newError(req.ID, fmt.Sprintf("unknown command %q", req.Cmd))
 	}
@@ -179,6 +218,15 @@ func (d *Daemon) snapshotState() State {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.state
+}
+
+// snapshotRouting returns a copy of the live routing options under lock. The
+// options are a value type, but SplitApps is a shared slice, so callers that
+// might mutate it should copy first; current readers only inspect it.
+func (d *Daemon) snapshotRouting() routing.Options {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.routing
 }
 
 func (d *Daemon) handleStatus(req Request) Response {
@@ -413,6 +461,50 @@ func (d *Daemon) handleSetRouting(req Request) Response {
 		return newError(req.ID, err.Error())
 	}
 	return resp
+}
+
+// handleSetSplit updates the per-app split configuration. Like set_routing it
+// only stores the new config and reflects it in the reported state; the change
+// takes effect on the next connect (live retuning would require restarting
+// sing-box). The normalized config is persisted so it survives a restart.
+func (d *Daemon) handleSetSplit(req Request) Response {
+	mode := routing.SplitMode(req.Mode)
+	switch mode {
+	case routing.SplitOff, routing.SplitExclude, routing.SplitInclude:
+	default:
+		return newError(req.ID, fmt.Sprintf("set_split: unknown mode %q", req.Mode))
+	}
+
+	d.mu.Lock()
+	d.routing.SplitMode = mode
+	d.routing.SplitApps = req.Apps
+	d.routing = d.routing.Normalize()
+	applySplitToState(&d.state, d.routing)
+	cur := d.state
+	ro := d.routing
+	d.mu.Unlock()
+
+	d.persistSettings(ro)
+
+	resp, err := newResult(req.ID, cur)
+	if err != nil {
+		return newError(req.ID, err.Error())
+	}
+	return resp
+}
+
+// applySplitToState mirrors the normalized split config onto a State. Off
+// collapses to empty fields so the wire form omits them, keeping a no-op split
+// invisible to the UI. The app slice is copied so the State never aliases the
+// daemon's live routing options.
+func applySplitToState(s *State, ro routing.Options) {
+	if ro.SplitMode == routing.SplitOff || len(ro.SplitApps) == 0 {
+		s.Split = ""
+		s.SplitApps = nil
+		return
+	}
+	s.Split = string(ro.SplitMode)
+	s.SplitApps = append([]string(nil), ro.SplitApps...)
 }
 
 func (d *Daemon) handlePing(ctx context.Context, req Request) Response {

@@ -503,6 +503,68 @@ func TestDirectModeFinalIsDirect(t *testing.T) {
 	}
 }
 
+// routeProcessRule finds the first route rule carrying a process_name match in a
+// built config's route block.
+func routeProcessRule(t *testing.T, cfg map[string]any) map[string]any {
+	t.Helper()
+	route := cfg["route"].(map[string]any)
+	rules, ok := route["rules"].([]map[string]any)
+	if !ok {
+		t.Fatalf("route rules wrong type: %T", route["rules"])
+	}
+	for _, r := range rules {
+		if _, has := r["process_name"]; has {
+			return r
+		}
+	}
+	return nil
+}
+
+func TestBuildSplitExcludeEmitsProcessNameDirect(t *testing.T) {
+	cfg, err := Build(fakeNodes(), "hy2", routing.Options{
+		Mode:      routing.ModeSmart,
+		SplitMode: routing.SplitExclude,
+		SplitApps: []string{"chrome.exe"},
+	}, TunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr := routeProcessRule(t, cfg)
+	if pr == nil {
+		t.Fatal("exclude build is missing a process_name route rule")
+	}
+	if pr["outbound"] != directTag || pr["action"] != "route" {
+		t.Errorf("exclude process rule = %v, want action route outbound direct", pr)
+	}
+	// Exclude leaves the final on the proxy.
+	if route := cfg["route"].(map[string]any); route["final"] != proxyTag {
+		t.Errorf("exclude final = %v, want proxy", route["final"])
+	}
+}
+
+func TestBuildSplitIncludeFinalDirectAppToProxy(t *testing.T) {
+	cfg, err := Build(fakeNodes(), "hy2", routing.Options{
+		Mode:      routing.ModeGlobal,
+		SplitMode: routing.SplitInclude,
+		SplitApps: []string{"chrome.exe"},
+	}, TunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr := routeProcessRule(t, cfg)
+	if pr == nil {
+		t.Fatal("include build is missing a process_name route rule")
+	}
+	if pr["outbound"] != proxyTag {
+		t.Errorf("include process rule outbound = %v, want proxy", pr["outbound"])
+	}
+	// Include forces the final to direct so only the listed app reaches the proxy.
+	route := cfg["route"].(map[string]any)
+	if route["final"] != directTag {
+		t.Errorf("include final = %v, want direct", route["final"])
+	}
+}
+
 func keys(m map[string]map[string]any) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

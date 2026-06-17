@@ -33,6 +33,7 @@ const (
 	CmdDisconnect         = "disconnect"
 	CmdPing               = "ping"
 	CmdSetRouting         = "set_routing"
+	CmdSetSplit           = "set_split"
 )
 
 // ConnState is the connection lifecycle state reported in State and state
@@ -79,8 +80,11 @@ type Request struct {
 	Link string `json:"link,omitempty"`
 	// Name names the profile for import_subscription and import_link.
 	Name string `json:"name,omitempty"`
-	// Mode is the routing mode for set_routing (smart/global/direct).
+	// Mode is the routing mode for set_routing (smart/global/direct) and also the
+	// split mode for set_split (off/exclude/include).
 	Mode string `json:"mode,omitempty"`
+	// Apps is the executable-name list for set_split, e.g. ["chrome.exe"].
+	Apps []string `json:"apps,omitempty"`
 }
 
 // Response is a core -> UI reply to a Request, correlated by ID. Exactly one of
@@ -109,7 +113,12 @@ type State struct {
 	Node    string    `json:"node,omitempty"`
 	Profile string    `json:"profile,omitempty"`
 	Routing string    `json:"routing,omitempty"`
-	Error   string    `json:"error,omitempty"`
+	// Split is the per-app split mode (off/exclude/include) and SplitApps the
+	// executable names it applies to. Both reflect the config that the next
+	// connect will use; an empty/off split omits them.
+	Split     string   `json:"split,omitempty"`
+	SplitApps []string `json:"split_apps,omitempty"`
+	Error     string   `json:"error,omitempty"`
 }
 
 // PingResult is one node's dial-latency probe outcome.
