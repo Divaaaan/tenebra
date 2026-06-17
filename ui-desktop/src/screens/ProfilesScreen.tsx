@@ -3,7 +3,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type PingResult, type Profile } from "../api";
 import type { Tenebra } from "../state/useTenebra";
 import { useI18n } from "../i18n/I18nContext";
+import type { Strings } from "../i18n/strings";
 import { formatDate, formatExpiry, formatTrafficUsage } from "../lib/format";
+import { ClipboardError, readClipboardText } from "../lib/clipboard";
+import {
+  decodeQrFromBlob,
+  decodeQrFromClipboard,
+  isQrDecodingSupported,
+  QrError,
+} from "../lib/qr";
 import { PingBadge } from "../components/PingBadge";
 
 interface ProfilesScreenProps {
@@ -275,7 +283,32 @@ function ProfileCard({
   );
 }
 
-type ImportTab = "subscription" | "link" | "file";
+type ImportTab = "subscription" | "link" | "file" | "qr";
+
+// Map the typed clipboard/QR failures to a user-facing message. Kept beside the
+// dialog so both the paste button and the QR panel report failures the same way.
+function clipboardErrorMessage(err: unknown, t: Strings): string {
+  if (err instanceof ClipboardError) {
+    return err.kind === "empty"
+      ? t.errors.clipboardEmpty
+      : t.errors.clipboardDenied;
+  }
+  return t.errors.generic;
+}
+
+function qrErrorMessage(err: unknown, t: Strings): string {
+  if (err instanceof QrError) {
+    switch (err.kind) {
+      case "unsupported":
+        return t.errors.qrUnsupported;
+      case "notFound":
+        return t.errors.qrNotFound;
+      default:
+        return t.errors.qrDecodeFailed;
+    }
+  }
+  return t.errors.generic;
+}
 
 interface ImportDialogProps {
   tenebra: Tenebra;
@@ -290,9 +323,15 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
   const [link, setLink] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [scanning, setScanning] = useState(false);
 
   const firstFieldRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const qrInputRef = useRef<HTMLInputElement>(null);
+
+  // Probe once on mount; the QR tab uses this to decide whether to even offer
+  // scanning, so the user isn't sent down a path the runtime can't follow.
+  const qrSupported = useMemo(() => isQrDecodingSupported(), []);
 
   useEffect(() => {
     firstFieldRef.current?.focus();
@@ -357,11 +396,60 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
     });
   }
 
-  const tabs: ImportTab[] = ["subscription", "link", "file"];
+  // Fill the active field from the clipboard so the user needn't paste by hand.
+  // Empty and denied are reported distinctly; a successful read clears any error.
+  async function pasteInto(set: (value: string) => void) {
+    setError(null);
+    try {
+      set(await readClipboardText());
+    } catch (err) {
+      setError(clipboardErrorMessage(err, t));
+    }
+  }
+
+  // Route a decoded QR string through the existing import path: a web URL is a
+  // subscription (named like the subscription tab), anything else a server link.
+  function importDecoded(value: string) {
+    const isSubscription = /^https?:\/\//i.test(value);
+    if (isSubscription) {
+      void finish(() =>
+        api.importSubscription(value, name.trim() || value),
+      );
+    } else {
+      void finish(() => api.importLink(value, name.trim() || undefined));
+    }
+  }
+
+  async function onQrBlob(blob: Blob) {
+    setScanning(true);
+    setError(null);
+    try {
+      importDecoded(await decodeQrFromBlob(blob));
+    } catch (err) {
+      setError(qrErrorMessage(err, t));
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  async function onQrFromClipboard() {
+    setScanning(true);
+    setError(null);
+    try {
+      importDecoded(await decodeQrFromClipboard());
+    } catch (err) {
+      setError(qrErrorMessage(err, t));
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  const tabs: ImportTab[] = ["subscription", "link", "file", "qr"];
   const tabLabels: Record<ImportTab, string> = {
     subscription: t.profiles.import.tabSubscription,
     link: t.profiles.import.tabLink,
     file: t.profiles.import.tabFile,
+    qr: t.profiles.import.tabQr,
   };
 
   return (
@@ -418,13 +506,23 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
           {tab === "subscription" && (
             <label className="field">
               <span className="field-label">{t.profiles.import.url}</span>
-              <input
-                className="control"
-                value={url}
-                placeholder={t.profiles.import.urlPlaceholder}
-                inputMode="url"
-                onChange={(e) => setUrl(e.target.value)}
-              />
+              <div className="field-row">
+                <input
+                  className="control"
+                  value={url}
+                  placeholder={t.profiles.import.urlPlaceholder}
+                  inputMode="url"
+                  onChange={(e) => setUrl(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={busy}
+                  onClick={() => void pasteInto(setUrl)}
+                >
+                  {t.profiles.import.paste}
+                </button>
+              </div>
             </label>
           )}
 
@@ -438,6 +536,16 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
                 placeholder={t.profiles.import.linkPlaceholder}
                 onChange={(e) => setLink(e.target.value)}
               />
+              <div className="field-actions">
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={busy}
+                  onClick={() => void pasteInto(setLink)}
+                >
+                  {t.profiles.import.paste}
+                </button>
+              </div>
             </label>
           )}
 
@@ -467,6 +575,50 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
             </div>
           )}
 
+          {tab === "qr" && (
+            <div className="field">
+              {qrSupported ? (
+                <>
+                  <div className="field-row">
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={busy || scanning}
+                      onClick={() => qrInputRef.current?.click()}
+                    >
+                      {scanning ? t.profiles.import.qrScanning : t.profiles.import.qrPick}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={busy || scanning}
+                      onClick={() => void onQrFromClipboard()}
+                    >
+                      {t.profiles.import.qrPasteImage}
+                    </button>
+                  </div>
+                  <p className="field-hint muted">{t.profiles.import.qrHint}</p>
+                </>
+              ) : (
+                <p className="field-hint muted">{t.errors.qrUnsupported}</p>
+              )}
+              <input
+                ref={qrInputRef}
+                type="file"
+                accept="image/*"
+                className="visually-hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  // Reset so picking the same file again still fires onChange.
+                  e.target.value = "";
+                  if (file) {
+                    void onQrBlob(file);
+                  }
+                }}
+              />
+            </div>
+          )}
+
           {error && (
             <p className="form-error" role="alert">
               {error}
@@ -478,7 +630,7 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
           <button type="button" className="btn btn-ghost" onClick={onClose}>
             {t.home.cancel}
           </button>
-          {tab !== "file" && (
+          {(tab === "subscription" || tab === "link") && (
             <button
               type="button"
               className="btn btn-primary"

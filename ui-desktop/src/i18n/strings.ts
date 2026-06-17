@@ -66,6 +66,7 @@ export interface Strings {
       tabSubscription: string;
       tabLink: string;
       tabFile: string;
+      tabQr: string;
       name: string;
       namePlaceholder: string;
       url: string;
@@ -74,6 +75,11 @@ export interface Strings {
       linkPlaceholder: string;
       pickFile: string;
       fileHint: string;
+      paste: string;
+      qrPick: string;
+      qrPasteImage: string;
+      qrHint: string;
+      qrScanning: string;
       submit: string;
       importing: string;
     };
@@ -121,6 +127,11 @@ export interface Strings {
     nameRequired: string;
     urlRequired: string;
     linkRequired: string;
+    clipboardEmpty: string;
+    clipboardDenied: string;
+    qrNotFound: string;
+    qrUnsupported: string;
+    qrDecodeFailed: string;
   };
 }
 
@@ -181,6 +192,7 @@ const en: Strings = {
       tabSubscription: "Subscription",
       tabLink: "Link",
       tabFile: "File",
+      tabQr: "QR code",
       name: "Name",
       namePlaceholder: "My provider",
       url: "Subscription URL",
@@ -189,6 +201,11 @@ const en: Strings = {
       linkPlaceholder: "vless://…  ·  hysteria2://…  ·  ss://…",
       pickFile: "Choose file…",
       fileHint: "A text file with one server link per line.",
+      paste: "Paste",
+      qrPick: "Choose image…",
+      qrPasteImage: "Paste image",
+      qrHint: "An image with a QR code for a subscription or server link.",
+      qrScanning: "Scanning…",
       submit: "Import",
       importing: "Importing…",
     },
@@ -232,6 +249,11 @@ const en: Strings = {
     nameRequired: "Enter a name.",
     urlRequired: "Enter a subscription URL.",
     linkRequired: "Paste a server link.",
+    clipboardEmpty: "The clipboard is empty.",
+    clipboardDenied: "Couldn't read the clipboard. Grant access or paste manually.",
+    qrNotFound: "No QR code found in that image.",
+    qrUnsupported: "QR scanning isn't available here. Paste the link instead.",
+    qrDecodeFailed: "Couldn't read that image.",
   },
 };
 
@@ -292,6 +314,7 @@ const ru: Strings = {
       tabSubscription: "Подписка",
       tabLink: "Ссылка",
       tabFile: "Файл",
+      tabQr: "QR-код",
       name: "Название",
       namePlaceholder: "Мой провайдер",
       url: "Ссылка подписки",
@@ -300,6 +323,11 @@ const ru: Strings = {
       linkPlaceholder: "vless://…  ·  hysteria2://…  ·  ss://…",
       pickFile: "Выбрать файл…",
       fileHint: "Текстовый файл: по одной ссылке на сервер в строке.",
+      paste: "Вставить",
+      qrPick: "Выбрать изображение…",
+      qrPasteImage: "Вставить изображение",
+      qrHint: "Изображение с QR-кодом для подписки или ссылки на сервер.",
+      qrScanning: "Сканирую…",
       submit: "Импортировать",
       importing: "Импортирую…",
     },
@@ -343,6 +371,11 @@ const ru: Strings = {
     nameRequired: "Введите название.",
     urlRequired: "Введите ссылку подписки.",
     linkRequired: "Вставьте ссылку на сервер.",
+    clipboardEmpty: "Буфер обмена пуст.",
+    clipboardDenied: "Не удалось прочитать буфер обмена. Дайте доступ или вставьте вручную.",
+    qrNotFound: "В этом изображении нет QR-кода.",
+    qrUnsupported: "Сканирование QR здесь недоступно. Вставьте ссылку вручную.",
+    qrDecodeFailed: "Не удалось прочитать изображение.",
   },
 };
 
