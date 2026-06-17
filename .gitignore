@@ -1,0 +1,40 @@
+# Go
+/core/bin/
+*.exe
+*.test
+*.out
+coverage.*
+
+# Node / front end
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.tsbuildinfo
+
+# Rust / Tauri
+target/
+/ui-desktop/src-tauri/target/
+/ui-desktop/src-tauri/gen/
+
+# sing-box and tunnel binaries are fetched at build time, never committed
+/bin/
+sing-box
+sing-box.exe
+wintun.dll
+
+# Secrets and infrastructure must never land in the repo:
+# no real servers, subscription URLs, keys or saved profiles
+.env
+.env.*
+!.env.example
+*.local
+profiles.json
+*.subscription
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

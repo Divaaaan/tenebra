@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - run: go vet ./...
+      - run: go test ./... -race -count=1
+      - uses: dominikh/staticcheck-action@v1
+        with:
+          version: latest
+  # The windows-latest desktop bundle job (Go sidecar + Tauri build) lands once
+  # the end-to-end build is wired.

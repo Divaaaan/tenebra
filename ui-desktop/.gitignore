@@ -1,0 +1,4 @@
+# Front-end build output and dependencies are covered by the root .gitignore;
+# this file only adds what is specific to the desktop package.
+dist/
+node_modules/
