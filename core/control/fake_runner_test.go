@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"errors"
 	"net"
 	"sync"
 	"time"
@@ -33,7 +34,9 @@ type fakeRunner struct {
 
 	startN  int
 	stopN   int
+	probeN  int
 	lastCfg []byte
+	cfgs    [][]byte // every config Start was called with, in order
 
 	up, down int64
 	statsErr error
@@ -44,6 +47,23 @@ type fakeRunner struct {
 
 	// startErr, when set, makes Start fail.
 	startErr error
+
+	// failStarts makes every probe fail while the current process is one of the
+	// first that-many Starts — i.e. the first failStarts candidates are treated as
+	// blocked (no matter how many times the loop retries them within their budget),
+	// and candidate failStarts+1 onward comes up. This models a blocked protocol
+	// the fallback loop must skip, rather than a transient probe blip. probeErr is
+	// the error returned for a failed probe (a default is used when nil).
+	// probeDelay is the delayMs a successful probe reports.
+	failStarts int
+	probeErr   error
+	probeDelay int
+
+	// onProbe, if set, is called (with the lock released) at the start of each
+	// Probe, letting a test drive timing — e.g. block until it chooses, or trigger
+	// a process exit. n is the cumulative probe count. It runs before the
+	// fail/success decision.
+	onProbe func(ctx context.Context, n int)
 }
 
 func newFakeRunner() *fakeRunner {
@@ -58,6 +78,7 @@ func (f *fakeRunner) Start(ctx context.Context, configJSON []byte) error {
 	}
 	f.startN++
 	f.lastCfg = append([]byte(nil), configJSON...)
+	f.cfgs = append(f.cfgs, append([]byte(nil), configJSON...))
 	f.done = make(chan error, 1)
 	return nil
 }
@@ -81,10 +102,44 @@ func (f *fakeRunner) Done() <-chan error {
 	return f.done
 }
 
+func (f *fakeRunner) Probe(ctx context.Context, tag string) (int, error) {
+	f.mu.Lock()
+	f.probeN++
+	n := f.probeN
+	hook := f.onProbe
+	blocked := f.probeErr != nil || f.startN <= f.failStarts
+	perr := f.probeErr
+	delay := f.probeDelay
+	f.mu.Unlock()
+
+	if hook != nil {
+		hook(ctx, n)
+	}
+	// Honour ctx so a probe abandoned by teardown returns promptly.
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if blocked {
+		if perr != nil {
+			return 0, perr
+		}
+		return 0, errors.New("fake probe: blocked")
+	}
+	return delay, nil
+}
+
 // setStats updates the cumulative counters the next Stats call returns.
 func (f *fakeRunner) setStats(up, down int64) {
 	f.mu.Lock()
 	f.up, f.down = up, down
+	f.mu.Unlock()
+}
+
+// setFailStarts updates failStarts under the lock, safe to call between connects
+// while a probe goroutine from a prior connection may still be unwinding.
+func (f *fakeRunner) setFailStarts(n int) {
+	f.mu.Lock()
+	f.failStarts = n
 	f.mu.Unlock()
 }
 
@@ -106,4 +161,19 @@ func (f *fakeRunner) stops() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.stopN
+}
+
+func (f *fakeRunner) probes() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.probeN
+}
+
+// startCfgs returns a copy of every config Start was handed, in order.
+func (f *fakeRunner) startCfgs() [][]byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([][]byte, len(f.cfgs))
+	copy(out, f.cfgs)
+	return out
 }

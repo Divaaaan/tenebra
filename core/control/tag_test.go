@@ -9,13 +9,13 @@ import (
 	"github.com/Divaaaan/tenebra/core/singbox"
 )
 
-// TestNodesAndTagMatchesBuilder is the invariant that protects node selection:
-// the tag nodesAndTag computes for the chosen server must equal the tag the
-// singbox builder actually assigns it, so the selector default routes through
-// the intended exit. We verify it by building a real config and reading back the
-// selector's "default" when the chosen node is the only usable one — then it is
-// forced to that node's tag rather than the first-tag fallback.
-func TestNodesAndTagMatchesBuilder(t *testing.T) {
+// TestServerTagsMatchBuilder is the invariant that protects node selection: the
+// tag serverTags computes for a server must equal the tag the singbox builder
+// actually assigns it, so the selector default the fallback loop hands Build
+// routes through the intended exit. We verify it by building a real config and
+// reading back the selector's "default" — the chosen tag must be both that
+// default and one of the selector's outbounds.
+func TestServerTagsMatchBuilder(t *testing.T) {
 	cases := []struct {
 		name    string
 		servers []profile.Server
@@ -77,9 +77,10 @@ func TestNodesAndTagMatchesBuilder(t *testing.T) {
 			p := profile.Profile{ID: "p", Name: "P", Source: profile.SourceManual, Servers: c.servers}
 			chosen := c.servers[c.chosenIdx]
 
-			nodes, selTag := nodesAndTag(p, chosen)
+			nodes := profileNodes(p)
+			selTag := serverTags(p)[chosen.ID]
 			if selTag == "" {
-				t.Fatalf("nodesAndTag returned empty tag for a usable chosen node")
+				t.Fatalf("serverTags returned empty tag for a usable chosen node")
 			}
 
 			cfg, err := singbox.Build(nodes, selTag, routing.Options{Mode: routing.ModeSmart}, singbox.TunOptions{})

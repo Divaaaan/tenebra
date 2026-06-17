@@ -37,6 +37,11 @@ type Runner interface {
 	// Stats returns cumulative upload/download byte counts from the clash API.
 	// An error (e.g. the API not yet listening) is non-fatal to the daemon.
 	Stats() (up, down int64, err error)
+	// Probe runs a clash API delay test through the outbound named tag, returning
+	// the measured round-trip in milliseconds. A nil error means traffic actually
+	// flows through that outbound; any error (blocked protocol, dead upstream, API
+	// not yet listening, ctx cancelled) means it does not. ctx bounds the call.
+	Probe(ctx context.Context, tag string) (delayMs int, err error)
 	// Done delivers the process's exit: it sends the exit error (nil on a clean
 	// exit) once and is closed afterwards. Before any Start it must block.
 	Done() <-chan error
@@ -85,6 +90,17 @@ type Daemon struct {
 	now  func() time.Time
 	dial func(ctx context.Context, network, address string) (net.Conn, error)
 
+	// fallback-loop timings, injectable so tests run fast and deterministically.
+	// probeWarmup is how long to wait after Start before the first probe (the
+	// clash API needs a moment to listen). probeRetry is the gap between probe
+	// retries within one attempt's budget. probeTimeout bounds a single probe.
+	// probeBudget caps the total time spent probing one candidate before it is
+	// declared failed.
+	probeWarmup  time.Duration
+	probeRetry   time.Duration
+	probeTimeout time.Duration
+	probeBudget  time.Duration
+
 	// fetch retrieves a subscription body. It is injectable so the auto-refresh
 	// logic can be unit-tested offline; production uses subscription.Fetch.
 	fetch func(ctx context.Context, url string) ([]byte, http.Header, error)
@@ -101,6 +117,11 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 		lastGood: fallback.NewMemLastGood(),
 		now:      time.Now,
 		fetch:    subscription.Fetch,
+
+		probeWarmup:  defaultProbeWarmup,
+		probeRetry:   defaultProbeRetry,
+		probeTimeout: defaultProbeTimeout,
+		probeBudget:  defaultProbeBudget,
 	}
 	var dialer net.Dialer
 	d.dial = dialer.DialContext
@@ -112,6 +133,14 @@ func (d *Daemon) SetEmitter(emit emitFunc) {
 	d.mu.Lock()
 	d.emit = emit
 	d.mu.Unlock()
+}
+
+// SetLastGood swaps in a different last-good store, replacing the in-memory
+// default. main wires the disk-backed store here so the last working node leads
+// the fallback walk on the next launch; tests keep the in-memory one. Call it
+// before serving — it is not synchronised against an in-flight connect.
+func (d *Daemon) SetLastGood(lg fallback.LastGood) {
+	d.lastGood = lg
 }
 
 // Handle dispatches one request to its command handler and returns the response
@@ -478,48 +507,62 @@ func applyUserInfo(p *profile.Profile, header string) {
 	}
 }
 
-// selectNode chooses which server to connect to for a profile. An explicit node
-// ID wins if it matches; otherwise the last-good node for the profile is used if
-// still present; otherwise the first server. It returns the chosen server and
-// the full ordered server list (so the caller can build a config carrying every
-// node with the chosen one selected).
-func selectNode(p profile.Profile, explicit string, lastGood fallback.LastGood) (profile.Server, bool) {
-	if len(p.Servers) == 0 {
-		return profile.Server{}, false
-	}
-	if explicit != "" {
-		for _, s := range p.Servers {
-			if s.ID == explicit {
-				return s, true
-			}
-		}
-		return profile.Server{}, false
-	}
-	if lastGood != nil {
-		if id, ok := lastGood.Get(p.ID); ok {
-			for _, s := range p.Servers {
-				if s.ID == id {
-					return s, true
-				}
-			}
-		}
-	}
-	return p.Servers[0], true
-}
-
-// nodesAndTag converts a profile's servers into model.Nodes and computes the
-// sing-box selector tag the chosen server will carry. The builder derives each
-// tag from the node name, uniquing collisions with a numeric suffix and skipping
-// zero-protocol nodes; we mirror that walk exactly so the tag we hand Build as
-// the selector default points at the chosen node and not a namesake. Getting
-// this wrong would silently route through the wrong exit, so it is worth the
-// small duplication rather than guessing by raw name.
-func nodesAndTag(p profile.Profile, chosen profile.Server) ([]model.Node, string) {
+// profileNodes converts a profile's servers into the model.Node slice the
+// builder consumes, preserving order.
+func profileNodes(p profile.Profile) []model.Node {
 	nodes := make([]model.Node, len(p.Servers))
 	for i, s := range p.Servers {
 		nodes[i] = s.Node
 	}
+	return nodes
+}
 
+// buildCandidates turns a profile's servers into fallback attempts. An explicit
+// node ID collapses the set to that single server, so a user who asked for a
+// specific exit gets exactly it (and an error if it is unknown). Without an
+// explicit node, every renderable server becomes a candidate and the fallback
+// machine decides their order.
+//
+// Servers the builder can't render — a zero protocol, or one not in
+// knownProtocol — are dropped: a config selecting such a node would silently
+// fall back to a different outbound, so probing it would measure the wrong exit.
+// Better to never attempt it. If that leaves nothing, connect fails with a clear
+// message rather than dialling the wrong server.
+func buildCandidates(p profile.Profile, explicit string) ([]fallback.Attempt, error) {
+	if explicit != "" {
+		for _, s := range p.Servers {
+			if s.ID == explicit {
+				if !renderable(s) {
+					return nil, fmt.Errorf("connect: node %s has an unsupported protocol %q", explicit, s.Protocol)
+				}
+				return []fallback.Attempt{{NodeID: s.ID, Node: s.Node}}, nil
+			}
+		}
+		return nil, fmt.Errorf("connect: node not found in profile")
+	}
+
+	cands := make([]fallback.Attempt, 0, len(p.Servers))
+	for _, s := range p.Servers {
+		if !renderable(s) {
+			continue
+		}
+		cands = append(cands, fallback.Attempt{NodeID: s.ID, Node: s.Node})
+	}
+	if len(cands) == 0 {
+		return nil, fmt.Errorf("connect: profile has no usable servers")
+	}
+	return cands, nil
+}
+
+// serverTags computes, for every renderable server in the profile, the sing-box
+// selector tag it will carry, keyed by the server's stable ID. The builder
+// derives each tag from the node name, uniquing collisions with a numeric suffix
+// and skipping nodes it can't render; this mirrors that walk exactly so the tag
+// the loop hands Build as the selector default points at the intended exit and
+// not a namesake. Getting it wrong would route through the wrong server, so the
+// duplication is deliberate. Non-renderable servers get no entry, matching the
+// builder dropping them.
+func serverTags(p profile.Profile) map[string]string {
 	seen := map[string]int{}
 	uniq := func(name string) string {
 		base := sanitizeTag(name)
@@ -537,7 +580,7 @@ func nodesAndTag(p profile.Profile, chosen profile.Server) ([]model.Node, string
 		}
 	}
 
-	selTag := ""
+	tags := make(map[string]string, len(p.Servers))
 	for _, s := range p.Servers {
 		if s.Protocol == "" {
 			continue // builder skips zero-protocol nodes; no tag assigned
@@ -545,17 +588,20 @@ func nodesAndTag(p profile.Profile, chosen profile.Server) ([]model.Node, string
 		tag := uniq(s.Node.Name)
 		if !knownProtocol(s.Protocol) {
 			// The builder allocates a tag then frees it for protocols it can't
-			// render (delete(seen, tag) in buildNodes), so no tag survives and
-			// the suffix counter is rolled back. Mirror that or every later tag
-			// drifts and selTag points at the wrong outbound.
+			// render (delete(seen, tag) in buildNodes), so no tag survives and the
+			// suffix counter is rolled back. Mirror that or every later tag drifts.
 			delete(seen, tag)
 			continue
 		}
-		if s.ID == chosen.ID {
-			selTag = tag
-		}
+		tags[s.ID] = tag
 	}
-	return nodes, selTag
+	return tags
+}
+
+// renderable reports whether the builder can turn this server into a working
+// outbound: it must have a known, non-zero protocol.
+func renderable(s profile.Server) bool {
+	return s.Protocol != "" && knownProtocol(s.Protocol)
 }
 
 // knownProtocol reports whether the builder can render a node of this protocol

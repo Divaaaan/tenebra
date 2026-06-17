@@ -31,13 +31,22 @@ func run() error {
 	log.SetOutput(os.Stderr)
 	log.SetFlags(log.LstdFlags)
 
-	store, err := profile.Open(configDir())
+	dir := configDir()
+	store, err := profile.Open(dir)
 	if err != nil {
 		return fmt.Errorf("open profile store: %w", err)
 	}
 
 	runner := windows.New()
 	daemon := control.NewDaemon(store, runner)
+	// Persist last-good per profile next to the store so the node that last
+	// connected leads the fallback walk on the next launch. A failure to open it
+	// is non-fatal: fall back to the in-memory default rather than refuse to run.
+	if lg, err := control.OpenFileLastGood(dir); err != nil {
+		log.Printf("tenebra-core: persistent last-good unavailable (%v); using in-memory", err)
+	} else {
+		daemon.SetLastGood(lg)
+	}
 	server := control.NewServer(daemon, os.Stdin, os.Stdout)
 
 	// Cancel on Ctrl-C / SIGTERM so the tunnel is torn down cleanly; Serve also
