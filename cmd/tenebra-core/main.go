@@ -58,6 +58,12 @@ func run() error {
 // per-user config location; if that can't be determined we fall back to the
 // working directory so the core still starts rather than refusing to run.
 func configDir() string {
+	// An explicit override (used by tests, and by the desktop app when it wants
+	// the store in a specific place) wins over the per-user default.
+	if dir := os.Getenv("TENEBRA_CONFIG_DIR"); dir != "" {
+		log.Printf("tenebra-core: store at %s (TENEBRA_CONFIG_DIR)", dir)
+		return dir
+	}
 	base, err := os.UserConfigDir()
 	if err != nil {
 		log.Printf("user config dir unavailable (%v); using current directory", err)
