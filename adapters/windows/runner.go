@@ -246,8 +246,7 @@ func (r *Runner) Probe(ctx context.Context, tag string) (delayMs int, err error)
 	if port == 0 {
 		port = defaultClashPort
 	}
-	endpoint := fmt.Sprintf("http://127.0.0.1:%d/proxies/%s/delay?timeout=%d&url=%s",
-		port, url.PathEscape(tag), probeTimeoutMs, url.QueryEscape(probeURL))
+	endpoint := delayURL(port, tag)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -264,6 +263,23 @@ func (r *Runner) Probe(ctx context.Context, tag string) (delayMs int, err error)
 		// on a failed test; include a trimmed form so logs show why it failed.
 		return 0, fmt.Errorf("windows: clash delay: status %s: %s", resp.Status, trimBody(body))
 	}
+	return parseDelay(body)
+}
+
+// delayURL builds the clash API delay-test endpoint for the outbound named tag.
+// The tag is path-escaped and the probe target query-escaped so a name or URL
+// with reserved characters can't corrupt the request. It is split out from Probe
+// so the URL shape can be asserted without a live API.
+func delayURL(port int, tag string) string {
+	return fmt.Sprintf("http://127.0.0.1:%d/proxies/%s/delay?timeout=%d&url=%s",
+		port, url.PathEscape(tag), probeTimeoutMs, url.QueryEscape(probeURL))
+}
+
+// parseDelay reads the {"delay":N} body the clash API returns from a successful
+// delay test and yields the round-trip in milliseconds. It is split out from
+// Probe so the parse can be tested without spawning sing-box or making an HTTP
+// call.
+func parseDelay(body []byte) (delayMs int, err error) {
 	var out struct {
 		Delay int `json:"delay"`
 	}
@@ -330,16 +346,24 @@ func singboxBinaryName() string {
 // current executable when missing. The tun device on Windows loads wintun.dll
 // from the directory of the running binary, so sing-box needs it alongside.
 func ensureWintun(binDir string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("windows: locate executable: %w", err)
+	}
+	return ensureWintunFrom(binDir, filepath.Dir(exe))
+}
+
+// ensureWintunFrom is the testable core of ensureWintun with the source
+// directory passed in instead of resolved from os.Executable. A dll already in
+// binDir is left alone; otherwise it is copied from srcDir, and a missing source
+// is an error.
+func ensureWintunFrom(binDir, srcDir string) error {
 	dst := filepath.Join(binDir, "wintun.dll")
 	if _, err := os.Stat(dst); err == nil {
 		return nil // already present
 	}
 
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("windows: locate executable: %w", err)
-	}
-	src := filepath.Join(filepath.Dir(exe), "wintun.dll")
+	src := filepath.Join(srcDir, "wintun.dll")
 	if src == dst {
 		return nil
 	}
@@ -419,10 +443,13 @@ type ringBuffer struct {
 	cap   int
 }
 
+// newRingBuffer returns an empty ring that retains the most recent capacity
+// lines.
 func newRingBuffer(capacity int) *ringBuffer {
 	return &ringBuffer{cap: capacity}
 }
 
+// add appends a line, dropping the oldest once the buffer is at capacity.
 func (b *ringBuffer) add(line string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -434,6 +461,8 @@ func (b *ringBuffer) add(line string) {
 	b.lines = append(b.lines, line)
 }
 
+// snapshot returns a copy of the buffered lines, oldest first, so callers can
+// read them without holding the lock or aliasing the backing array.
 func (b *ringBuffer) snapshot() []string {
 	b.mu.Lock()
 	defer b.mu.Unlock()

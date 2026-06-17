@@ -26,6 +26,9 @@ func main() {
 	}
 }
 
+// run wires up the core: it opens the profile store, builds the runner and
+// control daemon, restores persisted last-good and routing settings, and serves
+// the JSON protocol on stdin/stdout until EOF or a shutdown signal.
 func run() error {
 	// stdout is the protocol channel; keep all logging off it.
 	log.SetOutput(os.Stderr)

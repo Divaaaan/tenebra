@@ -33,6 +33,8 @@ func outbound(n model.Node, tag string) (obj map[string]any, ok bool, err error)
 	}
 }
 
+// vlessOutbound builds the sing-box vless outbound, attaching flow, TLS/REALITY,
+// and the stream transport only when the node carries them.
 func vlessOutbound(n model.Node, tag string) map[string]any {
 	o := map[string]any{
 		"type":        "vless",
@@ -53,6 +55,8 @@ func vlessOutbound(n model.Node, tag string) map[string]any {
 	return o
 }
 
+// hysteria2Outbound builds the sing-box hysteria2 outbound. Hysteria2 is always
+// over TLS, so a TLS object is emitted even when the node lacks one.
 func hysteria2Outbound(n model.Node, tag string) map[string]any {
 	o := map[string]any{
 		"type":        "hysteria2",
@@ -77,6 +81,8 @@ func hysteria2Outbound(n model.Node, tag string) map[string]any {
 	return o
 }
 
+// shadowsocksOutbound builds the sing-box shadowsocks outbound. The cipher and
+// password come straight from the node; shadowsocks carries no TLS of its own.
 func shadowsocksOutbound(n model.Node, tag string) map[string]any {
 	return map[string]any{
 		"type":        "shadowsocks",
@@ -88,6 +94,8 @@ func shadowsocksOutbound(n model.Node, tag string) map[string]any {
 	}
 }
 
+// trojanOutbound builds the sing-box trojan outbound. Trojan is TLS-only, so a
+// TLS object is emitted even when the node lacks one, plus any stream transport.
 func trojanOutbound(n model.Node, tag string) map[string]any {
 	o := map[string]any{
 		"type":        "trojan",
@@ -108,6 +116,8 @@ func trojanOutbound(n model.Node, tag string) map[string]any {
 	return o
 }
 
+// vmessOutbound builds the sing-box vmess outbound, defaulting the cipher to
+// "auto" and attaching TLS and the stream transport when the node carries them.
 func vmessOutbound(n model.Node, tag string) map[string]any {
 	o := map[string]any{
 		"type":        "vmess",

@@ -28,6 +28,10 @@ const (
 	defaultProbeBudget  = 8 * time.Second
 )
 
+// handleConnect starts a connection to a profile. It validates the profile,
+// builds the fallback candidate list (collapsed to a single node when the
+// request names one), and kicks off the background fallback loop. It returns as
+// soon as the attempt is launched; progress arrives as state events.
 func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 	if req.Profile == "" {
 		return newError(req.ID, "connect: missing profile")
@@ -103,6 +107,8 @@ func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 	return resp
 }
 
+// handleDisconnect tears the tunnel down to idle and returns the resulting
+// state. It is a no-op when nothing is connected.
 func (d *Daemon) handleDisconnect(req Request) Response {
 	d.teardown(StateIdle, "", "")
 	st := d.snapshotState()
@@ -439,6 +445,7 @@ type stateEvent struct {
 	Error string    `json:"error,omitempty"`
 }
 
+// emitTraffic pushes a traffic counter event to the UI, if an emitter is set.
 func (d *Daemon) emitTraffic(ev TrafficEvent) {
 	d.mu.Lock()
 	emit := d.emit
@@ -448,6 +455,7 @@ func (d *Daemon) emitTraffic(ev TrafficEvent) {
 	}
 }
 
+// emitLog pushes a diagnostic log line to the UI, if an emitter is set.
 func (d *Daemon) emitLog(level, msg string) {
 	d.mu.Lock()
 	emit := d.emit

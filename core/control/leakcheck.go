@@ -171,6 +171,7 @@ const leakUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537
 // plenty and bounds memory against a misbehaving endpoint.
 const leakMaxBody = 64 << 10
 
+// handleLeakCheck runs the IP/DNS leak check and returns its verdict.
 func (d *Daemon) handleLeakCheck(ctx context.Context, req Request) Response {
 	res := d.runLeakCheck(ctx)
 	resp, err := newResult(req.ID, res)

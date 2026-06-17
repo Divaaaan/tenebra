@@ -244,6 +244,7 @@ func (d *Daemon) snapshotRouting() routing.Options {
 	return d.routing
 }
 
+// handleStatus answers a status command with the current connection snapshot.
 func (d *Daemon) handleStatus(req Request) Response {
 	resp, err := newResult(req.ID, d.snapshotState())
 	if err != nil {
@@ -252,6 +253,8 @@ func (d *Daemon) handleStatus(req Request) Response {
 	return resp
 }
 
+// handleListProfiles returns every stored profile, normalising a nil slice to []
+// so the UI always receives an array.
 func (d *Daemon) handleListProfiles(req Request) Response {
 	out := struct {
 		Profiles []profile.Profile `json:"profiles"`
@@ -267,6 +270,8 @@ func (d *Daemon) handleListProfiles(req Request) Response {
 	return resp
 }
 
+// handleImportSubscription fetches a subscription URL, parses its nodes into a
+// new profile, applies any Subscription-Userinfo quota, and stores it.
 func (d *Daemon) handleImportSubscription(ctx context.Context, req Request) Response {
 	if req.URL == "" {
 		return newError(req.ID, "import_subscription: missing url")
@@ -299,6 +304,8 @@ func (d *Daemon) handleImportSubscription(ctx context.Context, req Request) Resp
 	return d.profileResult(req.ID, p)
 }
 
+// handleImportLink parses a single share link into a one-node manual profile,
+// naming it from the request, the node's own label, or a generic fallback.
 func (d *Daemon) handleImportLink(req Request) Response {
 	if req.Link == "" {
 		return newError(req.ID, "import_link: missing link")
@@ -326,6 +333,8 @@ func (d *Daemon) handleImportLink(req Request) Response {
 	return d.profileResult(req.ID, p)
 }
 
+// handleRemoveProfile deletes a profile, first tearing down the tunnel if it is
+// the one currently connected so no orphaned process outlives it.
 func (d *Daemon) handleRemoveProfile(req Request) Response {
 	if req.Profile == "" {
 		return newError(req.ID, "remove_profile: missing profile")
@@ -341,6 +350,8 @@ func (d *Daemon) handleRemoveProfile(req Request) Response {
 	return newResult0(req.ID)
 }
 
+// handleRefreshSubscription re-fetches one subscription profile's nodes from its
+// source URL. It rejects manual profiles, which have no URL to refresh from.
 func (d *Daemon) handleRefreshSubscription(ctx context.Context, req Request) Response {
 	if req.Profile == "" {
 		return newError(req.ID, "refresh_subscription: missing profile")
@@ -453,6 +464,9 @@ func profileChanged(before, after profile.Profile) bool {
 	return false
 }
 
+// handleSetRouting validates and stores the routing mode (smart/global/direct).
+// Like set_split it does not retune a live tunnel; the mode applies on the next
+// connect, and the choice is reflected back so the UI stays in sync.
 func (d *Daemon) handleSetRouting(req Request) Response {
 	mode := routing.Mode(req.Mode)
 	switch mode {
@@ -522,6 +536,8 @@ func applySplitToState(s *State, ro routing.Options) {
 	s.SplitApps = append([]string(nil), ro.SplitApps...)
 }
 
+// handlePing measures dial latency to every server in a profile and returns the
+// per-server results.
 func (d *Daemon) handlePing(ctx context.Context, req Request) Response {
 	if req.Profile == "" {
 		return newError(req.ID, "ping: missing profile")
@@ -558,6 +574,9 @@ func (d *Daemon) pingServers(ctx context.Context, servers []profile.Server) []Pi
 	return results
 }
 
+// pingOne TCP-dials a single server within pingDialTimeout and reports the
+// latency. A server missing a host or port, or one that fails to dial, comes
+// back with ok=false rather than an error.
 func (d *Daemon) pingOne(ctx context.Context, srv profile.Server) PingResult {
 	res := PingResult{Node: srv.ID}
 	if srv.Server == "" || srv.Port == 0 {
