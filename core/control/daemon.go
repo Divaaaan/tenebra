@@ -110,6 +110,15 @@ type Daemon struct {
 	// fetch retrieves a subscription body. It is injectable so the auto-refresh
 	// logic can be unit-tested offline; production uses subscription.Fetch.
 	fetch func(ctx context.Context, url string) ([]byte, http.Header, error)
+
+	// httpGet performs a plain HTTP GET for the leak check's IP and DNS echo
+	// requests. It is a separate, header-less getter from fetch so leak_check can
+	// be unit-tested offline with canned responses; production uses
+	// defaultHTTPGet. ipEchoes and dnsEchoURL are likewise injectable so a test
+	// can point the check at fake URLs.
+	httpGet    func(ctx context.Context, url string) ([]byte, error)
+	ipEchoes   []ipEcho
+	dnsEchoURL string
 }
 
 // NewDaemon builds a Daemon over a profile store and runner. Routing defaults to
@@ -123,6 +132,10 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 		lastGood: fallback.NewMemLastGood(),
 		now:      time.Now,
 		fetch:    subscription.Fetch,
+
+		httpGet:    defaultHTTPGet,
+		ipEchoes:   defaultIPEchoes,
+		dnsEchoURL: dnsEchoURL,
 
 		probeWarmup:  defaultProbeWarmup,
 		probeRetry:   defaultProbeRetry,
@@ -208,6 +221,8 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleSetRouting(req)
 	case CmdSetSplit:
 		return d.handleSetSplit(req)
+	case CmdLeakCheck:
+		return d.handleLeakCheck(ctx, req)
 	default:
 		return newError(req.ID, fmt.Sprintf("unknown command %q", req.Cmd))
 	}

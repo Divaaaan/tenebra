@@ -125,9 +125,28 @@ export interface Strings {
     clear: string;
     leakCheck: string;
     checking: string;
-    leakResultTunneled: string;
-    leakResultExposed: string;
+    /** Section heading for the public-IP finding. */
+    leakIpHeading: string;
+    /** Section heading for the DNS finding. */
+    leakDnsHeading: string;
+    /** Headlines keyed to the core's ip_verdict. */
+    leakIpOk: string;
+    leakIpWarn: string;
+    leakIpNeutral: string;
+    leakIpError: string;
+    /** Label for the observed public IP. */
     egressIp: string;
+    /** Label for the tunnel exit address we compared against. */
+    leakExitServer: string;
+    /** Trailing "via {source}" attribution for the echo endpoint. */
+    leakSource: string;
+    /** DNS status labels, keyed to the core's dns.status. */
+    leakDnsOk: string;
+    leakDnsLeak: string;
+    leakDnsInconclusive: string;
+    leakDnsUnavailable: string;
+    /** Label preceding the observed resolver list. */
+    leakDnsResolvers: string;
   };
 
   units: {
@@ -262,9 +281,20 @@ const en: Strings = {
     clear: "Clear",
     leakCheck: "IP / leak check",
     checking: "Checking…",
-    leakResultTunneled: "Traffic is going through the tunnel.",
-    leakResultExposed: "Egress matches your real address — not tunneled.",
-    egressIp: "Egress IP",
+    leakIpHeading: "Public IP",
+    leakDnsHeading: "DNS",
+    leakIpOk: "Traffic is leaving through the tunnel exit.",
+    leakIpWarn: "Your public IP is not the tunnel exit — traffic may be leaking.",
+    leakIpNeutral: "Public IP reported. Not connected, so no exit was checked.",
+    leakIpError: "Couldn't determine your public IP from any echo service.",
+    egressIp: "Public IP",
+    leakExitServer: "Tunnel exit",
+    leakSource: "via {source}",
+    leakDnsOk: "Resolvers look consistent with the tunnel.",
+    leakDnsLeak: "Resolvers appear to bypass the tunnel.",
+    leakDnsInconclusive: "Inconclusive — not enough signal for a verdict. This is not a pass.",
+    leakDnsUnavailable: "Couldn't run the DNS probe. This is not a pass.",
+    leakDnsResolvers: "Resolvers",
   },
   units: {
     ms: "ms",
@@ -397,9 +427,20 @@ const ru: Strings = {
     clear: "Очистить",
     leakCheck: "Проверка IP / утечек",
     checking: "Проверяю…",
-    leakResultTunneled: "Трафик идёт через туннель.",
-    leakResultExposed: "Адрес совпадает с вашим реальным — туннель не работает.",
+    leakIpHeading: "Внешний IP",
+    leakDnsHeading: "DNS",
+    leakIpOk: "Трафик выходит через узел туннеля.",
+    leakIpWarn: "Ваш внешний IP не совпадает с узлом туннеля — возможна утечка.",
+    leakIpNeutral: "Внешний IP получен. Подключения нет, узел не проверялся.",
+    leakIpError: "Не удалось определить внешний IP ни через один сервис.",
     egressIp: "Внешний IP",
+    leakExitServer: "Узел туннеля",
+    leakSource: "через {source}",
+    leakDnsOk: "Резолверы выглядят согласованными с туннелем.",
+    leakDnsLeak: "Похоже, резолверы идут мимо туннеля.",
+    leakDnsInconclusive: "Неопределённо — данных для вердикта недостаточно. Это не гарантия.",
+    leakDnsUnavailable: "Не удалось выполнить проверку DNS. Это не гарантия.",
+    leakDnsResolvers: "Резолверы",
   },
   units: {
     ms: "мс",

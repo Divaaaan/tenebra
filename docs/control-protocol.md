@@ -26,6 +26,7 @@ Three message kinds flow over the link:
 | `ping`                 | `profile`                          | `{ results: PingResult[] }` |
 | `set_routing`          | `mode` (`smart`/`global`/`direct`) | `State`                     |
 | `set_split`            | `mode` (`off`/`exclude`/`include`), `apps?` | `State`            |
+| `leak_check`           | —                                  | `LeakCheck`                 |
 
 ```
 request:  {"id":7,"cmd":"connect","profile":"p1","node":"n3"}
@@ -60,6 +61,46 @@ back into the reported `State` on launch.
 ```
 request:  {"id":8,"cmd":"set_split","mode":"exclude","apps":["Chrome.exe","steam.exe"]}
 response: {"id":8,"ok":true,"data":{"state":"idle","split":"exclude","split_apps":["chrome.exe","steam.exe"]}}
+```
+
+### Leak check (`leak_check`)
+
+The core observes the machine's current public IP from redundant third-party echo
+services (the first to answer wins, so one being blocked doesn't fail the check)
+and runs a best-effort DNS probe, then assembles a verdict. It takes no fields.
+
+The result is **honest about what it could not measure** and never reports a
+false pass:
+
+- `ip_verdict` is the headline severity. `ok` only when connected **and** the
+  observed IP is the configured tunnel exit; `warn` when connected but the IP is
+  clearly not the exit (a probable leak); `neutral` when idle (the IP is shown
+  without a pass/fail claim) or when the exit could not be compared; `error` when
+  no IP could be observed at all.
+- `exit_match` is the IP-vs-exit comparison, present only when connected:
+  `match`, `mismatch`, or `unknown`. A literal-IP exit is compared exactly; an
+  exit configured as a **hostname is not resolved** here (resolving would itself
+  go through the host resolver and muddy the result), so it yields `unknown`
+  rather than a guess.
+- `dns.status` is `ok`/`leak` only when the resolvers could be reasoned about;
+  otherwise `inconclusive` (some signal, no confident call) or `unavailable` (the
+  probe could not run). A full dnsleaktest-style flow is out of scope, so
+  `inconclusive`/`unavailable` are the common outcomes — **neither is a pass**,
+  and clients must not present them as "safe".
+
+A meaningful exit-match result needs a live, connected tunnel; on an idle client
+the check still returns a well-formed result (`connected:false`, a `neutral` or
+`error` IP verdict, and an honest DNS status).
+
+```
+request:  {"id":9,"cmd":"leak_check"}
+response: {"id":9,"ok":true,"data":{
+  "public_ip":"203.0.113.7","country":"NL","source":"ipify",
+  "connected":true,"exit_server":"203.0.113.7","exit_match":"match",
+  "ip_verdict":"ok","ip_message":"Public IP 203.0.113.7 matches the tunnel exit.",
+  "dns":{"status":"inconclusive","resolvers":["1.1.1.1"],
+         "message":"Observed resolver(s) shown; reported as inconclusive rather than a pass."}
+}}
 ```
 
 ## Events
@@ -116,6 +157,22 @@ type Profile = {
 };
 
 type PingResult = { node: string; rttMs: number; ok: boolean };
+
+type LeakCheck = {
+  public_ip?: string;   // omitted if every echo endpoint failed
+  country?: string;     // best-effort ISO 3166-1 alpha-2 for public_ip
+  source?: string;      // the echo endpoint that answered
+  connected: boolean;   // whether a tunnel was active at check time
+  exit_server?: string; // the exit address compared against; present when connected
+  exit_match?: "match" | "mismatch" | "unknown"; // omitted when idle
+  ip_verdict: "ok" | "warn" | "neutral" | "error";
+  ip_message: string;   // human summary of the IP finding
+  dns: {
+    status: "ok" | "leak" | "inconclusive" | "unavailable"; // last two are NOT a pass
+    resolvers?: string[]; // observed resolver IPs, if any
+    message: string;      // human summary of the DNS finding
+  };
+};
 ```
 
 This contract is the boundary between `ui-desktop` and `core/control`.

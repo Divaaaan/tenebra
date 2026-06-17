@@ -123,11 +123,85 @@ pub struct PingResult {
     pub ok: bool,
 }
 
+/// The IP-vs-exit comparison outcome, mirroring the core's `ExitVerdict`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExitMatch {
+    Match,
+    Mismatch,
+    Unknown,
+}
+
+/// Severity of a leak-check finding the UI maps to pass/warn styling, mirroring
+/// the core's `Verdict`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Verdict {
+    Ok,
+    Warn,
+    Neutral,
+    Error,
+}
+
+/// DNS leak assessment outcome, mirroring the core's `DNSStatus`. `Inconclusive`
+/// and `Unavailable` are deliberately distinct from a pass — the UI must never
+/// present them as "safe".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DnsStatus {
+    Ok,
+    Leak,
+    Inconclusive,
+    Unavailable,
+}
+
+/// The DNS portion of a leak check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DnsResult {
+    pub status: DnsStatus,
+    /// Observed resolver IPs, if any. Best-effort; may be empty even on a
+    /// successful probe, so it is omitted when empty (matching the core's
+    /// omitempty).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resolvers: Vec<String>,
+    pub message: String,
+}
+
+/// Result of the `leak_check` command. Mirrors the core's `LeakCheck` byte for
+/// byte (see `docs/control-protocol.md`): the observed public IP and a verdict
+/// on whether traffic is leaving through the tunnel exit, plus a best-effort DNS
+/// assessment that is honest about its limits.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LeakCheck {
-    pub ip: String,
-    pub country: String,
-    pub tunneled: bool,
+    /// Public IP observed from the current vantage point; absent if every echo
+    /// endpoint failed (then `ip_verdict` is `Error`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_ip: Option<String>,
+    /// Best-effort ISO 3166-1 alpha-2 country for `public_ip`, when an endpoint
+    /// volunteered it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
+    /// The echo endpoint that answered, for transparency.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+
+    /// Whether a tunnel was active at check time. Decides how `public_ip` is
+    /// judged: against the exit when connected, neutrally when not.
+    pub connected: bool,
+    /// The active node's configured exit address, present only when connected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_server: Option<String>,
+    /// Verdict on whether the observed IP corresponds to the tunnel exit; absent
+    /// when not connected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_match: Option<ExitMatch>,
+    /// Overall severity of the IP finding for the UI to style.
+    pub ip_verdict: Verdict,
+    /// Short human summary of the IP finding.
+    pub ip_message: String,
+
+    /// Best-effort DNS leak assessment.
+    pub dns: DnsResult,
 }
 
 /// Push events back to the UI. Implemented by the Tauri `AppHandle` wrapper in
