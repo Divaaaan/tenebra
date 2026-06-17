@@ -439,6 +439,28 @@
   font-size: 12px;
 }
 
+/* Input paired with an inline action (e.g. a Paste button). The control flexes
+   to fill the row; the button keeps its intrinsic width and aligns to its top
+   so it lines up with a single-line input. */
+.field-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.field-row .control {
+  flex: 1;
+  min-width: 0;
+}
+
+/* A trailing button row under a multi-line control (e.g. Paste below a link
+   textarea), aligned right to read as a secondary action on the field. */
+.field-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
 .control {
   width: 100%;
   padding: var(--space-3);
