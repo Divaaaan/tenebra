@@ -64,13 +64,13 @@ impl EventSink for TauriSink {
 // If the sidecar fails to spawn (e.g. the binary is missing), we log and fall
 // back to the mock rather than leaving the UI with no backend at all.
 // =============================================================================
-fn make_backend(sink: Arc<dyn EventSink>) -> Box<dyn Backend> {
+fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Box<dyn Backend> {
     if std::env::var_os("TENEBRA_MOCK").is_some() {
         return Box::new(backend::mock::MockBackend::new(sink));
     }
 
     let program = backend::sidecar::SidecarBackend::default_program();
-    let singbox = singbox_path();
+    let singbox = singbox_path(app);
     match backend::sidecar::SidecarBackend::spawn(program, singbox, Arc::clone(&sink)) {
         Ok(backend) => Box::new(backend),
         Err(e) => {
@@ -84,13 +84,19 @@ fn make_backend(sink: Arc<dyn EventSink>) -> Box<dyn Backend> {
 }
 
 /// Path passed to the core as TENEBRA_SINGBOX so it can locate sing-box. An
-/// explicit env var wins; otherwise the repo's local `bin/sing-box.exe` is used.
-/// Bundling sing-box + wintun as Tauri resources is a follow-up.
-fn singbox_path() -> std::path::PathBuf {
+/// explicit env var wins (handy in development); otherwise we use the copy
+/// shipped beside the app as a bundle resource, with wintun.dll in the same
+/// directory for the tun device to load.
+fn singbox_path(app: &AppHandle) -> std::path::PathBuf {
     if let Some(p) = std::env::var_os("TENEBRA_SINGBOX") {
         return std::path::PathBuf::from(p);
     }
-    std::path::PathBuf::from(r"C:\Users\danil\projects\tenebra\bin\sing-box.exe")
+    app.path()
+        .resolve(
+            "resources/sing-box.exe",
+            tauri::path::BaseDirectory::Resource,
+        )
+        .unwrap_or_else(|_| std::path::PathBuf::from("sing-box.exe"))
 }
 
 // --- command handlers ---------------------------------------------------------
@@ -211,7 +217,7 @@ pub fn run() {
             let sink: Arc<dyn EventSink> = Arc::new(TauriSink {
                 app: app.handle().clone(),
             });
-            let backend = make_backend(sink);
+            let backend = make_backend(app.handle(), sink);
             app.manage(AppState { backend });
             Ok(())
         })
