@@ -450,3 +450,199 @@ struct ProfileWrap {
 struct PingList {
     results: Vec<PingResult>,
 }
+
+#[cfg(test)]
+mod tests {
+    //! Exercises the pure framing/correlation helpers in isolation — no child
+    //! process. Real process spawning and the round-trip against the core are
+    //! covered by `tests/sidecar_e2e.rs`; here we pin the wire encoding, the
+    //! request/response correlation, and event dispatch.
+
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Mutex;
+
+    /// Parse the bytes `build_request` produced back into a `Value`, asserting the
+    /// trailing newline framing along the way.
+    fn parse_line(bytes: &[u8]) -> Value {
+        assert_eq!(bytes.last(), Some(&b'\n'), "request line must end in '\\n'");
+        serde_json::from_slice(&bytes[..bytes.len() - 1]).expect("request line is JSON")
+    }
+
+    #[test]
+    fn build_request_merges_id_and_cmd_into_params() {
+        let line = build_request(7, "connect", json!({ "profile": "p", "node": "n" })).unwrap();
+        let value = parse_line(&line);
+        assert_eq!(
+            value,
+            json!({ "id": 7, "cmd": "connect", "profile": "p", "node": "n" })
+        );
+    }
+
+    #[test]
+    fn build_request_treats_null_params_as_empty() {
+        let line = build_request(1, "status", Value::Null).unwrap();
+        let value = parse_line(&line);
+        assert_eq!(value, json!({ "id": 1, "cmd": "status" }));
+    }
+
+    #[test]
+    fn build_request_rejects_non_object_params() {
+        let err = build_request(1, "x", json!("notanobject")).unwrap_err();
+        assert!(err.contains("must be an object"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn obj_drops_null_values() {
+        let value = obj([("a", json!(1)), ("b", Value::Null), ("c", json!("x"))]);
+        assert_eq!(value, json!({ "a": 1, "c": "x" }));
+        assert_eq!(obj([]), json!({}));
+    }
+
+    /// Build a `Pending` map and register a waiter for `id`, returning the
+    /// receiver so the test can read what `complete_request` delivers.
+    fn pending_with(id: u64) -> (Pending, Receiver<ReplyResult>) {
+        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+        let (tx, rx) = mpsc::channel();
+        pending.lock().unwrap().insert(id, tx);
+        (pending, rx)
+    }
+
+    fn recv(rx: &Receiver<ReplyResult>) -> ReplyResult {
+        rx.recv_timeout(Duration::from_secs(1))
+            .expect("a reply within the timeout")
+    }
+
+    #[test]
+    fn complete_request_delivers_ok_data() {
+        let (pending, rx) = pending_with(5);
+        complete_request(
+            &pending,
+            5,
+            &json!({ "id": 5, "ok": true, "data": { "x": 1 } }),
+        );
+        assert_eq!(recv(&rx), Ok(json!({ "x": 1 })));
+        // The waiter is consumed once delivered.
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn complete_request_ok_without_data_is_null() {
+        let (pending, rx) = pending_with(5);
+        complete_request(&pending, 5, &json!({ "id": 5, "ok": true }));
+        assert_eq!(recv(&rx), Ok(Value::Null));
+    }
+
+    #[test]
+    fn complete_request_error_carries_message() {
+        let (pending, rx) = pending_with(5);
+        complete_request(
+            &pending,
+            5,
+            &json!({ "id": 5, "ok": false, "error": "boom" }),
+        );
+        assert_eq!(recv(&rx), Err("boom".to_string()));
+    }
+
+    #[test]
+    fn complete_request_error_without_message_falls_back() {
+        let (pending, rx) = pending_with(5);
+        complete_request(&pending, 5, &json!({ "id": 5, "ok": false }));
+        assert_eq!(recv(&rx), Err("tenebra-core reported an error".to_string()));
+    }
+
+    #[test]
+    fn complete_request_unknown_id_is_a_noop() {
+        let (pending, _rx) = pending_with(5);
+        // No waiter for id 9; must not panic and must leave id 5 untouched.
+        complete_request(&pending, 9, &json!({ "id": 9, "ok": true, "data": null }));
+        assert!(pending.lock().unwrap().contains_key(&5));
+    }
+
+    /// A recording sink for the event-forwarding tests.
+    #[derive(Default)]
+    struct Rec {
+        states: Mutex<Vec<State>>,
+        traffic: Mutex<Vec<(u64, u64, u64, u64)>>,
+        logs: Mutex<Vec<(String, String)>>,
+        profiles: AtomicUsize,
+    }
+
+    impl EventSink for Rec {
+        fn state(&self, state: &State) {
+            self.states.lock().unwrap().push(state.clone());
+        }
+        fn traffic(&self, up: u64, down: u64, up_rate: u64, down_rate: u64) {
+            self.traffic
+                .lock()
+                .unwrap()
+                .push((up, down, up_rate, down_rate));
+        }
+        fn log(&self, level: &str, msg: &str) {
+            self.logs
+                .lock()
+                .unwrap()
+                .push((level.to_string(), msg.to_string()));
+        }
+        fn profiles(&self) {
+            self.profiles.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn forward_event_routes_state() {
+        let sink = Rec::default();
+        forward_event(&json!({ "event": "state", "state": "connected" }), &sink);
+        let states = sink.states.lock().unwrap();
+        assert_eq!(states.len(), 1);
+        assert_eq!(states[0].state, super::super::ConnectionState::Connected);
+    }
+
+    #[test]
+    fn forward_event_routes_traffic() {
+        let sink = Rec::default();
+        forward_event(
+            &json!({ "event": "traffic", "up": 1, "down": 2, "up_rate": 3, "down_rate": 4 }),
+            &sink,
+        );
+        assert_eq!(*sink.traffic.lock().unwrap(), vec![(1, 2, 3, 4)]);
+    }
+
+    #[test]
+    fn forward_event_routes_log() {
+        let sink = Rec::default();
+        forward_event(
+            &json!({ "event": "log", "level": "warn", "msg": "hi" }),
+            &sink,
+        );
+        assert_eq!(
+            *sink.logs.lock().unwrap(),
+            vec![("warn".to_string(), "hi".to_string())]
+        );
+    }
+
+    #[test]
+    fn forward_event_routes_profiles_signal() {
+        let sink = Rec::default();
+        forward_event(&json!({ "event": "profiles" }), &sink);
+        assert_eq!(sink.profiles.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn forward_event_ignores_unknown_kind() {
+        let sink = Rec::default();
+        forward_event(&json!({ "event": "bogus" }), &sink);
+        assert!(sink.states.lock().unwrap().is_empty());
+        assert!(sink.traffic.lock().unwrap().is_empty());
+        assert!(sink.logs.lock().unwrap().is_empty());
+        assert_eq!(sink.profiles.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn forward_event_drops_a_malformed_state() {
+        let sink = Rec::default();
+        // An unparseable state (bad discriminant) is swallowed, not forwarded.
+        forward_event(&json!({ "event": "state", "state": "???" }), &sink);
+        assert!(sink.states.lock().unwrap().is_empty());
+    }
+}

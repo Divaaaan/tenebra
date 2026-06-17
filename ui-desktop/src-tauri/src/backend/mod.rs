@@ -233,3 +233,317 @@ pub trait Backend: Send + Sync + 'static {
     fn set_split(&self, mode: SplitMode, apps: Vec<String>) -> Result<State, String>;
     fn leak_check(&self) -> Result<LeakCheck, String>;
 }
+
+#[cfg(test)]
+mod tests {
+    //! These lock the wire format the front-end types in `src/api/types.ts`
+    //! depend on: the lowercase enum tokens, the camelCase / explicit field
+    //! renames, and which optional fields drop out when absent. A change here
+    //! that breaks the UI shows up as a failing round-trip rather than a silent
+    //! protocol drift.
+
+    use super::*;
+    use serde_json::{from_value, json, to_value, Value};
+
+    /// Assert an enum value serializes to exactly `token` and parses back.
+    fn assert_token<T>(value: T, token: &str)
+    where
+        T: Serialize + for<'de> Deserialize<'de> + PartialEq + std::fmt::Debug + Copy,
+    {
+        assert_eq!(to_value(value).unwrap(), json!(token));
+        let back: T = from_value(json!(token)).unwrap();
+        assert_eq!(back, value);
+    }
+
+    #[test]
+    fn connection_state_tokens() {
+        assert_token(ConnectionState::Idle, "idle");
+        assert_token(ConnectionState::Connecting, "connecting");
+        assert_token(ConnectionState::Connected, "connected");
+        assert_token(ConnectionState::Error, "error");
+    }
+
+    #[test]
+    fn routing_mode_tokens() {
+        assert_token(RoutingMode::Smart, "smart");
+        assert_token(RoutingMode::Global, "global");
+        assert_token(RoutingMode::Direct, "direct");
+    }
+
+    #[test]
+    fn split_mode_tokens() {
+        assert_token(SplitMode::Off, "off");
+        assert_token(SplitMode::Exclude, "exclude");
+        assert_token(SplitMode::Include, "include");
+    }
+
+    #[test]
+    fn protocol_tokens() {
+        assert_token(Protocol::Vless, "vless");
+        assert_token(Protocol::Hysteria2, "hysteria2");
+        assert_token(Protocol::Amneziawg, "amneziawg");
+        assert_token(Protocol::Shadowsocks, "shadowsocks");
+        assert_token(Protocol::Trojan, "trojan");
+        assert_token(Protocol::Vmess, "vmess");
+    }
+
+    #[test]
+    fn source_tokens() {
+        assert_token(Source::Subscription, "subscription");
+        assert_token(Source::Manual, "manual");
+    }
+
+    #[test]
+    fn exit_match_tokens() {
+        assert_token(ExitMatch::Match, "match");
+        assert_token(ExitMatch::Mismatch, "mismatch");
+        assert_token(ExitMatch::Unknown, "unknown");
+    }
+
+    #[test]
+    fn verdict_tokens() {
+        assert_token(Verdict::Ok, "ok");
+        assert_token(Verdict::Warn, "warn");
+        assert_token(Verdict::Neutral, "neutral");
+        assert_token(Verdict::Error, "error");
+    }
+
+    #[test]
+    fn dns_status_tokens() {
+        assert_token(DnsStatus::Ok, "ok");
+        assert_token(DnsStatus::Leak, "leak");
+        assert_token(DnsStatus::Inconclusive, "inconclusive");
+        assert_token(DnsStatus::Unavailable, "unavailable");
+    }
+
+    #[test]
+    fn full_state_round_trips() {
+        let state = State {
+            state: ConnectionState::Connected,
+            node: Some("demo-nl".into()),
+            profile: Some("demo-sub".into()),
+            routing: Some(RoutingMode::Smart),
+            split: Some(SplitMode::Exclude),
+            split_apps: Some(vec!["chrome.exe".into(), "steam.exe".into()]),
+            error: None,
+        };
+        let json = to_value(&state).unwrap();
+        let back: State = from_value(json).unwrap();
+        assert_eq!(back, state);
+    }
+
+    #[test]
+    fn idle_state_omits_absent_fields() {
+        let state = State {
+            state: ConnectionState::Idle,
+            node: None,
+            profile: None,
+            routing: None,
+            split: None,
+            split_apps: None,
+            error: None,
+        };
+        let obj = to_value(&state).unwrap();
+        let map = obj.as_object().unwrap();
+        // Only the always-present discriminant survives.
+        assert_eq!(map.get("state"), Some(&json!("idle")));
+        for absent in ["node", "profile", "routing", "split", "split_apps", "error"] {
+            assert!(
+                !map.contains_key(absent),
+                "expected {absent} to be omitted, got {obj}"
+            );
+        }
+        // And a bare state deserializes to all-None options.
+        let back: State = from_value(json!({ "state": "idle" })).unwrap();
+        assert_eq!(back, state);
+    }
+
+    fn sample_node() -> Node {
+        Node {
+            id: "demo-nl".into(),
+            name: "Amsterdam".into(),
+            protocol: Protocol::Vless,
+            server: "198.51.100.10".into(),
+            port: 443,
+        }
+    }
+
+    #[test]
+    fn profile_renames_camel_case_keys() {
+        let profile = Profile {
+            id: "demo-sub".into(),
+            name: "Demo".into(),
+            source: Source::Subscription,
+            url: Some("https://example.invalid/sub".into()),
+            nodes: vec![sample_node()],
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            expires_at: Some("2026-02-01T00:00:00Z".into()),
+            traffic_used: Some(7),
+            traffic_total: Some(100),
+        };
+        let obj = to_value(&profile).unwrap();
+        let map = obj.as_object().unwrap();
+        // snake_case fields are renamed on the wire; plain fields keep their name.
+        assert!(map.contains_key("updatedAt"));
+        assert!(map.contains_key("expiresAt"));
+        assert!(map.contains_key("trafficUsed"));
+        assert!(map.contains_key("trafficTotal"));
+        for plain in ["id", "name", "source", "url", "nodes"] {
+            assert!(map.contains_key(plain), "missing {plain} in {obj}");
+        }
+        // The snake_case spellings must NOT leak through.
+        for snake in ["updated_at", "expires_at", "traffic_used", "traffic_total"] {
+            assert!(!map.contains_key(snake), "{snake} leaked into {obj}");
+        }
+        let back: Profile = from_value(obj).unwrap();
+        assert_eq!(back, profile);
+    }
+
+    #[test]
+    fn manual_profile_omits_absent_optionals() {
+        let profile = Profile {
+            id: "demo-manual".into(),
+            name: "Manual".into(),
+            source: Source::Manual,
+            url: None,
+            nodes: vec![sample_node()],
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            expires_at: None,
+            traffic_used: None,
+            traffic_total: None,
+        };
+        let obj = to_value(&profile).unwrap();
+        let map = obj.as_object().unwrap();
+        for absent in ["url", "expiresAt", "trafficUsed", "trafficTotal"] {
+            assert!(
+                !map.contains_key(absent),
+                "expected {absent} omitted in {obj}"
+            );
+        }
+        let back: Profile = from_value(obj).unwrap();
+        assert_eq!(back, profile);
+    }
+
+    #[test]
+    fn ping_result_uses_camel_case() {
+        let result = PingResult {
+            node: "demo-nl".into(),
+            rtt_ms: 42,
+            ok: true,
+        };
+        let obj = to_value(&result).unwrap();
+        let map = obj.as_object().unwrap();
+        assert_eq!(map.get("node"), Some(&json!("demo-nl")));
+        assert_eq!(map.get("rttMs"), Some(&json!(42)));
+        assert_eq!(map.get("ok"), Some(&json!(true)));
+        assert!(!map.contains_key("rtt_ms"), "rtt_ms leaked: {obj}");
+        let back: PingResult = from_value(obj).unwrap();
+        assert_eq!(back, result);
+    }
+
+    #[test]
+    fn connected_leak_check_round_trips() {
+        let leak = LeakCheck {
+            public_ip: Some("198.51.100.10".into()),
+            country: Some("NL".into()),
+            source: Some("ipify".into()),
+            connected: true,
+            exit_server: Some("198.51.100.10".into()),
+            exit_match: Some(ExitMatch::Match),
+            ip_verdict: Verdict::Ok,
+            ip_message: "Public IP matches the tunnel exit.".into(),
+            dns: DnsResult {
+                status: DnsStatus::Inconclusive,
+                resolvers: vec!["198.51.100.53".into()],
+                message: "Observed resolver shown.".into(),
+            },
+        };
+        let back: LeakCheck = from_value(to_value(&leak).unwrap()).unwrap();
+        assert_eq!(back, leak);
+    }
+
+    #[test]
+    fn idle_leak_check_omits_exit_fields_but_keeps_required() {
+        let leak = LeakCheck {
+            public_ip: None,
+            country: None,
+            source: None,
+            connected: false,
+            exit_server: None,
+            exit_match: None,
+            ip_verdict: Verdict::Neutral,
+            ip_message: "Not connected.".into(),
+            dns: DnsResult {
+                status: DnsStatus::Inconclusive,
+                resolvers: vec![],
+                message: "Inconclusive.".into(),
+            },
+        };
+        let obj = to_value(&leak).unwrap();
+        let map = obj.as_object().unwrap();
+        for absent in [
+            "public_ip",
+            "country",
+            "source",
+            "exit_server",
+            "exit_match",
+        ] {
+            assert!(
+                !map.contains_key(absent),
+                "expected {absent} omitted in {obj}"
+            );
+        }
+        // These carry meaning even when empty and must always be present.
+        for required in ["connected", "ip_verdict", "ip_message", "dns"] {
+            assert!(map.contains_key(required), "missing {required} in {obj}");
+        }
+        let back: LeakCheck = from_value(obj).unwrap();
+        assert_eq!(back, leak);
+    }
+
+    #[test]
+    fn dns_result_resolvers_omitted_only_when_empty() {
+        let empty = DnsResult {
+            status: DnsStatus::Unavailable,
+            resolvers: vec![],
+            message: "n/a".into(),
+        };
+        let empty_obj = to_value(&empty).unwrap();
+        assert!(
+            !empty_obj.as_object().unwrap().contains_key("resolvers"),
+            "empty resolvers should be omitted: {empty_obj}"
+        );
+
+        let filled = DnsResult {
+            status: DnsStatus::Ok,
+            resolvers: vec!["198.51.100.53".into()],
+            message: "ok".into(),
+        };
+        let filled_obj = to_value(&filled).unwrap();
+        assert_eq!(
+            filled_obj.as_object().unwrap().get("resolvers"),
+            Some(&json!(["198.51.100.53"]))
+        );
+
+        // A payload without the key deserializes to an empty Vec (serde default).
+        let parsed: DnsResult = from_value(json!({ "status": "ok", "message": "ok" })).unwrap();
+        assert_eq!(parsed.resolvers, Vec::<String>::new());
+    }
+
+    #[test]
+    fn unknown_node_fields_are_ignored_on_deserialize() {
+        // The core may carry node fields the UI doesn't model; they must not
+        // break decoding (mirrors the sidecar's "extra fields ignored" contract).
+        let value: Value = json!({
+            "id": "n1",
+            "name": "Node",
+            "protocol": "vless",
+            "server": "198.51.100.10",
+            "port": 443,
+            "extra": "ignored",
+        });
+        let node: Node = from_value(value).unwrap();
+        assert_eq!(node.id, "n1");
+        assert_eq!(node.protocol, Protocol::Vless);
+    }
+}
