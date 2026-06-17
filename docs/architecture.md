@@ -1,6 +1,8 @@
 # Architecture
 
-Tenebra is a monorepo: one core, many thin platform shells.
+Tenebra is a monorepo: one core, many thin platform shells. For the wire format
+between the core and the UI see [control-protocol.md](control-protocol.md); to
+build and run it see [development.md](development.md).
 
 ## Layers
 
@@ -49,12 +51,14 @@ end). Android will be Jetpack Compose and iOS SwiftUI — all over the same core
 ### Desktop
 
 The core and sing-box run as a **sidecar process** beside the Tauri app. The UI
-sends commands (import subscription, connect, switch node) over a local socket
-as line-delimited JSON and receives status and traffic events back. The sidecar
-owns the wintun tunnel and the sing-box lifecycle.
+sends commands (import subscription, connect, switch node) to the sidecar over
+its **stdin** as line-delimited JSON and reads status and traffic events back
+from its **stdout**; the sidecar's diagnostics go to **stderr**. The sidecar owns
+the wintun tunnel and the sing-box lifecycle. The wire format is specified in
+[control-protocol.md](control-protocol.md).
 
 ```
- Tauri UI  <-- line-delimited JSON over local socket -->  core + sing-box
+ Tauri UI  <-- line-delimited JSON over stdin/stdout -->  core + sing-box
  (React)                                                    |
                                                             +-- wintun tunnel
 ```
