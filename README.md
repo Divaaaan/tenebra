@@ -38,12 +38,26 @@ a local JSON protocol. See [docs/architecture.md](docs/architecture.md).
 
 Requirements: Go 1.24+, Node 20+, and the Rust toolchain (for the desktop UI).
 
+Core tests:
+
 ```
-# core tests
-cd core && go test ./...
+go test ./...
 ```
 
-Desktop build instructions will be filled in once the bundle settles.
+Desktop app (Windows):
+
+```
+# fetch the sing-box binary and wintun.dll into src-tauri/resources
+powershell -File scripts/fetch-resources.ps1
+
+# build the core sidecar where Tauri bundles it
+go build -o ui-desktop/src-tauri/binaries/tenebra-core-x86_64-pc-windows-msvc.exe ./cmd/tenebra-core
+
+# build the bundle
+cd ui-desktop
+npm install
+npm run tauri build
+```
 
 ## License
 

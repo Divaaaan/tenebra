@@ -6,3 +6,7 @@ node_modules/
 # The core sidecar (tenebra-core) is built into src-tauri/binaries by the build
 # step, not checked in; it is produced from the Go sources in this repo.
 src-tauri/binaries/
+
+# sing-box and wintun are fetched into src-tauri/resources (scripts/fetch-resources.ps1)
+# and bundled at build time; the binaries themselves are not checked in.
+src-tauri/resources/
