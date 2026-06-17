@@ -1,9 +1,16 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { Profile } from "../api";
 import type { Tenebra } from "../state/useTenebra";
 import { useI18n } from "../i18n/I18nContext";
 import { formatBytes, formatRate } from "../lib/format";
+import { RollingNumber } from "../components/RollingNumber";
+import { Sparkline } from "../components/Sparkline";
+
+// How many rate samples the Home sparkline keeps. At one traffic tick per
+// second this is roughly a minute of history — enough to read the shape of a
+// burst without the line turning to noise.
+const SPARK_WINDOW = 60;
 
 interface HomeScreenProps {
   tenebra: Tenebra;
@@ -25,6 +32,41 @@ export function HomeScreen({
   const [nodeId, setNodeId] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Rolling rate history feeding the two sparklines. Sampled off the live
+  // traffic counters: one entry per traffic tick, bounded to SPARK_WINDOW.
+  // Reset whenever a session ends so the next connection starts from a clean
+  // line rather than replaying the last session's tail.
+  const phase = state.state;
+  const [history, setHistory] = useState<{ down: number[]; up: number[] }>({
+    down: [],
+    up: [],
+  });
+  const lastSample = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (phase !== "connected") {
+      // Clear once on leaving the connected state; the guard avoids setState on
+      // every render while idle.
+      if (lastSample.current !== null) {
+        lastSample.current = null;
+        setHistory({ down: [], up: [] });
+      }
+      return;
+    }
+    // Coalesce by the upstream sample identity (rates only change when the core
+    // emits a new traffic event), so equal back-to-back renders don't pad the
+    // window with duplicates.
+    const stamp = traffic.downRate + traffic.upRate * 1e-3;
+    if (lastSample.current === stamp) {
+      return;
+    }
+    lastSample.current = stamp;
+    setHistory((prev) => ({
+      down: [...prev.down, traffic.downRate].slice(-SPARK_WINDOW),
+      up: [...prev.up, traffic.upRate].slice(-SPARK_WINDOW),
+    }));
+  }, [phase, traffic.downRate, traffic.upRate]);
+
   if (profiles.length === 0) {
     return (
       <section className="home home--empty">
@@ -39,7 +81,6 @@ export function HomeScreen({
     );
   }
 
-  const phase = state.state;
   const isConnected = phase === "connected";
   const isConnecting = phase === "connecting";
   const locked = isConnecting || isConnected;
@@ -81,8 +122,10 @@ export function HomeScreen({
           disabled={busy && !locked}
           title={isConnecting ? t.home.cancel : buttonLabel}
         >
+          <span className="dial-aura" aria-hidden="true" />
+          <span className="dial-track" aria-hidden="true" />
           <span className="dial-ring" aria-hidden="true" />
-          {isConnecting && <span className="dial-spinner" aria-hidden="true" />}
+          <span className="dial-well" aria-hidden="true" />
           <span className="dial-label">{buttonLabel}</span>
         </button>
 
@@ -110,23 +153,43 @@ export function HomeScreen({
 
       {isConnected && (
         <div className="home-traffic">
-          <div className="traffic-stat">
+          <div className="traffic-stat traffic-stat--down">
             <span className="traffic-label">{t.home.download}</span>
-            <span className="traffic-rate">
-              {formatRate(traffic.downRate, t.units.perSecond)}
-            </span>
-            <span className="traffic-total muted">
-              {t.home.sessionTraffic}: {formatBytes(traffic.down)}
-            </span>
+            <RollingNumber
+              className="traffic-rate"
+              value={traffic.downRate}
+              format={(n) => formatRate(n, t.units.perSecond)}
+            />
+            <Sparkline
+              points={history.down}
+              width={130}
+              height={26}
+              aria-label={t.home.download}
+            />
+            <RollingNumber
+              className="traffic-total muted"
+              value={traffic.down}
+              format={(n) => `${t.home.sessionTraffic}: ${formatBytes(n)}`}
+            />
           </div>
-          <div className="traffic-stat">
+          <div className="traffic-stat traffic-stat--up">
             <span className="traffic-label">{t.home.upload}</span>
-            <span className="traffic-rate">
-              {formatRate(traffic.upRate, t.units.perSecond)}
-            </span>
-            <span className="traffic-total muted">
-              {t.home.sessionTraffic}: {formatBytes(traffic.up)}
-            </span>
+            <RollingNumber
+              className="traffic-rate"
+              value={traffic.upRate}
+              format={(n) => formatRate(n, t.units.perSecond)}
+            />
+            <Sparkline
+              points={history.up}
+              width={130}
+              height={26}
+              aria-label={t.home.upload}
+            />
+            <RollingNumber
+              className="traffic-total muted"
+              value={traffic.up}
+              format={(n) => `${t.home.sessionTraffic}: ${formatBytes(n)}`}
+            />
           </div>
         </div>
       )}

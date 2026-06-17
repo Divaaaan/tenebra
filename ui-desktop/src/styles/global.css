@@ -51,11 +51,13 @@ a {
 }
 
 /* Visible, consistent focus ring for keyboard users; pointer focus stays quiet
-   thanks to :focus-visible. */
+   thanks to :focus-visible. A solid outline guarantees visibility (and survives
+   forced-colors), with a soft accent halo layered on for character. */
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 4px var(--accent-bg);
 }
 
 ::selection {
@@ -85,14 +87,36 @@ a {
   background-clip: content-box;
 }
 
-/* Honour a user's reduced-motion preference everywhere. */
+/* A flag the renderer can read to decide whether to run JS-driven motion
+   (Web Animations, number rolls). CSS owns the media query; JS reads the
+   computed value so there is a single source of truth. Default: motion on. */
+:root {
+  --motion-ok: 1;
+}
+
+/* Honour a user's reduced-motion preference everywhere. This is the global
+   accessibility guard: it neutralises CSS transitions/animations, the View
+   Transitions cross-fade, and tells JS-driven effects to stand down. Essential
+   feedback (a value changing, a colour flipping) still happens — instantly. */
 @media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-ok: 0;
+  }
+
   *,
   *::before,
   *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* No cross-fade between screens; swap instantly. */
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
 }
 

@@ -2,16 +2,109 @@
    tokens.css; this file only arranges and shapes. */
 
 .app-shell {
+  position: relative;
   display: flex;
   height: 100%;
   background: var(--bg);
+  isolation: isolate;
 }
 
+/* Ambient "the room lights up when the tunnel is on" wash. Two faint pools sit
+   behind the whole shell and fade in only while connected (driven by the
+   data-conn attribute on the shell). On light theme --ambient-strength is 0, so
+   this is invisible there. Pure opacity/transform — cheap and non-interactive. */
+.app-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0;
+  background:
+    radial-gradient(
+      42rem 42rem at 18% 8%,
+      color-mix(in srgb, var(--accent) 16%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      38rem 38rem at 88% 96%,
+      color-mix(in srgb, var(--aurora) 14%, transparent),
+      transparent 58%
+    );
+  transition: opacity 1.2s var(--ease-out);
+}
+
+.app-shell[data-conn="connected"]::before {
+  opacity: var(--ambient-strength);
+}
+
+/* Screen transitions via the View Transitions API. The main region is the named
+   capture root; navigating swaps its content inside a startViewTransition (see
+   App.tsx), and the rules below give the swap a quiet fade-and-rise instead of a
+   hard cut. We drive old/new explicitly so they cross-fade rather than the
+   default where the old sits on top. Reduced-motion disables this in global.css;
+   browsers without the API just swap instantly (the JS falls back). */
 .app-main {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
   padding: var(--space-6);
+  view-transition-name: screen;
+}
+
+::view-transition-old(screen),
+::view-transition-new(screen) {
+  animation-duration: var(--dur-slow);
+  animation-timing-function: var(--ease-out);
+  /* Both layers occupy the same box; we fully control opacity below. */
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(screen) {
+  animation-name: screen-out;
+}
+
+::view-transition-new(screen) {
+  animation-name: screen-in;
+}
+
+@keyframes screen-out {
+  to {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes screen-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+/* --- shared motion keyframes ------------------------------------------------ */
+/* A small, reused vocabulary so entrances feel like one system. Each animates
+   only opacity/transform (GPU-friendly) and is neutralised by the reduced-motion
+   guard in global.css. */
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
 }
 
 /* --- sidebar ---------------------------------------------------------------- */
@@ -39,16 +132,21 @@
   width: 30px;
   height: 30px;
   border-radius: var(--radius-md);
-  background: var(--accent);
+  /* The mark carries the brand's "light in the dark" idea: an indigo-to-aurora
+     gradient with a faint bloom. */
+  background: linear-gradient(135deg, var(--accent-strong), var(--aurora));
   color: var(--accent-contrast);
   font-weight: 700;
   font-size: 16px;
+  box-shadow: 0 0 16px -6px color-mix(in srgb, var(--aurora) 70%, transparent);
 }
 
 .sidebar-title {
   font-size: 16px;
   font-weight: 600;
-  letter-spacing: 0.01em;
+  /* The wordmark gets a touch of tracking so "Tenebra" reads as a mark, not
+     body text — a small, deliberate type choice that carries the brand. */
+  letter-spacing: 0.04em;
 }
 
 .sidebar-nav {
@@ -58,6 +156,7 @@
 }
 
 .sidebar-link {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -71,6 +170,21 @@
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
+/* An accent rail on the active item. It scales from the centre so switching
+   tabs reads as the marker growing into place. */
+.sidebar-link::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  width: 3px;
+  height: 18px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  transform: translateY(-50%) scaleY(0);
+  transition: transform var(--dur-base) var(--ease-spring);
+}
+
 .sidebar-link:hover {
   background: var(--surface-hover);
   color: var(--text);
@@ -81,8 +195,17 @@
   color: var(--accent);
 }
 
+.sidebar-link.active::before {
+  transform: translateY(-50%) scaleY(1);
+}
+
 .sidebar-icon {
   flex-shrink: 0;
+  transition: transform var(--dur-base) var(--ease-spring);
+}
+
+.sidebar-link:hover .sidebar-icon {
+  transform: translateX(1px);
 }
 
 .sidebar-foot {
@@ -101,25 +224,66 @@
 }
 
 .status-dot {
+  position: relative;
   width: 8px;
   height: 8px;
   border-radius: var(--radius-pill);
   background: var(--text-faint);
+  transition: background var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
+}
+
+/* The animated halo lives on a pseudo-element so the loop runs on transform +
+   opacity (composited) rather than animating box-shadow every frame. It's a
+   concentric ring that expands and fades; colour is inherited per state. */
+.status-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: currentColor;
+  opacity: 0;
+  transform: scale(1);
+  pointer-events: none;
 }
 
 .status-pill--connected .status-dot {
   background: var(--ok);
   box-shadow: 0 0 0 3px var(--ok-bg);
+  color: var(--ok);
+}
+
+/* A slow steady breath signals a live, healthy tunnel at a glance. */
+.status-pill--connected .status-dot::after {
+  animation: dot-halo 3.2s var(--ease-in-out) infinite;
 }
 
 .status-pill--connecting .status-dot {
   background: var(--warn);
   box-shadow: 0 0 0 3px var(--warn-bg);
+  color: var(--warn);
+}
+
+.status-pill--connecting .status-dot::after {
+  animation: dot-halo 1.4s var(--ease-in-out) infinite;
 }
 
 .status-pill--error .status-dot {
   background: var(--danger);
   box-shadow: 0 0 0 3px var(--danger-bg);
+  color: var(--danger);
+}
+
+@keyframes dot-halo {
+  0% {
+    opacity: 0.4;
+    transform: scale(1);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(2.6);
+  }
 }
 
 /* --- buttons ---------------------------------------------------------------- */
@@ -137,7 +301,13 @@
   font-weight: 500;
   white-space: nowrap;
   transition: background var(--transition-fast), border-color var(--transition-fast),
-    opacity var(--transition-fast);
+    color var(--transition-fast), opacity var(--transition-fast),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+/* A small physical dip on press — consistent feedback across every button. */
+.btn:not(:disabled):active {
+  transform: translateY(1px) scale(0.99);
 }
 
 .btn:disabled {
@@ -215,6 +385,9 @@
 .screen-head h1 {
   font-size: 22px;
   font-weight: 600;
+  /* Negative tracking on large headings tightens the system face so it reads as
+     a considered display size rather than scaled-up body copy. */
+  letter-spacing: -0.01em;
 }
 
 .screen-head-actions {
@@ -229,6 +402,7 @@
   gap: var(--space-3);
   padding: var(--space-7) var(--space-4);
   text-align: center;
+  animation: rise-in var(--dur-slow) var(--ease-out) both;
 }
 
 .empty-state h1,
@@ -243,6 +417,9 @@
   border-radius: var(--radius-md);
   padding: var(--space-5);
   box-shadow: var(--shadow-sm);
+  transition: border-color var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
 }
 
 /* --- form fields ------------------------------------------------------------ */
@@ -269,11 +446,17 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text);
-  transition: border-color var(--transition-fast);
+  transition: border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.control:hover {
+  border-color: var(--border-strong);
 }
 
 .control:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
   outline: none;
 }
 
@@ -312,92 +495,270 @@
   gap: var(--space-4);
 }
 
+/* The dial is the emotional centerpiece: a recessed well in the dark that
+   light pools into as the tunnel comes alive. Layers, from back to front:
+   the aura (soft outer bloom), the track (faint full ring), the progress
+   ring (conic sweep that breathes while connecting), the well (the button
+   face), and the label. State lives on .dial--<phase>; the layers react. */
 .dial {
   position: relative;
   display: grid;
   place-items: center;
-  width: 200px;
-  height: 200px;
+  width: 208px;
+  height: 208px;
   border: 0;
   border-radius: 50%;
-  background: var(--surface);
+  background: transparent;
   color: var(--text);
-  transition: background var(--transition-med), transform var(--transition-fast);
+  isolation: isolate;
+  transition: transform var(--dur-base) var(--ease-spring);
 }
 
 .dial:not(:disabled):hover {
-  transform: scale(1.02);
+  transform: scale(1.025);
 }
 
-.dial:active {
-  transform: scale(0.99);
+.dial:not(:disabled):active {
+  transform: scale(0.985);
+  transition-duration: var(--dur-fast);
 }
 
-.dial-ring {
+/* Outer bloom. Quiet at rest, swells with the connection. Sits behind
+   everything and never intercepts clicks. */
+.dial-aura {
+  position: absolute;
+  inset: -18px;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--accent) 45%, transparent) 0%,
+    transparent 68%
+  );
+  filter: blur(6px);
+  transition: opacity var(--dur-slow) var(--ease-out),
+    background var(--dur-slow) var(--ease-out);
+}
+
+/* Faint full-circle track the progress ring rides on. */
+.dial-track {
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  border: 3px solid var(--border-strong);
-  transition: border-color var(--transition-med), box-shadow var(--transition-med);
+  border: 2px solid var(--border);
+  pointer-events: none;
+}
+
+/* The expressive ring. A conic gradient masked to a thin annulus so it reads
+   as a stroke, not a disc. Rotating this while connecting gives a living
+   sweep instead of a generic spinner; when connected it stops and glows. */
+.dial-ring {
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    color-mix(in srgb, var(--accent) 25%, transparent) 90deg,
+    var(--accent) 270deg,
+    var(--aurora) 360deg
+  );
+  /* Carve the centre out so only a ring remains. */
+  -webkit-mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 5px),
+    #000 calc(100% - 4px)
+  );
+  mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 5px),
+    #000 calc(100% - 4px)
+  );
+  opacity: 0;
+  transform: rotate(-90deg);
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+
+/* The button face — a recessed disc. */
+.dial-well {
+  position: absolute;
+  inset: 8px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: var(--dial-well);
+  border: 1px solid var(--border);
+  box-shadow: var(--dial-well-shadow);
+  transition: border-color var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
 }
 
 .dial-label {
   position: relative;
-  font-size: 18px;
+  z-index: 1;
+  font-size: 17px;
   font-weight: 600;
+  letter-spacing: 0.01em;
+  transition: color var(--dur-base) var(--ease-out);
 }
 
+/* --- idle: calm and inviting. A hint of accent on the ring; hover blooms. -- */
 .dial--idle .dial-ring {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  opacity: 0.55;
 }
 
 .dial--idle:hover .dial-ring {
-  border-color: var(--accent);
-  box-shadow: var(--shadow-glow);
+  opacity: 0.9;
 }
 
+.dial--idle:hover .dial-aura {
+  opacity: 0.4;
+}
+
+.dial--idle:hover .dial-well {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong));
+}
+
+.dial--idle .dial-label {
+  color: var(--text);
+}
+
+/* --- connecting: the ring sweeps (rotation) while the aura breathes. Both are
+   transform/opacity only, so the loop stays on the compositor. --- */
+.dial--connecting .dial-ring {
+  opacity: 1;
+  animation: dial-sweep 1.4s linear infinite;
+}
+
+.dial--connecting .dial-aura {
+  animation: aura-breathe var(--dur-breath) var(--ease-in-out) infinite;
+}
+
+.dial--connecting .dial-label {
+  color: var(--accent);
+}
+
+/* --- connected: the sweep settles, the ring glows steady, light pools in. -- */
 .dial--connected .dial-ring {
-  border-color: var(--ok);
-  box-shadow: 0 0 0 6px var(--ok-bg);
+  opacity: 1;
+  background: conic-gradient(
+    from 0deg,
+    var(--aurora),
+    var(--accent),
+    var(--aurora)
+  );
+  transform: rotate(-90deg);
+  animation: dial-settle var(--dur-slow) var(--ease-spring);
+}
+
+.dial--connected .dial-aura {
+  opacity: 0.55;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--aurora) 38%, transparent) 0%,
+    color-mix(in srgb, var(--accent) 22%, transparent) 45%,
+    transparent 70%
+  );
+  animation: dial-glow-pulse 5.5s var(--ease-in-out) infinite;
+}
+
+.dial--connected .dial-well {
+  border-color: color-mix(in srgb, var(--aurora) 30%, var(--border));
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.05),
+    inset 0 -8px 28px rgba(0, 0, 0, 0.4),
+    0 0 28px -6px color-mix(in srgb, var(--aurora) 50%, transparent);
 }
 
 .dial--connected .dial-label {
-  color: var(--ok);
+  color: color-mix(in srgb, var(--aurora) 70%, var(--text));
 }
 
+/* --- error: a brief shake + red, then it settles back to a calm error ring. */
 .dial--error .dial-ring {
-  border-color: var(--danger);
-  box-shadow: 0 0 0 6px var(--danger-bg);
+  opacity: 1;
+  background: conic-gradient(from 0deg, var(--danger), #ff9a9a, var(--danger));
 }
 
-.dial--connecting .dial-ring {
-  border-color: var(--warn);
-  animation: dial-pulse 1.4s ease-in-out infinite;
+.dial--error .dial-aura {
+  opacity: 0.4;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--danger) 40%, transparent) 0%,
+    transparent 68%
+  );
 }
 
-.dial-spinner {
-  position: absolute;
-  width: 200px;
-  height: 200px;
-  border-radius: 50%;
-  border: 3px solid transparent;
-  border-top-color: var(--warn);
-  animation: dial-spin 0.9s linear infinite;
+.dial--error .dial-well {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
 }
 
-@keyframes dial-spin {
+.dial--error .dial-label {
+  color: var(--danger);
+}
+
+/* The shake plays once on entry to the error state. It is keyed to the phase
+   class, so React swapping the class re-triggers it; reduced-motion neutralises
+   it via the global guard. */
+.dial--error {
+  animation: dial-shake 420ms var(--ease-out);
+}
+
+@keyframes dial-sweep {
   to {
-    transform: rotate(360deg);
+    transform: rotate(270deg);
   }
 }
 
-@keyframes dial-pulse {
+/* Aura breathing, composited: it swells and brightens on opacity + scale only.
+   The static blur on .dial-aura stays put (not animated), so no repaint storm. */
+@keyframes aura-breathe {
   0%,
   100% {
-    box-shadow: 0 0 0 0 var(--warn-bg);
+    opacity: 0.32;
+    transform: scale(0.96);
   }
   50% {
-    box-shadow: 0 0 0 10px transparent;
+    opacity: 0.6;
+    transform: scale(1.04);
+  }
+}
+
+@keyframes dial-settle {
+  0% {
+    transform: rotate(-90deg) scale(1.04);
+  }
+  100% {
+    transform: rotate(-90deg) scale(1);
+  }
+}
+
+@keyframes dial-glow-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.62;
+  }
+}
+
+@keyframes dial-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  18% {
+    transform: translateX(-7px);
+  }
+  38% {
+    transform: translateX(6px);
+  }
+  58% {
+    transform: translateX(-4px);
+  }
+  78% {
+    transform: translateX(2px);
   }
 }
 
@@ -414,6 +775,7 @@
   color: var(--danger);
   font-size: 13px;
   text-align: center;
+  animation: rise-in var(--dur-base) var(--ease-out) both;
 }
 
 .home-meta {
@@ -447,16 +809,32 @@
   grid-template-columns: 1fr 1fr;
   gap: var(--space-3);
   width: 100%;
+  /* Slides up as it mounts when the connection lands, so the panel feels like
+     it surfaces with the session rather than popping in. */
+  animation: rise-in var(--dur-slow) var(--ease-out) both;
 }
 
 .traffic-stat {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-2);
   padding: var(--space-4);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
+  /* Carries the stat's accent to the sparkline (which strokes currentColor)
+     without tinting the surrounding text. */
+  --spark: var(--accent);
+}
+
+/* Download leans aurora-cool, upload leans brand-indigo — a quiet way to tell
+   the two directions apart at a glance. */
+.traffic-stat--down {
+  --spark: var(--aurora);
+}
+
+.traffic-stat--up {
+  --spark: var(--accent);
 }
 
 .traffic-label {
@@ -470,8 +848,22 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The sparkline renders a bare <svg>; colour it through currentColor so the
+   per-direction --spark drives the stroke and fill without a prop. */
+.traffic-stat svg {
+  display: block;
+  width: 100%;
+  height: 26px;
+  color: var(--spark);
+  /* Fades in just after the panel rises, so the line draws onto an already
+     settled card. */
+  animation: fade-in var(--dur-base) var(--ease-out) both;
+  animation-delay: 120ms;
+}
+
 .traffic-total {
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .home-quick {
@@ -504,13 +896,49 @@
   padding: 0;
 }
 
+/* A short cascade so the list assembles top-to-bottom instead of all at once.
+   Capped at the sixth row to bound the longest wait. */
+.profile-list .profile-card:nth-child(1) {
+  animation-delay: 0ms;
+}
+.profile-list .profile-card:nth-child(2) {
+  animation-delay: 45ms;
+}
+.profile-list .profile-card:nth-child(3) {
+  animation-delay: 90ms;
+}
+.profile-list .profile-card:nth-child(4) {
+  animation-delay: 135ms;
+}
+.profile-list .profile-card:nth-child(5) {
+  animation-delay: 180ms;
+}
+.profile-list .profile-card:nth-child(n + 6) {
+  animation-delay: 220ms;
+}
+
 .profile-card {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  /* Each card settles in as the list mounts. */
+  animation: rise-in var(--dur-base) var(--ease-out) both;
+}
+
+/* Lift on hover so the row you're about to act on comes forward. */
+.profile-card:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
 }
 
 .profile-card.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent),
+    0 0 24px -10px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.profile-card.is-selected:hover {
   border-color: var(--accent);
 }
 
@@ -586,6 +1014,16 @@
   padding: var(--space-3);
   background: var(--bg-inset);
   border-radius: var(--radius-sm);
+  animation: node-expand var(--dur-base) var(--ease-out);
+  transform-origin: top;
+}
+
+/* Reveal the node list with a slight unfold rather than a hard appear. */
+@keyframes node-expand {
+  from {
+    opacity: 0;
+    transform: scaleY(0.96) translateY(-4px);
+  }
 }
 
 .node-row {
@@ -593,6 +1031,12 @@
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-1);
+  border-radius: var(--radius-sm);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.node-row:hover {
+  background: var(--surface-hover);
 }
 
 .node-info {
@@ -665,6 +1109,9 @@
   padding: var(--space-4);
   background: rgba(0, 0, 0, 0.55);
   z-index: 10;
+  animation: fade-in var(--dur-base) var(--ease-out);
+  /* Soften the dialog's backdrop so the app recedes behind it. */
+  backdrop-filter: blur(2px);
 }
 
 .modal {
@@ -678,6 +1125,14 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
+  animation: modal-in var(--dur-base) var(--ease-spring);
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
 }
 
 .modal-title {
@@ -767,6 +1222,7 @@
 }
 
 .routing-radio {
+  position: relative;
   flex-shrink: 0;
   width: 16px;
   height: 16px;
@@ -776,10 +1232,24 @@
   transition: border-color var(--transition-fast);
 }
 
+/* The inner dot scales in with a spring when its option is chosen, instead of
+   a hard fill swap. */
+.routing-radio::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  background: var(--accent);
+  transform: scale(0);
+  transition: transform var(--dur-base) var(--ease-spring);
+}
+
 .routing-option.is-checked .routing-radio {
   border-color: var(--accent);
-  background:
-    radial-gradient(circle, var(--accent) 0 4px, transparent 5px);
+}
+
+.routing-option.is-checked .routing-radio::after {
+  transform: scale(1);
 }
 
 .routing-text {
@@ -831,17 +1301,23 @@
   background: transparent;
   color: var(--text-muted);
   font-weight: 500;
-  transition: background var(--transition-fast), color var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast),
+    transform var(--dur-fast) var(--ease-out);
 }
 
 .segmented-item:hover {
   color: var(--text);
 }
 
+.segmented-item:not(.is-active):active {
+  transform: scale(0.96);
+}
+
 .segmented-item.is-active {
   background: var(--surface);
   color: var(--text);
   box-shadow: var(--shadow-sm);
+  animation: pop-in var(--dur-base) var(--ease-spring);
 }
 
 .switch {
@@ -853,7 +1329,8 @@
   border: 0;
   border-radius: var(--radius-pill);
   background: var(--border-strong);
-  transition: background var(--transition-fast);
+  transition: background var(--dur-base) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
 }
 
 .switch.is-on {
@@ -868,11 +1345,19 @@
   height: 18px;
   border-radius: 50%;
   background: #fff;
-  transition: transform var(--transition-fast);
+  box-shadow: var(--shadow-sm);
+  /* Spring easing gives the thumb a tiny settle when it lands — the toggle
+     feels mechanical rather than a flat slide. */
+  transition: transform var(--dur-base) var(--ease-spring);
 }
 
 .switch.is-on .switch-thumb {
   transform: translateX(18px);
+}
+
+/* A small dip on press — composited scale, no layout. */
+.switch:not(:disabled):active {
+  transform: scale(0.94);
 }
 
 /* --- logs ------------------------------------------------------------------- */
@@ -882,6 +1367,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
+  animation: rise-in var(--dur-base) var(--ease-out) both;
 }
 
 .leak-result.is-ok {
@@ -927,6 +1413,9 @@
   gap: var(--space-3);
   padding: 2px 0;
   align-items: baseline;
+  /* New lines ease in so the tail of a busy log doesn't strobe. Cheap: opacity
+     only, and it plays once per appended row. */
+  animation: fade-in var(--dur-fast) var(--ease-out);
 }
 
 .log-time {

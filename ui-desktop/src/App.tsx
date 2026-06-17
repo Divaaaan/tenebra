@@ -14,6 +14,7 @@ import {
   getLastProfileId,
   setLastProfileId,
 } from "./lib/settings";
+import { withViewTransition } from "./lib/viewTransition";
 
 export type ScreenId = "home" | "profiles" | "settings" | "logs";
 
@@ -21,6 +22,21 @@ export function App() {
   const tenebra = useTenebra();
   const { t } = useI18n();
   const [screen, setScreen] = useState<ScreenId>("home");
+
+  // Navigate through a view transition so screen swaps fade-and-rise rather than
+  // cutting. The helper no-ops the animation (but still navigates) when the API
+  // is absent or the user prefers reduced motion. The latest screen is held in a
+  // ref so this callback stays stable yet can skip a transition when the target
+  // is already active — re-triggering the tray "Show" then won't replay the
+  // animation on the screen you're already looking at.
+  const screenRef = useRef(screen);
+  screenRef.current = screen;
+  const navigate = useCallback((next: ScreenId) => {
+    if (next === screenRef.current) {
+      return;
+    }
+    withViewTransition(() => setScreen(next));
+  }, []);
 
   // The profile the user is acting on. Defaults to whatever is connected, then
   // to the first available profile, so the Home screen always has a target.
@@ -75,7 +91,7 @@ export function App() {
     (async () => {
       const subs = await Promise.all([
         onTrayConnect(() => connectSelectedRef.current()),
-        onTrayShow(() => setScreen("home")),
+        onTrayShow(() => navigate("home")),
       ]);
       if (!active) {
         subs.forEach((u) => u());
@@ -123,7 +139,7 @@ export function App() {
             tenebra={tenebra}
             selectedProfile={selectedProfile}
             onSelectProfile={setSelectedProfileId}
-            onGoToProfiles={() => setScreen("profiles")}
+            onGoToProfiles={() => navigate("profiles")}
           />
         );
       case "profiles":
@@ -142,8 +158,8 @@ export function App() {
   })();
 
   return (
-    <div className="app-shell">
-      <Sidebar active={screen} onNavigate={setScreen} state={tenebra.state} />
+    <div className="app-shell" data-conn={tenebra.state.state}>
+      <Sidebar active={screen} onNavigate={navigate} state={tenebra.state} />
       <main className="app-main" aria-label={t.nav[screen]}>
         {body}
       </main>
