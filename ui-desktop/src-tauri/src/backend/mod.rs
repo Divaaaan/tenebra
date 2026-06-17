@@ -11,6 +11,7 @@
 //! in `src/api/types.ts` expect.
 
 pub mod mock;
+pub mod sidecar;
 
 use serde::{Deserialize, Serialize};
 

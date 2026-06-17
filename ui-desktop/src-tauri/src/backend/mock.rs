@@ -90,7 +90,9 @@ fn spawn_connect(shared: &Arc<Shared>, generation: u64, node_name: String) {
             drop(inner);
             shared.emit_state(&snapshot);
         }
-        shared.sink.log("info", &format!("tunnel up via {node_name}"));
+        shared
+            .sink
+            .log("info", &format!("tunnel up via {node_name}"));
 
         run_traffic(&shared, generation);
     });
@@ -107,8 +109,8 @@ fn run_traffic(shared: &Arc<Shared>, generation: u64) {
             thread::sleep(TRAFFIC_TICK);
 
             let mut inner = shared.inner.lock().unwrap();
-            let live = inner.generation == generation
-                && inner.state.state == ConnectionState::Connected;
+            let live =
+                inner.generation == generation && inner.state.state == ConnectionState::Connected;
             if !live {
                 return;
             }
@@ -156,7 +158,12 @@ impl Backend for MockBackend {
             traffic_used: Some(7 * GIB),
             traffic_total: Some(100 * GIB),
         };
-        self.shared.inner.lock().unwrap().profiles.push(profile.clone());
+        self.shared
+            .inner
+            .lock()
+            .unwrap()
+            .profiles
+            .push(profile.clone());
         self.shared
             .sink
             .log("info", &format!("imported subscription \"{name}\""));
@@ -189,8 +196,15 @@ impl Backend for MockBackend {
             traffic_used: None,
             traffic_total: None,
         };
-        self.shared.inner.lock().unwrap().profiles.push(profile.clone());
-        self.shared.sink.log("info", &format!("imported link \"{name}\""));
+        self.shared
+            .inner
+            .lock()
+            .unwrap()
+            .profiles
+            .push(profile.clone());
+        self.shared
+            .sink
+            .log("info", &format!("imported link \"{name}\""));
         Ok(profile)
     }
 
@@ -266,7 +280,9 @@ impl Backend for MockBackend {
         drop(inner);
 
         self.shared.emit_state(&snapshot);
-        self.shared.sink.log("info", &format!("dialing {node_name}…"));
+        self.shared
+            .sink
+            .log("info", &format!("dialing {node_name}…"));
         spawn_connect(&self.shared, generation, node_name);
         Ok(snapshot)
     }
@@ -359,9 +375,27 @@ fn demo_profiles() -> Vec<Profile> {
             source: Source::Subscription,
             url: Some("https://example.invalid/sub".into()),
             nodes: vec![
-                node_lit("demo-nl", "Amsterdam · REALITY", Protocol::Vless, "198.51.100.10", 443),
-                node_lit("demo-de", "Frankfurt · Hysteria2", Protocol::Hysteria2, "198.51.100.20", 8443),
-                node_lit("demo-fi", "Helsinki · AmneziaWG", Protocol::Amneziawg, "198.51.100.30", 51820),
+                node_lit(
+                    "demo-nl",
+                    "Amsterdam · REALITY",
+                    Protocol::Vless,
+                    "198.51.100.10",
+                    443,
+                ),
+                node_lit(
+                    "demo-de",
+                    "Frankfurt · Hysteria2",
+                    Protocol::Hysteria2,
+                    "198.51.100.20",
+                    8443,
+                ),
+                node_lit(
+                    "demo-fi",
+                    "Helsinki · AmneziaWG",
+                    Protocol::Amneziawg,
+                    "198.51.100.30",
+                    51820,
+                ),
             ],
             updated_at: now_rfc3339(),
             expires_at: Some(in_days(21)),
