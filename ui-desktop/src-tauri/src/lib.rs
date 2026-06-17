@@ -13,8 +13,8 @@ use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, State as TauriState};
 
 use backend::{
-    Backend, EventSink, LeakCheck, PingResult, Profile, RoutingMode, State, EVENT_LOG,
-    EVENT_STATE, EVENT_TRAFFIC,
+    Backend, EventSink, LeakCheck, PingResult, Profile, RoutingMode, State, EVENT_LOG, EVENT_STATE,
+    EVENT_TRAFFIC,
 };
 
 /// Held in Tauri's managed state and shared by every command handler.
@@ -55,15 +55,42 @@ impl EventSink for TauriSink {
 // =============================================================================
 // Backend selection.
 //
-// This is the ONE switch between the demo fake and the real implementation.
-// When the core sidecar client lands, build it here instead — it implements the
-// same `Backend` trait, so nothing else in this file (or the front end) changes:
+// The ONE switch between the real core sidecar and the demo fake. By default we
+// spawn the `tenebra-core` sidecar and drive the real tunnel; set TENEBRA_MOCK=1
+// to fall back to the in-process mock (useful for UI work without the core, or
+// when the sidecar binary isn't built). Both implement the same `Backend` trait,
+// so nothing else in this file or the front end changes.
 //
-//     Box::new(backend::sidecar::SidecarClient::spawn(sink)?)
-//
+// If the sidecar fails to spawn (e.g. the binary is missing), we log and fall
+// back to the mock rather than leaving the UI with no backend at all.
 // =============================================================================
 fn make_backend(sink: Arc<dyn EventSink>) -> Box<dyn Backend> {
-    Box::new(backend::mock::MockBackend::new(sink))
+    if std::env::var_os("TENEBRA_MOCK").is_some() {
+        return Box::new(backend::mock::MockBackend::new(sink));
+    }
+
+    let program = backend::sidecar::SidecarBackend::default_program();
+    let singbox = singbox_path();
+    match backend::sidecar::SidecarBackend::spawn(program, singbox, Arc::clone(&sink)) {
+        Ok(backend) => Box::new(backend),
+        Err(e) => {
+            sink.log(
+                "error",
+                &format!("could not start tenebra-core, using demo backend: {e}"),
+            );
+            Box::new(backend::mock::MockBackend::new(sink))
+        }
+    }
+}
+
+/// Path passed to the core as TENEBRA_SINGBOX so it can locate sing-box. An
+/// explicit env var wins; otherwise the repo's local `bin/sing-box.exe` is used.
+/// Bundling sing-box + wintun as Tauri resources is a follow-up.
+fn singbox_path() -> std::path::PathBuf {
+    if let Some(p) = std::env::var_os("TENEBRA_SINGBOX") {
+        return std::path::PathBuf::from(p);
+    }
+    std::path::PathBuf::from(r"C:\Users\danil\projects\tenebra\bin\sing-box.exe")
 }
 
 // --- command handlers ---------------------------------------------------------
@@ -79,7 +106,10 @@ fn status(state: TauriState<'_, AppState>) -> Result<State, String> {
 
 #[tauri::command]
 fn list_profiles(state: TauriState<'_, AppState>) -> Result<ProfileList, String> {
-    state.backend.list_profiles().map(|profiles| ProfileList { profiles })
+    state
+        .backend
+        .list_profiles()
+        .map(|profiles| ProfileList { profiles })
 }
 
 #[tauri::command]
@@ -135,7 +165,10 @@ fn disconnect(state: TauriState<'_, AppState>) -> Result<State, String> {
 
 #[tauri::command]
 fn ping(state: TauriState<'_, AppState>, profile: String) -> Result<PingList, String> {
-    state.backend.ping(profile).map(|results| PingList { results })
+    state
+        .backend
+        .ping(profile)
+        .map(|results| PingList { results })
 }
 
 #[tauri::command]

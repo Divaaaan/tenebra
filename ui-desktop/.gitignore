@@ -2,3 +2,7 @@
 # this file only adds what is specific to the desktop package.
 dist/
 node_modules/
+
+# The core sidecar (tenebra-core) is built into src-tauri/binaries by the build
+# step, not checked in; it is produced from the Go sources in this repo.
+src-tauri/binaries/
