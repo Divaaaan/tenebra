@@ -3,11 +3,15 @@
 [![CI](https://github.com/Divaaaan/tenebra/actions/workflows/ci.yml/badge.svg)](https://github.com/Divaaaan/tenebra/actions/workflows/ci.yml)
 
 A cross-platform VPN client built on [sing-box](https://github.com/SagerNet/sing-box).
-Desktop first (Windows), with a shared core meant to extend to macOS, Linux,
+Desktop first (Windows), with a shared Go core meant to extend to macOS, Linux,
 Android and iOS.
 
-> Early development. The desktop client is the current focus; expect things to
-> move around.
+> **Project status — early development.** The desktop client is the current
+> focus. The core, the control protocol and the UI are in good shape and well
+> tested, but the real tunnel path (wintun + sing-box, which needs an elevated
+> live run) is still being validated end to end. Treat this as pre-release:
+> not yet "production-ready", and expect things to move around. See
+> [Project status](#project-status) for the honest breakdown.
 
 ## Why another client
 
@@ -23,22 +27,80 @@ do with your traffic. Tenebra:
 - ships no telemetry, no accounts and no bundled servers — you import your own
   subscription.
 
-## Architecture
+## What it does
 
-- **core/** — Go. Subscription parsing, profile storage, routing, the protocol
-  fallback state machine and sing-box config generation. Shared by every
-  platform.
-- **adapters/** — the system tunnel per OS: wintun on Windows, utun on
-  macOS/Linux, `VpnService` on Android, Network Extension on iOS.
-- **ui-desktop/** — Tauri 2: a Rust shell with a React + TypeScript front end.
-- **ui-android/**, **ui-ios/** — native UIs to come, on top of the same core.
+Everything below is implemented in this repo today (the UI features are desktop):
 
-On desktop the core runs sing-box as a sidecar process and talks to the UI over
-a local JSON protocol. See [docs/architecture.md](docs/architecture.md).
+- **Many protocols, one model.** Import VLESS (incl. REALITY), Hysteria2,
+  AmneziaWG, Shadowsocks, Trojan and VMess. A single normalized node model feeds
+  a from-scratch sing-box config generator.
+- **Import the way you have it.** Subscription URL, a raw share link, a `.txt`
+  file of links, clipboard paste, or a QR code (image file or pasted image).
+  Subscription bodies handle base64 or plaintext link lists and read the
+  `Subscription-Userinfo` header for traffic used / total and expiry.
+- **Smart RU routing.** *Smart* keeps Russian domains and IPs (and your LAN)
+  direct and tunnels the rest; *Global* tunnels everything; *Direct* is the
+  proxy off. Geodata is pulled from the official public sing-geoip / sing-geosite
+  rule-sets at runtime — the client ships none of its own.
+- **Protocol fallback.** A pure state machine walks the last known-good node
+  first, then by protocol preference (REALITY → Hysteria2 → AmneziaWG), so a
+  blocked or throttled protocol is retried as another. The last good node leads
+  the next launch.
+- **Per-app split tunnelling.** *Exclude* sends chosen apps around the tunnel;
+  *Include* sends only chosen apps through it. Matched by executable name and
+  persisted across restarts.
+- **Honest leak check.** Observes the machine's public IP from redundant echo
+  services and runs a best-effort DNS probe, then reports a verdict that never
+  fakes a pass — it tells you what it could *not* measure rather than claiming
+  "safe". See [docs/control-protocol.md](docs/control-protocol.md#leak-check-leak_check).
+- **Desktop niceties.** System tray with quick connect/disconnect, launch at
+  login, single-instance, live traffic graphs, light/dark themes, and English /
+  Russian UI.
+
+A kill-switch (drop proxied traffic instead of leaking when the tunnel drops) and
+LAN bypass exist as core routing options; the kill-switch is not yet a UI toggle.
+
+## Project status
+
+| Area | State |
+|------|-------|
+| Go core (parsing, profiles, routing, config gen, fallback, leak logic) | Implemented, unit-tested, no third-party deps |
+| Control protocol (core ↔ UI) | Implemented; covered by Go tests **and** a real-binary e2e |
+| Desktop UI (Tauri 2 + React) | Implemented: all screens, tray, autostart, i18n, themes |
+| Real tunnel (wintun + sing-box, elevated) | **Needs a live, admin run to validate**; not yet signed off |
+| macOS / Linux / Android / iOS | Planned — the core is shared and platform-agnostic |
+| Release / installer signing | Not set up (CI builds an unsigned NSIS installer) |
+
+If you want to help close the gap, the tunnel bring-up and the non-Windows
+adapters are the highest-leverage places — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Repository layout
+
+```
+tenebra/
+├── core/                 Go. Platform-agnostic, stdlib-only, fully unit-tested.
+│   ├── model/            Normalized proxy node + config types.
+│   ├── subscription/     Parse vless/hysteria2/ss/trojan/vmess links + sub bodies.
+│   ├── profile/          Named profiles and their atomic on-disk store.
+│   ├── routing/          smart/global/direct + per-app split -> sing-box route/dns.
+│   ├── singbox/          Build a full sing-box config as plain JSON (no sing-box dep).
+│   ├── fallback/         Pure REALITY->Hysteria2->AmneziaWG fallback state machine.
+│   └── control/          The line-delimited JSON protocol + the daemon.
+├── adapters/
+│   └── windows/          Spawn & supervise sing-box; traffic via its clash API.
+├── cmd/
+│   └── tenebra-core/     The sidecar entry point (talks the protocol on stdin/stdout).
+├── ui-desktop/           Tauri 2 app: Rust shell (src-tauri) + React/TS front end (src).
+├── scripts/
+│   └── fetch-resources.ps1   Download pinned sing-box + wintun for bundling.
+└── docs/                 Architecture, control protocol, and the dev guide.
+```
 
 ## Building
 
-Requirements: Go 1.24+, Node 20+, and the Rust toolchain (for the desktop UI).
+Requirements: **Go 1.24+**, **Node 20+**, and the **Rust toolchain** (for the
+desktop UI). Full walkthrough and troubleshooting in
+[docs/development.md](docs/development.md).
 
 Core tests:
 
@@ -60,6 +122,16 @@ cd ui-desktop
 npm install
 npm run tauri build
 ```
+
+## Documentation
+
+- [docs/](docs/) — documentation index.
+- [docs/architecture.md](docs/architecture.md) — the layers and how they connect.
+- [docs/control-protocol.md](docs/control-protocol.md) — the core ↔ UI wire format.
+- [docs/development.md](docs/development.md) — set up, build, run and test.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — how to contribute.
+- [SECURITY.md](SECURITY.md) — reporting a vulnerability and our trust stance.
+- [CHANGELOG.md](CHANGELOG.md) — what's changed.
 
 ## License
 

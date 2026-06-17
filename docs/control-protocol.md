@@ -1,8 +1,11 @@
 # Control protocol
 
 The desktop UI never touches the tunnel directly. A core sidecar process owns
-sing-box and the wintun tunnel; the UI drives it over a local connection using
-**line-delimited JSON** — one JSON object per line, UTF-8.
+sing-box and the wintun tunnel; the UI drives it over the sidecar's **stdin /
+stdout** using **line-delimited JSON** — one JSON object per line, UTF-8.
+Requests go in on stdin, responses and events come back on stdout, and the
+sidecar's logs go to stderr. (For where this sits in the system, see
+[architecture.md](architecture.md).)
 
 Three message kinds flow over the link:
 
