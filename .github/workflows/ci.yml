@@ -19,5 +19,29 @@ jobs:
       - uses: dominikh/staticcheck-action@v1
         with:
           version: latest
-  # The windows-latest desktop bundle job (Go sidecar + Tauri build) lands once
-  # the end-to-end build is wired.
+  desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Fetch sing-box and wintun
+        run: powershell -ExecutionPolicy Bypass -File scripts/fetch-resources.ps1
+      - name: Build core sidecar
+        run: go build -o ui-desktop/src-tauri/binaries/tenebra-core-x86_64-pc-windows-msvc.exe ./cmd/tenebra-core
+      - name: Install front-end dependencies
+        working-directory: ui-desktop
+        run: npm ci
+      - name: Build the installer
+        working-directory: ui-desktop
+        run: npm run tauri build -- --bundles nsis
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tenebra-windows-installer
+          path: ui-desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
