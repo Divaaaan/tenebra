@@ -25,13 +25,35 @@
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
   --shadow-glow: 0 0 0 6px color-mix(in srgb, var(--accent) 18%, transparent);
 
-  --transition-fast: 120ms ease;
-  --transition-med: 220ms ease;
+  /* Motion system. A handful of durations and shared easings, reused
+     everywhere so the whole app accelerates and settles with one voice.
+     --dur-* are the timing steps; --ease-* are the character of the move.
+     prefers-reduced-motion neutralises these globally (see global.css). */
+  --dur-fast: 130ms; /* taps, hovers, presses */
+  --dur-base: 240ms; /* the default — most state changes */
+  --dur-slow: 420ms; /* deliberate moments: screen swaps, the dial settling */
+  --dur-breath: 2600ms; /* ambient loops: the dial aura breathing while connecting */
 
-  /* Brand accent stays constant across themes. */
+  /* Emphasised ease-out: quick to leave, gentle to arrive. The workhorse. */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  /* Symmetric ease for things that travel and return (toggles, sparkline). */
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  /* A short overshoot — used sparingly where a state should feel "alive"
+     (the dial snapping into "connected", a switch thumb landing). */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Legacy aliases kept so existing rules keep working; both now route
+     through the motion system above. */
+  --transition-fast: var(--dur-fast) var(--ease-out);
+  --transition-med: var(--dur-base) var(--ease-out);
+
+  /* Brand accent stays constant across themes. Indigo is the resting brand;
+     a cooler aurora-teal is the "alive" companion that only blooms when the
+     tunnel is up, so connected reads as light entering the dark. */
   --accent: #6c8cff;
   --accent-strong: #5273ff;
   --accent-contrast: #ffffff;
+  --aurora: #57e8d0;
 
   --ok: #3ecf8e;
   --warn: #f5b14c;
@@ -60,6 +82,20 @@
   --warn-bg: rgba(245, 177, 76, 0.14);
   --danger-bg: rgba(240, 103, 103, 0.14);
   --accent-bg: rgba(108, 140, 255, 0.14);
+
+  /* The well behind the dial — a touch deeper than the page so the button
+     reads as a recess in the dark that light can pool into. */
+  --dial-well: radial-gradient(
+    circle at 50% 42%,
+    #11151c 0%,
+    #0c0e12 70%
+  );
+  /* A deep inset shadow carves the recess on dark. */
+  --dial-well-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.04),
+    inset 0 -8px 24px rgba(0, 0, 0, 0.45);
+  /* Ambient "the room lights up" wash, only visible once connected. Two faint
+     pools drift behind the whole shell; kept very low so it never competes. */
+  --ambient-strength: 0.5;
 }
 
 /* Light theme. */
@@ -86,4 +122,16 @@
   --warn-bg: rgba(214, 142, 41, 0.14);
   --danger-bg: rgba(214, 70, 70, 0.12);
   --accent-bg: rgba(82, 115, 255, 0.12);
+
+  /* Light keeps the recess subtle and skips the ambient room-glow, which only
+     makes sense against darkness. */
+  --dial-well: radial-gradient(
+    circle at 50% 42%,
+    #ffffff 0%,
+    #eef1f6 72%
+  );
+  /* A soft, light inset instead of the heavy dark one — keeps the well clean. */
+  --dial-well-shadow: inset 0 1px 2px rgba(20, 28, 46, 0.06),
+    inset 0 -6px 18px rgba(20, 28, 46, 0.06);
+  --ambient-strength: 0;
 }
