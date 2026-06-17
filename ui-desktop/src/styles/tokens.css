@@ -1,0 +1,89 @@
+/* Design tokens. Colour is the only thing that flips between themes; spacing,
+   radii, typography and motion are shared. Dark is the default and lives on
+   :root so a missing data-theme still renders the intended look. */
+
+:root {
+  --font-sans:
+    "Inter", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial,
+    sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", "SF Mono", Consolas, monospace;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-glow: 0 0 0 6px color-mix(in srgb, var(--accent) 18%, transparent);
+
+  --transition-fast: 120ms ease;
+  --transition-med: 220ms ease;
+
+  /* Brand accent stays constant across themes. */
+  --accent: #6c8cff;
+  --accent-strong: #5273ff;
+  --accent-contrast: #ffffff;
+
+  --ok: #3ecf8e;
+  --warn: #f5b14c;
+  --danger: #f06767;
+}
+
+/* Dark theme (default). */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0e1014;
+  --bg-elevated: #161a21;
+  --bg-inset: #1d222b;
+  --surface: #14181f;
+  --surface-hover: #1b212a;
+
+  --border: #262c37;
+  --border-strong: #333b48;
+
+  --text: #e8ecf2;
+  --text-muted: #9aa4b2;
+  --text-faint: #69727f;
+
+  --ok-bg: rgba(62, 207, 142, 0.14);
+  --warn-bg: rgba(245, 177, 76, 0.14);
+  --danger-bg: rgba(240, 103, 103, 0.14);
+  --accent-bg: rgba(108, 140, 255, 0.14);
+}
+
+/* Light theme. */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f4f6fa;
+  --bg-elevated: #ffffff;
+  --bg-inset: #eef1f6;
+  --surface: #ffffff;
+  --surface-hover: #f0f3f8;
+
+  --border: #e1e6ed;
+  --border-strong: #cdd4df;
+
+  --text: #1a1f27;
+  --text-muted: #5a6573;
+  --text-faint: #8c97a5;
+
+  --shadow-sm: 0 1px 2px rgba(20, 28, 46, 0.08);
+  --shadow-md: 0 10px 30px rgba(20, 28, 46, 0.12);
+
+  --ok-bg: rgba(36, 168, 109, 0.12);
+  --warn-bg: rgba(214, 142, 41, 0.14);
+  --danger-bg: rgba(214, 70, 70, 0.12);
+  --accent-bg: rgba(82, 115, 255, 0.12);
+}
