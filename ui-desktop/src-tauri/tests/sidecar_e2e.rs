@@ -49,6 +49,9 @@ impl Core {
         let mut child = Command::new(program)
             // A bogus sing-box path is fine: these commands never start a tunnel.
             .env("TENEBRA_SINGBOX", "sing-box-not-needed-for-this-test")
+            // Isolate the store in a temp dir so the test never writes to the
+            // real per-user config location.
+            .env("TENEBRA_CONFIG_DIR", test_store_dir())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -107,6 +110,14 @@ impl Drop for Core {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// A throwaway profile-store dir for the test run, so it never touches the real
+/// per-user config location and always starts from an empty store.
+fn test_store_dir() -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("tenebra-e2e-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    dir
 }
 
 #[test]
