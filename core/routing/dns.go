@@ -57,7 +57,12 @@ func dnsServer(tag, addr, detour string) map[string]any {
 		"type":   scheme,
 		"tag":    tag,
 		"server": server,
-		"detour": detour,
+	}
+	// sing-box 1.13 rejects a DNS detour to a bare "direct" outbound as
+	// meaningless — a server with no detour already dials directly — so only set
+	// a detour for the proxied resolver.
+	if detour != "" && detour != tagDirect {
+		s["detour"] = detour
 	}
 	if port > 0 {
 		s["server_port"] = port
