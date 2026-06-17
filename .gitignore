@@ -23,6 +23,9 @@ sing-box
 sing-box.exe
 wintun.dll
 
+# sing-box runtime cache, written next to wherever the core runs
+cache.db
+
 # Secrets and infrastructure must never land in the repo:
 # no real servers, subscription URLs, keys or saved profiles
 .env

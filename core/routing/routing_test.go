@@ -164,8 +164,8 @@ func TestDNSBlockStructure(t *testing.T) {
 	if byTag[dnsRemoteTag]["type"] != "tls" || byTag[dnsRemoteTag]["server"] != "1.1.1.1" {
 		t.Errorf("remote DNS = %v, want type tls server 1.1.1.1", byTag[dnsRemoteTag])
 	}
-	if byTag[dnsDirectTag]["detour"] != tagDirect {
-		t.Errorf("direct DNS detour = %v, want direct", byTag[dnsDirectTag]["detour"])
+	if _, has := byTag[dnsDirectTag]["detour"]; has {
+		t.Errorf("direct DNS should have no detour (1.13 rejects a detour to a bare direct outbound), got %v", byTag[dnsDirectTag]["detour"])
 	}
 	if byTag[dnsDirectTag]["type"] != "https" || byTag[dnsDirectTag]["server"] != "77.88.8.8" || byTag[dnsDirectTag]["path"] != "/dns-query" {
 		t.Errorf("direct DNS = %v, want type https server 77.88.8.8 path /dns-query", byTag[dnsDirectTag])
