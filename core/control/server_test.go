@@ -38,6 +38,14 @@ func newHarness(t *testing.T) *harness {
 	}
 	runner := newFakeRunner()
 	d := NewDaemon(store, runner)
+	// Shrink the fallback-loop timings so tests don't wait out real warmups/budgets.
+	// The fake runner's Probe answers instantly, so a blocked candidate must burn
+	// its whole (tiny) budget before the loop gives up on it — keep the budget
+	// short so a multi-candidate walk finishes well inside the await deadlines.
+	d.probeWarmup = time.Millisecond
+	d.probeRetry = time.Millisecond
+	d.probeTimeout = 200 * time.Millisecond
+	d.probeBudget = 60 * time.Millisecond
 
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
@@ -85,7 +93,16 @@ func (h *harness) readLoop(r io.Reader) {
 			for k, v := range probe {
 				cp[k] = v
 			}
-			h.events <- cp
+			// Best-effort: drop events when the buffer is full rather than block the
+			// pipe reader. A live connection's traffic poller keeps emitting every
+			// second, so once a test stops draining events the reader must not wedge —
+			// otherwise the daemon's emit (a pipe write) blocks and Close()'s wg.Wait
+			// deadlocks at cleanup. Tests assert on the events they care about well
+			// before the 256-deep buffer fills.
+			select {
+			case h.events <- cp:
+			default:
+			}
 			continue
 		}
 		var resp Response
@@ -150,6 +167,25 @@ func (h *harness) awaitEvent(name string) map[string]any {
 		case <-deadline:
 			h.t.Fatalf("timed out waiting for %s event", name)
 			return nil
+		}
+	}
+}
+
+// waitStarts blocks until the fake runner has been started at least n times,
+// failing on timeout. connect now starts sing-box from a background loop, so a
+// test that needs the process to exist must wait for the Start rather than assume
+// it happened by the time the connecting response arrived.
+func (h *harness) waitStarts(n int) {
+	h.t.Helper()
+	deadline := time.After(3 * time.Second)
+	for {
+		if h.runner.starts() >= n {
+			return
+		}
+		select {
+		case <-deadline:
+			h.t.Fatalf("timed out waiting for %d runner start(s); got %d", n, h.runner.starts())
+		case <-time.After(2 * time.Millisecond):
 		}
 	}
 }
@@ -341,14 +377,16 @@ func TestConnectDisconnectDriveState(t *testing.T) {
 	if st.State != StateConnecting {
 		t.Errorf("connect response state = %q, want connecting", st.State)
 	}
-	if st.Profile != p.ID || st.Node != p.Servers[0].ID {
-		t.Errorf("connect response = %+v, want profile %s node %s", st, p.ID, p.Servers[0].ID)
+	// The connect response carries the profile but not yet a node: with protocol
+	// fallback the node is only known once a candidate's probe succeeds, and it
+	// arrives on the connected event below.
+	if st.Profile != p.ID {
+		t.Errorf("connect response profile = %q, want %s", st.Profile, p.ID)
 	}
 
-	// The runner must have been started with a non-empty config.
-	if h.runner.starts() != 1 {
-		t.Errorf("runner started %d times, want 1", h.runner.starts())
-	}
+	// The runner is started from the background loop; wait for it, then check the
+	// config it was handed.
+	h.waitStarts(1)
 	if len(h.runner.lastCfg) == 0 {
 		t.Error("runner started with empty config")
 	}
@@ -361,7 +399,8 @@ func TestConnectDisconnectDriveState(t *testing.T) {
 		t.Error("config has no outbounds")
 	}
 
-	// A connecting state event, then (the process stays up) a connected one.
+	// A connecting state event, then (the probe confirms the tunnel) a connected
+	// one carrying the node the fallback loop landed on.
 	h.awaitState(StateConnecting)
 	connected := h.awaitState(StateConnected)
 	if connected["node"] != p.Servers[0].ID {
@@ -405,8 +444,9 @@ func TestConnectExplicitNodeNotFound(t *testing.T) {
 	}
 }
 
-// TestProcessExitBecomesError simulates sing-box dying after connect; the daemon
-// must publish an error state, not hang.
+// TestProcessExitBecomesError simulates sing-box dying during connect; the daemon
+// must publish an error state, not hang. The single-node profile means a dead
+// process exhausts the fallback walk straight to error.
 func TestProcessExitBecomesError(t *testing.T) {
 	h := newHarness(t)
 	p := h.importFakeProfile()
@@ -415,7 +455,10 @@ func TestProcessExitBecomesError(t *testing.T) {
 	h.await()
 	h.awaitState(StateConnecting)
 
-	// Kill the "process" before it would promote to connected.
+	// Wait until the loop has actually spawned the process before killing it —
+	// before Start the runner's done channel is the never-fired placeholder, and
+	// the loop runs Start in the background after returning connecting.
+	h.waitStarts(1)
 	h.runner.exit(errors.New("exit status 1"))
 
 	ev := h.awaitState(StateError)

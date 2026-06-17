@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,6 +40,17 @@ const logRingSize = 200
 // statsTimeout keeps a clash API poll from blocking the traffic loop if the API
 // is slow or not yet listening.
 const statsTimeout = 2 * time.Second
+
+// probeURL is the target the clash API delay test fetches through the outbound.
+// A 204 means real traffic reached the internet through that proxy; it is the
+// canonical reachability check sing-box's own clash API exposes.
+const probeURL = "http://www.gstatic.com/generate_204"
+
+// probeTimeoutMs is the server-side timeout (in milliseconds) handed to the
+// clash API delay test, matching the connect loop's per-attempt budget. The
+// HTTP request itself is given a little more headroom so the local call doesn't
+// time out before the API has a chance to answer with its own timeout verdict.
+const probeTimeoutMs = 5000
 
 // blocked is returned by Done before the first Start. It has no sender and is
 // never closed, so a receive on it blocks forever — exactly the "Done must block
@@ -216,6 +228,59 @@ func (r *Runner) Stats() (up, down int64, err error) {
 		return 0, 0, fmt.Errorf("windows: clash stats: read: %w", err)
 	}
 	return parseConnections(body)
+}
+
+// Probe asks the clash API to run a delay test through the named outbound: it
+// fetches a known 204 endpoint via that proxy and reports the round-trip in
+// milliseconds. A successful test is honest proof that traffic actually flows
+// through tag — unlike "the process stayed up", it fails when the protocol is
+// blocked, the handshake never completes, or the upstream is dead. A non-200
+// from the API (which includes its own timeout, surfaced as a 408/504) or any
+// transport error means the outbound is not usable.
+//
+// ctx bounds the whole call so the connect loop can abandon a probe when the
+// connection is superseded; the clash API is also told its own timeout so it
+// stops testing rather than holding the request open.
+func (r *Runner) Probe(ctx context.Context, tag string) (delayMs int, err error) {
+	port := r.ClashPort
+	if port == 0 {
+		port = defaultClashPort
+	}
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d/proxies/%s/delay?timeout=%d&url=%s",
+		port, url.PathEscape(tag), probeTimeoutMs, url.QueryEscape(probeURL))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return 0, fmt.Errorf("windows: clash delay request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("windows: clash delay: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode != http.StatusOK {
+		// The API returns a message body (e.g. {"message":"An error occurred..."})
+		// on a failed test; include a trimmed form so logs show why it failed.
+		return 0, fmt.Errorf("windows: clash delay: status %s: %s", resp.Status, trimBody(body))
+	}
+	var out struct {
+		Delay int `json:"delay"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return 0, fmt.Errorf("windows: parse clash delay: %w", err)
+	}
+	return out.Delay, nil
+}
+
+// trimBody renders a short, single-line form of an API error body for logs.
+func trimBody(b []byte) string {
+	const max = 200
+	s := string(b)
+	if len(s) > max {
+		s = s[:max]
+	}
+	return s
 }
 
 // Logs returns a copy of the most recent sing-box output lines, newest last, for
