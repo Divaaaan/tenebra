@@ -21,6 +21,15 @@ export function formatRate(bytesPerSecond: number, perSecond: string): string {
   return `${formatBytes(bytesPerSecond)}${perSecond}`;
 }
 
+/** A byte/sec rate as a bare megabit-per-second number, e.g. 11_775_000 → "94.2".
+ *  The unit ("Mbps") is rendered separately by the stat cell. */
+export function formatMbps(bytesPerSecond: number): string {
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) {
+    return "0.0";
+  }
+  return ((bytesPerSecond * 8) / 1_000_000).toFixed(1);
+}
+
 /** RFC3339 timestamp as a localized date, or em dash when absent/invalid. */
 export function formatDate(iso: string | undefined, lang: Language): string {
   if (!iso) {

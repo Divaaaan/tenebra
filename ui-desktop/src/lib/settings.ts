@@ -5,6 +5,7 @@
 
 const AUTOCONNECT_KEY = "tenebra.autoconnect";
 const LAST_PROFILE_KEY = "tenebra.lastProfile";
+const KILLSWITCH_KEY = "tenebra.killSwitch";
 
 /** Whether "connect on launch" is enabled. Off unless explicitly turned on. */
 export function getAutoconnect(): boolean {
@@ -23,4 +24,17 @@ export function getLastProfileId(): string | null {
 
 export function setLastProfileId(id: string): void {
   localStorage.setItem(LAST_PROFILE_KEY, id);
+}
+
+/**
+ * Whether the kill-switch (drop proxied traffic instead of leaking when the
+ * tunnel drops) is armed. Persisted here so the choice survives restarts and so
+ * the connect flow can pass it to the core. Off unless explicitly armed.
+ */
+export function getKillSwitch(): boolean {
+  return localStorage.getItem(KILLSWITCH_KEY) === "1";
+}
+
+export function setKillSwitch(on: boolean): void {
+  localStorage.setItem(KILLSWITCH_KEY, on ? "1" : "0");
 }
