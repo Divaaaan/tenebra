@@ -241,7 +241,7 @@ func TestServerIDDistinguishesStructFields(t *testing.T) {
 func TestServerIDStableWithStructFields(t *testing.T) {
 	n := model.Node{Protocol: model.AmneziaWG, Server: "wg.test", Port: 51820,
 		WireGuard: &model.WireGuard{PrivateKey: "PRIV", PeerPublicKey: "PEER"}}
-	if serverID(n) != serverID(n) {
+	if first, second := serverID(n), serverID(n); first != second {
 		t.Error("serverID not deterministic for WG node")
 	}
 	// A relabelled WG node keeps its ID (name still excluded).
