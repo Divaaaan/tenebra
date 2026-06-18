@@ -333,6 +333,62 @@ func TestParseShadowsocksEdgeErrors(t *testing.T) {
 	}
 }
 
+// TestParseShadowsocksLegacyAtInPassword covers fix #7: the legacy fully-base64
+// form must split on the LAST '@' so a password containing '@' is preserved.
+// The blob decodes to "aes-256-gcm:p@ssw0rd@example.com:8388".
+func TestParseShadowsocksLegacyAtInPassword(t *testing.T) {
+	const raw = "ss://YWVzLTI1Ni1nY206cEBzc3cwcmRAZXhhbXBsZS5jb206ODM4OA==#atpass"
+	got, err := ParseLink(raw)
+	if err != nil {
+		t.Fatalf("ParseLink() error = %v", err)
+	}
+	want := model.Node{
+		Protocol: model.Shadowsocks,
+		Name:     "atpass",
+		Server:   "example.com",
+		Port:     8388,
+		Method:   "aes-256-gcm",
+		Password: "p@ssw0rd",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ParseLink() =\n %#v\nwant\n %#v", got, want)
+	}
+}
+
+// TestParseShadowsocksEmptyPassword covers fix #7: a Shadowsocks link with an
+// empty password must be rejected in both the SIP002 and legacy forms (an empty
+// password is unusable and previously slipped through — only method was checked).
+func TestParseShadowsocksEmptyPassword(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		raw  string
+	}{
+		// SIP002 raw userinfo "aes-256-gcm:" -> method set, password empty.
+		{"sip002 empty password", "ss://aes-256-gcm:@example.com:8388#x"},
+		// Legacy blob decodes to "aes-256-gcm:@example.com:8388".
+		{"legacy empty password", "ss://YWVzLTI1Ni1nY206QGV4YW1wbGUuY29tOjgzODg=#x"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := ParseLink(tt.raw); err == nil {
+				t.Errorf("ParseLink(%q) expected empty-password error, got nil", tt.raw)
+			}
+		})
+	}
+}
+
+// TestParseHysteria2EmptyPassword covers fix #7: a Hysteria2 link carrying no
+// userinfo secret must be rejected rather than producing a passwordless node.
+func TestParseHysteria2EmptyPassword(t *testing.T) {
+	for _, raw := range []string{
+		"hysteria2://@example.com:8444#x", // empty userinfo
+		"hy2://@example.com:8444#x",       // alias, empty userinfo
+	} {
+		if _, err := ParseLink(raw); err == nil {
+			t.Errorf("ParseLink(%q) expected empty-password error, got nil", raw)
+		}
+	}
+}
+
 func TestParseShadowsocksPluginQuery(t *testing.T) {
 	got, err := ParseLink("ss://aes-256-gcm:plainpass@example.com:8388?plugin=v2ray-plugin%3Btls#pl")
 	if err != nil {

@@ -130,9 +130,12 @@ func Build(nodes []model.Node, selectedTag string, ro routing.Options, tun TunOp
 
 // buildNodes converts nodes into outbounds and endpoints, assigning each a
 // unique tag. It returns the outbound objects, endpoint objects, and the
-// ordered list of node tags (outbounds then endpoints) for the selector. A node
-// that fails to convert because of missing required fields aborts the build;
-// unknown/zero protocols are skipped.
+// ordered list of node tags (outbounds then endpoints) for the selector.
+// Zero/unknown protocols and semantically-invalid nodes (see validateNode) are
+// skipped, freeing their tag, so one bad entry can't poison the shared config
+// the connect path builds from every profile node. The error return is reserved
+// for genuinely fatal conditions; today it is always nil and the caller turns an
+// empty tag list into the "no usable nodes" error.
 func buildNodes(nodes []model.Node) (outs, endpoints []map[string]any, tags []string, err error) {
 	seen := map[string]int{}
 	uniq := func(name string) string {
@@ -158,10 +161,25 @@ func buildNodes(nodes []model.Node) (outs, endpoints []map[string]any, tags []st
 		}
 		tag := uniq(n.Name)
 
+		// A semantically-invalid node (bad port, missing credentials, keyless
+		// REALITY) must not be emitted: the connect path builds one config from
+		// every profile node, so a single node sing-box rejects at decode fails
+		// the ENTIRE config — every selector member and fallback candidate with
+		// it. Skip the offender exactly like an unknown protocol, freeing its tag,
+		// so one bad entry doesn't sink a whole subscription.
+		if err := validateNode(n); err != nil {
+			delete(seen, tag)
+			continue
+		}
+
 		if n.Protocol == model.AmneziaWG {
 			ep, epErr := wireguardEndpoint(n, tag)
 			if epErr != nil {
-				return nil, nil, nil, epErr
+				// validateNode already vetted the key material; treat any residual
+				// endpoint error as a skip, not a fatal, to keep the blast radius
+				// to the single node.
+				delete(seen, tag)
+				continue
 			}
 			endpoints = append(endpoints, ep)
 			tags = append(tags, tag)
@@ -181,6 +199,49 @@ func buildNodes(nodes []model.Node) (outs, endpoints []map[string]any, tags []st
 		tags = append(tags, tag)
 	}
 	return outs, endpoints, tags, nil
+}
+
+// validateNode reports whether a node carries the minimum fields sing-box needs
+// to build a working outbound/endpoint for its protocol. It returns an error
+// describing the first missing requirement; buildNodes turns that into a
+// logged-skip rather than a fatal so one bad node can't poison the shared
+// config. The checks mirror sing-box's own decode-time requirements:
+//   - port must be a valid uint16 (1..65535), for every protocol;
+//   - Shadowsocks needs a method AND a password;
+//   - Trojan and Hysteria2 need a password;
+//   - VLESS and VMess need a UUID;
+//   - a REALITY node (TLS.Reality set) needs a non-empty public_key — a keyless
+//     reality outbound can never handshake and sing-box FATALs on it.
+func validateNode(n model.Node) error {
+	if n.Port < 1 || n.Port > 65535 {
+		return fmt.Errorf("node %q: port %d out of range 1..65535", n.Name, n.Port)
+	}
+	if n.TLS != nil && n.TLS.Reality != nil && n.TLS.Reality.PublicKey == "" {
+		return fmt.Errorf("node %q: reality without public_key", n.Name)
+	}
+	switch n.Protocol {
+	case model.Shadowsocks:
+		if n.Method == "" || n.Password == "" {
+			return fmt.Errorf("node %q: shadowsocks needs method and password", n.Name)
+		}
+	case model.Trojan:
+		if n.Password == "" {
+			return fmt.Errorf("node %q: trojan needs password", n.Name)
+		}
+	case model.Hysteria2:
+		if n.Password == "" {
+			return fmt.Errorf("node %q: hysteria2 needs password", n.Name)
+		}
+	case model.VLESS, model.VMess:
+		if n.UUID == "" {
+			return fmt.Errorf("node %q: %s needs uuid", n.Name, n.Protocol)
+		}
+	case model.AmneziaWG:
+		if n.WireGuard == nil || n.WireGuard.PrivateKey == "" || n.WireGuard.PeerPublicKey == "" {
+			return fmt.Errorf("node %q: amneziawg needs private_key and peer_public_key", n.Name)
+		}
+	}
+	return nil
 }
 
 // tunInbound renders the single tun inbound. auto_route always routes traffic

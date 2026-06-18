@@ -86,9 +86,18 @@ func assignServerIDs(nodes []model.Node) []Server {
 }
 
 // serverID is the first 8 bytes of a SHA-256 over the fields that identify a
-// server: protocol, endpoint and the credential that authenticates to it. The
+// server: protocol, endpoint and the credentials that authenticate to it. The
 // name is deliberately excluded so a relabelled node keeps its ID. Fields are
 // length-prefixed to avoid collisions between adjacent values.
+//
+// The common credential fields (UUID/Password/Method) aren't enough for every
+// protocol: an AmneziaWG peer carries none of them, so two distinct WG peers on
+// the same host:port would collide to one ID; likewise two REALITY variants that
+// differ only in public_key/short_id, or two transports that differ only in
+// type/path. Folding those discriminators in keeps the ID a faithful identity so
+// a refresh maps each server to the right prior entry. Absent sub-structs
+// contribute empty fields (length-prefixed), so a plain node's ID is unchanged
+// from before only when those fields were already empty.
 func serverID(n model.Node) string {
 	h := sha256.New()
 	writeField(h, string(n.Protocol))
@@ -97,6 +106,29 @@ func serverID(n model.Node) string {
 	writeField(h, n.UUID)
 	writeField(h, n.Password)
 	writeField(h, n.Method)
+	if n.WireGuard != nil {
+		writeField(h, n.WireGuard.PrivateKey)
+		writeField(h, n.WireGuard.PeerPublicKey)
+	} else {
+		writeField(h, "")
+		writeField(h, "")
+	}
+	if n.TLS != nil && n.TLS.Reality != nil {
+		writeField(h, n.TLS.Reality.PublicKey)
+		writeField(h, n.TLS.Reality.ShortID)
+	} else {
+		writeField(h, "")
+		writeField(h, "")
+	}
+	if n.Transport != nil {
+		writeField(h, n.Transport.Type)
+		writeField(h, n.Transport.Path)
+		writeField(h, n.Transport.ServiceName)
+	} else {
+		writeField(h, "")
+		writeField(h, "")
+		writeField(h, "")
+	}
 	sum := h.Sum(nil)
 	return hex.EncodeToString(sum[:8])
 }
