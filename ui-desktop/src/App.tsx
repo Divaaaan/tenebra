@@ -15,6 +15,7 @@ import {
   setLastProfileId,
 } from "./lib/settings";
 import { withViewTransition } from "./lib/viewTransition";
+import { useConnectBloom } from "./lib/useConnectBloom";
 
 export type ScreenId = "home" | "profiles" | "settings" | "logs";
 
@@ -22,6 +23,10 @@ export function App() {
   const tenebra = useTenebra();
   const { t } = useI18n();
   const [screen, setScreen] = useState<ScreenId>("home");
+
+  // The signature moment: a full-window flash of light when the tunnel goes
+  // live. No-ops under reduced motion and on the initial snapshot.
+  useConnectBloom(tenebra.state.state);
 
   // Navigate through a view transition so screen swaps fade-and-rise rather than
   // cutting. The helper no-ops the animation (but still navigates) when the API

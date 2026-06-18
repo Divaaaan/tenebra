@@ -1,6 +1,13 @@
-/* Design tokens. Colour is the only thing that flips between themes; spacing,
-   radii, typography and motion are shared. Dark is the default and lives on
-   :root so a missing data-theme still renders the intended look. */
+/* Design tokens — the single source for colour, type, space, and motion.
+   "Eclipse" palette: the canvas is a cold violet-black (night, chosen — not the
+   absence of design), the brand charge is an electric indigo→periwinkle, and a
+   cyan aurora is the "alive / protected" colour that only floods in once the
+   tunnel is up. Warmth (Ember) is reserved for danger, so on this product an
+   error is the only heat against the cold — a small, deliberate emotional code.
+
+   Colour is the only thing that flips between themes; space, radii, type and
+   motion are shared. Dark is the default and lives on :root, so a missing
+   data-theme still renders the intended look. */
 
 :root {
   --font-sans:
@@ -15,49 +22,60 @@
   --space-5: 24px;
   --space-6: 32px;
   --space-7: 48px;
+  --space-8: 72px;
 
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 16px;
+  --radius-sm: 7px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
   --radius-pill: 999px;
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 14px 40px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 30px 70px -20px rgba(0, 0, 0, 0.6);
   --shadow-glow: 0 0 0 6px color-mix(in srgb, var(--accent) 18%, transparent);
 
-  /* Motion system. A handful of durations and shared easings, reused
-     everywhere so the whole app accelerates and settles with one voice.
-     --dur-* are the timing steps; --ease-* are the character of the move.
-     prefers-reduced-motion neutralises these globally (see global.css). */
+  /* Motion system. A handful of durations and shared easings reused everywhere,
+     so the whole app accelerates and settles with one voice. --dur-* are the
+     timing steps; --ease-* are the character of the move. prefers-reduced-motion
+     neutralises these globally (see global.css). */
   --dur-fast: 130ms; /* taps, hovers, presses */
   --dur-base: 240ms; /* the default — most state changes */
-  --dur-slow: 420ms; /* deliberate moments: screen swaps, the dial settling */
-  --dur-breath: 2600ms; /* ambient loops: the dial aura breathing while connecting */
+  --dur-slow: 460ms; /* deliberate moments: screen swaps, the dial settling */
+  --dur-bloom: 1100ms; /* the hero: connection flooding the canvas with light */
+  --dur-breath: 4200ms; /* ambient loops: aura breathing, sky drifting */
 
   /* Emphasised ease-out: quick to leave, gentle to arrive. The workhorse. */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  /* Symmetric ease for things that travel and return (toggles, sparkline). */
+  /* Symmetric ease for things that travel and return (toggles, the wave). */
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
-  /* A short overshoot — used sparingly where a state should feel "alive"
-     (the dial snapping into "connected", a switch thumb landing). */
+  /* A short overshoot — used where a state should feel "alive" (the dial
+     snapping into connected, a switch thumb landing). */
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* A bigger, springier landing for the connect bloom only. */
+  --ease-bloom: cubic-bezier(0.16, 1, 0.3, 1);
 
-  /* Legacy aliases kept so existing rules keep working; both now route
-     through the motion system above. */
+  /* Legacy aliases kept so existing rules keep working; both route through the
+     motion system above. */
   --transition-fast: var(--dur-fast) var(--ease-out);
   --transition-med: var(--dur-base) var(--ease-out);
 
-  /* Brand accent stays constant across themes. Indigo is the resting brand;
-     a cooler aurora-teal is the "alive" companion that only blooms when the
-     tunnel is up, so connected reads as light entering the dark. */
-  --accent: #6c8cff;
-  --accent-strong: #5273ff;
+  /* Brand energy colours — constant across themes. Halo (indigo→periwinkle) is
+     the resting charge; Aurora (cyan-teal) is the companion that blooms when the
+     tunnel is live, so connected reads as light entering the dark. A violet mid
+     bridges the two so gradients between them never go muddy-grey. Ember is the
+     warm exception, used only for danger. */
+  --accent: #7c84ff; /* halo / brand */
+  --accent-strong: #5d63f5;
+  --accent-soft: #a9adff;
   --accent-contrast: #ffffff;
-  --aurora: #57e8d0;
+  --aurora: #45e0d0; /* alive / protected */
+  --aurora-strong: #18c8c0;
+  --violet: #9d6bff; /* the bridge between halo and aurora */
+  --ember: #ff7d5c; /* warmth, reserved for danger */
 
-  --ok: #3ecf8e;
+  --ok: #3fd99a;
   --warn: #f5b14c;
-  --danger: #f06767;
+  --danger: var(--ember);
 }
 
 /* Dark theme (default). */
@@ -65,73 +83,75 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --bg: #0e1014;
-  --bg-elevated: #161a21;
-  --bg-inset: #1d222b;
-  --surface: #14181f;
-  --surface-hover: #1b212a;
+  /* A cold violet-black, not a neutral grey — the dark is a choice. */
+  --bg: #0a0b12;
+  --bg-elevated: #11131d;
+  --bg-inset: #181b27;
+  --surface: #12141f;
+  --surface-hover: #191d2b;
 
-  --border: #262c37;
-  --border-strong: #333b48;
+  --border: #242838;
+  --border-strong: #343a50;
 
-  --text: #e8ecf2;
-  --text-muted: #9aa4b2;
-  --text-faint: #69727f;
+  --text: #eaecf5;
+  --text-muted: #9aa1b9;
+  --text-faint: #646b85;
 
-  --ok-bg: rgba(62, 207, 142, 0.14);
+  --ok-bg: rgba(63, 217, 154, 0.14);
   --warn-bg: rgba(245, 177, 76, 0.14);
-  --danger-bg: rgba(240, 103, 103, 0.14);
-  --accent-bg: rgba(108, 140, 255, 0.14);
+  --danger-bg: rgba(255, 125, 92, 0.15);
+  --accent-bg: rgba(124, 132, 255, 0.15);
+  --aurora-bg: rgba(69, 224, 208, 0.14);
 
-  /* The well behind the dial — a touch deeper than the page so the button
-     reads as a recess in the dark that light can pool into. */
-  --dial-well: radial-gradient(
-    circle at 50% 42%,
-    #11151c 0%,
-    #0c0e12 70%
-  );
+  /* The well behind the dial — deeper than the page, so the button reads as a
+     recess in the dark that light can pool into. */
+  --dial-well: radial-gradient(circle at 50% 38%, #14172180 0%, #090a11 72%);
   /* A deep inset shadow carves the recess on dark. */
-  --dial-well-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.04),
-    inset 0 -8px 24px rgba(0, 0, 0, 0.45);
-  /* Ambient "the room lights up" wash, only visible once connected. Two faint
-     pools drift behind the whole shell; kept very low so it never competes. */
-  --ambient-strength: 0.5;
+  --dial-well-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.05),
+    inset 0 -10px 30px rgba(0, 0, 0, 0.55);
+
+  /* Ambient "sky": how strongly the background aurora shows. It is faintly alive
+     even when idle (cold), and intensifies on connect (see global.css). */
+  --sky-idle: 0.5;
+  --sky-connected: 1;
+  /* Grain opacity over the canvas — a touch of texture so flat panels don't read
+     as dead space. Off on light. */
+  --grain-opacity: 0.035;
 }
 
-/* Light theme. */
+/* Light theme — stays clean and bright; the night-sky drama is a dark-only idea,
+   so the ambient sky and grain switch off and the recess stays subtle. */
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --bg: #f4f6fa;
+  --bg: #f3f5fb;
   --bg-elevated: #ffffff;
-  --bg-inset: #eef1f6;
+  --bg-inset: #eceff7;
   --surface: #ffffff;
-  --surface-hover: #f0f3f8;
+  --surface-hover: #eef1f9;
 
-  --border: #e1e6ed;
-  --border-strong: #cdd4df;
+  --border: #e0e5f0;
+  --border-strong: #ccd3e2;
 
-  --text: #1a1f27;
-  --text-muted: #5a6573;
-  --text-faint: #8c97a5;
+  --text: #161a26;
+  --text-muted: #565e73;
+  --text-faint: #8a93a8;
 
   --shadow-sm: 0 1px 2px rgba(20, 28, 46, 0.08);
-  --shadow-md: 0 10px 30px rgba(20, 28, 46, 0.12);
+  --shadow-md: 0 14px 38px rgba(20, 28, 46, 0.14);
+  --shadow-lg: 0 30px 60px -24px rgba(20, 28, 46, 0.2);
 
   --ok-bg: rgba(36, 168, 109, 0.12);
   --warn-bg: rgba(214, 142, 41, 0.14);
-  --danger-bg: rgba(214, 70, 70, 0.12);
-  --accent-bg: rgba(82, 115, 255, 0.12);
+  --danger-bg: rgba(224, 92, 60, 0.12);
+  --accent-bg: rgba(93, 99, 245, 0.12);
+  --aurora-bg: rgba(24, 200, 192, 0.14);
 
-  /* Light keeps the recess subtle and skips the ambient room-glow, which only
-     makes sense against darkness. */
-  --dial-well: radial-gradient(
-    circle at 50% 42%,
-    #ffffff 0%,
-    #eef1f6 72%
-  );
-  /* A soft, light inset instead of the heavy dark one — keeps the well clean. */
+  --dial-well: radial-gradient(circle at 50% 38%, #ffffff 0%, #eef1f9 74%);
   --dial-well-shadow: inset 0 1px 2px rgba(20, 28, 46, 0.06),
-    inset 0 -6px 18px rgba(20, 28, 46, 0.06);
-  --ambient-strength: 0;
+    inset 0 -6px 18px rgba(20, 28, 46, 0.07);
+
+  --sky-idle: 0;
+  --sky-connected: 0.35;
+  --grain-opacity: 0;
 }
