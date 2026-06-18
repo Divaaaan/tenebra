@@ -1,0 +1,514 @@
+/* Profiles + import overlay — spec-sheet restyle. Renders inside the shared
+   overlay panel (.overlay-body), laid out as a vertical document. Sharp borders,
+   one accent, mono throughout, near-zero motion. Class names are prof-scoped so
+   nothing here collides with the connection/server vocabulary. */
+
+.prof {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  /* Clear the overlay's top-right ✕ so the title doesn't sit under it. */
+  padding: 26px var(--sp-5) var(--sp-6);
+}
+
+/* ── header ── */
+.prof-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  border-bottom: var(--bw) solid var(--line);
+  padding-bottom: var(--sp-4);
+}
+.prof-headings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.prof-eyebrow {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-cap);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.prof-title {
+  margin: 0;
+  font-family: var(--display);
+  font-size: var(--fs-kpi);
+  font-weight: 700;
+  letter-spacing: var(--track-kpi);
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+/* ── primary button (matches the connect CTA vocabulary) ── */
+.prof-btn-primary {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding: 13px 28px;
+  border: var(--bw-emphasis) solid var(--signal);
+  color: var(--signal);
+  transition:
+    background var(--t-base),
+    color var(--t-base);
+}
+.prof-btn-primary:hover {
+  background: var(--signal);
+  color: var(--on-signal);
+}
+.prof-btn-primary:disabled {
+  border-color: var(--text-dim-2);
+  color: var(--text-dim-2);
+  cursor: default;
+}
+.prof-btn-primary:disabled:hover {
+  background: transparent;
+  color: var(--text-dim-2);
+}
+
+/* ── ghost / glyph buttons ── */
+.prof-ghost {
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 6px 12px;
+  border: var(--bw) solid var(--line);
+  color: var(--text-dim);
+  transition:
+    color var(--t-fast),
+    border-color var(--t-fast);
+}
+.prof-ghost:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+.prof-ghost:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.prof-ghost:disabled:hover {
+  color: var(--text-dim);
+  border-color: var(--line);
+}
+/* Destructive is the accent, not a separate red. */
+.prof-ghost--danger:hover {
+  color: var(--signal);
+  border-color: var(--signal);
+}
+
+/* ── empty state ── */
+.prof-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-3);
+  border: var(--bw) solid var(--line);
+  padding: 56px var(--sp-5);
+  text-align: center;
+}
+.prof-empty-glyph {
+  font-family: var(--mono);
+  font-size: 28px;
+  line-height: 1;
+  color: var(--text-dim-2);
+}
+.prof-empty-title {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--text);
+}
+.prof-empty-hint {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--track-body);
+  color: var(--text-dim);
+  max-width: 42ch;
+}
+
+/* ── profile list ── */
+.prof-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.prof-card {
+  border: var(--bw) solid var(--line);
+  padding: var(--sp-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  transition: border-color var(--t-fast);
+}
+.prof-card:hover {
+  background: var(--surface);
+}
+.prof-card.is-selected {
+  background: var(--surface-2);
+  border-color: var(--line-2);
+}
+
+.prof-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-4);
+}
+.prof-card-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.prof-active-sq {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  background: var(--signal);
+  display: inline-block;
+}
+.prof-name {
+  margin: 0;
+  font-family: var(--display);
+  font-size: var(--fs-sku);
+  font-weight: 600;
+  letter-spacing: var(--track-sku);
+  line-height: 1.1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prof-name.is-active {
+  color: var(--signal);
+}
+.prof-src {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border: var(--bw) solid var(--line);
+  padding: 2px 7px;
+  flex: none;
+}
+.prof-active-tag {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--signal);
+  flex: none;
+}
+
+/* node-count toggle, reads as a stat */
+.prof-count {
+  flex: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  border: var(--bw) solid var(--line);
+  padding: 5px 11px;
+  color: var(--text-dim);
+  transition:
+    color var(--t-fast),
+    border-color var(--t-fast);
+}
+.prof-count:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+.prof-count[aria-expanded="true"] {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+.prof-count-n {
+  font-family: var(--display);
+  font-size: var(--fs-brand);
+  font-weight: 700;
+  letter-spacing: var(--track-kpi);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.prof-count-lab {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.prof-count-caret {
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  line-height: 1;
+  align-self: center;
+}
+
+/* ── meta spec rows ── */
+.prof-meta {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin: 0;
+  border-top: var(--bw) solid var(--line);
+  border-left: var(--bw) solid var(--line);
+}
+.prof-meta-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--sp-3) var(--sp-4);
+  border-right: var(--bw) solid var(--line);
+  border-bottom: var(--bw) solid var(--line);
+  min-width: 0;
+}
+.prof-meta-lab {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.prof-meta-val {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  letter-spacing: var(--track-body);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prof-expiry--ok {
+  color: var(--text-dim);
+}
+.prof-expiry--soon {
+  color: var(--warn-soft);
+}
+.prof-expiry--expired {
+  color: var(--signal);
+}
+
+/* ── expanded node list ── */
+.prof-nodes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: var(--bw) solid var(--line);
+}
+.prof-node {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: 11px var(--sp-1);
+  border-bottom: var(--bw) solid var(--line);
+}
+.prof-node:last-child {
+  border-bottom: none;
+}
+.prof-node-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.prof-node-name {
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  letter-spacing: var(--track-body);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prof-node-detail {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-body);
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── action row ── */
+.prof-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  border-top: var(--bw) solid var(--line);
+  padding-top: var(--sp-4);
+}
+
+/* ==========================================================================
+   IMPORT DIALOG — a secondary modal stacked over the overlay panel. Its own
+   scrim sits above the shell overlay (z-index 20); the panel is a bordered
+   spec-sheet card.
+   ========================================================================== */
+.prof-modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.62);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-5);
+}
+.prof-modal {
+  width: min(520px, 100%);
+  background: var(--bg);
+  border: var(--bw) solid var(--line-2);
+  padding: var(--sp-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+.prof-modal-title {
+  margin: 0;
+  font-family: var(--display);
+  font-size: var(--fs-sku);
+  font-weight: 700;
+  letter-spacing: var(--track-sku);
+  text-transform: uppercase;
+}
+
+/* tabs = segmented control */
+.prof-tabs {
+  display: flex;
+}
+.prof-tab {
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 7px 13px;
+  border: var(--bw) solid var(--line);
+  margin-right: -1px;
+  color: var(--text-dim);
+  transition:
+    color var(--t-fast),
+    border-color var(--t-fast);
+}
+.prof-tab:hover {
+  color: var(--text);
+}
+.prof-tab.is-on {
+  color: var(--signal);
+  border-color: var(--signal);
+  position: relative;
+  z-index: 1;
+}
+
+.prof-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+/* fields */
+.prof-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.prof-field-lab {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.prof-field-row {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: stretch;
+}
+.prof-field-row .prof-input {
+  flex: 1;
+  min-width: 0;
+}
+.prof-field-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.prof-field-hint {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--track-body);
+  color: var(--text-dim);
+}
+
+/* inputs */
+.prof-input {
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  letter-spacing: var(--track-body);
+  color: var(--text);
+  background: transparent;
+  border: var(--bw) solid var(--line);
+  padding: 9px 11px;
+  caret-color: var(--signal);
+  transition: border-color var(--t-fast);
+}
+.prof-input::placeholder {
+  color: var(--text-dim-2);
+}
+.prof-input:focus {
+  outline: none;
+  border-color: var(--signal);
+}
+.prof-input--area {
+  resize: vertical;
+  min-height: 72px;
+  line-height: 1.5;
+}
+
+/* error text = the accent */
+.prof-error {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--track-body);
+  color: var(--signal);
+}
+
+.prof-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  border-top: var(--bw) solid var(--line);
+  padding-top: var(--sp-4);
+}
+
+/* visually hidden file inputs (kept focusable for a11y) */
+.prof-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

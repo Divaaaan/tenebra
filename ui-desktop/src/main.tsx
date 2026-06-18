@@ -16,6 +16,9 @@ import "./styles/app.css";
 import "./styles/shell.css";
 import "./styles/connection.css";
 import "./styles/servers.css";
+import "./styles/settings.css";
+import "./styles/profiles.css";
+import "./styles/logs.css";
 
 const root = document.getElementById("root");
 if (!root) {

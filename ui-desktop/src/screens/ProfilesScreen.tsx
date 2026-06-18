@@ -32,12 +32,17 @@ export function ProfilesScreen({
   const [pings, setPings] = useState<Record<string, PingResult[]>>({});
 
   return (
-    <section className="screen profiles">
-      <header className="screen-head">
-        <h1>{t.profiles.title}</h1>
+    <section className="prof">
+      <header className="prof-head">
+        <div className="prof-headings">
+          <span className="prof-eyebrow" aria-hidden="true">
+            TNB · CONFIG
+          </span>
+          <h1 className="prof-title">{t.profiles.title}</h1>
+        </div>
         <button
           type="button"
-          className="btn btn-primary"
+          className="prof-btn-primary"
           onClick={() => setImporting(true)}
         >
           {t.profiles.import.title}
@@ -45,12 +50,15 @@ export function ProfilesScreen({
       </header>
 
       {profiles.length === 0 ? (
-        <div className="empty-state">
-          <h2>{t.profiles.empty}</h2>
-          <p className="muted">{t.profiles.emptyHint}</p>
+        <div className="prof-empty">
+          <span className="prof-empty-glyph" aria-hidden="true">
+            ▢
+          </span>
+          <h2 className="prof-empty-title">{t.profiles.empty}</h2>
+          <p className="prof-empty-hint">{t.profiles.emptyHint}</p>
         </div>
       ) : (
-        <ul className="profile-list">
+        <ul className="prof-list">
           {profiles.map((profile) => (
             <ProfileCard
               key={profile.id}
@@ -69,10 +77,7 @@ export function ProfilesScreen({
       )}
 
       {importing && (
-        <ImportDialog
-          tenebra={tenebra}
-          onClose={() => setImporting(false)}
-        />
+        <ImportDialog tenebra={tenebra} onClose={() => setImporting(false)} />
       )}
     </section>
   );
@@ -86,6 +91,32 @@ interface ProfileCardProps {
   onSelect: () => void;
   pings?: PingResult[];
   onPings: (results: PingResult[]) => void;
+}
+
+// Calendar-day tone for the expiry readout, mirroring the day math in
+// formatExpiry. Purely presentational: signal once expired, soft-warn inside a
+// week, dim otherwise. Returns null when there's no usable timestamp.
+type ExpiryTone = "expired" | "soon" | "ok";
+function expiryTone(iso: string | undefined): ExpiryTone | null {
+  if (!iso) {
+    return null;
+  }
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  const startOfDay = (d: Date) =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round(
+    (startOfDay(date) - startOfDay(new Date())) / 86_400_000,
+  );
+  if (days < 0) {
+    return "expired";
+  }
+  if (days <= 7) {
+    return "soon";
+  }
+  return "ok";
 }
 
 function ProfileCard({
@@ -110,6 +141,7 @@ function ProfileCard({
     tomorrow: t.profiles.expiresTomorrow,
     expired: t.profiles.expired,
   });
+  const tone = expiryTone(profile.expiresAt);
 
   const fastest = useMemo(() => {
     const ok = (pings ?? []).filter((r) => r.ok);
@@ -171,58 +203,72 @@ function ProfileCard({
     pings?.find((r) => r.node === nodeId);
 
   return (
-    <li className={`card profile-card${selected ? " is-selected" : ""}`}>
-      <div className="profile-head">
-        <div className="profile-title">
-          <h2>{profile.name}</h2>
-          <span className={`badge badge--${profile.source}`}>
-            {t.profiles.source[profile.source]}
-          </span>
-          {connected && <span className="badge badge--active">{t.profiles.active}</span>}
+    <li className={`prof-card${selected ? " is-selected" : ""}`}>
+      <div className="prof-card-head">
+        <div className="prof-card-title">
+          {connected && (
+            <span className="prof-active-sq" aria-hidden="true" />
+          )}
+          <h2 className={connected ? "prof-name is-active" : "prof-name"}>
+            {profile.name}
+          </h2>
+          <span className="prof-src">{t.profiles.source[profile.source]}</span>
+          {connected && (
+            <span className="prof-active-tag">{t.profiles.active}</span>
+          )}
         </div>
         <button
           type="button"
-          className="btn btn-ghost btn-sm"
+          className="prof-count"
           aria-expanded={expanded}
           onClick={() => setExpanded((v) => !v)}
         >
-          {profile.nodes.length} {t.profiles.nodes}
+          <span className="prof-count-n">{profile.nodes.length}</span>
+          <span className="prof-count-lab">{t.profiles.nodes}</span>
+          <span className="prof-count-caret" aria-hidden="true">
+            {expanded ? "▣" : "▢"}
+          </span>
         </button>
       </div>
 
-      <dl className="profile-meta">
-        <div>
-          <dt>{t.profiles.updated}</dt>
-          <dd>{formatDate(profile.updatedAt, lang)}</dd>
+      <dl className="prof-meta">
+        <div className="prof-meta-cell">
+          <dt className="prof-meta-lab">{t.profiles.updated}</dt>
+          <dd className="prof-meta-val">{formatDate(profile.updatedAt, lang)}</dd>
         </div>
         {expiry && (
-          <div>
-            <dt>{t.profiles.expires}</dt>
-            <dd title={formatDate(profile.expiresAt, lang)}>{expiry}</dd>
+          <div className="prof-meta-cell">
+            <dt className="prof-meta-lab">{t.profiles.expires}</dt>
+            <dd
+              className={`prof-meta-val prof-expiry prof-expiry--${tone ?? "ok"}`}
+              title={formatDate(profile.expiresAt, lang)}
+            >
+              {expiry}
+            </dd>
           </div>
         )}
         {usage && (
-          <div>
-            <dt>{t.profiles.traffic}</dt>
-            <dd>{usage}</dd>
+          <div className="prof-meta-cell">
+            <dt className="prof-meta-lab">{t.profiles.traffic}</dt>
+            <dd className="prof-meta-val">{usage}</dd>
           </div>
         )}
       </dl>
 
       {expanded && (
-        <ul className="node-list">
+        <ul className="prof-nodes">
           {profile.nodes.map((node) => (
-            <li key={node.id} className="node-row">
-              <div className="node-info">
-                <span className="node-name">{node.name}</span>
-                <span className="node-detail muted">
+            <li key={node.id} className="prof-node">
+              <div className="prof-node-info">
+                <span className="prof-node-name">{node.name}</span>
+                <span className="prof-node-detail">
                   {node.protocol} · {node.server}:{node.port}
                 </span>
               </div>
               <PingBadge result={pingResultFor(node.id)} />
               <button
                 type="button"
-                className="btn btn-ghost btn-sm"
+                className="prof-ghost"
                 disabled={busy}
                 onClick={() => connectNode(node.id)}
               >
@@ -233,10 +279,10 @@ function ProfileCard({
         </ul>
       )}
 
-      <div className="profile-actions">
+      <div className="prof-actions">
         <button
           type="button"
-          className="btn btn-secondary btn-sm"
+          className="prof-ghost"
           disabled={selected}
           onClick={onSelect}
         >
@@ -244,7 +290,7 @@ function ProfileCard({
         </button>
         <button
           type="button"
-          className="btn btn-secondary btn-sm"
+          className="prof-ghost"
           disabled={pinging}
           onClick={runPing}
         >
@@ -253,7 +299,7 @@ function ProfileCard({
         {fastest && (
           <button
             type="button"
-            className="btn btn-secondary btn-sm"
+            className="prof-ghost"
             disabled={busy}
             onClick={() => connectNode(fastest.node)}
           >
@@ -263,7 +309,7 @@ function ProfileCard({
         {profile.source === "subscription" && (
           <button
             type="button"
-            className="btn btn-ghost btn-sm"
+            className="prof-ghost"
             disabled={busy}
             onClick={refresh}
           >
@@ -272,7 +318,7 @@ function ProfileCard({
         )}
         <button
           type="button"
-          className="btn btn-danger btn-sm"
+          className="prof-ghost prof-ghost--danger"
           disabled={busy}
           onClick={remove}
         >
@@ -412,9 +458,7 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
   function importDecoded(value: string) {
     const isSubscription = /^https?:\/\//i.test(value);
     if (isSubscription) {
-      void finish(() =>
-        api.importSubscription(value, name.trim() || value),
-      );
+      void finish(() => api.importSubscription(value, name.trim() || value));
     } else {
       void finish(() => api.importLink(value, name.trim() || undefined));
     }
@@ -454,7 +498,7 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
 
   return (
     <div
-      className="modal-overlay"
+      className="prof-modal-scrim"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) {
           onClose();
@@ -462,23 +506,27 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
       }}
     >
       <div
-        className="modal"
+        className="prof-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="import-title"
       >
-        <h2 id="import-title" className="modal-title">
+        <h2 id="import-title" className="prof-modal-title">
           {t.profiles.import.title}
         </h2>
 
-        <div className="tabs" role="tablist" aria-label={t.profiles.import.title}>
+        <div
+          className="prof-tabs"
+          role="tablist"
+          aria-label={t.profiles.import.title}
+        >
           {tabs.map((id) => (
             <button
               key={id}
               type="button"
               role="tab"
               aria-selected={tab === id}
-              className={`tab${tab === id ? " active" : ""}`}
+              className={`prof-tab${tab === id ? " is-on" : ""}`}
               onClick={() => {
                 setTab(id);
                 setError(null);
@@ -489,13 +537,13 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
           ))}
         </div>
 
-        <div className="modal-body" role="tabpanel">
+        <div className="prof-modal-body" role="tabpanel">
           {tab !== "file" && (
-            <label className="field">
-              <span className="field-label">{t.profiles.import.name}</span>
+            <label className="prof-field">
+              <span className="prof-field-lab">{t.profiles.import.name}</span>
               <input
                 ref={firstFieldRef}
-                className="control"
+                className="prof-input"
                 value={name}
                 placeholder={t.profiles.import.namePlaceholder}
                 onChange={(e) => setName(e.target.value)}
@@ -504,11 +552,11 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
           )}
 
           {tab === "subscription" && (
-            <label className="field">
-              <span className="field-label">{t.profiles.import.url}</span>
-              <div className="field-row">
+            <label className="prof-field">
+              <span className="prof-field-lab">{t.profiles.import.url}</span>
+              <div className="prof-field-row">
                 <input
-                  className="control"
+                  className="prof-input"
                   value={url}
                   placeholder={t.profiles.import.urlPlaceholder}
                   inputMode="url"
@@ -516,7 +564,7 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
                 />
                 <button
                   type="button"
-                  className="btn btn-secondary"
+                  className="prof-ghost"
                   disabled={busy}
                   onClick={() => void pasteInto(setUrl)}
                 >
@@ -527,19 +575,19 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
           )}
 
           {tab === "link" && (
-            <label className="field">
-              <span className="field-label">{t.profiles.import.link}</span>
+            <label className="prof-field">
+              <span className="prof-field-lab">{t.profiles.import.link}</span>
               <textarea
-                className="control control--area"
+                className="prof-input prof-input--area"
                 value={link}
                 rows={3}
                 placeholder={t.profiles.import.linkPlaceholder}
                 onChange={(e) => setLink(e.target.value)}
               />
-              <div className="field-actions">
+              <div className="prof-field-actions">
                 <button
                   type="button"
-                  className="btn btn-secondary btn-sm"
+                  className="prof-ghost"
                   disabled={busy}
                   onClick={() => void pasteInto(setLink)}
                 >
@@ -550,21 +598,21 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
           )}
 
           {tab === "file" && (
-            <div className="field">
+            <div className="prof-field">
               <button
                 type="button"
-                className="btn btn-secondary"
+                className="prof-ghost"
                 disabled={busy}
                 onClick={() => fileInputRef.current?.click()}
               >
                 {t.profiles.import.pickFile}
               </button>
-              <p className="field-hint muted">{t.profiles.import.fileHint}</p>
+              <p className="prof-field-hint">{t.profiles.import.fileHint}</p>
               <input
                 ref={fileInputRef}
                 type="file"
                 accept=".txt"
-                className="visually-hidden"
+                className="prof-visually-hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) {
@@ -576,37 +624,39 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
           )}
 
           {tab === "qr" && (
-            <div className="field">
+            <div className="prof-field">
               {qrSupported ? (
                 <>
-                  <div className="field-row">
+                  <div className="prof-field-row">
                     <button
                       type="button"
-                      className="btn btn-secondary"
+                      className="prof-ghost"
                       disabled={busy || scanning}
                       onClick={() => qrInputRef.current?.click()}
                     >
-                      {scanning ? t.profiles.import.qrScanning : t.profiles.import.qrPick}
+                      {scanning
+                        ? t.profiles.import.qrScanning
+                        : t.profiles.import.qrPick}
                     </button>
                     <button
                       type="button"
-                      className="btn btn-secondary"
+                      className="prof-ghost"
                       disabled={busy || scanning}
                       onClick={() => void onQrFromClipboard()}
                     >
                       {t.profiles.import.qrPasteImage}
                     </button>
                   </div>
-                  <p className="field-hint muted">{t.profiles.import.qrHint}</p>
+                  <p className="prof-field-hint">{t.profiles.import.qrHint}</p>
                 </>
               ) : (
-                <p className="field-hint muted">{t.errors.qrUnsupported}</p>
+                <p className="prof-field-hint">{t.errors.qrUnsupported}</p>
               )}
               <input
                 ref={qrInputRef}
                 type="file"
                 accept="image/*"
-                className="visually-hidden"
+                className="prof-visually-hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   // Reset so picking the same file again still fires onChange.
@@ -620,20 +670,20 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
           )}
 
           {error && (
-            <p className="form-error" role="alert">
+            <p className="prof-error" role="alert">
               {error}
             </p>
           )}
         </div>
 
-        <div className="modal-actions">
-          <button type="button" className="btn btn-ghost" onClick={onClose}>
+        <div className="prof-modal-actions">
+          <button type="button" className="prof-ghost" onClick={onClose}>
             {t.home.cancel}
           </button>
           {(tab === "subscription" || tab === "link") && (
             <button
               type="button"
-              className="btn btn-primary"
+              className="prof-btn-primary"
               disabled={busy}
               onClick={tab === "subscription" ? submitSubscription : submitLink}
             >
