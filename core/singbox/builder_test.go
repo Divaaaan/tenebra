@@ -442,9 +442,17 @@ func TestWireGuardEndpoint(t *testing.T) {
 	if p["pre_shared_key"] != "PSKFAKE" {
 		t.Errorf("peer psk = %v", p["pre_shared_key"])
 	}
-	// AmneziaWG knobs present on the endpoint.
-	if ep["jc"] != 4 || ep["s1"] != 15 || ep["h1"] != int64(1234567890) {
-		t.Errorf("amnezia knobs = jc:%v s1:%v h1:%v", ep["jc"], ep["s1"], ep["h1"])
+	// The bundled binary is stock sing-box, which has no AmneziaWG support and
+	// FATALs on these keys at decode. The endpoint must be plain WireGuard: none
+	// of the amnezia obfuscation knobs may be serialized even though the node
+	// carries them, or the whole config would be rejected.
+	for _, k := range []string{"jc", "jmin", "jmax", "s1", "s2", "h1", "h2", "h3", "h4"} {
+		if _, has := ep[k]; has {
+			t.Errorf("plain WG endpoint must not carry amnezia knob %q, got %v", k, ep[k])
+		}
+		if _, has := p[k]; has {
+			t.Errorf("peer must not carry amnezia knob %q, got %v", k, p[k])
+		}
 	}
 }
 
@@ -666,6 +674,196 @@ func TestBuildSplitIncludeFinalDirectAppToProxy(t *testing.T) {
 	route := cfg["route"].(map[string]any)
 	if route["final"] != directTag {
 		t.Errorf("include final = %v, want direct", route["final"])
+	}
+}
+
+// goodSSNode is a minimal valid Shadowsocks node used as the surviving member in
+// the invalid-node-skip tests.
+func goodSSNode(name string) model.Node {
+	return model.Node{
+		Protocol: model.Shadowsocks,
+		Name:     name,
+		Server:   "good.example.test",
+		Port:     8388,
+		Method:   "aes-256-gcm",
+		Password: "p",
+	}
+}
+
+// TestInvalidNodeSkippedNotFatal is the core of fix #1: a structurally-present
+// but semantically-invalid node must be skipped, not abort the whole config, so
+// the healthy node it shares a profile with still builds. Each case pairs one
+// poisoning node with one good node and asserts the good one survives and the
+// bad one is absent.
+func TestInvalidNodeSkippedNotFatal(t *testing.T) {
+	cases := []struct {
+		name string
+		bad  model.Node
+	}{
+		{
+			name: "ss port out of uint16 range",
+			bad:  model.Node{Protocol: model.Shadowsocks, Name: "bad", Server: "b.test", Port: 99999, Method: "aes-256-gcm", Password: "p"},
+		},
+		{
+			name: "ss empty method",
+			bad:  model.Node{Protocol: model.Shadowsocks, Name: "bad", Server: "b.test", Port: 8388, Method: "", Password: "p"},
+		},
+		{
+			name: "ss empty password",
+			bad:  model.Node{Protocol: model.Shadowsocks, Name: "bad", Server: "b.test", Port: 8388, Method: "aes-256-gcm", Password: ""},
+		},
+		{
+			name: "trojan no password",
+			bad:  model.Node{Protocol: model.Trojan, Name: "bad", Server: "b.test", Port: 443},
+		},
+		{
+			name: "vless no uuid",
+			bad:  model.Node{Protocol: model.VLESS, Name: "bad", Server: "b.test", Port: 443},
+		},
+		{
+			name: "vmess no uuid",
+			bad:  model.Node{Protocol: model.VMess, Name: "bad", Server: "b.test", Port: 443},
+		},
+		{
+			name: "hysteria2 no password",
+			bad:  model.Node{Protocol: model.Hysteria2, Name: "bad", Server: "b.test", Port: 8443},
+		},
+		{
+			name: "reality empty public_key",
+			bad: model.Node{
+				Protocol: model.VLESS, Name: "bad", Server: "b.test", Port: 443,
+				UUID: "66666666-6666-6666-6666-666666666666",
+				TLS:  &model.TLS{Enabled: true, Reality: &model.Reality{}},
+			},
+		},
+		{
+			name: "amneziawg missing key material",
+			bad:  model.Node{Protocol: model.AmneziaWG, Name: "bad", Server: "b.test", Port: 51820, WireGuard: &model.WireGuard{}},
+		},
+		{
+			name: "port zero",
+			bad:  model.Node{Protocol: model.Trojan, Name: "bad", Server: "b.test", Port: 0, Password: "x"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			nodes := []model.Node{tc.bad, goodSSNode("good")}
+			cfg, err := Build(nodes, "", routing.Options{Mode: routing.ModeGlobal}, TunOptions{})
+			if err != nil {
+				t.Fatalf("invalid node should be skipped, not error: %v", err)
+			}
+			by := outboundsByTag(t, cfg)
+			if _, has := by["bad"]; has {
+				t.Error("invalid node must not appear in outbounds")
+			}
+			if _, has := by["good"]; !has {
+				t.Errorf("healthy node must survive alongside the skipped one; tags %v", keys(by))
+			}
+			// The selector must list the good node and never the bad one.
+			sel := by[proxyTag]
+			members := sel["outbounds"].([]string)
+			if !contains(members, "good") || contains(members, "bad") {
+				t.Errorf("selector members = %v, want good present and bad absent", members)
+			}
+		})
+	}
+}
+
+// TestAllNodesInvalidStillErrors guards that the skip path doesn't paper over a
+// profile where nothing is usable: with every node invalid, Build must still
+// return the "no usable nodes" error.
+func TestAllNodesInvalidStillErrors(t *testing.T) {
+	nodes := []model.Node{
+		{Protocol: model.Shadowsocks, Name: "a", Server: "a.test", Port: 99999, Method: "aes-256-gcm", Password: "p"},
+		{Protocol: model.Trojan, Name: "b", Server: "b.test", Port: 443}, // no password
+	}
+	_, err := Build(nodes, "", routing.Options{Mode: routing.ModeGlobal}, TunOptions{})
+	if err == nil {
+		t.Fatal("expected error when no node is usable")
+	}
+	if !strings.Contains(err.Error(), "no usable nodes") {
+		t.Errorf("error = %v, want no usable nodes", err)
+	}
+}
+
+// TestRealityEmptyPubKeyNeverEmitted is the builder-level guard for fix #3: even
+// if a reality node reached tlsObject, no reality block with an empty public_key
+// may be emitted. Here the node is skipped entirely (validateNode), so it must be
+// absent; the assertion focuses on the good node carrying a proper reality block.
+func TestRealityEmptyPubKeyNeverEmitted(t *testing.T) {
+	good := model.Node{
+		Protocol: model.VLESS, Name: "rgood", Server: "r.test", Port: 443,
+		UUID: "77777777-7777-7777-7777-777777777777",
+		TLS:  &model.TLS{Enabled: true, Reality: &model.Reality{PublicKey: "REALKEY", ShortID: "aa"}},
+	}
+	bad := model.Node{
+		Protocol: model.VLESS, Name: "rbad", Server: "r.test", Port: 443,
+		UUID: "88888888-8888-8888-8888-888888888888",
+		TLS:  &model.TLS{Enabled: true, Reality: &model.Reality{}},
+	}
+	cfg, err := Build([]model.Node{bad, good}, "", routing.Options{Mode: routing.ModeGlobal}, TunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := outboundsByTag(t, cfg)
+	if _, has := by["rbad"]; has {
+		t.Error("keyless reality node must be skipped")
+	}
+	tls := by["rgood"]["tls"].(map[string]any)
+	reality := tls["reality"].(map[string]any)
+	if reality["public_key"] != "REALKEY" {
+		t.Errorf("good reality public_key = %v, want REALKEY", reality["public_key"])
+	}
+}
+
+// TestTLSObjectDropsEmptyRealityKey unit-tests tlsObject directly: a reality
+// sub-object with an empty public_key must never be serialized, and the chrome
+// uTLS default must not kick in for it either.
+func TestTLSObjectDropsEmptyRealityKey(t *testing.T) {
+	o := tlsObject(&model.TLS{Enabled: true, Reality: &model.Reality{}})
+	if o == nil {
+		t.Fatal("tlsObject returned nil for enabled TLS")
+	}
+	if _, has := o["reality"]; has {
+		t.Errorf("empty-key reality must not be emitted, got %v", o["reality"])
+	}
+	if _, has := o["utls"]; has {
+		t.Errorf("no chrome uTLS default for keyless reality, got %v", o["utls"])
+	}
+	// A populated key still emits the block.
+	o2 := tlsObject(&model.TLS{Enabled: true, Reality: &model.Reality{PublicKey: "K"}})
+	if _, has := o2["reality"]; !has {
+		t.Error("reality with a key must still be emitted")
+	}
+}
+
+// TestWireGuardPlainEndpointNoAmneziaKeys is the fix #2 builder check: a node
+// carrying amnezia knobs still produces a plain WireGuard endpoint with none of
+// them, so stock sing-box accepts it.
+func TestWireGuardPlainEndpointNoAmneziaKeys(t *testing.T) {
+	node := model.Node{
+		Protocol: model.AmneziaWG, Name: "awg2", Server: "wg.test", Port: 51820,
+		WireGuard: &model.WireGuard{
+			PrivateKey: "PRIV", PeerPublicKey: "PEER", LocalAddress: []string{"10.0.0.9/32"},
+			Jc: 5, Jmin: 50, Jmax: 1000, S1: 1, S2: 2, H1: 1, H2: 2, H3: 3, H4: 4,
+		},
+	}
+	cfg, err := Build([]model.Node{node}, "", routing.Options{Mode: routing.ModeGlobal}, TunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eps := cfg["endpoints"].([]map[string]any)
+	if len(eps) != 1 {
+		t.Fatalf("endpoints = %d, want 1", len(eps))
+	}
+	ep := eps[0]
+	if ep["type"] != "wireguard" || ep["private_key"] != "PRIV" {
+		t.Errorf("endpoint = %v", ep)
+	}
+	for _, k := range []string{"jc", "jmin", "jmax", "s1", "s2", "h1", "h2", "h3", "h4"} {
+		if _, has := ep[k]; has {
+			t.Errorf("amnezia knob %q leaked into endpoint: %v", k, ep[k])
+		}
 	}
 }
 

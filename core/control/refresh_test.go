@@ -204,6 +204,81 @@ func TestRefreshAllSubscriptionsFailureSkips(t *testing.T) {
 	}
 }
 
+// TestRefreshPreservesQuotaWhenHeaderAbsent covers fix #5: a refresh that
+// returns the node list but no Subscription-Userinfo header must keep the prior
+// quota and expiry rather than zeroing them. The 6h background sweep takes this
+// path, so silently wiping the known quota would be a recurring data-loss bug.
+func TestRefreshPreservesQuotaWhenHeaderAbsent(t *testing.T) {
+	const subURL = "https://example.invalid/noheader"
+	f := &fakeFetch{
+		bodies: map[string]string{subURL: vlessLink},
+		// No header entry for subURL: fetch returns an empty http.Header.
+	}
+	d, store := daemonWithFetch(t, f)
+	p := seedSubscription(t, store, "Provider", subURL)
+
+	// Establish known quota/expiry on the stored profile, as a prior refresh
+	// carrying a header would have.
+	expires := time.Unix(1893456000, 0).UTC()
+	p.TrafficUsed = 7 << 30
+	p.TrafficTotal = 100 << 30
+	p.ExpiresAt = &expires
+	if err := store.Update(p); err != nil {
+		t.Fatalf("seed quota: %v", err)
+	}
+
+	updated, _, err := d.refreshProfile(context.Background(), mustGet(t, store, p.ID))
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	if updated.TrafficUsed != 7<<30 {
+		t.Errorf("TrafficUsed = %d, want preserved %d", updated.TrafficUsed, int64(7<<30))
+	}
+	if updated.TrafficTotal != 100<<30 {
+		t.Errorf("TrafficTotal = %d, want preserved %d", updated.TrafficTotal, int64(100<<30))
+	}
+	if updated.ExpiresAt == nil || !updated.ExpiresAt.Equal(expires) {
+		t.Errorf("ExpiresAt = %v, want preserved %v", updated.ExpiresAt, expires)
+	}
+
+	// The store must reflect the same preserved values, not just the return.
+	got := mustGet(t, store, p.ID)
+	if got.TrafficUsed != 7<<30 || got.TrafficTotal != 100<<30 || got.ExpiresAt == nil {
+		t.Errorf("stored profile lost quota: used=%d total=%d expires=%v",
+			got.TrafficUsed, got.TrafficTotal, got.ExpiresAt)
+	}
+}
+
+// TestRefreshUpdatesQuotaWhenHeaderPresent is the counterpart: when the refresh
+// DOES carry a header, the new values replace the old ones (so a quota reset or
+// usage bump from the panel still lands).
+func TestRefreshUpdatesQuotaWhenHeaderPresent(t *testing.T) {
+	const subURL = "https://example.invalid/withheader"
+	f := &fakeFetch{
+		bodies:  map[string]string{subURL: vlessLink},
+		headers: map[string]http.Header{subURL: userInfoHeader(1<<30, 1<<30, 50<<30, time.Time{})},
+	}
+	d, store := daemonWithFetch(t, f)
+	p := seedSubscription(t, store, "Provider", subURL)
+	p.TrafficUsed = 99 << 30
+	p.TrafficTotal = 100 << 30
+	if err := store.Update(p); err != nil {
+		t.Fatalf("seed quota: %v", err)
+	}
+
+	updated, _, err := d.refreshProfile(context.Background(), mustGet(t, store, p.ID))
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if want := int64(2 << 30); updated.TrafficUsed != want {
+		t.Errorf("TrafficUsed = %d, want %d from header", updated.TrafficUsed, want)
+	}
+	if updated.TrafficTotal != 50<<30 {
+		t.Errorf("TrafficTotal = %d, want %d from header", updated.TrafficTotal, int64(50<<30))
+	}
+}
+
 // TestManualRefreshEmitsProfilesEvent drives the full server and asserts the
 // manual refresh_subscription command emits a profiles event after it changes a
 // stored profile, proving the event reaches the wire.

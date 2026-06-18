@@ -416,10 +416,18 @@ func (d *Daemon) refreshProfile(ctx context.Context, p profile.Profile) (profile
 	before := p
 	p.Servers = rebuilt.Servers
 	p.UpdatedAt = rebuilt.UpdatedAt
-	p.ExpiresAt = nil
-	p.TrafficUsed = 0
-	p.TrafficTotal = 0
-	applyUserInfo(&p, header.Get("Subscription-Userinfo"))
+	// Only refresh traffic/expiry when this response actually carries a user-info
+	// header. A refresh that returns the node list but no Subscription-Userinfo
+	// (some panels send it only intermittently) must preserve the known quota and
+	// expiry rather than silently zeroing them — the 6h background sweep would
+	// otherwise wipe them. applyUserInfo no-ops on a blank header, so guarding the
+	// overwrite here is what keeps the prior values.
+	if ui := header.Get("Subscription-Userinfo"); ui != "" {
+		p.ExpiresAt = nil
+		p.TrafficUsed = 0
+		p.TrafficTotal = 0
+		applyUserInfo(&p, ui)
+	}
 
 	if err := d.store.Update(p); err != nil {
 		return profile.Profile{}, false, err

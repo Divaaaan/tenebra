@@ -60,15 +60,19 @@ func parseShadowsocks(raw string) (model.Node, error) {
 		}
 		host, port = h, prt
 	} else {
-		// Legacy: the whole thing is base64(method:password@host:port).
+		// Legacy: the whole thing is base64(method:password@host:port). Split on
+		// the LAST '@' (like the SIP002 branch) so a password containing '@' isn't
+		// truncated — only the host:port authority follows the final separator.
 		dec, err := decodeBase64(body)
 		if err != nil {
 			return model.Node{}, fmt.Errorf("subscription: ss: base64: %w", err)
 		}
-		creds, authority, ok := strings.Cut(string(dec), "@")
-		if !ok {
+		decStr := string(dec)
+		at := strings.LastIndexByte(decStr, '@')
+		if at < 0 {
 			return model.Node{}, fmt.Errorf("subscription: ss: malformed legacy link")
 		}
+		creds, authority := decStr[:at], decStr[at+1:]
 		m, p, ok := strings.Cut(creds, ":")
 		if !ok {
 			return model.Node{}, fmt.Errorf("subscription: ss: malformed method:password")
@@ -84,6 +88,9 @@ func parseShadowsocks(raw string) (model.Node, error) {
 
 	if method == "" {
 		return model.Node{}, fmt.Errorf("subscription: ss: empty method")
+	}
+	if password == "" {
+		return model.Node{}, fmt.Errorf("subscription: ss: empty password")
 	}
 
 	n := model.Node{

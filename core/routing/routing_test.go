@@ -233,6 +233,29 @@ func TestDNSBlockStructure(t *testing.T) {
 	}
 }
 
+// TestDNSFinalModeAware covers fix #4: in direct mode the DNS final must resolve
+// via the direct resolver (route.final is direct, so forcing DNS through the
+// proxy selector would break resolution exactly when the user picks direct). In
+// smart and global modes the final stays on the remote resolver.
+func TestDNSFinalModeAware(t *testing.T) {
+	tests := []struct {
+		mode Mode
+		want string
+	}{
+		{ModeSmart, dnsRemoteTag},
+		{ModeGlobal, dnsRemoteTag},
+		{ModeDirect, dnsDirectTag},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.mode), func(t *testing.T) {
+			dns := (Options{Mode: tt.mode}).Normalize().DNS()
+			if dns["final"] != tt.want {
+				t.Errorf("%s dns final = %v, want %q", tt.mode, dns["final"], tt.want)
+			}
+		})
+	}
+}
+
 func TestDNSStrategyIPv4Only(t *testing.T) {
 	on := (Options{Mode: ModeSmart, IPv4Only: true}).Normalize().DNS()
 	if on["strategy"] != "ipv4_only" {
