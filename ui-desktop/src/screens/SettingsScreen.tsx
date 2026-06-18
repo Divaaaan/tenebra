@@ -155,14 +155,14 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   ];
 
   return (
-    <section className="screen settings">
-      <header className="screen-head">
-        <h1>{t.settings.title}</h1>
-      </header>
+    <section className="set-doc">
+      <h1 className="set-title">{t.settings.title}</h1>
 
-      <section className="settings-section card">
-        <h2>{t.settings.routing}</h2>
-        <div className="routing-group" role="radiogroup" aria-label={t.settings.routing}>
+      <section className="set-section">
+        <div className="set-section-head">
+          <h2 className="set-eyebrow">{t.settings.routing}</h2>
+        </div>
+        <div className="set-options" role="radiogroup" aria-label={t.settings.routing}>
           {routingOptions.map((opt, index) => {
             const checked = routing === opt.mode;
             return (
@@ -172,14 +172,14 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
                 role="radio"
                 aria-checked={checked}
                 tabIndex={checked ? 0 : -1}
-                className={`routing-option${checked ? " is-checked" : ""}`}
+                className={`set-option${checked ? " is-checked" : ""}`}
                 onClick={() => void tenebra.setRouting(opt.mode)}
                 onKeyDown={(e) => onRoutingKey(e, index)}
               >
-                <span className="routing-radio" aria-hidden="true" />
-                <span className="routing-text">
-                  <span className="routing-label">{opt.label}</span>
-                  <span className="routing-hint muted">{opt.hint}</span>
+                <span className="set-mark" aria-hidden="true">{checked ? "▣" : "▢"}</span>
+                <span className="set-option-text">
+                  <span className="set-option-label">{opt.label}</span>
+                  <span className="set-option-hint">{opt.hint}</span>
                 </span>
               </button>
             );
@@ -187,13 +187,13 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
         </div>
       </section>
 
-      <section className="settings-section card">
-        <div className="settings-head">
-          <h2>{t.settings.split}</h2>
-          <p className="settings-sub muted">{t.settings.splitHint}</p>
+      <section className="set-section">
+        <div className="set-section-head">
+          <h2 className="set-eyebrow">{t.settings.split}</h2>
+          <p className="set-sub">{t.settings.splitHint}</p>
         </div>
 
-        <div className="routing-group" role="radiogroup" aria-label={t.settings.split}>
+        <div className="set-options" role="radiogroup" aria-label={t.settings.split}>
           {splitOptions.map((opt, index) => {
             const checked = splitMode === opt.mode;
             return (
@@ -203,14 +203,14 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
                 role="radio"
                 aria-checked={checked}
                 tabIndex={checked ? 0 : -1}
-                className={`routing-option${checked ? " is-checked" : ""}`}
+                className={`set-option${checked ? " is-checked" : ""}`}
                 onClick={() => chooseSplitMode(opt.mode)}
                 onKeyDown={(e) => onSplitKey(e, index)}
               >
-                <span className="routing-radio" aria-hidden="true" />
-                <span className="routing-text">
-                  <span className="routing-label">{opt.label}</span>
-                  <span className="routing-hint muted">{opt.hint}</span>
+                <span className="set-mark" aria-hidden="true">{checked ? "▣" : "▢"}</span>
+                <span className="set-option-text">
+                  <span className="set-option-label">{opt.label}</span>
+                  <span className="set-option-hint">{opt.hint}</span>
                 </span>
               </button>
             );
@@ -218,24 +218,26 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
         </div>
 
         {splitMode !== "off" && (
-          <div className="split-apps">
-            <span className="setting-name">{t.settings.splitApps}</span>
-            <div className="field-row">
-              <input
-                type="text"
-                className="control"
-                value={appDraft}
-                onChange={(e) => setAppDraft(e.target.value)}
-                onKeyDown={onAppInputKey}
-                placeholder={t.settings.splitAddPlaceholder}
-                aria-label={t.settings.splitApps}
-                spellCheck={false}
-                autoCapitalize="off"
-                autoCorrect="off"
-              />
+          <div className="set-apps">
+            <span className="set-eyebrow">{t.settings.splitApps}</span>
+            <div className="set-add">
+              <span className="set-field">
+                <span className="set-prompt" aria-hidden="true">$</span>
+                <input
+                  type="text"
+                  value={appDraft}
+                  onChange={(e) => setAppDraft(e.target.value)}
+                  onKeyDown={onAppInputKey}
+                  placeholder={t.settings.splitAddPlaceholder}
+                  aria-label={t.settings.splitApps}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                />
+              </span>
               <button
                 type="button"
-                className="btn btn-primary"
+                className="set-btn"
                 onClick={addApp}
                 disabled={!canAddApp}
               >
@@ -244,19 +246,19 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             </div>
 
             {splitApps.length === 0 ? (
-              <p className="split-empty muted">{t.settings.splitAppsEmpty}</p>
+              <p className="set-empty">{t.settings.splitAppsEmpty}</p>
             ) : (
-              <ul className="split-list">
+              <ul className="set-app-list">
                 {splitApps.map((name) => (
-                  <li key={name} className="split-item">
-                    <span className="split-item-name">{name}</span>
+                  <li key={name} className="set-app-row">
+                    <span className="set-app-name">{name}</span>
                     <button
                       type="button"
-                      className="btn btn-ghost btn-sm"
+                      className="set-remove"
                       onClick={() => removeApp(name)}
                       aria-label={`${t.settings.splitRemove} ${name}`}
                     >
-                      {t.settings.splitRemove}
+                      <span aria-hidden="true">✕</span>
                     </button>
                   </li>
                 ))}
@@ -266,18 +268,22 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
         )}
       </section>
 
-      <section className="settings-section card">
-        <h2>{t.settings.appearance}</h2>
+      <section className="set-section">
+        <div className="set-section-head">
+          <h2 className="set-eyebrow">{t.settings.appearance}</h2>
+        </div>
 
-        <div className="setting-row">
-          <span className="setting-name">{t.settings.theme}</span>
-          <div className="segmented" role="group" aria-label={t.settings.theme}>
+        <div className="set-row">
+          <span className="set-row-text">
+            <span className="set-row-label">{t.settings.theme}</span>
+          </span>
+          <div className="set-seg" role="group" aria-label={t.settings.theme}>
             {themeOptions.map((opt) => (
               <button
                 key={opt.value}
                 type="button"
                 aria-pressed={theme === opt.value}
-                className={`segmented-item${theme === opt.value ? " is-active" : ""}`}
+                className={`${theme === opt.value ? "is-active" : ""}`}
                 onClick={() => setTheme(opt.value)}
               >
                 {opt.label}
@@ -286,15 +292,17 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
           </div>
         </div>
 
-        <div className="setting-row">
-          <span className="setting-name">{t.settings.language}</span>
-          <div className="segmented" role="group" aria-label={t.settings.language}>
+        <div className="set-row">
+          <span className="set-row-text">
+            <span className="set-row-label">{t.settings.language}</span>
+          </span>
+          <div className="set-seg" role="group" aria-label={t.settings.language}>
             {langOptions.map((opt) => (
               <button
                 key={opt.value}
                 type="button"
                 aria-pressed={lang === opt.value}
-                className={`segmented-item${lang === opt.value ? " is-active" : ""}`}
+                className={`${lang === opt.value ? "is-active" : ""}`}
                 onClick={() => setLang(opt.value)}
               >
                 {opt.label}
@@ -304,38 +312,46 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
         </div>
       </section>
 
-      <section className="settings-section card">
-        <h2>{t.settings.startup}</h2>
-        <div className="setting-row">
-          <span className="setting-text">
-            <span className="setting-name">{t.settings.launchAtLogin}</span>
-            <span className="setting-hint muted">{t.settings.launchAtLoginHint}</span>
+      <section className="set-section">
+        <div className="set-section-head">
+          <h2 className="set-eyebrow">{t.settings.startup}</h2>
+        </div>
+        <div className="set-row">
+          <span className="set-row-text">
+            <span className="set-row-label">{t.settings.launchAtLogin}</span>
+            <span className="set-row-hint">{t.settings.launchAtLoginHint}</span>
           </span>
           <button
             type="button"
             role="switch"
             aria-checked={launchAtLogin}
             disabled={launchBusy}
-            className={`switch${launchAtLogin ? " is-on" : ""}`}
+            className={`set-switch${launchAtLogin ? " is-on" : ""}`}
             onClick={() => void toggleLaunchAtLogin()}
           >
-            <span className="switch-thumb" aria-hidden="true" />
+            <span className="set-switch-box" aria-hidden="true">
+              {launchAtLogin ? "▣" : "▢"}
+            </span>
+            {launchAtLogin ? "ON" : "OFF"}
           </button>
         </div>
 
-        <div className="setting-row">
-          <span className="setting-text">
-            <span className="setting-name">{t.settings.autoconnect}</span>
-            <span className="setting-hint muted">{t.settings.autoconnectHint}</span>
+        <div className="set-row">
+          <span className="set-row-text">
+            <span className="set-row-label">{t.settings.autoconnect}</span>
+            <span className="set-row-hint">{t.settings.autoconnectHint}</span>
           </span>
           <button
             type="button"
             role="switch"
             aria-checked={autoconnect}
-            className={`switch${autoconnect ? " is-on" : ""}`}
+            className={`set-switch${autoconnect ? " is-on" : ""}`}
             onClick={toggleAutoconnect}
           >
-            <span className="switch-thumb" aria-hidden="true" />
+            <span className="set-switch-box" aria-hidden="true">
+              {autoconnect ? "▣" : "▢"}
+            </span>
+            {autoconnect ? "ON" : "OFF"}
           </button>
         </div>
       </section>
