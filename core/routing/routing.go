@@ -3,9 +3,10 @@
 // the singbox package stitches these into the full config.
 //
 // The smart mode keeps Russian destinations (and, optionally, LAN) on the
-// direct outbound and sends everything else through the proxy. RU geodata is
-// pulled from the official public sing-geoip/sing-geosite rule-sets at runtime
-// by sing-box itself, so the client ships no geodata of its own.
+// direct outbound and sends everything else through the proxy. RU geodata comes
+// from the official public sing-geoip/sing-geosite rule-sets: when the client
+// ships them locally (Options.RuleSetDir) sing-box loads them from disk at
+// startup; otherwise it fetches them at runtime over the direct outbound.
 package routing
 
 import (
@@ -57,9 +58,10 @@ const (
 )
 
 // Rule-set identifiers and their upstream source. These are public geodata
-// releases from SagerNet, not Tenebra infrastructure. They are fetched over the
-// direct outbound so a blocked proxy can't stop the client from bootstrapping
-// its own routing rules.
+// releases from SagerNet, not Tenebra infrastructure. When the client ships the
+// .srs files locally (RuleSetDir set) they load from disk; otherwise they are
+// fetched over the direct outbound so a blocked proxy can't stop the client from
+// bootstrapping its own routing rules.
 const (
 	ruleSetGeoIPRU   = "geoip-ru"
 	ruleSetGeositeRU = "geosite-ru"
@@ -67,8 +69,15 @@ const (
 	urlGeoIPRU   = "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ru.srs"
 	urlGeositeRU = "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ru.srs"
 
+	// fileGeoIPRU and fileGeositeRU are the on-disk names of the bundled rule-set
+	// binaries, resolved against RuleSetDir. They must match what
+	// scripts/fetch-resources.ps1 writes into the resources directory.
+	fileGeoIPRU   = "geoip-ru.srs"
+	fileGeositeRU = "geosite-ru.srs"
+
 	// ruleSetUpdateInterval keeps the cached rule-sets reasonably fresh without
-	// hammering GitHub. sing-box only re-downloads after this elapses.
+	// hammering GitHub. sing-box only re-downloads after this elapses. It applies
+	// only to the remote form (no RuleSetDir).
 	ruleSetUpdateInterval = "168h" // weekly
 )
 
@@ -95,6 +104,14 @@ type Options struct {
 	// (the zero-equivalent after Normalize) leaves base routing untouched.
 	SplitMode SplitMode
 	SplitApps []string // executable names, normalized to lowercase
+
+	// RuleSetDir is the absolute directory holding the bundled RU rule-set
+	// binaries (geoip-ru.srs / geosite-ru.srs). When set, smart mode references
+	// them as local rule-sets loaded from disk, so sing-box starts instantly and
+	// never blocks on a GitHub download. Empty keeps the legacy remote behaviour:
+	// sing-box fetches the .srs over the direct outbound at startup. The daemon
+	// only sets this once it has confirmed both files exist there.
+	RuleSetDir string
 }
 
 // Normalize returns a copy with empty fields replaced by sane defaults. Mode

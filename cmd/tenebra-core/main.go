@@ -58,6 +58,17 @@ func run() error {
 	} else {
 		daemon.SetSettings(st)
 	}
+	// Load the RU geo rule-sets from disk instead of downloading them from GitHub
+	// at every connect, but only if the bundled files are actually present. The
+	// remote fallback (left in place when this is empty) blocks sing-box startup
+	// for ~10s when raw.githubusercontent.com is throttled, which is the freeze we
+	// are eliminating.
+	if rsDir := ruleSetDir(); rsDir != "" {
+		log.Printf("tenebra-core: loading RU rule-sets locally from %s", rsDir)
+		daemon.SetRuleSetDir(rsDir)
+	} else {
+		log.Printf("tenebra-core: bundled RU rule-sets not found; falling back to remote download")
+	}
 	server := control.NewServer(daemon, os.Stdin, os.Stdout)
 
 	// Cancel on Ctrl-C / SIGTERM so the tunnel is torn down cleanly; Serve also
@@ -72,6 +83,31 @@ func run() error {
 		return nil
 	}
 	return err
+}
+
+// ruleSetFiles are the bundled RU rule-set binaries expected next to the
+// sing-box executable. They must match the on-disk names the routing package
+// resolves against Options.RuleSetDir and the names fetch-resources.ps1 writes.
+var ruleSetFiles = []string{"geoip-ru.srs", "geosite-ru.srs"}
+
+// ruleSetDir returns the directory to load the RU rule-sets from, or "" to keep
+// the remote-download fallback. The resources directory is the one holding the
+// sing-box binary (TENEBRA_SINGBOX); the .srs ship alongside it. It returns a
+// path only when every required rule-set file is actually present there, so a
+// dev build or an incomplete install transparently falls back to remote instead
+// of pointing sing-box at a missing path (which would FATAL).
+func ruleSetDir() string {
+	bin := os.Getenv("TENEBRA_SINGBOX")
+	if bin == "" {
+		return ""
+	}
+	dir := filepath.Dir(bin)
+	for _, f := range ruleSetFiles {
+		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
+			return ""
+		}
+	}
+	return dir
 }
 
 // configDir returns the directory the profile store lives in. It prefers the

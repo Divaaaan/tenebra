@@ -180,6 +180,19 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	d.mu.Unlock()
 }
 
+// SetRuleSetDir points the routing layer at a directory holding the bundled RU
+// rule-set binaries (geoip-ru.srs / geosite-ru.srs) so smart-mode configs load
+// them locally instead of downloading them from GitHub at startup — the latter
+// blocks sing-box for ~10s (and can FATAL) when raw.githubusercontent.com is
+// throttled. main passes the resources dir here only after confirming both
+// files exist; an empty dir leaves the remote fallback in place. Call it before
+// serving — it is not synchronised against an in-flight connect.
+func (d *Daemon) SetRuleSetDir(dir string) {
+	d.mu.Lock()
+	d.routing.RuleSetDir = dir
+	d.mu.Unlock()
+}
+
 // persistSettings saves the split portion of ro through the settings store, if
 // one is installed. Persistence is best-effort: a write failure is logged via
 // the daemon's log event but never fails the originating command, mirroring how

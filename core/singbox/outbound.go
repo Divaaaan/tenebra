@@ -159,10 +159,18 @@ func tlsObject(t *model.TLS) map[string]any {
 	if len(t.ALPN) > 0 {
 		o["alpn"] = t.ALPN
 	}
-	if t.Fingerprint != "" {
+	// REALITY requires a uTLS fingerprint: sing-box FATALs with "uTLS is required
+	// by reality client" if one is missing. Real subscriptions usually send
+	// fp=chrome, but a node that omits it must not sink the whole config, so
+	// default the fingerprint to chrome whenever REALITY is in use.
+	fingerprint := t.Fingerprint
+	if fingerprint == "" && t.Reality != nil {
+		fingerprint = "chrome"
+	}
+	if fingerprint != "" {
 		o["utls"] = map[string]any{
 			"enabled":     true,
-			"fingerprint": t.Fingerprint,
+			"fingerprint": fingerprint,
 		}
 	}
 	if t.Reality != nil {
