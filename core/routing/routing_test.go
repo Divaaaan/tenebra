@@ -2,6 +2,7 @@ package routing
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"testing"
 )
 
@@ -83,6 +84,63 @@ func TestRuleSetURLsAndDetour(t *testing.T) {
 	// Both official public sources must be referenced.
 	if urlGeoIPRU == "" || urlGeositeRU == "" {
 		t.Fatal("rule-set URLs must be set")
+	}
+}
+
+func TestRuleSetsLocalWhenDirSet(t *testing.T) {
+	dir := filepath.Join("C:\\", "resources")
+	rs := (Options{Mode: ModeSmart, RuleSetDir: dir}).Normalize().RouteRuleSets()
+	if len(rs) != 2 {
+		t.Fatalf("local rule_sets = %d, want 2", len(rs))
+	}
+	wantPath := map[string]string{
+		ruleSetGeoIPRU:   filepath.Join(dir, fileGeoIPRU),
+		ruleSetGeositeRU: filepath.Join(dir, fileGeositeRU),
+	}
+	for _, set := range rs {
+		tag := set["tag"].(string)
+		if set["type"] != "local" {
+			t.Errorf("rule_set %q type = %v, want local", tag, set["type"])
+		}
+		if set["format"] != "binary" {
+			t.Errorf("rule_set %q format = %v, want binary", tag, set["format"])
+		}
+		if set["path"] != wantPath[tag] {
+			t.Errorf("rule_set %q path = %v, want %v", tag, set["path"], wantPath[tag])
+		}
+		// A local rule-set must carry none of the remote-download fields, or
+		// sing-box would still try to fetch it at startup.
+		for _, k := range []string{"url", "download_detour", "update_interval"} {
+			if _, has := set[k]; has {
+				t.Errorf("local rule_set %q must not have %q, got %v", tag, k, set[k])
+			}
+		}
+	}
+}
+
+// TestRuleSetsRemoteWhenDirEmpty pins the fallback: with no RuleSetDir the sets
+// stay remote and carry no local path.
+func TestRuleSetsRemoteWhenDirEmpty(t *testing.T) {
+	rs := (Options{Mode: ModeSmart}).Normalize().RouteRuleSets()
+	if len(rs) != 2 {
+		t.Fatalf("remote rule_sets = %d, want 2", len(rs))
+	}
+	for _, set := range rs {
+		if set["type"] != "remote" {
+			t.Errorf("rule_set %q type = %v, want remote", set["tag"], set["type"])
+		}
+		if _, has := set["path"]; has {
+			t.Errorf("remote rule_set %q must not have a path, got %v", set["tag"], set["path"])
+		}
+	}
+}
+
+// TestRuleSetDirSurvivesNormalize guards the plumbing: Normalize must preserve
+// RuleSetDir so the value the daemon sets reaches Build unchanged.
+func TestRuleSetDirSurvivesNormalize(t *testing.T) {
+	dir := filepath.Join("C:\\", "some", "resources")
+	if got := (Options{Mode: ModeSmart, RuleSetDir: dir}).Normalize().RuleSetDir; got != dir {
+		t.Errorf("RuleSetDir after Normalize = %q, want %q", got, dir)
 	}
 }
 

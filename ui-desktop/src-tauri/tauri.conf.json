@@ -31,7 +31,12 @@
     "active": true,
     "targets": "all",
     "externalBin": ["binaries/tenebra-core"],
-    "resources": ["resources/sing-box.exe", "resources/wintun.dll"],
+    "resources": [
+      "resources/sing-box.exe",
+      "resources/wintun.dll",
+      "resources/geoip-ru.srs",
+      "resources/geosite-ru.srs"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

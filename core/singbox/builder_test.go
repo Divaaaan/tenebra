@@ -301,6 +301,62 @@ func TestVLESSNoRealityWhenAbsent(t *testing.T) {
 	}
 }
 
+// TestVLESSRealityDefaultsFingerprint covers the secondary bug: a REALITY node
+// with no uTLS fingerprint makes sing-box FATAL ("uTLS is required by reality
+// client"). The builder must default the fingerprint to chrome so one such node
+// can't sink the whole config.
+func TestVLESSRealityDefaultsFingerprint(t *testing.T) {
+	nodes := []model.Node{{
+		Protocol: model.VLESS,
+		Name:     "reality-nofp",
+		Server:   "r.example.test",
+		Port:     443,
+		UUID:     "44444444-4444-4444-4444-444444444444",
+		TLS: &model.TLS{
+			Enabled:    true,
+			ServerName: "r.example.test",
+			Reality:    &model.Reality{PublicKey: "PUBKEYFAKE"},
+			// Fingerprint deliberately empty.
+		},
+	}}
+	cfg, err := Build(nodes, "", routing.Options{Mode: routing.ModeGlobal}, TunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tls := outboundsByTag(t, cfg)["reality-nofp"]["tls"].(map[string]any)
+	utls, ok := tls["utls"].(map[string]any)
+	if !ok {
+		t.Fatalf("reality node without fingerprint must still emit utls; tls=%v", tls)
+	}
+	if utls["enabled"] != true || utls["fingerprint"] != "chrome" {
+		t.Errorf("utls = %v, want enabled chrome", utls)
+	}
+	if _, has := tls["reality"]; !has {
+		t.Error("reality object missing")
+	}
+}
+
+// TestNoRealityNoFingerprintStaysBare guards that the chrome default is scoped
+// to REALITY: a plain-TLS node with no fingerprint must not gain a uTLS object.
+func TestNoRealityNoFingerprintStaysBare(t *testing.T) {
+	nodes := []model.Node{{
+		Protocol: model.VLESS,
+		Name:     "plain-tls",
+		Server:   "p.example.test",
+		Port:     443,
+		UUID:     "55555555-5555-5555-5555-555555555555",
+		TLS:      &model.TLS{Enabled: true, ServerName: "p.example.test"},
+	}}
+	cfg, err := Build(nodes, "", routing.Options{Mode: routing.ModeGlobal}, TunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tls := outboundsByTag(t, cfg)["plain-tls"]["tls"].(map[string]any)
+	if _, has := tls["utls"]; has {
+		t.Errorf("plain TLS node should not get utls, got %v", tls["utls"])
+	}
+}
+
 func TestHysteria2Outbound(t *testing.T) {
 	o := outboundsByTag(t, buildFake(t))["hy2"]
 	if o["type"] != "hysteria2" || o["password"] != "hy2pass" {
@@ -416,6 +472,34 @@ func TestRouteBlock(t *testing.T) {
 	}
 	if !strings.Contains(joined, "sing-geosite/rule-set/geosite-category-ru.srs") {
 		t.Errorf("missing geosite-category-ru url: %v", urls)
+	}
+}
+
+// TestRouteBlockLocalRuleSets confirms RuleSetDir threads through Build into the
+// route block as local rule-sets with on-disk paths and no download URLs — the
+// core of the freeze fix.
+func TestRouteBlockLocalRuleSets(t *testing.T) {
+	dir := "C:\\res"
+	cfg, err := Build(fakeNodes(), "", routing.Options{Mode: routing.ModeSmart, RuleSetDir: dir}, TunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := cfg["route"].(map[string]any)
+	rs, ok := route["rule_set"].([]map[string]any)
+	if !ok || len(rs) != 2 {
+		t.Fatalf("route rule_set = %v, want 2", route["rule_set"])
+	}
+	for _, s := range rs {
+		if s["type"] != "local" {
+			t.Errorf("rule_set %v type = %v, want local", s["tag"], s["type"])
+		}
+		if _, has := s["url"]; has {
+			t.Errorf("local rule_set %v must not have a url", s["tag"])
+		}
+		path, _ := s["path"].(string)
+		if !strings.HasPrefix(path, dir) || !strings.HasSuffix(path, ".srs") {
+			t.Errorf("rule_set %v path = %q, want under %q ending .srs", s["tag"], path, dir)
+		}
 	}
 }
 
