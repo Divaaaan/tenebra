@@ -81,14 +81,27 @@ impl SidecarBackend {
         sink: Arc<dyn EventSink>,
     ) -> Result<Self, String> {
         let program = program.into();
-        let mut child = Command::new(&program)
+        let mut command = Command::new(&program);
+        command
             .env("TENEBRA_SINGBOX", singbox_path.into())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            // Leave stderr inherited: the core logs diagnostics there and they
-            // are useful in the console / test output, never on the protocol
-            // channel.
-            .stderr(Stdio::inherit())
+            // Send the core's stderr diagnostics to a log file rather than
+            // inheriting our own. A GUI app has no console, so its stderr handle
+            // is invalid; inheriting it makes CreateProcess fail with
+            // STARTF_USESTDHANDLES and the sidecar never starts. A real file (or
+            // the null device) is always a valid handle, and the log is handy
+            // when a user reports a problem.
+            .stderr(core_log_stderr());
+        // Don't flash a console window when the GUI spawns the console-subsystem
+        // core; the pipes carry everything we need.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+        let mut child = command
             .spawn()
             .map_err(|e| format!("failed to start tenebra-core ({}): {e}", program.display()))?;
 
@@ -146,6 +159,27 @@ impl SidecarBackend {
         }
         PathBuf::from("tenebra-core")
     }
+}
+
+/// Where the core's stderr diagnostics are written. Next to the app's data
+/// (`%LOCALAPPDATA%\Tenebra` on Windows), falling back to the temp dir, so a
+/// user hitting a problem has one file to share.
+fn core_log_path() -> Option<PathBuf> {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let dir = base.join("Tenebra");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join("core.log"))
+}
+
+/// A valid stderr target for the core: the log file if it can be created,
+/// otherwise the null device. Never an inherited handle — see `spawn`.
+fn core_log_stderr() -> Stdio {
+    core_log_path()
+        .and_then(|p| std::fs::File::create(p).ok())
+        .map(Stdio::from)
+        .unwrap_or_else(Stdio::null)
 }
 
 impl Drop for SidecarBackend {
