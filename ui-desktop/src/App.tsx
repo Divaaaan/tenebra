@@ -27,6 +27,12 @@ import {
 
 type Overlay = "profiles" | "settings" | "logs" | null;
 
+// The kill-switch UI exists, but the core doesn't yet honour it at connect time
+// (it's a routing option with no control-protocol command). Until that's wired,
+// the toggle is shown disabled and the "armed" banner is suppressed — we never
+// claim a protection we don't actually deliver. Flip this when the wiring lands.
+const KILL_SWITCH_WIRED = false;
+
 export function App() {
   const tenebra = useTenebra();
   const { t } = useI18n();
@@ -231,7 +237,7 @@ export function App() {
     <div className="app" data-conn={phase}>
       <TopBar activeProfile={metaProfile} />
 
-      {connected && killSwitch && (
+      {connected && killSwitch && KILL_SWITCH_WIRED && (
         <div className="kill-banner" role="status">
           ⚠ {t.bottom.killBanner}
         </div>
@@ -277,6 +283,7 @@ export function App() {
         onSetRouting={handleSetRouting}
         killSwitch={killSwitch}
         onToggleKillSwitch={handleToggleKill}
+        killSwitchDisabled={!KILL_SWITCH_WIRED}
         onLeakCheck={() => setOverlay("logs")}
         onSettings={() => setOverlay("settings")}
       />
