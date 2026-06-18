@@ -98,7 +98,11 @@ func Build(nodes []model.Node, selectedTag string, ro routing.Options, tun TunOp
 
 	cfg := map[string]any{
 		"log": map[string]any{
-			"level":     "info",
+			// warn, not info: at info sing-box logs (and formats) every connection
+			// and DNS exchange, which is real per-packet work during the burst of
+			// reconnections right after the tunnel comes up — exactly when the UI
+			// feels least responsive. warn keeps the genuinely useful lines.
+			"level":     "warn",
 			"timestamp": true,
 		},
 		"dns":       ro.DNS(),

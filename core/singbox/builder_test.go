@@ -140,7 +140,7 @@ func TestLogBlock(t *testing.T) {
 	if !ok {
 		t.Fatal("missing log block")
 	}
-	if log["level"] != "info" || log["timestamp"] != true {
+	if log["level"] != "warn" || log["timestamp"] != true {
 		t.Errorf("log block = %v", log)
 	}
 }
