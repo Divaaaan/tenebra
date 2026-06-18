@@ -66,6 +66,8 @@ export interface Strings {
     routing: string;
     killSwitch: string;
     killBanner: string;
+    /** Tooltip while the kill-switch is present but not yet core-enforced. */
+    killSwitchPending: string;
     leakCheck: string;
     settings: string;
   };
@@ -266,6 +268,7 @@ const en: Strings = {
     routing: "Routing",
     killSwitch: "kill-switch",
     killBanner: "KILL-SWITCH ARMED · traffic blocked if the tunnel drops",
+    killSwitchPending: "Kill-switch isn't wired to the core yet",
     leakCheck: "leak-check",
     settings: "settings",
   },
@@ -451,6 +454,7 @@ const ru: Strings = {
     routing: "Маршрут",
     killSwitch: "kill-switch",
     killBanner: "KILL-SWITCH ВКЛ · трафик блокируется при обрыве туннеля",
+    killSwitchPending: "Kill-switch ещё не подключён к ядру",
     leakCheck: "проверка",
     settings: "настройки",
   },

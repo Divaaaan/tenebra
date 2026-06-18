@@ -169,6 +169,14 @@
   color: var(--signal);
   border-color: var(--signal);
 }
+.toggle:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.toggle:disabled:hover {
+  color: var(--text-dim);
+  border-color: var(--line);
+}
 .toggle .box {
   font-size: var(--fs-data);
   line-height: 1;
