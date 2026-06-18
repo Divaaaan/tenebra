@@ -107,6 +107,21 @@ func buildFake(t *testing.T) map[string]any {
 	return cfg
 }
 
+// TestKillSwitchEnablesStrictRoute pins the kill-switch wiring: with the option
+// set, the tun must turn strict_route on (the hard leak guarantee); without it,
+// off (the gentle default verified in TestTunInboundPresent).
+func TestKillSwitchEnablesStrictRoute(t *testing.T) {
+	cfg, err := Build(fakeNodes(), "hy2",
+		routing.Options{Mode: routing.ModeSmart, KillSwitch: true}, TunOptions{})
+	if err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+	in := cfg["inbounds"].([]map[string]any)[0]
+	if in["strict_route"] != true {
+		t.Errorf("kill-switch should set strict_route=true, got %v", in["strict_route"])
+	}
+}
+
 // outboundsByTag indexes the outbounds array by tag for assertions.
 func outboundsByTag(t *testing.T, cfg map[string]any) map[string]map[string]any {
 	t.Helper()
@@ -155,8 +170,13 @@ func TestTunInboundPresent(t *testing.T) {
 	if in["type"] != "tun" || in["tag"] != tunTag {
 		t.Errorf("inbound type/tag = %v/%v", in["type"], in["tag"])
 	}
-	if in["auto_route"] != true || in["strict_route"] != true {
-		t.Errorf("tun must have auto_route+strict_route, got %v", in)
+	if in["auto_route"] != true {
+		t.Errorf("tun must have auto_route, got %v", in)
+	}
+	// strict_route follows the kill-switch option, which defaults off, so the
+	// default config leaves it off to keep the connect transition gentle.
+	if in["strict_route"] != false {
+		t.Errorf("tun strict_route should default to false, got %v", in["strict_route"])
 	}
 	addr, ok := in["address"].([]string)
 	if !ok || len(addr) != 1 || addr[0] != tunAddr {
