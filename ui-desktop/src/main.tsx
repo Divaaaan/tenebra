@@ -5,8 +5,17 @@ import { App } from "./App";
 import { I18nProvider } from "./i18n/I18nContext";
 import { ThemeProvider } from "./theme/ThemeContext";
 
+// Self-hosted display + mono faces (bundled by Vite, never fetched at runtime —
+// a remote font CDN is both a privacy leak and, from Russia, a startup-blocking
+// timeout). These register the @font-face rules the tokens reference.
+import "@fontsource-variable/space-grotesk";
+import "@fontsource-variable/jetbrains-mono";
+
 import "./styles/global.css";
 import "./styles/app.css";
+import "./styles/shell.css";
+import "./styles/connection.css";
+import "./styles/servers.css";
 
 const root = document.getElementById("root");
 if (!root) {

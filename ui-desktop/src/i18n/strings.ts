@@ -23,6 +23,53 @@ export interface Strings {
     error: string;
   };
 
+  /** Top bar: brand line + the active subscription's meta. */
+  topbar: {
+    noSubscription: string;
+  };
+
+  /** Left connection pane. */
+  conn: {
+    eyebrow: string;
+    subOff: string;
+    subPending: string;
+    /** Trailing reassurance on the connected sub-line; prefix is server·proto. */
+    subConnected: string;
+    abort: string;
+    exitIp: string;
+    change: string;
+    statSession: string;
+    statDown: string;
+    statPing: string;
+    unitMinSec: string;
+    unitMbps: string;
+  };
+
+  /** Right server-list pane. */
+  servers: {
+    title: string;
+    online: string;
+    showing: string;
+    regionAll: string;
+    regionEurope: string;
+    regionAmericas: string;
+    regionAsiaPac: string;
+    searchPlaceholder: string;
+    emptyFilter: string;
+    down: string;
+    addSub: string;
+    noNodes: string;
+  };
+
+  /** Bottom bar: routing segmented control, kill-switch, quick actions. */
+  bottom: {
+    routing: string;
+    killSwitch: string;
+    killBanner: string;
+    leakCheck: string;
+    settings: string;
+  };
+
   home: {
     connect: string;
     disconnect: string;
@@ -184,6 +231,44 @@ const en: Strings = {
     connected: "Connected",
     error: "Error",
   },
+  topbar: {
+    noSubscription: "no subscription",
+  },
+  conn: {
+    eyebrow: "Tunnel status",
+    subOff: "traffic unprotected · select a node and connect",
+    subPending: "establishing tunnel · negotiating · · ·",
+    subConnected: "no logs",
+    abort: "ABORT",
+    exitIp: "exit node",
+    change: "change",
+    statSession: "Session",
+    statDown: "Down",
+    statPing: "Ping",
+    unitMinSec: "m:s",
+    unitMbps: "Mbps",
+  },
+  servers: {
+    title: "Nodes",
+    online: "online",
+    showing: "showing",
+    regionAll: "all",
+    regionEurope: "europe",
+    regionAmericas: "americas",
+    regionAsiaPac: "asia-pac",
+    searchPlaceholder: "search node · de-fra",
+    emptyFilter: "no nodes match this filter",
+    down: "down",
+    addSub: "+ add",
+    noNodes: "this subscription has no nodes",
+  },
+  bottom: {
+    routing: "Routing",
+    killSwitch: "kill-switch",
+    killBanner: "KILL-SWITCH ARMED · traffic blocked if the tunnel drops",
+    leakCheck: "leak-check",
+    settings: "settings",
+  },
   home: {
     connect: "Connect",
     disconnect: "Disconnect",
@@ -330,6 +415,44 @@ const ru: Strings = {
     connecting: "Подключение…",
     connected: "Подключено",
     error: "Ошибка",
+  },
+  topbar: {
+    noSubscription: "нет подписки",
+  },
+  conn: {
+    eyebrow: "Статус туннеля",
+    subOff: "трафик не защищён · выберите узел и подключитесь",
+    subPending: "поднимаю туннель · согласование · · ·",
+    subConnected: "без логов",
+    abort: "ОТМЕНА",
+    exitIp: "узел выхода",
+    change: "сменить",
+    statSession: "Сессия",
+    statDown: "Загрузка",
+    statPing: "Пинг",
+    unitMinSec: "м:с",
+    unitMbps: "Мбит/с",
+  },
+  servers: {
+    title: "Узлы",
+    online: "онлайн",
+    showing: "показано",
+    regionAll: "все",
+    regionEurope: "европа",
+    regionAmericas: "америка",
+    regionAsiaPac: "азия",
+    searchPlaceholder: "поиск узла · de-fra",
+    emptyFilter: "нет узлов под этот фильтр",
+    down: "недост.",
+    addSub: "+ добавить",
+    noNodes: "в этой подписке нет узлов",
+  },
+  bottom: {
+    routing: "Маршрут",
+    killSwitch: "kill-switch",
+    killBanner: "KILL-SWITCH ВКЛ · трафик блокируется при обрыве туннеля",
+    leakCheck: "проверка",
+    settings: "настройки",
   },
   home: {
     connect: "Подключиться",
