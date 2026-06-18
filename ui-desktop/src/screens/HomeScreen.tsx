@@ -19,6 +19,31 @@ interface HomeScreenProps {
   onGoToProfiles: () => void;
 }
 
+/** A small directional chevron marking download vs upload. Decorative: the
+ *  adjacent text label carries the meaning for assistive tech. */
+function TrafficArrow({ direction }: { direction: "down" | "up" }) {
+  return (
+    <svg
+      className="traffic-arrow"
+      viewBox="0 0 16 16"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {direction === "down" ? (
+        <path d="M8 3v10M4 9l4 4 4-4" />
+      ) : (
+        <path d="M8 13V3M4 7l4-4 4 4" />
+      )}
+    </svg>
+  );
+}
+
 export function HomeScreen({
   tenebra,
   selectedProfile,
@@ -113,7 +138,7 @@ export function HomeScreen({
       : t.home.connect;
 
   return (
-    <section className="home">
+    <section className={`home home--${phase}`}>
       <div className="home-dial">
         <button
           type="button"
@@ -122,15 +147,35 @@ export function HomeScreen({
           disabled={busy && !locked}
           title={isConnecting ? t.home.cancel : buttonLabel}
         >
+          <span className="dial-bloom" aria-hidden="true" />
           <span className="dial-aura" aria-hidden="true" />
+          <span className="dial-spokes" aria-hidden="true" />
           <span className="dial-track" aria-hidden="true" />
           <span className="dial-ring" aria-hidden="true" />
           <span className="dial-well" aria-hidden="true" />
-          <span className="dial-label">{buttonLabel}</span>
+          <span className="dial-core" aria-hidden="true" />
+          <span className="dial-label">
+            <svg
+              className="dial-glyph"
+              viewBox="0 0 24 24"
+              width="26"
+              height="26"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.4"
+              strokeLinecap="round"
+              aria-hidden="true"
+            >
+              {/* The universal power mark: an open arc with a vertical stem. */}
+              <path d="M12 3v8" />
+              <path d="M7.5 6.3a6.5 6.5 0 1 0 9 0" />
+            </svg>
+            {buttonLabel}
+          </span>
         </button>
 
         <p className="home-status" aria-live="polite">
-          {t.state[phase]}
+          <span className="home-status-word">{t.state[phase]}</span>
         </p>
 
         {phase === "error" && state.error && (
@@ -154,7 +199,10 @@ export function HomeScreen({
       {isConnected && (
         <div className="home-traffic">
           <div className="traffic-stat traffic-stat--down">
-            <span className="traffic-label">{t.home.download}</span>
+            <span className="traffic-head">
+              <TrafficArrow direction="down" />
+              <span className="traffic-label">{t.home.download}</span>
+            </span>
             <RollingNumber
               className="traffic-rate"
               value={traffic.downRate}
@@ -163,7 +211,7 @@ export function HomeScreen({
             <Sparkline
               points={history.down}
               width={130}
-              height={26}
+              height={34}
               aria-label={t.home.download}
             />
             <RollingNumber
@@ -173,7 +221,10 @@ export function HomeScreen({
             />
           </div>
           <div className="traffic-stat traffic-stat--up">
-            <span className="traffic-label">{t.home.upload}</span>
+            <span className="traffic-head">
+              <TrafficArrow direction="up" />
+              <span className="traffic-label">{t.home.upload}</span>
+            </span>
             <RollingNumber
               className="traffic-rate"
               value={traffic.upRate}
@@ -182,7 +233,7 @@ export function HomeScreen({
             <Sparkline
               points={history.up}
               width={130}
-              height={26}
+              height={34}
               aria-label={t.home.upload}
             />
             <RollingNumber

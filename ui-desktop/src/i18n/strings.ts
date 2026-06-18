@@ -6,6 +6,8 @@ export type Language = "en" | "ru";
 
 export interface Strings {
   appName: string;
+  /** Short brand tagline shown under the wordmark in the sidebar. */
+  tagline: string;
 
   nav: {
     home: string;
@@ -169,6 +171,7 @@ export interface Strings {
 
 const en: Strings = {
   appName: "Tenebra",
+  tagline: "Privacy in the dark",
   nav: {
     home: "Home",
     profiles: "Profiles",
@@ -315,6 +318,7 @@ const en: Strings = {
 
 const ru: Strings = {
   appName: "Tenebra",
+  tagline: "Приватность в темноте",
   nav: {
     home: "Главная",
     profiles: "Профили",

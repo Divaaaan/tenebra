@@ -47,7 +47,10 @@ export function Sidebar({ active, onNavigate, state }: SidebarProps) {
         <span className="sidebar-mark" aria-hidden="true">
           T
         </span>
-        <span className="sidebar-title">{t.appName}</span>
+        <span className="sidebar-wordmark">
+          <span className="sidebar-title">{t.appName}</span>
+          <span className="sidebar-tagline">{t.tagline}</span>
+        </span>
       </div>
 
       <nav className="sidebar-nav" aria-label={t.appName}>
