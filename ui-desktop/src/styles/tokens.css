@@ -62,6 +62,14 @@
   --t-fast: 80ms linear; /* chip colour / border */
   --t-base: 100ms linear; /* button fill / row background */
 
+  /* Status-word tints. The 52px hero word in pure --good/--text reads harsh, so
+     it's softened (desaturated toward the text colour). Defined in terms of the
+     theme vars below, so it adapts to dark and light on its own. The dot matches
+     the word; error stays the hard --signal — that one is meant to alarm. */
+  --word-on: color-mix(in srgb, var(--good) 58%, var(--text) 42%);
+  --word-off: color-mix(in srgb, var(--text) 50%, var(--text-dim) 50%);
+  --word-pending: color-mix(in srgb, var(--warn-soft) 60%, var(--text) 40%);
+
   /* A flag the renderer reads to decide whether to run JS-driven motion. CSS
      owns the media query; JS reads the computed value. Default: on. */
   --motion-ok: 1;

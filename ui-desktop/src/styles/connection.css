@@ -47,25 +47,25 @@
 }
 
 .conn-word.idle {
-  color: var(--text);
+  color: var(--word-off);
 }
 .conn-word.idle .ind {
   border: 2px solid var(--text-dim-2);
 }
 
 .conn-word.connecting {
-  color: var(--warn-soft);
+  color: var(--word-pending);
 }
 .conn-word.connecting .ind {
-  background: var(--warn-soft);
+  background: var(--word-pending);
   animation: blink-pending 1s steps(2) infinite;
 }
 
 .conn-word.connected {
-  color: var(--good);
+  color: var(--word-on);
 }
 .conn-word.connected .ind {
-  background: var(--good);
+  background: var(--word-on);
   animation: blink-live 2.2s ease-in-out infinite;
 }
 
