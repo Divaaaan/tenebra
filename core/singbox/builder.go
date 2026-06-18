@@ -106,7 +106,7 @@ func Build(nodes []model.Node, selectedTag string, ro routing.Options, tun TunOp
 			"timestamp": true,
 		},
 		"dns":       ro.DNS(),
-		"inbounds":  []map[string]any{tunInbound(tun)},
+		"inbounds":  []map[string]any{tunInbound(tun, ro.KillSwitch)},
 		"outbounds": outbounds,
 		"route":     routeBlock(ro),
 		"experimental": map[string]any{
@@ -183,20 +183,23 @@ func buildNodes(nodes []model.Node) (outs, endpoints []map[string]any, tags []st
 	return outs, endpoints, tags, nil
 }
 
-// tunInbound renders the single tun inbound. strict_route is forced on: it is
-// what makes the kill switch real — with auto_route + strict_route, sing-box
-// installs routes that prevent traffic from escaping the tunnel, so when the
-// proxy is down packets are dropped rather than leaking to the physical
-// interface. Combined with route final=proxy (no implicit direct), there is no
-// path for proxied traffic to bypass the tunnel.
-func tunInbound(t TunOptions) map[string]any {
+// tunInbound renders the single tun inbound. auto_route always routes traffic
+// into the tunnel; strict_route follows the kill-switch option. strict_route is
+// what makes the kill switch real — sing-box installs firewall rules that drop
+// any packet trying to escape the tunnel, so nothing leaks when the proxy is
+// down. But those rules are applied system-wide the instant the tunnel comes up,
+// which stalls every existing connection (and the desktop UI's own webview)
+// while Windows reprograms its filter engine. That trade — a hard leak guarantee
+// for a rough connect — is the user's to make, so it is off unless the
+// kill-switch option is set.
+func tunInbound(t TunOptions, strictRoute bool) map[string]any {
 	return map[string]any{
 		"type":           "tun",
 		"tag":            tunTag,
 		"interface_name": t.InterfaceName,
 		"address":        []string{tunAddr},
 		"auto_route":     true,
-		"strict_route":   true,
+		"strict_route":   strictRoute,
 		"mtu":            t.MTU,
 		"stack":          t.Stack,
 	}
