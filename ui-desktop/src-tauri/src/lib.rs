@@ -18,9 +18,12 @@ use backend::{
     State, EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
-/// Held in Tauri's managed state and shared by every command handler.
+/// Held in Tauri's managed state and shared by every command handler. The
+/// backend is an `Arc` rather than a `Box` so an async command can clone a
+/// handle and run its blocking backend call on a worker thread (the trait is
+/// `Send + Sync`), keeping the main/event-loop thread free.
 struct AppState {
-    backend: Box<dyn Backend>,
+    backend: Arc<dyn Backend>,
 }
 
 /// Bridges backend events to the webview. The backend calls these; we forward
@@ -73,21 +76,21 @@ impl EventSink for TauriSink {
 // If the sidecar fails to spawn (e.g. the binary is missing), we log and fall
 // back to the mock rather than leaving the UI with no backend at all.
 // =============================================================================
-fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Box<dyn Backend> {
+fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
     if std::env::var_os("TENEBRA_MOCK").is_some() {
-        return Box::new(backend::mock::MockBackend::new(sink));
+        return Arc::new(backend::mock::MockBackend::new(sink));
     }
 
     let program = backend::sidecar::SidecarBackend::default_program();
     let singbox = singbox_path(app);
     match backend::sidecar::SidecarBackend::spawn(program, singbox, Arc::clone(&sink)) {
-        Ok(backend) => Box::new(backend),
+        Ok(backend) => Arc::new(backend),
         Err(e) => {
             sink.log(
                 "error",
                 &format!("could not start tenebra-core, using demo backend: {e}"),
             );
-            Box::new(backend::mock::MockBackend::new(sink))
+            Arc::new(backend::mock::MockBackend::new(sink))
         }
     }
 }
@@ -113,96 +116,126 @@ fn singbox_path(app: &AppHandle) -> std::path::PathBuf {
 // Each mirrors one row of the control-protocol request table. They return
 // `Result<T, String>`; Tauri serializes `Ok` as the response `data` and `Err`
 // as the response `error`, matching the protocol's `{ ok, data | error }`.
+//
+// They are `async`: a sync Tauri command runs on the main/event-loop thread, so
+// it freezes the whole window for its duration. Every backend call here blocks
+// on the sidecar's response channel (up to the 60s request timeout), and the
+// network-bound ones (connect, import, refresh, ping, leak_check) can take
+// seconds. So each clones the `Arc` backend and runs the blocking call on a
+// worker thread via `spawn_blocking`, leaving the UI responsive. `spawn_blocking`
+// only fails if the runtime is shutting down; we surface that as an error string
+// like any other.
 
-#[tauri::command]
-fn status(state: TauriState<'_, AppState>) -> Result<State, String> {
-    state.backend.status()
+/// Run a blocking backend call off the main thread and flatten the join error
+/// into the command's `Result<_, String>`. `f` gets an owned `Arc` handle.
+async fn off_thread<T, F>(backend: Arc<dyn Backend>, f: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<dyn Backend>) -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || f(backend))
+        .await
+        .map_err(|e| format!("backend task failed: {e}"))?
 }
 
 #[tauri::command]
-fn list_profiles(state: TauriState<'_, AppState>) -> Result<ProfileList, String> {
-    state
-        .backend
-        .list_profiles()
-        .map(|profiles| ProfileList { profiles })
+async fn status(state: TauriState<'_, AppState>) -> Result<State, String> {
+    off_thread(Arc::clone(&state.backend), |b| b.status()).await
 }
 
 #[tauri::command]
-fn import_subscription(
+async fn list_profiles(state: TauriState<'_, AppState>) -> Result<ProfileList, String> {
+    off_thread(Arc::clone(&state.backend), |b| {
+        b.list_profiles().map(|profiles| ProfileList { profiles })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn import_subscription(
     state: TauriState<'_, AppState>,
     url: String,
     name: String,
 ) -> Result<ProfileWrap, String> {
-    state
-        .backend
-        .import_subscription(url, name)
-        .map(ProfileWrap::new)
+    off_thread(Arc::clone(&state.backend), move |b| {
+        b.import_subscription(url, name).map(ProfileWrap::new)
+    })
+    .await
 }
 
 #[tauri::command]
-fn import_link(
+async fn import_link(
     state: TauriState<'_, AppState>,
     link: String,
     name: Option<String>,
 ) -> Result<ProfileWrap, String> {
-    state.backend.import_link(link, name).map(ProfileWrap::new)
+    off_thread(Arc::clone(&state.backend), move |b| {
+        b.import_link(link, name).map(ProfileWrap::new)
+    })
+    .await
 }
 
 #[tauri::command]
-fn remove_profile(state: TauriState<'_, AppState>, profile: String) -> Result<(), String> {
-    state.backend.remove_profile(profile)
+async fn remove_profile(state: TauriState<'_, AppState>, profile: String) -> Result<(), String> {
+    off_thread(Arc::clone(&state.backend), move |b| {
+        b.remove_profile(profile)
+    })
+    .await
 }
 
 #[tauri::command]
-fn refresh_subscription(
+async fn refresh_subscription(
     state: TauriState<'_, AppState>,
     profile: String,
 ) -> Result<ProfileWrap, String> {
-    state
-        .backend
-        .refresh_subscription(profile)
-        .map(ProfileWrap::new)
+    off_thread(Arc::clone(&state.backend), move |b| {
+        b.refresh_subscription(profile).map(ProfileWrap::new)
+    })
+    .await
 }
 
 #[tauri::command]
-fn connect(
+async fn connect(
     state: TauriState<'_, AppState>,
     profile: String,
     node: Option<String>,
 ) -> Result<State, String> {
-    state.backend.connect(profile, node)
+    off_thread(Arc::clone(&state.backend), move |b| {
+        b.connect(profile, node)
+    })
+    .await
 }
 
 #[tauri::command]
-fn disconnect(state: TauriState<'_, AppState>) -> Result<State, String> {
-    state.backend.disconnect()
+async fn disconnect(state: TauriState<'_, AppState>) -> Result<State, String> {
+    off_thread(Arc::clone(&state.backend), |b| b.disconnect()).await
 }
 
 #[tauri::command]
-fn ping(state: TauriState<'_, AppState>, profile: String) -> Result<PingList, String> {
-    state
-        .backend
-        .ping(profile)
-        .map(|results| PingList { results })
+async fn ping(state: TauriState<'_, AppState>, profile: String) -> Result<PingList, String> {
+    off_thread(Arc::clone(&state.backend), move |b| {
+        b.ping(profile).map(|results| PingList { results })
+    })
+    .await
 }
 
 #[tauri::command]
-fn set_routing(state: TauriState<'_, AppState>, mode: RoutingMode) -> Result<State, String> {
-    state.backend.set_routing(mode)
+async fn set_routing(state: TauriState<'_, AppState>, mode: RoutingMode) -> Result<State, String> {
+    off_thread(Arc::clone(&state.backend), move |b| b.set_routing(mode)).await
 }
 
 #[tauri::command]
-fn set_split(
+async fn set_split(
     state: TauriState<'_, AppState>,
     mode: SplitMode,
     apps: Vec<String>,
 ) -> Result<State, String> {
-    state.backend.set_split(mode, apps)
+    off_thread(Arc::clone(&state.backend), move |b| b.set_split(mode, apps)).await
 }
 
 #[tauri::command]
-fn leak_check(state: TauriState<'_, AppState>) -> Result<LeakCheck, String> {
-    state.backend.leak_check()
+async fn leak_check(state: TauriState<'_, AppState>) -> Result<LeakCheck, String> {
+    off_thread(Arc::clone(&state.backend), |b| b.leak_check()).await
 }
 
 /// Quit the whole app. Closing the window only hides it (see the close handler
