@@ -21,7 +21,7 @@ func (o Options) DNS() map[string]any {
 			dnsServer(dnsDirectTag, o.DNSDirect, tagDirect),
 		},
 		"rules": o.dnsRules(),
-		"final": dnsRemoteTag,
+		"final": o.dnsFinal(),
 	}
 	if s := o.strategy(); s != "" {
 		dns["strategy"] = s
@@ -87,4 +87,17 @@ func (o Options) dnsRules() []map[string]any {
 			"server":   dnsDirectTag,
 		},
 	}
+}
+
+// dnsFinal is the fallback DNS server for lookups no rule matched. It must track
+// the route final: in direct mode route.final is the direct outbound, so DNS has
+// to resolve via the direct resolver too — forcing it through dns-remote (which
+// detours to the proxy selector) would break resolution exactly when the user
+// picks direct mode because the proxy is down. Smart and global keep dns-remote
+// so general lookups stay encrypted over the proxy and don't leak to the LAN.
+func (o Options) dnsFinal() string {
+	if o.Mode == ModeDirect {
+		return dnsDirectTag
+	}
+	return dnsRemoteTag
 }

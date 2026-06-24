@@ -180,6 +180,19 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	d.mu.Unlock()
 }
 
+// SetRuleSetDir points the routing layer at a directory holding the bundled RU
+// rule-set binaries (geoip-ru.srs / geosite-ru.srs) so smart-mode configs load
+// them locally instead of downloading them from GitHub at startup — the latter
+// blocks sing-box for ~10s (and can FATAL) when raw.githubusercontent.com is
+// throttled. main passes the resources dir here only after confirming both
+// files exist; an empty dir leaves the remote fallback in place. Call it before
+// serving — it is not synchronised against an in-flight connect.
+func (d *Daemon) SetRuleSetDir(dir string) {
+	d.mu.Lock()
+	d.routing.RuleSetDir = dir
+	d.mu.Unlock()
+}
+
 // persistSettings saves the split portion of ro through the settings store, if
 // one is installed. Persistence is best-effort: a write failure is logged via
 // the daemon's log event but never fails the originating command, mirroring how
@@ -403,10 +416,18 @@ func (d *Daemon) refreshProfile(ctx context.Context, p profile.Profile) (profile
 	before := p
 	p.Servers = rebuilt.Servers
 	p.UpdatedAt = rebuilt.UpdatedAt
-	p.ExpiresAt = nil
-	p.TrafficUsed = 0
-	p.TrafficTotal = 0
-	applyUserInfo(&p, header.Get("Subscription-Userinfo"))
+	// Only refresh traffic/expiry when this response actually carries a user-info
+	// header. A refresh that returns the node list but no Subscription-Userinfo
+	// (some panels send it only intermittently) must preserve the known quota and
+	// expiry rather than silently zeroing them — the 6h background sweep would
+	// otherwise wipe them. applyUserInfo no-ops on a blank header, so guarding the
+	// overwrite here is what keeps the prior values.
+	if ui := header.Get("Subscription-Userinfo"); ui != "" {
+		p.ExpiresAt = nil
+		p.TrafficUsed = 0
+		p.TrafficTotal = 0
+		applyUserInfo(&p, ui)
+	}
 
 	if err := d.store.Update(p); err != nil {
 		return profile.Profile{}, false, err

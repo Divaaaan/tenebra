@@ -1,0 +1,269 @@
+/* Logs + leak-check overlay — spec-sheet: a monospace console and a titled
+   leak-check readout. Sharp borders, one accent, near-zero motion. The host
+   overlay owns the ✕ close and the body padding; the screen leaves headroom up
+   top so the title clears that control. */
+
+.log-screen {
+  display: flex;
+  flex-direction: column;
+  padding: 24px 24px 22px;
+}
+
+/* ── shared eyebrow (matches the connection pane) ── */
+.log-eyebrow {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-cap);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* ── header: title + leak-check CTA ── */
+.log-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding-bottom: var(--sp-5);
+  border-bottom: var(--bw) solid var(--line);
+}
+.log-head-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+.log-title {
+  font-family: var(--display);
+  font-size: var(--fs-sku);
+  font-weight: 600;
+  letter-spacing: var(--track-sku);
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+/* ── primary button (leak-check) ── */
+.log-btn-primary {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding: 13px 28px;
+  border: var(--bw-emphasis) solid var(--signal);
+  color: var(--signal);
+  transition:
+    background var(--t-base),
+    color var(--t-base);
+}
+.log-btn-primary:hover {
+  background: var(--signal);
+  color: var(--on-signal);
+}
+.log-btn-primary:disabled {
+  border-color: var(--text-dim-2);
+  color: var(--text-dim);
+  cursor: default;
+}
+.log-btn-primary:disabled:hover {
+  background: transparent;
+  color: var(--text-dim);
+}
+
+/* ── ghost button (clear) ── */
+.log-btn-ghost {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 5px 11px;
+  border: var(--bw) solid var(--line);
+  color: var(--text-dim);
+  transition:
+    color var(--t-fast),
+    border-color var(--t-fast);
+}
+.log-btn-ghost:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+.log-btn-ghost:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.log-btn-ghost:disabled:hover {
+  color: var(--text-dim);
+  border-color: var(--line);
+}
+
+/* ── leak-check readout: titled spec-sheet block, one verdict per row ── */
+.log-spec {
+  border: var(--bw) solid var(--line);
+  margin-top: var(--sp-5);
+}
+.log-spec-row {
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-left: var(--bw-emphasis) solid var(--line);
+}
+.log-spec-row + .log-spec-row {
+  border-top: var(--bw) solid var(--line);
+}
+/* The left rule carries the row's honest tone; neutral stays the quiet --line so
+   an inconclusive result never reads as a pass. */
+.log-spec-row[data-tone="good"] {
+  border-left-color: var(--good);
+}
+.log-spec-row[data-tone="bad"] {
+  border-left-color: var(--signal);
+}
+
+.log-spec-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-4);
+}
+
+/* The raw verdict word (ok / warn / leak / …), coloured to match the tone. */
+.log-verdict {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.log-verdict--good {
+  color: var(--good);
+}
+.log-verdict--bad {
+  color: var(--signal);
+}
+
+.log-spec-line {
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  letter-spacing: var(--track-body);
+  color: var(--text);
+  line-height: 1.5;
+}
+.log-spec-detail {
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--track-body);
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+/* ── labelled fact rows (public IP, exit, resolvers) ── */
+.log-facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--sp-1) var(--sp-4);
+}
+.log-fact {
+  display: contents;
+}
+.log-fact dt {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.log-fact dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  letter-spacing: var(--track-body);
+  color: var(--text);
+  word-break: break-all;
+}
+.log-fact-note {
+  color: var(--text-dim);
+}
+
+/* ── console block: header rule + dense monospace log ── */
+.log-console-block {
+  margin-top: var(--sp-6);
+  display: flex;
+  flex-direction: column;
+}
+.log-console-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding-bottom: var(--sp-3);
+  border-bottom: var(--bw) solid var(--line);
+}
+
+.log-console {
+  border: var(--bw) solid var(--line);
+  border-top: none;
+  max-height: 320px;
+  overflow-y: auto;
+  font-variant-numeric: tabular-nums;
+  user-select: text;
+}
+
+.log-empty {
+  padding: 18px 16px;
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  letter-spacing: var(--track-body);
+  color: var(--text-dim-2);
+}
+
+.log-row {
+  display: grid;
+  grid-template-columns: max-content max-content 1fr;
+  gap: var(--sp-4);
+  padding: 4px 16px;
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  letter-spacing: var(--track-body);
+  line-height: 1.5;
+}
+.log-row:first-child {
+  padding-top: 10px;
+}
+.log-row:last-child {
+  padding-bottom: 10px;
+}
+
+.log-time {
+  color: var(--text-dim-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Level glyph: fixed-width column, coloured by severity. info stays dim, warn is
+   the soft amber heads-up, error claims the lone accent. */
+.log-lvl {
+  text-transform: uppercase;
+  letter-spacing: var(--track-label);
+  white-space: nowrap;
+  min-width: 38px;
+}
+.log-lvl--info {
+  color: var(--text-dim);
+}
+.log-lvl--warn {
+  color: var(--warn-soft);
+}
+.log-lvl--error {
+  color: var(--signal);
+}
+
+.log-msg {
+  color: var(--text);
+  min-width: 0;
+  word-break: break-word;
+}

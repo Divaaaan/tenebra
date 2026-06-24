@@ -16,6 +16,8 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@fontsource-variable/jetbrains-mono": "5.2.8",
+    "@fontsource-variable/space-grotesk": "5.2.10",
     "@tauri-apps/api": "2.11.1",
     "@tauri-apps/plugin-autostart": "2.5.0",
     "@tauri-apps/plugin-dialog": "2.7.1",
