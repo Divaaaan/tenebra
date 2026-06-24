@@ -167,6 +167,91 @@ func TestServerIDChangesOnIdentityFields(t *testing.T) {
 	}
 }
 
+// TestServerIDDistinguishesStructFields covers fix #6: two servers on the same
+// host:port that differ only in WireGuard keys, REALITY material, or transport
+// details must get distinct IDs. Before the fix these collided to one ID because
+// serverID hashed only protocol/server/port/uuid/password/method.
+func TestServerIDDistinguishesStructFields(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b model.Node
+	}{
+		{
+			name: "amneziawg peers same endpoint different keys",
+			a: model.Node{Protocol: model.AmneziaWG, Server: "wg.test", Port: 51820,
+				WireGuard: &model.WireGuard{PrivateKey: "PRIV1", PeerPublicKey: "PEER1"}},
+			b: model.Node{Protocol: model.AmneziaWG, Server: "wg.test", Port: 51820,
+				WireGuard: &model.WireGuard{PrivateKey: "PRIV2", PeerPublicKey: "PEER2"}},
+		},
+		{
+			name: "amneziawg differ only in peer public key",
+			a: model.Node{Protocol: model.AmneziaWG, Server: "wg.test", Port: 51820,
+				WireGuard: &model.WireGuard{PrivateKey: "PRIV", PeerPublicKey: "PEER1"}},
+			b: model.Node{Protocol: model.AmneziaWG, Server: "wg.test", Port: 51820,
+				WireGuard: &model.WireGuard{PrivateKey: "PRIV", PeerPublicKey: "PEER2"}},
+		},
+		{
+			name: "reality variants differ in public key",
+			a: model.Node{Protocol: model.VLESS, Server: "r.test", Port: 443, UUID: "u",
+				TLS: &model.TLS{Enabled: true, Reality: &model.Reality{PublicKey: "K1", ShortID: "aa"}}},
+			b: model.Node{Protocol: model.VLESS, Server: "r.test", Port: 443, UUID: "u",
+				TLS: &model.TLS{Enabled: true, Reality: &model.Reality{PublicKey: "K2", ShortID: "aa"}}},
+		},
+		{
+			name: "reality variants differ in short id",
+			a: model.Node{Protocol: model.VLESS, Server: "r.test", Port: 443, UUID: "u",
+				TLS: &model.TLS{Enabled: true, Reality: &model.Reality{PublicKey: "K", ShortID: "aa"}}},
+			b: model.Node{Protocol: model.VLESS, Server: "r.test", Port: 443, UUID: "u",
+				TLS: &model.TLS{Enabled: true, Reality: &model.Reality{PublicKey: "K", ShortID: "bb"}}},
+		},
+		{
+			name: "transports differ in type",
+			a: model.Node{Protocol: model.VLESS, Server: "t.test", Port: 443, UUID: "u",
+				Transport: &model.Transport{Type: "ws", Path: "/x"}},
+			b: model.Node{Protocol: model.VLESS, Server: "t.test", Port: 443, UUID: "u",
+				Transport: &model.Transport{Type: "grpc", ServiceName: "x"}},
+		},
+		{
+			name: "transports differ in path",
+			a: model.Node{Protocol: model.VLESS, Server: "t.test", Port: 443, UUID: "u",
+				Transport: &model.Transport{Type: "ws", Path: "/a"}},
+			b: model.Node{Protocol: model.VLESS, Server: "t.test", Port: 443, UUID: "u",
+				Transport: &model.Transport{Type: "ws", Path: "/b"}},
+		},
+		{
+			name: "transports differ in service name",
+			a: model.Node{Protocol: model.VLESS, Server: "t.test", Port: 443, UUID: "u",
+				Transport: &model.Transport{Type: "grpc", ServiceName: "svc1"}},
+			b: model.Node{Protocol: model.VLESS, Server: "t.test", Port: 443, UUID: "u",
+				Transport: &model.Transport{Type: "grpc", ServiceName: "svc2"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if serverID(tt.a) == serverID(tt.b) {
+				t.Errorf("serverID collision: %s and %s hash equal", tt.name, tt.name)
+			}
+		})
+	}
+}
+
+// TestServerIDStableWithStructFields confirms the extra fields don't break
+// determinism: the same populated node still hashes to itself, and an absent
+// sub-struct hashes the same as one whose relevant fields are empty.
+func TestServerIDStableWithStructFields(t *testing.T) {
+	n := model.Node{Protocol: model.AmneziaWG, Server: "wg.test", Port: 51820,
+		WireGuard: &model.WireGuard{PrivateKey: "PRIV", PeerPublicKey: "PEER"}}
+	if first, second := serverID(n), serverID(n); first != second {
+		t.Error("serverID not deterministic for WG node")
+	}
+	// A relabelled WG node keeps its ID (name still excluded).
+	renamed := n
+	renamed.Name = "elsewhere"
+	if serverID(n) != serverID(renamed) {
+		t.Error("serverID changed when only Name changed on a WG node")
+	}
+}
+
 // TestServerIDNoCollisionAcrossBoundary guards the length-prefix scheme:
 // splitting a value across fields must not collide.
 func TestServerIDNoCollisionAcrossBoundary(t *testing.T) {

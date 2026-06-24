@@ -14,15 +14,17 @@ body,
 }
 
 body {
-  font-family: var(--font-sans);
-  font-size: 14px;
-  line-height: 1.5;
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  line-height: 1.45;
   color: var(--text);
   background: var(--bg);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "calt" 0;
   -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-  /* The window chrome owns selection; stray text selection in the shell reads
-     as a bug, so opt content back in only where it matters. */
+  text-rendering: geometricPrecision;
+  /* The window chrome owns selection; stray selection in the shell reads as a
+     bug, so content opts back in (see .selectable / inputs). */
   user-select: none;
 }
 
@@ -34,8 +36,7 @@ p {
 }
 
 button {
-  font: inherit;
-  color: inherit;
+  all: unset;
   cursor: pointer;
 }
 
@@ -46,58 +47,42 @@ textarea {
   color: inherit;
 }
 
-a {
-  color: var(--accent);
+/* Text that is data, not chrome — IPs, codes — can be selected/copied. */
+.selectable,
+input,
+textarea {
+  user-select: text;
 }
 
-/* Visible, consistent focus ring for keyboard users; pointer focus stays quiet
-   thanks to :focus-visible. A solid outline guarantees visibility (and survives
-   forced-colors), with a soft accent halo layered on for character. */
+/* Spec-sheet focus ring: a hard 1px signal outline, no halo, no radius. */
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: var(--bw) solid var(--signal);
   outline-offset: 2px;
-  border-radius: var(--radius-sm);
-  box-shadow: 0 0 0 4px var(--accent-bg);
 }
 
 ::selection {
-  background: var(--accent-bg);
+  background: var(--signal);
+  color: var(--on-signal);
 }
 
-/* Scrollbars tuned to the surface so they don't fight the dark theme. */
+/* Thin, quiet scrollbars tuned to the rules. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
+  scrollbar-color: var(--line-2) transparent;
 }
 
 *::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
 *::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: var(--radius-pill);
-  border: 2px solid transparent;
-  background-clip: content-box;
+  background: var(--line-2);
 }
 
-*::-webkit-scrollbar-thumb:hover {
-  background: var(--text-faint);
-  background-clip: content-box;
-}
-
-/* A flag the renderer can read to decide whether to run JS-driven motion
-   (Web Animations, number rolls). CSS owns the media query; JS reads the
-   computed value so there is a single source of truth. Default: motion on. */
-:root {
-  --motion-ok: 1;
-}
-
-/* Honour a user's reduced-motion preference everywhere. This is the global
-   accessibility guard: it neutralises CSS transitions/animations, the View
-   Transitions cross-fade, and tells JS-driven effects to stand down. Essential
-   feedback (a value changing, a colour flipping) still happens — instantly. */
+/* Honour reduced-motion everywhere: neutralise transitions/animations and the
+   View Transitions cross-fade, and tell JS-driven effects to stand down.
+   Essential feedback (a value changing, a colour flipping) still happens. */
 @media (prefers-reduced-motion: reduce) {
   :root {
     --motion-ok: 0;
@@ -112,7 +97,6 @@ a {
     scroll-behavior: auto !important;
   }
 
-  /* No cross-fade between screens; swap instantly. */
   ::view-transition-group(*),
   ::view-transition-old(*),
   ::view-transition-new(*) {
@@ -131,4 +115,10 @@ a {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* Tabular figures wherever data lives (most of the UI). */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
 }

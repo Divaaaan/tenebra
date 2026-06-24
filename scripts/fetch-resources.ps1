@@ -26,4 +26,13 @@ Expand-Archive -Path $wintunZip -DestinationPath $wintunOut -Force
 $dll = Get-ChildItem $wintunOut -Recurse -Filter wintun.dll | Where-Object { $_.FullName -match "amd64" } | Select-Object -First 1
 Copy-Item $dll.FullName (Join-Path $dest "wintun.dll") -Force
 
-Write-Host "Fetched sing-box $singboxVersion and wintun $wintunVersion into $dest"
+# RU geo rule-sets, shipped locally so smart routing loads them from disk instead
+# of downloading them from GitHub at startup (the download blocks sing-box for
+# ~10s when raw.githubusercontent.com is throttled). These are the official
+# SagerNet rule-set releases, pinned to the branch the routing layer references.
+$geoipUrl = "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ru.srs"
+curl.exe -L --retry 12 --retry-all-errors --retry-delay 2 -o (Join-Path $dest "geoip-ru.srs") $geoipUrl
+$geositeUrl = "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ru.srs"
+curl.exe -L --retry 12 --retry-all-errors --retry-delay 2 -o (Join-Path $dest "geosite-ru.srs") $geositeUrl
+
+Write-Host "Fetched sing-box $singboxVersion, wintun $wintunVersion, and RU rule-sets into $dest"

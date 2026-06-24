@@ -1,12 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions the Tenebra window needs: its own commands plus the file picker for importing links and opening the leak-check helper.",
+  "description": "Permissions the Tenebra window needs: its own commands plus the file picker for importing links.",
   "windows": ["main"],
+  "comment": "shell:allow-open is intentionally NOT granted. It lets the webview ask the OS to open arbitrary URLs/paths, and node/profile names here come from untrusted subscriptions, so it would be an injection vector for a VPN client. The app has no genuine external-link need (the picker uses dialog:allow-open; the leak check runs through the core, not the OS opener). If an external link is ever required, grant shell:allow-open scoped to an explicit URL allowlist rather than unconditionally. shell:allow-spawn stays, tightly scoped to the tenebra-core sidecar.",
   "permissions": [
     "core:default",
     "dialog:allow-open",
-    "shell:allow-open",
     "autostart:allow-enable",
     "autostart:allow-disable",
     "autostart:allow-is-enabled",

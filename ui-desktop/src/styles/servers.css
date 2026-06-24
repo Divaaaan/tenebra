@@ -1,0 +1,233 @@
+/* Server list (right pane) — subscription selector, region chips, search, and
+   the scrollable node rows. */
+
+.srv-head {
+  padding: 18px 22px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  border-bottom: var(--bw) solid var(--line);
+}
+
+/* subscription selector + add */
+.srv-subs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  min-height: 22px;
+}
+.srv-sub-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.srv-sub-name {
+  font-size: var(--fs-meta);
+  letter-spacing: var(--track-cap);
+  text-transform: uppercase;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.srv-add {
+  font-size: var(--fs-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  flex: none;
+  transition: color var(--t-fast);
+}
+.srv-add:hover {
+  color: var(--signal);
+}
+
+/* title + counts */
+.srv-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.srv-title h2 {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--track-cap);
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.srv-pinging {
+  color: var(--signal);
+}
+.srv-title .count {
+  font-size: var(--fs-meta);
+  color: var(--text-dim);
+  letter-spacing: 0.06em;
+}
+.srv-title .count b {
+  color: var(--text);
+}
+
+/* chips — shared by region filters and subscription tabs */
+.srv-filters {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.chip {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 4px 9px;
+  border: var(--bw) solid var(--line);
+  color: var(--text-dim);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition:
+    color var(--t-fast),
+    border-color var(--t-fast);
+}
+.chip::before {
+  content: "[ ";
+  color: var(--text-dim-2);
+}
+.chip::after {
+  content: " ]";
+  color: var(--text-dim-2);
+}
+.chip:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+.chip.on {
+  color: var(--signal);
+  border-color: var(--signal);
+}
+.chip.on::before,
+.chip.on::after {
+  color: var(--signal);
+}
+
+/* search */
+.srv-search {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  border: var(--bw) solid var(--line);
+  padding: 6px 11px;
+  font-size: var(--fs-meta);
+  letter-spacing: var(--track-body);
+}
+.srv-search .prompt {
+  color: var(--signal);
+}
+.srv-search input {
+  all: unset;
+  font: inherit;
+  color: var(--text);
+  width: 100%;
+  caret-color: var(--signal);
+}
+.srv-search input::placeholder {
+  color: var(--text-dim-2);
+}
+
+/* list + rows */
+.srv-list {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.srv-empty {
+  padding: 40px 22px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: var(--fs-meta);
+  letter-spacing: 0.06em;
+}
+.srv-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: 13px 22px;
+  border-bottom: var(--bw) solid var(--line);
+  cursor: pointer;
+  transition: background var(--t-fast);
+}
+.srv-row:hover {
+  background: var(--surface);
+}
+.srv-row.active {
+  background: var(--surface-2);
+}
+.srv-row.active .srv-node {
+  color: var(--signal);
+}
+.srv-row.is-dead {
+  cursor: default;
+}
+.srv-name {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.srv-node {
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  letter-spacing: var(--track-body);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.srv-active-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--signal);
+  display: inline-block;
+  flex: none;
+}
+.srv-city {
+  font-size: var(--fs-label);
+  color: var(--text-dim);
+  letter-spacing: var(--track-body);
+  text-transform: lowercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.srv-ping {
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  text-align: right;
+  min-width: 52px;
+}
+.srv-ping.hi {
+  color: var(--warn-soft);
+}
+.srv-ping.dead {
+  color: var(--text-dim-2);
+}
+.srv-proto {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  border: var(--bw) solid var(--line);
+  padding: 2px 6px;
+  min-width: 54px;
+  text-align: center;
+}

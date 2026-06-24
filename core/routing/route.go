@@ -1,16 +1,35 @@
 package routing
 
-// RouteRuleSets returns the rule_set entries the route/dns blocks reference.
-// Only smart mode needs them (global/direct match no geodata), so the other
-// modes get an empty slice and sing-box downloads nothing.
+import "path/filepath"
+
+// RouteRuleSets returns the rule_set definitions the route/dns blocks reference
+// by tag. Only smart mode needs them (global/direct match no geodata), so the
+// other modes get an empty slice and sing-box loads/downloads nothing.
 //
-// The sets are remote .srs binaries fetched through the direct outbound so the
-// download survives a blocked proxy.
+// When RuleSetDir is set, the sets are local .srs binaries loaded from disk, so
+// sing-box never blocks startup on a network fetch. When it is empty, they are
+// remote .srs binaries pulled through the direct outbound so the download
+// survives a blocked proxy — the original behaviour, kept as a fallback for dev
+// builds or installs missing the bundled files.
 func (o Options) RouteRuleSets() []map[string]any {
 	if o.Mode != ModeSmart {
 		return nil
 	}
-	mk := func(tag, url string) map[string]any {
+	if o.RuleSetDir != "" {
+		local := func(tag, file string) map[string]any {
+			return map[string]any{
+				"type":   "local",
+				"tag":    tag,
+				"format": "binary",
+				"path":   filepath.Join(o.RuleSetDir, file),
+			}
+		}
+		return []map[string]any{
+			local(ruleSetGeoIPRU, fileGeoIPRU),
+			local(ruleSetGeositeRU, fileGeositeRU),
+		}
+	}
+	remote := func(tag, url string) map[string]any {
 		return map[string]any{
 			"type":            "remote",
 			"tag":             tag,
@@ -21,8 +40,8 @@ func (o Options) RouteRuleSets() []map[string]any {
 		}
 	}
 	return []map[string]any{
-		mk(ruleSetGeoIPRU, urlGeoIPRU),
-		mk(ruleSetGeositeRU, urlGeositeRU),
+		remote(ruleSetGeoIPRU, urlGeoIPRU),
+		remote(ruleSetGeositeRU, urlGeositeRU),
 	}
 }
 

@@ -333,7 +333,7 @@ impl Backend for MockBackend {
                 let ok = r % 12 != 0;
                 PingResult {
                     node: n.id.clone(),
-                    rtt_ms: if ok { 20 + (r as u32 * 24 % 240) } else { 0 },
+                    rtt_ms: if ok { 20 + (r as i64 * 24 % 240) } else { 0 },
                     ok,
                 }
             })

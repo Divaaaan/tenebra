@@ -14,11 +14,10 @@
     "windows": [
       {
         "title": "Tenebra",
-        "width": 960,
-        "height": 680,
-        "minWidth": 760,
-        "minHeight": 560,
-        "resizable": true,
+        "width": 1120,
+        "height": 720,
+        "resizable": false,
+        "maximizable": false,
         "center": true,
         "theme": "Dark"
       }
@@ -31,7 +30,12 @@
     "active": true,
     "targets": "all",
     "externalBin": ["binaries/tenebra-core"],
-    "resources": ["resources/sing-box.exe", "resources/wintun.dll"],
+    "resources": [
+      "resources/sing-box.exe",
+      "resources/wintun.dll",
+      "resources/geoip-ru.srs",
+      "resources/geosite-ru.srs"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

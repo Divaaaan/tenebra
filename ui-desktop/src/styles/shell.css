@@ -1,0 +1,238 @@
+/* App shell — fixed 1120×720 window split into top bar / (kill banner) / body /
+   bottom bar. Body is the two-pane connection + server grid. */
+
+.app {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  border: var(--bw) solid var(--line-2);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* A whisper of grain so flat panels don't read as dead space. Dark only. */
+.app::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: var(--grain-opacity);
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+}
+
+.app > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ── top bar ── */
+.app-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 22px;
+  border-bottom: var(--bw) solid var(--line);
+}
+.brand {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: var(--fs-brand);
+  letter-spacing: 0.01em;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.brand .bracket {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+.brand .mark {
+  color: var(--text);
+}
+.brand .ver {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  color: var(--text-dim);
+  letter-spacing: 0.06em;
+  margin-left: 10px;
+  text-transform: uppercase;
+}
+.app-acct {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  font-size: var(--fs-meta);
+  color: var(--text-dim);
+  letter-spacing: var(--track-body);
+}
+.app-acct .b {
+  color: var(--text);
+}
+.app-acct .sep {
+  color: var(--line-2);
+}
+
+/* ── kill-switch banner ── */
+.kill-banner {
+  background: var(--signal);
+  color: var(--on-signal);
+  padding: 6px 22px;
+  font-size: var(--fs-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* ── body ── */
+.app-body {
+  display: grid;
+  grid-template-columns: 1.25fr 1fr;
+  flex: 1;
+  min-height: 0;
+}
+.pane {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── bottom bar ── */
+.app-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-3) 22px;
+  border-top: var(--bw) solid var(--line);
+}
+.proto {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.proto-lab {
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.seg {
+  display: flex;
+}
+.seg button {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 5px 11px;
+  border: var(--bw) solid var(--line);
+  margin-right: -1px;
+  color: var(--text-dim);
+  transition:
+    color var(--t-fast),
+    border-color var(--t-fast);
+}
+.seg button.on {
+  color: var(--signal);
+  border-color: var(--signal);
+  position: relative;
+  z-index: 1;
+}
+.seg button:hover {
+  color: var(--text);
+}
+.toggle {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 5px 10px;
+  border: var(--bw) solid var(--line);
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  transition:
+    color var(--t-fast),
+    border-color var(--t-fast);
+}
+.toggle:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+.toggle.on {
+  color: var(--signal);
+  border-color: var(--signal);
+}
+.toggle:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.toggle:disabled:hover {
+  color: var(--text-dim);
+  border-color: var(--line);
+}
+.toggle .box {
+  font-size: var(--fs-data);
+  line-height: 1;
+}
+.app-bottom .right {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.app-bottom .act {
+  font-size: var(--fs-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  display: inline-flex;
+  gap: 6px;
+  transition: color var(--t-fast);
+}
+.app-bottom .act:hover {
+  color: var(--signal);
+}
+
+/* ── overlay host for secondary surfaces (import / settings / logs) ── */
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: rgba(0, 0, 0, 0.62);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 36px 22px;
+  overflow-y: auto;
+}
+.overlay-panel {
+  position: relative;
+  width: min(820px, 100%);
+  background: var(--bg);
+  border: var(--bw) solid var(--line-2);
+}
+.overlay-close {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  z-index: 1;
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  color: var(--text-dim);
+  padding: 4px 8px;
+  transition: color var(--t-fast);
+}
+.overlay-close:hover {
+  color: var(--signal);
+}
+.overlay-body {
+  padding: var(--sp-2);
+  max-height: calc(720px - 72px);
+  overflow-y: auto;
+}

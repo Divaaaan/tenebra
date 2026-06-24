@@ -119,7 +119,11 @@ pub struct Profile {
 pub struct PingResult {
     /// The node id this result is for.
     pub node: String,
-    pub rtt_ms: u32,
+    /// Round-trip time in milliseconds. Widened to match the core's wire type
+    /// (`RTTMs int64`): a value the core reports as negative (e.g. a sentinel for
+    /// a failed probe) or beyond `u32` would otherwise fail to decode and turn the
+    /// whole ping response into an error, losing every node.
+    pub rtt_ms: i64,
     pub ok: bool,
 }
 
@@ -439,6 +443,21 @@ mod tests {
         assert!(!map.contains_key("rtt_ms"), "rtt_ms leaked: {obj}");
         let back: PingResult = from_value(obj).unwrap();
         assert_eq!(back, result);
+    }
+
+    #[test]
+    fn ping_result_rtt_ms_is_i64_wire_compatible() {
+        // The core emits RTTMs as int64. A negative sentinel and a value past
+        // u32::MAX must both decode — modelling rtt_ms as u32 would reject these
+        // and fail the entire ping response.
+        for rtt in [-1_i64, 0, 42, i64::from(u32::MAX) + 1, i64::MAX] {
+            let value = json!({ "node": "n", "rttMs": rtt, "ok": false });
+            let parsed: PingResult =
+                from_value(value).unwrap_or_else(|e| panic!("rttMs {rtt} should decode: {e}"));
+            assert_eq!(parsed.rtt_ms, rtt);
+            // And it round-trips back to the same wire token.
+            assert_eq!(to_value(parsed).unwrap()["rttMs"], json!(rtt));
+        }
     }
 
     #[test]

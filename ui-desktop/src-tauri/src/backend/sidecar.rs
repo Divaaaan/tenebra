@@ -173,11 +173,23 @@ fn core_log_path() -> Option<PathBuf> {
     Some(dir.join("core.log"))
 }
 
-/// A valid stderr target for the core: the log file if it can be created,
+/// A valid stderr target for the core: the log file if it can be opened,
 /// otherwise the null device. Never an inherited handle — see `spawn`.
+///
+/// Opened for append, not truncate: a crash-restart loop would otherwise wipe
+/// the very tail that explains the crash on every relaunch. We write a short
+/// separator first so successive sessions stay legible in the one file.
 fn core_log_stderr() -> Stdio {
     core_log_path()
-        .and_then(|p| std::fs::File::create(p).ok())
+        .and_then(|p| {
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(p)
+                .ok()?;
+            let _ = writeln!(file, "\n--- tenebra-core session start ---");
+            Some(file)
+        })
         .map(Stdio::from)
         .unwrap_or_else(Stdio::null)
 }
@@ -265,9 +277,20 @@ fn build_request(id: u64, cmd: &str, params: Value) -> Result<Vec<u8>, String> {
 
 /// Read the child's stdout to EOF, framing by newline. Each complete line is a
 /// JSON object: one carrying an `id` completes the matching pending request; one
-/// carrying an `event` is forwarded to the UI. On EOF or error the loop marks
-/// the backend closed and fails every still-pending request so no caller hangs.
+/// carrying an `event` is forwarded to the UI. When the loop ends — normal EOF,
+/// a read error, OR a panic in a sink call unwinding the thread — the backend is
+/// marked closed and every still-pending request is failed so no caller hangs
+/// out the full timeout. That cleanup lives in `ReaderGuard::drop`, which runs on
+/// every exit path including a panic, so the "reader stops ⇒ pending drained +
+/// closed set" invariant holds unconditionally.
 fn read_loop(stdout: impl std::io::Read, shared: Arc<Shared>, sink: Arc<dyn EventSink>) {
+    // Fail-fast cleanup, guaranteed to run even if `forward_event` panics: the
+    // guard's Drop fires during unwind, so a sink panic can't leave callers
+    // blocked on a reader that's no longer reading.
+    let _guard = ReaderGuard {
+        shared: Arc::clone(&shared),
+    };
+
     let reader = BufReader::new(stdout);
     // read_line frames on '\n' and buffers partial chunks internally, so a line
     // split across OS reads still arrives whole.
@@ -300,12 +323,33 @@ fn read_loop(stdout: impl std::io::Read, shared: Arc<Shared>, sink: Arc<dyn Even
         }
         // Anything else (no id, no event) is unexpected and ignored.
     }
+}
 
-    // Stdout closed: the core is gone. Fail outstanding requests so blocked
-    // callers return an error instead of waiting out the timeout.
-    shared.closed.store(true, Ordering::SeqCst);
-    let mut pending = shared.pending.lock().unwrap();
-    for (_, tx) in pending.drain() {
+/// Runs the reader's close-and-drain on drop so it fires on every exit path,
+/// panic included. Marks the backend closed and fails outstanding requests, so a
+/// blocked caller returns an error immediately instead of waiting out the
+/// timeout when the reader stops for any reason.
+struct ReaderGuard {
+    shared: Arc<Shared>,
+}
+
+impl Drop for ReaderGuard {
+    fn drop(&mut self) {
+        self.shared.closed.store(true, Ordering::SeqCst);
+        fail_all_pending(&self.shared.pending);
+    }
+}
+
+/// Fail every outstanding request with the "core gone" error and clear the map.
+/// Pulled out of the guard so it can be exercised directly. Recovers from a
+/// poisoned lock: if a holder panicked mid-mutation we still must drain, a
+/// poisoned mutex being no reason to strand callers for the full timeout.
+fn fail_all_pending(pending: &Pending) {
+    let mut map = match pending.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    for (_, tx) in map.drain() {
         let _ = tx.send(Err("tenebra-core exited before responding".into()));
     }
 }
@@ -678,5 +722,91 @@ mod tests {
         // An unparseable state (bad discriminant) is swallowed, not forwarded.
         forward_event(&json!({ "event": "state", "state": "???" }), &sink);
         assert!(sink.states.lock().unwrap().is_empty());
+    }
+
+    /// A sink that panics the first time the reader forwards a state event,
+    /// standing in for any Tauri sink call (`app.emit`, tray) blowing up on the
+    /// reader thread.
+    struct PanickingSink;
+
+    impl EventSink for PanickingSink {
+        fn state(&self, _state: &State) {
+            panic!("sink boom");
+        }
+        fn traffic(&self, _up: u64, _down: u64, _up_rate: u64, _down_rate: u64) {}
+        fn log(&self, _level: &str, _msg: &str) {}
+        fn profiles(&self) {}
+    }
+
+    /// Build a `Shared` with a throwaway child just to populate the `child` /
+    /// `stdin` fields; `read_loop` never touches them — it only drives the
+    /// `stdout` reader we pass in and `pending` / `closed`. The child is killed
+    /// when the returned `Shared` is dropped.
+    fn shared_with_dummy_child() -> Arc<Shared> {
+        // Any program with a stdin pipe works; we never write to or read from it.
+        // `cmd` exists on every Windows runner and stays put waiting on stdin.
+        let mut child = Command::new("cmd")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn dummy child for test");
+        let stdin = child.stdin.take().expect("dummy stdin");
+        Arc::new(Shared {
+            stdin: Mutex::new(stdin),
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            next_id: AtomicU64::new(1),
+            closed: AtomicBool::new(false),
+            child: Mutex::new(child),
+        })
+    }
+
+    #[test]
+    fn read_loop_drains_pending_when_a_sink_panics() {
+        let shared = shared_with_dummy_child();
+
+        // A caller is blocked waiting on id 1, exactly as `Shared::request` would
+        // leave it.
+        let (tx, rx) = mpsc::channel();
+        shared.pending.lock().unwrap().insert(1, tx);
+
+        // One line: a state event whose dispatch will panic inside the sink.
+        let stdout = b"{\"event\":\"state\",\"state\":\"connected\"}\n".to_vec();
+        let sink: Arc<dyn EventSink> = Arc::new(PanickingSink);
+
+        // The reader thread would unwind here; the panic-safety guarantee is that
+        // its cleanup still runs. Swallow the backtrace noise for a clean run.
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            read_loop(&stdout[..], Arc::clone(&shared), sink);
+        }));
+        std::panic::set_hook(prev);
+
+        assert!(
+            result.is_err(),
+            "the sink panic must propagate, not be hidden"
+        );
+        // Despite the panic: closed is set and the pending caller is failed
+        // immediately instead of hanging out the 60s timeout.
+        assert!(
+            shared.closed.load(Ordering::SeqCst),
+            "closed must be set even when the reader unwinds"
+        );
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(1)),
+            Ok(Err("tenebra-core exited before responding".to_string())),
+            "the in-flight request must be drained on a reader panic"
+        );
+        assert!(
+            shared.pending.lock().unwrap().is_empty(),
+            "pending must be empty after the drain"
+        );
+
+        // Reap the dummy child explicitly: a bare `Shared` has no Drop, and `cmd`
+        // would otherwise linger waiting on its stdin pipe.
+        let mut child = shared.child.lock().unwrap();
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }

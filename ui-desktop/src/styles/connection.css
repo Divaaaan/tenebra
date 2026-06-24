@@ -1,0 +1,288 @@
+/* Connection panel (left pane) — status, connect CTA, current node, stats,
+   traffic sparkline. Spec-sheet: sharp borders, one accent, near-zero motion. */
+
+.pane.conn {
+  border-right: var(--bw) solid var(--line);
+}
+
+.conn-inner {
+  padding: 30px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  height: 100%;
+}
+
+/* ── status block ── */
+.conn-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.conn-eyebrow {
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-cap);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.conn-word {
+  font-family: var(--display);
+  font-size: var(--fs-word);
+  font-weight: 700;
+  letter-spacing: var(--track-word);
+  line-height: 1;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.conn-word .ind {
+  width: 16px;
+  height: 16px;
+  display: inline-block;
+  flex: none;
+}
+
+.conn-word.idle {
+  color: var(--word-off);
+}
+.conn-word.idle .ind {
+  border: 2px solid var(--text-dim-2);
+}
+
+.conn-word.connecting {
+  color: var(--word-pending);
+}
+.conn-word.connecting .ind {
+  background: var(--word-pending);
+  animation: blink-pending 1s steps(2) infinite;
+}
+
+.conn-word.connected {
+  color: var(--word-on);
+}
+.conn-word.connected .ind {
+  background: var(--word-on);
+  animation: blink-live 2.2s ease-in-out infinite;
+}
+
+.conn-word.error {
+  color: var(--signal);
+}
+.conn-word.error .ind {
+  background: var(--signal);
+}
+
+@keyframes blink-pending {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0.25;
+  }
+}
+
+@keyframes blink-live {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.2;
+  }
+}
+
+.conn-sub {
+  font-size: var(--fs-data);
+  color: var(--text-dim);
+  letter-spacing: var(--track-body);
+}
+.conn-sub .sig {
+  color: var(--signal);
+}
+.conn-sub .b {
+  color: var(--text);
+}
+
+/* ── connect button ── */
+.connect-btn {
+  align-self: flex-start;
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding: 13px 28px;
+  border: var(--bw-emphasis) solid var(--signal);
+  color: var(--signal);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  transition:
+    background var(--t-base),
+    color var(--t-base);
+}
+.connect-btn:hover {
+  background: var(--signal);
+  color: var(--on-signal);
+}
+.connect-btn.on {
+  border-color: var(--text-dim-2);
+  color: var(--text-dim);
+}
+.connect-btn.on:hover {
+  background: transparent;
+  border-color: var(--signal);
+  color: var(--signal);
+}
+
+/* ── current-node card ── */
+.cur-server {
+  border: var(--bw) solid var(--line);
+  padding: 18px 20px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--sp-2) var(--sp-4);
+  align-items: center;
+}
+.cur-server .node {
+  font-family: var(--display);
+  font-size: var(--fs-sku);
+  font-weight: 600;
+  letter-spacing: var(--track-sku);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cur-server .ip {
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-dim);
+  text-align: right;
+  grid-row: 1;
+  grid-column: 2;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cur-server .city {
+  font-size: var(--fs-meta);
+  color: var(--text-dim);
+  letter-spacing: var(--track-body);
+  text-transform: lowercase;
+  grid-column: 1;
+}
+.cur-server .swap {
+  grid-row: 2;
+  grid-column: 2;
+  text-align: right;
+  font-size: var(--fs-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  transition: color var(--t-fast);
+}
+.cur-server .swap:hover {
+  color: var(--signal);
+}
+
+/* ── stats row ── */
+.conn-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-top: var(--bw) solid var(--line);
+}
+.stat {
+  padding: var(--sp-4) 0;
+  border-right: var(--bw) solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-right: var(--sp-4);
+}
+.stat:last-child {
+  border-right: none;
+}
+.stat:not(:first-child) {
+  padding-left: var(--sp-4);
+}
+.stat-lab {
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.stat-val {
+  font-family: var(--display);
+  font-size: var(--fs-kpi);
+  font-weight: 700;
+  letter-spacing: var(--track-kpi);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.stat-val .u {
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-dim);
+  margin-left: var(--sp-1);
+  font-weight: 500;
+}
+.stat-val.dim {
+  color: var(--text-dim-2);
+}
+
+/* ── traffic chart ── */
+.traffic {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.traffic-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.traffic-meta .down {
+  color: var(--signal);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.traffic-meta .up {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.swatch {
+  width: 14px;
+  height: 2px;
+  display: inline-block;
+}
+.swatch.down {
+  background: var(--signal);
+  height: 3px;
+}
+.swatch.up {
+  background: var(--text-dim);
+}
+.traffic-wrap {
+  border-top: var(--bw) solid var(--line);
+  border-bottom: var(--bw) solid var(--line);
+  padding: 6px 0;
+}
+.traffic-svg {
+  display: block;
+  width: 100%;
+  height: 84px;
+}

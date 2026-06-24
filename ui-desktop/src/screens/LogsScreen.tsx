@@ -15,7 +15,7 @@ interface LogsScreenProps {
   tenebra: Tenebra;
 }
 
-/** Tone the result blocks are styled with. "good"/"bad" carry colour; "neutral"
+/** Tone the result rows are styled with. "good"/"bad" carry colour; "neutral"
  *  is deliberately uncoloured so an undeterminable check never reads as safe. */
 type Tone = "good" | "bad" | "neutral";
 
@@ -99,44 +99,58 @@ export function LogsScreen({ tenebra }: LogsScreenProps) {
   }
 
   return (
-    <section className="screen logs">
-      <header className="screen-head">
-        <h1>{t.logs.title}</h1>
-        <div className="screen-head-actions">
+    <section className="log-screen">
+      <header className="log-head">
+        <div className="log-head-titles">
+          <span className="log-eyebrow">{t.logs.leakCheck}</span>
+          <h1 className="log-title">{t.logs.title}</h1>
+        </div>
+        <button
+          type="button"
+          className="log-btn-primary"
+          disabled={checking}
+          onClick={checkLeak}
+        >
+          {checking ? t.logs.checking : t.logs.leakCheck}
+        </button>
+      </header>
+
+      {leak && <LeakReport leak={leak} t={t} />}
+
+      <section className="log-console-block">
+        <div className="log-console-head">
+          <span className="log-eyebrow">{t.logs.title}</span>
           <button
             type="button"
-            className="btn btn-secondary btn-sm"
-            disabled={checking}
-            onClick={checkLeak}
-          >
-            {checking ? t.logs.checking : t.logs.leakCheck}
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
+            className="log-btn-ghost"
             disabled={logs.length === 0}
             onClick={tenebra.clearLogs}
           >
             {t.logs.clear}
           </button>
         </div>
-      </header>
 
-      {leak && <LeakReport leak={leak} t={t} />}
-
-      <div className="log-panel" role="log" aria-live="polite" ref={panelRef}>
-        {logs.length === 0 ? (
-          <p className="log-empty muted">{t.logs.empty}</p>
-        ) : (
-          logs.map((line) => (
-            <div key={line.id} className="log-line">
-              <span className="log-time muted">{formatTime(line.at, lang)}</span>
-              <span className={`log-level log-${line.level}`}>{line.level}</span>
-              <span className="log-msg">{line.msg}</span>
-            </div>
-          ))
-        )}
-      </div>
+        <div
+          className="log-console"
+          role="log"
+          aria-live="polite"
+          ref={panelRef}
+        >
+          {logs.length === 0 ? (
+            <p className="log-empty">{t.logs.empty}</p>
+          ) : (
+            logs.map((line) => (
+              <div key={line.id} className="log-row">
+                <span className="log-time">{formatTime(line.at, lang)}</span>
+                <span className={`log-lvl log-lvl--${line.level}`}>
+                  {line.level}
+                </span>
+                <span className="log-msg">{line.msg}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
     </section>
   );
 }
@@ -147,31 +161,31 @@ interface LeakReportProps {
 }
 
 /** The two-part leak finding: the public-IP verdict and the DNS assessment.
- *  role="status" announces the result once when it lands; each block carries its
+ *  role="status" announces the result once when it lands; each row carries its
  *  tone via a data attribute the stylesheet keys off. */
 function LeakReport({ leak, t }: LeakReportProps) {
   const ipBlockTone = ipTone(leak.ip_verdict);
   const dnsBlockTone = dnsTone(leak.dns.status);
 
   return (
-    <div className="leak-report" role="status">
-      <section className="leak-block" data-tone={ipBlockTone}>
-        <header className="leak-block-head">
-          <h2 className="leak-block-title">{t.logs.leakIpHeading}</h2>
-          <span className={`leak-tag leak-tag--${ipBlockTone}`}>
+    <div className="log-spec" role="status">
+      <section className="log-spec-row" data-tone={ipBlockTone}>
+        <header className="log-spec-head">
+          <span className="log-eyebrow">{t.logs.leakIpHeading}</span>
+          <span className={`log-verdict log-verdict--${ipBlockTone}`}>
             {leak.ip_verdict}
           </span>
         </header>
-        <p className="leak-headline">{ipHeadline(t, leak.ip_verdict)}</p>
+        <p className="log-spec-line">{ipHeadline(t, leak.ip_verdict)}</p>
         {leak.public_ip && (
-          <dl className="leak-facts">
-            <div className="leak-fact">
+          <dl className="log-facts">
+            <div className="log-fact">
               <dt>{t.logs.egressIp}</dt>
-              <dd className="leak-mono">
+              <dd className="selectable">
                 {leak.public_ip}
                 {leak.country ? ` (${leak.country})` : ""}
                 {leak.source ? (
-                  <span className="leak-source muted">
+                  <span className="log-fact-note">
                     {" "}
                     {t.logs.leakSource.replace("{source}", leak.source)}
                   </span>
@@ -179,29 +193,29 @@ function LeakReport({ leak, t }: LeakReportProps) {
               </dd>
             </div>
             {leak.connected && leak.exit_server && (
-              <div className="leak-fact">
+              <div className="log-fact">
                 <dt>{t.logs.leakExitServer}</dt>
-                <dd className="leak-mono">{leak.exit_server}</dd>
+                <dd className="selectable">{leak.exit_server}</dd>
               </div>
             )}
           </dl>
         )}
       </section>
 
-      <section className="leak-block" data-tone={dnsBlockTone}>
-        <header className="leak-block-head">
-          <h2 className="leak-block-title">{t.logs.leakDnsHeading}</h2>
-          <span className={`leak-tag leak-tag--${dnsBlockTone}`}>
+      <section className="log-spec-row" data-tone={dnsBlockTone}>
+        <header className="log-spec-head">
+          <span className="log-eyebrow">{t.logs.leakDnsHeading}</span>
+          <span className={`log-verdict log-verdict--${dnsBlockTone}`}>
             {leak.dns.status}
           </span>
         </header>
-        <p className="leak-headline">{dnsHeadline(t, leak.dns.status)}</p>
-        <p className="leak-detail muted">{leak.dns.message}</p>
+        <p className="log-spec-line">{dnsHeadline(t, leak.dns.status)}</p>
+        <p className="log-spec-detail">{leak.dns.message}</p>
         {leak.dns.resolvers && leak.dns.resolvers.length > 0 && (
-          <dl className="leak-facts">
-            <div className="leak-fact">
+          <dl className="log-facts">
+            <div className="log-fact">
               <dt>{t.logs.leakDnsResolvers}</dt>
-              <dd className="leak-mono">{leak.dns.resolvers.join(", ")}</dd>
+              <dd className="selectable">{leak.dns.resolvers.join(", ")}</dd>
             </div>
           </dl>
         )}

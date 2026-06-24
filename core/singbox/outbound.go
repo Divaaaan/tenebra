@@ -159,13 +159,27 @@ func tlsObject(t *model.TLS) map[string]any {
 	if len(t.ALPN) > 0 {
 		o["alpn"] = t.ALPN
 	}
-	if t.Fingerprint != "" {
+	// A REALITY block is only valid with a non-empty public_key: sing-box FATALs
+	// with "invalid public_key" otherwise, and a keyless reality outbound could
+	// never complete a handshake anyway. The builder already skips such nodes
+	// (see buildNodes), but guard here too so tlsObject never emits a reality
+	// block with an empty public_key even if reached by another path.
+	reality := t.Reality != nil && t.Reality.PublicKey != ""
+	// REALITY requires a uTLS fingerprint: sing-box FATALs with "uTLS is required
+	// by reality client" if one is missing. Real subscriptions usually send
+	// fp=chrome, but a node that omits it must not sink the whole config, so
+	// default the fingerprint to chrome whenever REALITY is in use.
+	fingerprint := t.Fingerprint
+	if fingerprint == "" && reality {
+		fingerprint = "chrome"
+	}
+	if fingerprint != "" {
 		o["utls"] = map[string]any{
 			"enabled":     true,
-			"fingerprint": t.Fingerprint,
+			"fingerprint": fingerprint,
 		}
 	}
-	if t.Reality != nil {
+	if reality {
 		r := map[string]any{
 			"enabled":    true,
 			"public_key": t.Reality.PublicKey,

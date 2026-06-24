@@ -1,5 +1,7 @@
 /* Application layout and components. All colour comes from the theme tokens in
-   tokens.css; this file only arranges and shapes. */
+   tokens.css; this file arranges, shapes, and animates. The through-line:
+   Tenebra is darkness, and connecting is light blooming into it. The Connect
+   dial is the hero; everything else stays disciplined around it. */
 
 .app-shell {
   position: relative;
@@ -9,46 +11,111 @@
   isolation: isolate;
 }
 
-/* Ambient "the room lights up when the tunnel is on" wash. Two faint pools sit
-   behind the whole shell and fade in only while connected (driven by the
-   data-conn attribute on the shell). On light theme --ambient-strength is 0, so
-   this is invisible there. Pure opacity/transform — cheap and non-interactive. */
+/* --- ambient night sky ------------------------------------------------------
+   Two layers sit behind the whole shell and never intercept clicks:
+   ::before is the aurora — slow-drifting colour pools, faintly alive even when
+   idle (cold violet/indigo) and intensified + warmed toward aurora-cyan on
+   connect. ::after is a fine grain so large flat areas read as textured night
+   rather than dead fill. On light theme --sky-idle and --grain-opacity are 0,
+   so both are invisible and the light look stays clean. Pure opacity/transform
+   plus a static SVG grain — cheap, no repaint storms. */
 .app-shell::before {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  z-index: -2;
+  pointer-events: none;
+  opacity: var(--sky-idle);
+  background:
+    radial-gradient(
+      36rem 36rem at 16% 6%,
+      color-mix(in srgb, var(--accent) 30%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      32rem 32rem at 88% 18%,
+      color-mix(in srgb, var(--violet) 26%, transparent),
+      transparent 62%
+    ),
+    radial-gradient(
+      40rem 40rem at 78% 96%,
+      color-mix(in srgb, var(--aurora) 22%, transparent),
+      transparent 60%
+    );
+  filter: blur(14px) saturate(1.1);
+  transition: opacity var(--dur-bloom) var(--ease-out);
+  animation: sky-drift 32s var(--ease-in-out) infinite alternate;
+  will-change: transform, opacity;
+}
+
+/* When connected the sky brightens and warms toward aurora — the room lights up
+   because the tunnel is live. */
+.app-shell[data-conn="connected"]::before {
+  opacity: var(--sky-connected);
+  background:
+    radial-gradient(
+      40rem 40rem at 18% 4%,
+      color-mix(in srgb, var(--aurora) 34%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      34rem 34rem at 86% 16%,
+      color-mix(in srgb, var(--accent) 30%, transparent),
+      transparent 62%
+    ),
+    radial-gradient(
+      44rem 44rem at 80% 98%,
+      color-mix(in srgb, var(--aurora) 28%, transparent),
+      transparent 60%
+    );
+}
+
+/* While connecting, the sky stirs faster — energy gathering. */
+.app-shell[data-conn="connecting"]::before {
+  animation-duration: 11s;
+}
+
+/* Error desaturates and cools the sky to near-nothing, so the warmth reads only
+   on the dial itself. */
+.app-shell[data-conn="error"]::before {
+  opacity: calc(var(--sky-idle) * 0.5);
+  filter: blur(14px) saturate(0.5);
+}
+
+.app-shell::after {
   content: "";
   position: absolute;
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  opacity: 0;
-  background:
-    radial-gradient(
-      42rem 42rem at 18% 8%,
-      color-mix(in srgb, var(--accent) 16%, transparent),
-      transparent 60%
-    ),
-    radial-gradient(
-      38rem 38rem at 88% 96%,
-      color-mix(in srgb, var(--aurora) 14%, transparent),
-      transparent 58%
-    );
-  transition: opacity 1.2s var(--ease-out);
+  opacity: var(--grain-opacity);
+  /* A tiny fractal-noise tile, inlined so there is no network/asset dependency
+     (offline + privacy). Repeated across the canvas as static texture. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
 }
 
-.app-shell[data-conn="connected"]::before {
-  opacity: var(--ambient-strength);
+@keyframes sky-drift {
+  from {
+    transform: translate3d(-2%, -1%, 0) scale(1.04);
+  }
+  to {
+    transform: translate3d(2%, 1.5%, 0) scale(1.1);
+  }
 }
 
-/* Screen transitions via the View Transitions API. The main region is the named
-   capture root; navigating swaps its content inside a startViewTransition (see
-   App.tsx), and the rules below give the swap a quiet fade-and-rise instead of a
-   hard cut. We drive old/new explicitly so they cross-fade rather than the
-   default where the old sits on top. Reduced-motion disables this in global.css;
-   browsers without the API just swap instantly (the JS falls back). */
+/* --- screen transitions -----------------------------------------------------
+   The main region is the named capture root; navigating swaps its content inside
+   a startViewTransition (see App.tsx). The new screen rises and brightens in
+   while the old one sinks and dims — more character than a plain cut, still
+   tasteful. Reduced-motion disables this in global.css; browsers without the API
+   swap instantly (the JS falls back). */
 .app-main {
+  position: relative;
   flex: 1;
   min-width: 0;
   overflow-y: auto;
-  padding: var(--space-6);
+  padding: var(--space-7) var(--space-6);
   view-transition-name: screen;
 }
 
@@ -56,7 +123,6 @@
 ::view-transition-new(screen) {
   animation-duration: var(--dur-slow);
   animation-timing-function: var(--ease-out);
-  /* Both layers occupy the same box; we fully control opacity below. */
   mix-blend-mode: normal;
 }
 
@@ -71,19 +137,19 @@
 @keyframes screen-out {
   to {
     opacity: 0;
-    transform: translateY(-6px);
+    transform: translateY(-10px) scale(0.99);
   }
 }
 
 @keyframes screen-in {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(14px) scale(0.99);
   }
 }
 
-/* --- shared motion keyframes ------------------------------------------------ */
-/* A small, reused vocabulary so entrances feel like one system. Each animates
+/* --- shared motion keyframes ------------------------------------------------
+   A small, reused vocabulary so entrances feel like one system. Each animates
    only opacity/transform (GPU-friendly) and is neutralised by the reduced-motion
    guard in global.css. */
 
@@ -96,7 +162,7 @@
 @keyframes rise-in {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(10px);
   }
 }
 
@@ -107,15 +173,23 @@
   }
 }
 
-/* --- sidebar ---------------------------------------------------------------- */
+/* --- sidebar ----------------------------------------------------------------
+   A quiet dark rail with a confident brand lockup at the top and a live status
+   readout pinned to the foot. */
 
 .app-sidebar {
+  position: relative;
   display: flex;
   flex-direction: column;
-  width: 212px;
+  width: 224px;
   flex-shrink: 0;
-  padding: var(--space-4) var(--space-3);
-  background: var(--bg-elevated);
+  padding: var(--space-5) var(--space-4);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 6%, var(--bg-elevated)),
+      var(--bg-elevated) 40%
+    );
   border-right: 1px solid var(--border);
 }
 
@@ -123,30 +197,94 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-2) var(--space-5);
+  padding: var(--space-2) var(--space-2) var(--space-6);
 }
 
+/* The mark carries the brand's "light in the dark" idea: a halo→aurora gradient
+   disc with a soft outer bloom and a small bright core that drifts, like a body
+   catching light. */
 .sidebar-mark {
+  position: relative;
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
-  border-radius: var(--radius-md);
-  /* The mark carries the brand's "light in the dark" idea: an indigo-to-aurora
-     gradient with a faint bloom. */
-  background: linear-gradient(135deg, var(--accent-strong), var(--aurora));
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  background:
+    radial-gradient(
+      circle at 32% 28%,
+      color-mix(in srgb, #fff 70%, var(--aurora)),
+      transparent 45%
+    ),
+    linear-gradient(140deg, var(--accent-strong), var(--violet) 55%, var(--aurora));
   color: var(--accent-contrast);
-  font-weight: 700;
-  font-size: 16px;
-  box-shadow: 0 0 16px -6px color-mix(in srgb, var(--aurora) 70%, transparent);
+  font-weight: 800;
+  font-size: 19px;
+  letter-spacing: 0.02em;
+  box-shadow:
+    0 6px 18px -6px color-mix(in srgb, var(--accent) 70%, transparent),
+    0 0 22px -8px color-mix(in srgb, var(--aurora) 80%, transparent);
+  isolation: isolate;
 }
 
+/* A slow sheen sweeps across the mark so it always feels lit. */
+.sidebar-mark::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    120deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.4) 48%,
+    transparent 62%
+  );
+  mix-blend-mode: overlay;
+  transform: translateX(-120%);
+  animation: mark-sheen 6.5s var(--ease-in-out) 1.5s infinite;
+}
+
+@keyframes mark-sheen {
+  0%,
+  72%,
+  100% {
+    transform: translateX(-120%);
+  }
+  86% {
+    transform: translateX(120%);
+  }
+}
+
+.sidebar-wordmark {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* The wordmark: heavily tracked so "TENEBRA" reads as a mark, not body text —
+   the central type decision, since the system stack carries the brand through
+   treatment rather than a custom face. */
 .sidebar-title {
-  font-size: 16px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  text-indent: 0.34em; /* balance the trailing letter-spacing so it reads centred */
+  background: linear-gradient(100deg, var(--text), var(--accent-soft));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  white-space: nowrap;
+}
+
+.sidebar-tagline {
+  font-size: 10px;
   font-weight: 600;
-  /* The wordmark gets a touch of tracking so "Tenebra" reads as a mark, not
-     body text — a small, deliberate type choice that carries the brand. */
-  letter-spacing: 0.04em;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
 }
 
 .sidebar-nav {
@@ -166,21 +304,23 @@
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-muted);
+  font-weight: 500;
   text-align: left;
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
-/* An accent rail on the active item. It scales from the centre so switching
-   tabs reads as the marker growing into place. */
+/* An accent rail on the active item, scaling from the centre so switching tabs
+   reads as the marker growing into place. */
 .sidebar-link::before {
   content: "";
   position: absolute;
-  left: 2px;
+  left: 1px;
   top: 50%;
   width: 3px;
-  height: 18px;
+  height: 20px;
   border-radius: var(--radius-pill);
-  background: var(--accent);
+  background: linear-gradient(var(--accent), var(--aurora));
+  box-shadow: 0 0 10px -1px color-mix(in srgb, var(--accent) 80%, transparent);
   transform: translateY(-50%) scaleY(0);
   transition: transform var(--dur-base) var(--ease-spring);
 }
@@ -192,7 +332,7 @@
 
 .sidebar-link.active {
   background: var(--accent-bg);
-  color: var(--accent);
+  color: var(--text);
 }
 
 .sidebar-link.active::before {
@@ -201,11 +341,17 @@
 
 .sidebar-icon {
   flex-shrink: 0;
-  transition: transform var(--dur-base) var(--ease-spring);
+  color: var(--text-muted);
+  transition: transform var(--dur-base) var(--ease-spring),
+    color var(--transition-fast);
 }
 
 .sidebar-link:hover .sidebar-icon {
   transform: translateX(1px);
+}
+
+.sidebar-link.active .sidebar-icon {
+  color: var(--accent);
 }
 
 .sidebar-foot {
@@ -220,6 +366,7 @@
   align-items: center;
   gap: var(--space-2);
   font-size: 12px;
+  font-weight: 500;
   color: var(--text-muted);
 }
 
@@ -248,9 +395,9 @@
 }
 
 .status-pill--connected .status-dot {
-  background: var(--ok);
-  box-shadow: 0 0 0 3px var(--ok-bg);
-  color: var(--ok);
+  background: var(--aurora);
+  box-shadow: 0 0 0 3px var(--aurora-bg);
+  color: var(--aurora);
 }
 
 /* A slow steady breath signals a live, healthy tunnel at a glance. */
@@ -265,7 +412,7 @@
 }
 
 .status-pill--connecting .status-dot::after {
-  animation: dot-halo 1.4s var(--ease-in-out) infinite;
+  animation: dot-halo 1.3s var(--ease-in-out) infinite;
 }
 
 .status-pill--error .status-dot {
@@ -276,13 +423,13 @@
 
 @keyframes dot-halo {
   0% {
-    opacity: 0.4;
+    opacity: 0.45;
     transform: scale(1);
   }
   70%,
   100% {
     opacity: 0;
-    transform: scale(2.6);
+    transform: scale(2.8);
   }
 }
 
@@ -298,11 +445,11 @@
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
-  font-weight: 500;
+  font-weight: 600;
   white-space: nowrap;
   transition: background var(--transition-fast), border-color var(--transition-fast),
     color var(--transition-fast), opacity var(--transition-fast),
-    transform var(--dur-fast) var(--ease-out);
+    box-shadow var(--transition-fast), transform var(--dur-fast) var(--ease-out);
 }
 
 /* A small physical dip on press — consistent feedback across every button. */
@@ -321,12 +468,18 @@
 }
 
 .btn-primary {
-  background: var(--accent);
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
   color: var(--accent-contrast);
+  box-shadow: 0 6px 18px -8px color-mix(in srgb, var(--accent) 80%, transparent);
 }
 
 .btn-primary:not(:disabled):hover {
-  background: var(--accent-strong);
+  box-shadow: 0 8px 22px -6px color-mix(in srgb, var(--accent) 90%, transparent);
+  transform: translateY(-1px);
+}
+
+.btn-primary:not(:disabled):active {
+  transform: translateY(0) scale(0.99);
 }
 
 .btn-secondary {
@@ -358,7 +511,7 @@
 
 .btn-danger:not(:disabled):hover {
   background: var(--danger-bg);
-  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
 }
 
 /* --- shared bits ------------------------------------------------------------ */
@@ -371,7 +524,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
-  max-width: 760px;
+  max-width: 780px;
   margin: 0 auto;
 }
 
@@ -380,14 +533,29 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
+  padding-bottom: var(--space-2);
 }
 
 .screen-head h1 {
-  font-size: 22px;
-  font-weight: 600;
+  position: relative;
+  font-size: 26px;
+  font-weight: 700;
   /* Negative tracking on large headings tightens the system face so it reads as
      a considered display size rather than scaled-up body copy. */
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
+}
+
+/* A short accent underline tucked under each screen title — a structural mark
+   that ties the headings to the brand without shouting. */
+.screen-head h1::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -7px;
+  width: 32px;
+  height: 3px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--accent), var(--aurora));
 }
 
 .screen-head-actions {
@@ -400,21 +568,23 @@
   flex-direction: column;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-7) var(--space-4);
+  padding: var(--space-8) var(--space-4);
   text-align: center;
   animation: rise-in var(--dur-slow) var(--ease-out) both;
 }
 
 .empty-state h1,
 .empty-state h2 {
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .card {
+  position: relative;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   padding: var(--space-5);
   box-shadow: var(--shadow-sm);
   transition: border-color var(--dur-base) var(--ease-out),
@@ -439,9 +609,6 @@
   font-size: 12px;
 }
 
-/* Input paired with an inline action (e.g. a Paste button). The control flexes
-   to fill the row; the button keeps its intrinsic width and aligns to its top
-   so it lines up with a single-line input. */
 .field-row {
   display: flex;
   align-items: flex-start;
@@ -453,8 +620,6 @@
   min-width: 0;
 }
 
-/* A trailing button row under a multi-line control (e.g. Paste below a link
-   textarea), aligned right to read as a secondary action on the field. */
 .field-actions {
   display: flex;
   justify-content: flex-end;
@@ -469,7 +634,7 @@
   border-radius: var(--radius-sm);
   color: var(--text);
   transition: border-color var(--transition-fast),
-    box-shadow var(--transition-fast);
+    box-shadow var(--transition-fast), background var(--transition-fast);
 }
 
 .control:hover {
@@ -493,16 +658,19 @@
   font-size: 13px;
 }
 
-/* --- home ------------------------------------------------------------------- */
+/* --- home: the hero stage ---------------------------------------------------
+   The Home screen is a stage for the dial. It sits centred with breathing room,
+   the status reads large and confident, and the supporting panels surface below
+   only when there's a live session to describe. */
 
 .home {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--space-6);
-  max-width: 480px;
+  max-width: 460px;
   margin: 0 auto;
-  padding-top: var(--space-5);
+  padding-top: var(--space-4);
 }
 
 .home--empty {
@@ -514,20 +682,27 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-5);
 }
 
-/* The dial is the emotional centerpiece: a recessed well in the dark that
-   light pools into as the tunnel comes alive. Layers, from back to front:
-   the aura (soft outer bloom), the track (faint full ring), the progress
-   ring (conic sweep that breathes while connecting), the well (the button
-   face), and the label. State lives on .dial--<phase>; the layers react. */
+/* The dial is the emotional centerpiece: a recessed well in the dark that light
+   pools into as the tunnel comes alive. Layers, back to front:
+     .dial-bloom   one-shot flood that expands across the stage on connect
+     .dial-aura    soft outer glow that breathes
+     .dial-spokes  faint radial ticks that rotate while connecting (energy)
+     .dial-track   the resting full ring
+     .dial-ring    the expressive conic stroke (sweeps, then glows steady)
+     .dial-well    the recessed button face
+     .dial-core    a bright inner pool that fills on connect
+     .dial-label   the verb
+   State lives on .dial--<phase>; the layers react. Everything animates on
+   transform/opacity only, so loops stay on the compositor. */
 .dial {
   position: relative;
   display: grid;
   place-items: center;
-  width: 208px;
-  height: 208px;
+  width: 232px;
+  height: 232px;
   border: 0;
   border-radius: 50%;
   background: transparent;
@@ -537,30 +712,86 @@
 }
 
 .dial:not(:disabled):hover {
-  transform: scale(1.025);
+  transform: scale(1.03);
 }
 
 .dial:not(:disabled):active {
-  transform: scale(0.985);
+  transform: scale(0.98);
   transition-duration: var(--dur-fast);
 }
 
-/* Outer bloom. Quiet at rest, swells with the connection. Sits behind
-   everything and never intercepts clicks. */
+/* The bloom: a thin ring of light that expands outward past the dial when the
+   connection lands, washing the stage. It is keyed to the connected phase class,
+   so React swapping the class plays it once. Sits behind the dial; never clicks. */
+.dial-bloom {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  border: 2px solid color-mix(in srgb, var(--aurora) 80%, transparent);
+  box-shadow:
+    0 0 60px 10px color-mix(in srgb, var(--aurora) 40%, transparent),
+    inset 0 0 40px color-mix(in srgb, var(--aurora) 30%, transparent);
+}
+
+.dial--connected .dial-bloom {
+  animation: dial-bloom var(--dur-bloom) var(--ease-bloom);
+}
+
+@keyframes dial-bloom {
+  0% {
+    opacity: 0.9;
+    transform: scale(0.7);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.5);
+  }
+}
+
+/* Outer glow. Quiet at rest, swells with the connection. */
 .dial-aura {
   position: absolute;
-  inset: -18px;
+  inset: -22px;
   border-radius: 50%;
   pointer-events: none;
   opacity: 0;
   background: radial-gradient(
     circle,
-    color-mix(in srgb, var(--accent) 45%, transparent) 0%,
+    color-mix(in srgb, var(--accent) 50%, transparent) 0%,
     transparent 68%
   );
-  filter: blur(6px);
+  filter: blur(8px);
   transition: opacity var(--dur-slow) var(--ease-out),
     background var(--dur-slow) var(--ease-out);
+}
+
+/* Radial energy spokes — a ring of faint ticks that becomes visible and rotates
+   while connecting, so the gathering of energy reads as motion converging on the
+   button. Built as a repeating conic gradient masked to a thin annulus. */
+.dial-spokes {
+  position: absolute;
+  inset: 14px;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  background: repeating-conic-gradient(
+    from 0deg,
+    color-mix(in srgb, var(--accent) 55%, transparent) 0deg 1.4deg,
+    transparent 1.4deg 9deg
+  );
+  -webkit-mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 14px),
+    #000 calc(100% - 13px)
+  );
+  mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 14px),
+    #000 calc(100% - 13px)
+  );
+  transition: opacity var(--dur-base) var(--ease-out);
 }
 
 /* Faint full-circle track the progress ring rides on. */
@@ -572,31 +803,30 @@
   pointer-events: none;
 }
 
-/* The expressive ring. A conic gradient masked to a thin annulus so it reads
-   as a stroke, not a disc. Rotating this while connecting gives a living
-   sweep instead of a generic spinner; when connected it stops and glows. */
+/* The expressive ring. A conic gradient masked to a thin annulus so it reads as
+   a stroke, not a disc. Rotating it while connecting gives a living sweep instead
+   of a generic spinner; when connected it stops and glows. */
 .dial-ring {
   position: absolute;
-  inset: -3px;
+  inset: -4px;
   border-radius: 50%;
   pointer-events: none;
   background: conic-gradient(
     from 0deg,
     transparent 0deg,
     color-mix(in srgb, var(--accent) 25%, transparent) 90deg,
-    var(--accent) 270deg,
+    var(--accent) 250deg,
     var(--aurora) 360deg
   );
-  /* Carve the centre out so only a ring remains. */
   -webkit-mask: radial-gradient(
     farthest-side,
-    transparent calc(100% - 5px),
-    #000 calc(100% - 4px)
+    transparent calc(100% - 6px),
+    #000 calc(100% - 5px)
   );
   mask: radial-gradient(
     farthest-side,
-    transparent calc(100% - 5px),
-    #000 calc(100% - 4px)
+    transparent calc(100% - 6px),
+    #000 calc(100% - 5px)
   );
   opacity: 0;
   transform: rotate(-90deg);
@@ -606,7 +836,7 @@
 /* The button face — a recessed disc. */
 .dial-well {
   position: absolute;
-  inset: 8px;
+  inset: 10px;
   border-radius: 50%;
   pointer-events: none;
   background: var(--dial-well);
@@ -616,26 +846,74 @@
     box-shadow var(--dur-base) var(--ease-out);
 }
 
+/* A bright inner pool that sits just inside the well and fills with aurora light
+   as the session goes live — the light that has "pooled" in the recess. */
+.dial-core {
+  position: absolute;
+  inset: 10px;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    circle at 50% 45%,
+    color-mix(in srgb, var(--aurora) 36%, transparent) 0%,
+    transparent 62%
+  );
+  transition: opacity var(--dur-slow) var(--ease-out);
+}
+
 .dial-label {
   position: relative;
   z-index: 1;
-  font-size: 17px;
-  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 18px;
+  font-weight: 700;
   letter-spacing: 0.01em;
   transition: color var(--dur-base) var(--ease-out);
 }
 
-/* --- idle: calm and inviting. A hint of accent on the ring; hover blooms. -- */
+/* A power glyph above the verb so the action reads instantly, even before the
+   word. An inline SVG (renders identically across engines), inheriting the
+   label's per-phase colour via currentColor. */
+.dial-glyph {
+  display: block;
+  transition: transform var(--dur-base) var(--ease-spring);
+}
+
+.dial:not(:disabled):hover .dial-glyph {
+  transform: scale(1.08);
+}
+
+/* While connecting, the glyph slowly energises — a calm rotation distinct from
+   the faster ring sweep, so the icon itself reads as charging up. */
+.dial--connecting .dial-glyph {
+  animation: glyph-charge 2.4s var(--ease-in-out) infinite;
+}
+
+@keyframes glyph-charge {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  50% {
+    transform: rotate(14deg);
+  }
+}
+
+/* --- idle: calm and inviting. A hint of accent on the ring; hover blooms. --- */
 .dial--idle .dial-ring {
-  opacity: 0.55;
+  opacity: 0.5;
 }
 
 .dial--idle:hover .dial-ring {
-  opacity: 0.9;
+  opacity: 0.95;
 }
 
 .dial--idle:hover .dial-aura {
-  opacity: 0.4;
+  opacity: 0.45;
 }
 
 .dial--idle:hover .dial-well {
@@ -646,28 +924,42 @@
   color: var(--text);
 }
 
-/* --- connecting: the ring sweeps (rotation) while the aura breathes. Both are
-   transform/opacity only, so the loop stays on the compositor. --- */
-.dial--connecting .dial-ring {
-  opacity: 1;
-  animation: dial-sweep 1.4s linear infinite;
-}
-
-.dial--connecting .dial-aura {
+/* A slow, almost-imperceptible breath at rest so the dial reads as alive, not
+   inert — like something holding charge. */
+.dial--idle .dial-aura {
+  opacity: 0.16;
   animation: aura-breathe var(--dur-breath) var(--ease-in-out) infinite;
 }
 
-.dial--connecting .dial-label {
-  color: var(--accent);
+/* --- connecting: spokes rotate inward + ring sweeps + aura pulses. Energy
+   gathering. All transform/opacity, so the loop stays composited. --- */
+.dial--connecting .dial-ring {
+  opacity: 1;
+  animation: dial-sweep 1.2s linear infinite;
 }
 
-/* --- connected: the sweep settles, the ring glows steady, light pools in. -- */
+.dial--connecting .dial-spokes {
+  opacity: 0.5;
+  animation: spokes-spin 5s linear infinite reverse;
+}
+
+.dial--connecting .dial-aura {
+  opacity: 0.5;
+  animation: aura-breathe 1.6s var(--ease-in-out) infinite;
+}
+
+.dial--connecting .dial-label {
+  color: var(--accent-soft);
+}
+
+/* --- connected: the sweep settles, the ring glows steady, light pools in. --- */
 .dial--connected .dial-ring {
   opacity: 1;
   background: conic-gradient(
     from 0deg,
     var(--aurora),
     var(--accent),
+    var(--violet),
     var(--aurora)
   );
   transform: rotate(-90deg);
@@ -675,55 +967,59 @@
 }
 
 .dial--connected .dial-aura {
-  opacity: 0.55;
+  opacity: 0.6;
   background: radial-gradient(
     circle,
-    color-mix(in srgb, var(--aurora) 38%, transparent) 0%,
-    color-mix(in srgb, var(--accent) 22%, transparent) 45%,
+    color-mix(in srgb, var(--aurora) 42%, transparent) 0%,
+    color-mix(in srgb, var(--accent) 24%, transparent) 45%,
     transparent 70%
   );
-  animation: dial-glow-pulse 5.5s var(--ease-in-out) infinite;
+  animation: aura-breathe var(--dur-breath) var(--ease-in-out) infinite;
+}
+
+.dial--connected .dial-core {
+  opacity: 1;
+  animation: core-pulse 5.5s var(--ease-in-out) infinite;
 }
 
 .dial--connected .dial-well {
-  border-color: color-mix(in srgb, var(--aurora) 30%, var(--border));
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.05),
-    inset 0 -8px 28px rgba(0, 0, 0, 0.4),
-    0 0 28px -6px color-mix(in srgb, var(--aurora) 50%, transparent);
+  border-color: color-mix(in srgb, var(--aurora) 35%, var(--border));
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.06),
+    inset 0 -10px 34px rgba(0, 0, 0, 0.45),
+    0 0 36px -6px color-mix(in srgb, var(--aurora) 55%, transparent);
 }
 
 .dial--connected .dial-label {
-  color: color-mix(in srgb, var(--aurora) 70%, var(--text));
+  color: color-mix(in srgb, var(--aurora) 75%, var(--text));
 }
 
-/* --- error: a brief shake + red, then it settles back to a calm error ring. */
+/* --- error: a sharp shake + Ember heat, then a calm error ring. The only place
+   warmth appears, so a failure genuinely reads as heat against the cold. --- */
+.dial--error {
+  animation: dial-shake 440ms var(--ease-out);
+}
+
 .dial--error .dial-ring {
   opacity: 1;
-  background: conic-gradient(from 0deg, var(--danger), #ff9a9a, var(--danger));
+  background: conic-gradient(from 0deg, var(--ember), #ffb199, var(--ember));
 }
 
 .dial--error .dial-aura {
-  opacity: 0.4;
+  opacity: 0.45;
   background: radial-gradient(
     circle,
-    color-mix(in srgb, var(--danger) 40%, transparent) 0%,
+    color-mix(in srgb, var(--ember) 45%, transparent) 0%,
     transparent 68%
   );
 }
 
 .dial--error .dial-well {
-  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+  border-color: color-mix(in srgb, var(--ember) 45%, var(--border));
 }
 
 .dial--error .dial-label {
-  color: var(--danger);
-}
-
-/* The shake plays once on entry to the error state. It is keyed to the phase
-   class, so React swapping the class re-triggers it; reduced-motion neutralises
-   it via the global guard. */
-.dial--error {
-  animation: dial-shake 420ms var(--ease-out);
+  color: var(--ember);
 }
 
 @keyframes dial-sweep {
@@ -732,36 +1028,44 @@
   }
 }
 
-/* Aura breathing, composited: it swells and brightens on opacity + scale only.
-   The static blur on .dial-aura stays put (not animated), so no repaint storm. */
+@keyframes spokes-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Aura breathing, composited: swells and brightens on opacity + scale only. The
+   static blur on .dial-aura stays put (not animated), so no repaint storm. */
 @keyframes aura-breathe {
   0%,
   100% {
-    opacity: 0.32;
-    transform: scale(0.96);
+    transform: scale(0.95);
+    opacity: 0.5;
   }
   50% {
-    opacity: 0.6;
-    transform: scale(1.04);
+    transform: scale(1.06);
+    opacity: 0.72;
+  }
+}
+
+@keyframes core-pulse {
+  0%,
+  100% {
+    opacity: 0.85;
+    transform: scale(0.99);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.02);
   }
 }
 
 @keyframes dial-settle {
   0% {
-    transform: rotate(-90deg) scale(1.04);
+    transform: rotate(-90deg) scale(1.05);
   }
   100% {
     transform: rotate(-90deg) scale(1);
-  }
-}
-
-@keyframes dial-glow-pulse {
-  0%,
-  100% {
-    opacity: 0.45;
-  }
-  50% {
-    opacity: 0.62;
   }
 }
 
@@ -770,29 +1074,53 @@
   100% {
     transform: translateX(0);
   }
-  18% {
-    transform: translateX(-7px);
+  16% {
+    transform: translateX(-9px);
   }
-  38% {
-    transform: translateX(6px);
+  34% {
+    transform: translateX(8px);
   }
-  58% {
-    transform: translateX(-4px);
+  52% {
+    transform: translateX(-5px);
   }
-  78% {
-    transform: translateX(2px);
+  72% {
+    transform: translateX(3px);
   }
 }
 
+/* The status line under the dial — large and assured, with the phase word
+   carrying the live colour. */
 .home-status {
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.home-status-word {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  transition: color var(--dur-base) var(--ease-out);
+}
+
+.home--connected .home-status-word {
+  color: color-mix(in srgb, var(--aurora) 70%, var(--text));
+}
+
+.home--connecting .home-status-word {
+  color: var(--accent-soft);
+}
+
+.home--error .home-status-word {
+  color: var(--ember);
 }
 
 .home-error {
   padding: var(--space-3) var(--space-4);
   background: var(--danger-bg);
+  border: 1px solid color-mix(in srgb, var(--ember) 35%, transparent);
   border-radius: var(--radius-sm);
   color: var(--danger);
   font-size: 13px;
@@ -800,20 +1128,28 @@
   animation: rise-in var(--dur-base) var(--ease-out) both;
 }
 
+/* Active session summary — a single rounded panel that surfaces under the dial,
+   reading as a little "session card". */
 .home-meta {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
   width: 100%;
   margin: 0;
+  padding: var(--space-2) var(--space-4);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
 }
 
 .home-meta-row {
   display: flex;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: var(--space-2) 0;
-  border-bottom: 1px solid var(--border);
+  padding: var(--space-3) 0;
+}
+
+.home-meta-row + .home-meta-row {
+  border-top: 1px solid var(--border);
 }
 
 .home-meta-row dt {
@@ -822,7 +1158,7 @@
 
 .home-meta-row dd {
   margin: 0;
-  font-weight: 500;
+  font-weight: 600;
   text-align: right;
 }
 
@@ -831,26 +1167,28 @@
   grid-template-columns: 1fr 1fr;
   gap: var(--space-3);
   width: 100%;
-  /* Slides up as it mounts when the connection lands, so the panel feels like
-     it surfaces with the session rather than popping in. */
+  /* Surfaces as the connection lands, so the panel feels like it rises with the
+     session rather than popping in. */
   animation: rise-in var(--dur-slow) var(--ease-out) both;
 }
 
 .traffic-stat {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-1);
   padding: var(--space-4);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  /* Carries the stat's accent to the sparkline (which strokes currentColor)
-     without tinting the surrounding text. */
+  overflow: hidden;
+  /* Carries the stat's accent to the wave (which strokes currentColor) without
+     tinting the surrounding text. */
   --spark: var(--accent);
 }
 
-/* Download leans aurora-cool, upload leans brand-indigo — a quiet way to tell
-   the two directions apart at a glance. */
+/* Download leans aurora-cool, upload leans halo-indigo — a quiet way to tell the
+   two directions apart at a glance. */
 .traffic-stat--down {
   --spark: var(--aurora);
 }
@@ -859,28 +1197,79 @@
   --spark: var(--accent);
 }
 
+/* A hairline of the direction's colour along the top edge of each stat. */
+.traffic-stat::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--spark),
+    transparent
+  );
+  opacity: 0.7;
+}
+
+.traffic-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.traffic-arrow {
+  color: var(--spark);
+  flex-shrink: 0;
+}
+
 .traffic-label {
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--text-muted);
 }
 
 .traffic-rate {
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 20px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 
-/* The sparkline renders a bare <svg>; colour it through currentColor so the
-   per-direction --spark drives the stroke and fill without a prop. */
+/* The wave renders a bare <svg>; colour it through currentColor so the
+   per-direction --spark drives stroke and fill without a prop. */
 .traffic-stat svg {
   display: block;
   width: 100%;
-  height: 26px;
+  height: 34px;
+  margin-top: var(--space-1);
   color: var(--spark);
-  /* Fades in just after the panel rises, so the line draws onto an already
-     settled card. */
+  /* Fades in just after the panel rises, so the line draws onto a settled card. */
   animation: fade-in var(--dur-base) var(--ease-out) both;
   animation-delay: 120ms;
+}
+
+/* The live "now" dot on the wave breathes so the latest sample reads as a
+   pulse riding the edge of the line. Composited (opacity), and the global
+   reduced-motion guard freezes it. */
+.spark-head-halo {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: spark-pulse 1.8s var(--ease-in-out) infinite;
+}
+
+@keyframes spark-pulse {
+  0%,
+  100% {
+    opacity: 0.18;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(1.25);
+  }
 }
 
 .traffic-total {
@@ -896,9 +1285,11 @@
 }
 
 .home-quick-title {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
 }
 
 .home-quick-row {
@@ -924,19 +1315,19 @@
   animation-delay: 0ms;
 }
 .profile-list .profile-card:nth-child(2) {
-  animation-delay: 45ms;
+  animation-delay: 55ms;
 }
 .profile-list .profile-card:nth-child(3) {
-  animation-delay: 90ms;
+  animation-delay: 110ms;
 }
 .profile-list .profile-card:nth-child(4) {
-  animation-delay: 135ms;
+  animation-delay: 165ms;
 }
 .profile-list .profile-card:nth-child(5) {
-  animation-delay: 180ms;
+  animation-delay: 220ms;
 }
 .profile-list .profile-card:nth-child(n + 6) {
-  animation-delay: 220ms;
+  animation-delay: 270ms;
 }
 
 .profile-card {
@@ -947,21 +1338,50 @@
   animation: rise-in var(--dur-base) var(--ease-out) both;
 }
 
+/* A faint accent edge-light on the left, lit on hover/selection so the row you're
+   acting on glows along its spine. */
+.profile-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: var(--space-5);
+  bottom: var(--space-5);
+  width: 3px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(var(--accent), var(--aurora));
+  opacity: 0;
+  transform: scaleY(0.4);
+  transform-origin: center;
+  transition: opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-spring);
+}
+
 /* Lift on hover so the row you're about to act on comes forward. */
 .profile-card:hover {
   border-color: var(--border-strong);
-  transform: translateY(-2px);
+  transform: translateY(-3px);
   box-shadow: var(--shadow-md);
 }
 
+.profile-card:hover::before {
+  opacity: 0.7;
+  transform: scaleY(1);
+}
+
 .profile-card.is-selected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent),
-    0 0 24px -10px color-mix(in srgb, var(--accent) 60%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent),
+    0 0 28px -12px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+.profile-card.is-selected::before {
+  opacity: 1;
+  transform: scaleY(1);
 }
 
 .profile-card.is-selected:hover {
-  border-color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--border));
 }
 
 .profile-head {
@@ -979,8 +1399,9 @@
 }
 
 .profile-title h2 {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .badge {
@@ -989,14 +1410,15 @@
   padding: 2px var(--space-2);
   border-radius: var(--radius-pill);
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   background: var(--bg-inset);
   color: var(--text-muted);
 }
 
 .badge--subscription {
   background: var(--accent-bg);
-  color: var(--accent);
+  color: var(--accent-soft);
 }
 
 .badge--manual {
@@ -1005,8 +1427,8 @@
 }
 
 .badge--active {
-  background: var(--ok-bg);
-  color: var(--ok);
+  background: var(--aurora-bg);
+  color: var(--aurora);
 }
 
 .profile-meta {
@@ -1024,7 +1446,7 @@
 .profile-meta dd {
   margin: 0;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .node-list {
@@ -1035,7 +1457,7 @@
   margin: 0;
   padding: var(--space-3);
   background: var(--bg-inset);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   animation: node-expand var(--dur-base) var(--ease-out);
   transform-origin: top;
 }
@@ -1052,7 +1474,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-1);
+  padding: var(--space-2) var(--space-2);
   border-radius: var(--radius-sm);
   transition: background var(--dur-fast) var(--ease-out);
 }
@@ -1071,7 +1493,7 @@
 
 .node-name {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .node-detail {
@@ -1095,6 +1517,7 @@
   padding: 2px var(--space-2);
   border-radius: var(--radius-sm);
   font-size: 12px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   background: var(--bg-inset);
   color: var(--text-muted);
@@ -1105,8 +1528,8 @@
 }
 
 .ping-good {
-  background: var(--ok-bg);
-  color: var(--ok);
+  background: var(--aurora-bg);
+  color: var(--aurora);
 }
 
 .ping-fair {
@@ -1129,11 +1552,11 @@
   align-items: center;
   justify-content: center;
   padding: var(--space-4);
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(5, 6, 12, 0.62);
   z-index: 10;
   animation: fade-in var(--dur-base) var(--ease-out);
   /* Soften the dialog's backdrop so the app recedes behind it. */
-  backdrop-filter: blur(2px);
+  backdrop-filter: blur(4px);
 }
 
 .modal {
@@ -1143,23 +1566,24 @@
   width: 100%;
   max-width: 460px;
   padding: var(--space-5);
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
-  animation: modal-in var(--dur-base) var(--ease-spring);
+  box-shadow: var(--shadow-lg);
+  animation: modal-in var(--dur-base) var(--ease-bloom);
 }
 
 @keyframes modal-in {
   from {
     opacity: 0;
-    transform: translateY(8px) scale(0.97);
+    transform: translateY(12px) scale(0.96);
   }
 }
 
 .modal-title {
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .modal-body {
@@ -1186,15 +1610,21 @@
   flex: 1;
   padding: var(--space-2) var(--space-3);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: calc(var(--radius-sm) - 2px);
   background: transparent;
   color: var(--text-muted);
   font-size: 13px;
-  transition: background var(--transition-fast), color var(--transition-fast);
+  font-weight: 600;
+  transition: background var(--transition-fast), color var(--transition-fast),
+    transform var(--dur-fast) var(--ease-out);
 }
 
 .tab:hover {
   color: var(--text);
+}
+
+.tab:not(.active):active {
+  transform: scale(0.96);
 }
 
 .tab.active {
@@ -1213,7 +1643,8 @@
 
 .settings-section h2 {
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 700;
+  letter-spacing: -0.005em;
 }
 
 .routing-group {
@@ -1223,6 +1654,7 @@
 }
 
 .routing-option {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
@@ -1231,31 +1663,37 @@
   border-radius: var(--radius-md);
   background: var(--bg-inset);
   text-align: left;
-  transition: border-color var(--transition-fast), background var(--transition-fast);
+  overflow: hidden;
+  transition: border-color var(--transition-fast), background var(--transition-fast),
+    transform var(--dur-fast) var(--ease-out);
 }
 
 .routing-option:hover {
   border-color: var(--border-strong);
 }
 
+.routing-option:active {
+  transform: scale(0.995);
+}
+
 .routing-option.is-checked {
-  border-color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
   background: var(--accent-bg);
 }
 
 .routing-radio {
   position: relative;
   flex-shrink: 0;
-  width: 16px;
-  height: 16px;
-  margin-top: 2px;
+  width: 17px;
+  height: 17px;
+  margin-top: 1px;
   border: 2px solid var(--border-strong);
   border-radius: 50%;
   transition: border-color var(--transition-fast);
 }
 
-/* The inner dot scales in with a spring when its option is chosen, instead of
-   a hard fill swap. */
+/* The inner dot scales in with a spring when its option is chosen, instead of a
+   hard fill swap. */
 .routing-radio::after {
   content: "";
   position: absolute;
@@ -1281,14 +1719,13 @@
 }
 
 .routing-label {
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .routing-hint {
   font-size: 12px;
 }
 
-/* A section heading with a one-line subtitle under it (split tunnelling). */
 .settings-head {
   display: flex;
   flex-direction: column;
@@ -1299,8 +1736,6 @@
   font-size: 12px;
 }
 
-/* Split tunnelling: the editable app list sits under the mode selector. It is
-   indented under a sub-label so it reads as belonging to the chosen mode. */
 .split-apps {
   display: flex;
   flex-direction: column;
@@ -1329,7 +1764,6 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-inset);
-  /* New rows ease in rather than snapping, matching the rest of the app. */
   animation: rise-in var(--dur-fast) var(--ease-out) both;
 }
 
@@ -1355,7 +1789,7 @@
 }
 
 .setting-name {
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .setting-hint {
@@ -1375,7 +1809,7 @@
   border-radius: calc(var(--radius-sm) - 2px);
   background: transparent;
   color: var(--text-muted);
-  font-weight: 500;
+  font-weight: 600;
   transition: background var(--transition-fast), color var(--transition-fast),
     transform var(--dur-fast) var(--ease-out);
 }
@@ -1398,47 +1832,46 @@
 .switch {
   position: relative;
   flex-shrink: 0;
-  width: 42px;
-  height: 24px;
+  width: 46px;
+  height: 26px;
   padding: 0;
   border: 0;
   border-radius: var(--radius-pill);
   background: var(--border-strong);
   transition: background var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out),
     transform var(--dur-fast) var(--ease-out);
 }
 
 .switch.is-on {
-  background: var(--accent);
+  background: linear-gradient(120deg, var(--accent), var(--aurora-strong));
+  box-shadow: 0 0 16px -4px color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 .switch-thumb {
   position: absolute;
   top: 3px;
   left: 3px;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   background: #fff;
   box-shadow: var(--shadow-sm);
-  /* Spring easing gives the thumb a tiny settle when it lands — the toggle
-     feels mechanical rather than a flat slide. */
+  /* Spring easing gives the thumb a tiny settle when it lands — the toggle feels
+     mechanical rather than a flat slide. */
   transition: transform var(--dur-base) var(--ease-spring);
 }
 
 .switch.is-on .switch-thumb {
-  transform: translateX(18px);
+  transform: translateX(20px);
 }
 
-/* A small dip on press — composited scale, no layout. */
 .switch:not(:disabled):active {
   transform: scale(0.94);
 }
 
 /* --- logs ------------------------------------------------------------------- */
 
-/* The leak finding is two stacked blocks (public IP, DNS), each carrying its own
-   tone. They rise in together as one result. */
 .leak-report {
   display: flex;
   flex-direction: column;
@@ -1485,24 +1918,21 @@
 
 .leak-block-title {
   font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-weight: 700;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-muted);
 }
 
-/* The status chip echoes the raw verdict word (ok/warn/leak/…) in the block's
-   tone, so the state is legible at a glance and to a screen reader in reading
-   order. */
 .leak-tag {
   display: inline-flex;
   align-items: center;
   padding: 1px var(--space-2);
   border-radius: var(--radius-pill);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.04em;
   background: var(--bg-inset);
   color: var(--text-muted);
 }
@@ -1523,7 +1953,7 @@
 }
 
 .leak-headline {
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .leak-detail {
@@ -1564,7 +1994,7 @@
 .log-panel {
   flex: 1;
   min-height: 280px;
-  max-height: calc(100vh - 220px);
+  max-height: calc(100vh - 240px);
   overflow-y: auto;
   padding: var(--space-3);
   background: var(--bg-inset);
@@ -1585,7 +2015,7 @@
   padding: 2px 0;
   align-items: baseline;
   /* New lines ease in so the tail of a busy log doesn't strobe. Cheap: opacity
-     only, and it plays once per appended row. */
+     only, plays once per appended row. */
   animation: fade-in var(--dur-fast) var(--ease-out);
 }
 
@@ -1599,7 +2029,7 @@
   width: 42px;
   text-transform: uppercase;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .log-info {

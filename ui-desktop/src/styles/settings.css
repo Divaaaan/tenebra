@@ -1,0 +1,336 @@
+/* Settings overlay — spec-sheet restyle. A plain vertical document: a title, then
+   titled sections divided by 1px rules. One accent (--signal), mono throughout,
+   sharp corners, near-zero motion. Lives inside .overlay-panel, so the top padding
+   clears the overlay's own ✕ close button (top-right). */
+
+.set-doc {
+  display: flex;
+  flex-direction: column;
+  /* Top space so the title clears the overlay-close glyph; sides match the dense
+     panel rhythm. */
+  padding: 26px 24px 22px;
+}
+
+.set-title {
+  font-family: var(--display);
+  font-size: var(--fs-sku);
+  font-weight: 600;
+  letter-spacing: var(--track-sku);
+  text-transform: uppercase;
+  /* Keep clear of the ✕ in the corner. */
+  padding-right: 40px;
+}
+
+/* ── section ── */
+.set-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding: var(--sp-5) 0;
+  border-top: var(--bw) solid var(--line);
+}
+.set-section:first-of-type {
+  margin-top: var(--sp-4);
+}
+
+.set-section-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+.set-eyebrow {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-cap);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.set-sub {
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  letter-spacing: var(--track-body);
+  color: var(--text-dim);
+}
+
+/* ── option rows (routing / split mode) — bordered radio rows ── */
+/* Adjacent rows overlap their borders into a single rule via the negative
+   margin on each row, so the group reads as one stacked control. */
+.set-options {
+  display: flex;
+  flex-direction: column;
+}
+.set-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: 12px 14px;
+  border: var(--bw) solid var(--line);
+  margin-bottom: -1px; /* adjacent borders merge into one rule */
+  text-align: left;
+  color: var(--text);
+  transition:
+    color var(--t-fast),
+    border-color var(--t-fast),
+    background var(--t-fast);
+}
+.set-option:hover {
+  border-color: var(--text-dim);
+}
+.set-option.is-checked {
+  border-color: var(--signal);
+  position: relative;
+  z-index: 1;
+}
+.set-mark {
+  flex: none;
+  margin-top: 1px;
+  font-size: var(--fs-body);
+  line-height: 1.2;
+  color: var(--text-dim-2);
+}
+.set-option.is-checked .set-mark {
+  color: var(--signal);
+}
+.set-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.set-option-label {
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  letter-spacing: var(--track-body);
+  text-transform: uppercase;
+}
+.set-option.is-checked .set-option-label {
+  color: var(--signal);
+}
+.set-option-hint {
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  letter-spacing: var(--track-body);
+  color: var(--text-dim);
+}
+
+/* ── split-tunnelling app list ── */
+.set-apps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+/* input + add, sharing the search-field vocabulary from the main screen */
+.set-add {
+  display: flex;
+  gap: var(--sp-2);
+}
+.set-field {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 1;
+  min-width: 0;
+  border: var(--bw) solid var(--line);
+  padding: 7px 11px;
+  transition: border-color var(--t-fast);
+}
+.set-field:focus-within {
+  border-color: var(--signal);
+}
+.set-field .set-prompt {
+  color: var(--signal);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  flex: none;
+}
+.set-field input {
+  all: unset;
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--track-body);
+  color: var(--text);
+  caret-color: var(--signal);
+}
+.set-field input::placeholder {
+  color: var(--text-dim-2);
+}
+
+/* primary action — the connect-button vocabulary, sized down */
+.set-btn {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding: 0 18px;
+  border: var(--bw-emphasis) solid var(--signal);
+  color: var(--signal);
+  transition:
+    background var(--t-base),
+    color var(--t-base),
+    border-color var(--t-base);
+}
+.set-btn:hover {
+  background: var(--signal);
+  color: var(--on-signal);
+}
+.set-btn:disabled {
+  border-color: var(--line);
+  color: var(--text-dim-2);
+  cursor: default;
+}
+.set-btn:disabled:hover {
+  background: transparent;
+  color: var(--text-dim-2);
+}
+
+.set-empty {
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  letter-spacing: var(--track-body);
+  color: var(--text-dim);
+}
+
+.set-app-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.set-app-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: 9px 12px;
+  border: var(--bw) solid var(--line);
+  margin-bottom: -1px;
+}
+.set-app-name {
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  letter-spacing: var(--track-body);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ghost remove — a quiet ✕ that warms to the accent (destructive = signal) */
+.set-remove {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  line-height: 1;
+  color: var(--text-dim);
+  padding: 4px 7px;
+  border: var(--bw) solid var(--line);
+  transition:
+    color var(--t-fast),
+    border-color var(--t-fast);
+}
+.set-remove:hover {
+  color: var(--signal);
+  border-color: var(--signal);
+}
+
+/* ── field row: eyebrow label + control on one line ── */
+.set-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+}
+.set-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.set-row-label {
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--text);
+}
+.set-row-hint {
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  letter-spacing: var(--track-body);
+  color: var(--text-dim);
+}
+
+/* ── segmented control (theme / language) — adjacent buttons, borders merged ── */
+.set-seg {
+  display: inline-flex;
+  flex: none;
+}
+.set-seg button {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 6px 13px;
+  border: var(--bw) solid var(--line);
+  margin-right: -1px;
+  color: var(--text-dim);
+  transition:
+    color var(--t-fast),
+    border-color var(--t-fast);
+}
+.set-seg button:last-child {
+  margin-right: 0;
+}
+.set-seg button:hover {
+  color: var(--text);
+}
+.set-seg button.is-active {
+  color: var(--signal);
+  border-color: var(--signal);
+  position: relative;
+  z-index: 1;
+}
+
+/* ── switch (startup toggles) — a labelled ▢/▣ box, not a sliding pill ── */
+.set-switch {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 6px 12px;
+  border: var(--bw) solid var(--line);
+  color: var(--text-dim);
+  transition:
+    color var(--t-fast),
+    border-color var(--t-fast);
+}
+.set-switch:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+.set-switch.is-on {
+  color: var(--good);
+  border-color: var(--good);
+}
+.set-switch:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.set-switch:disabled:hover {
+  color: var(--text-dim);
+  border-color: var(--line);
+}
+.set-switch-box {
+  font-size: var(--fs-data);
+  line-height: 1;
+}

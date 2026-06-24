@@ -18,14 +18,21 @@ func parseHysteria2(raw string) (model.Node, error) {
 		return model.Node{}, fmt.Errorf("subscription: hysteria2: %w", err)
 	}
 
+	// The password sits in the userinfo; some generators url-encode it. Hysteria2
+	// authenticates on it, so reject a link that carries none rather than emit a
+	// passwordless node the builder would later drop.
+	password := userinfoSecret(u)
+	if password == "" {
+		return model.Node{}, fmt.Errorf("subscription: hysteria2: empty password")
+	}
+
 	q := u.Query()
 	n := model.Node{
 		Protocol: model.Hysteria2,
 		Name:     fragmentName(u),
 		Server:   host,
 		Port:     port,
-		// The password sits in the userinfo; some generators url-encode it.
-		Password: userinfoSecret(u),
+		Password: password,
 	}
 
 	n.TLS = &model.TLS{

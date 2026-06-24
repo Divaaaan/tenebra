@@ -1,137 +1,187 @@
-/* Design tokens. Colour is the only thing that flips between themes; spacing,
-   radii, typography and motion are shared. Dark is the default and lives on
-   :root so a missing data-theme still renders the intended look. */
+/* Design tokens — the single source for colour, type, space, and motion.
+
+   "Spec-sheet" identity: the UI reads like a network status panel or a man page,
+   not a consumer app. Near-black canvas, exactly one orange accent, mono type
+   everywhere, sharp corners, no shadows, near-zero motion. Dark is the canonical
+   theme and lives on :root, so a missing data-theme still renders the intent.
+   Light is an inverted spec-sheet on paper — the only thing that flips is colour;
+   space, geometry, type and motion are shared.
+
+   Colour discipline: --signal is the only accent and is rationed (active,
+   interactive, warning). --good (green) appears ONLY for connected/protected.
+   If everything is signal, nothing is. */
 
 :root {
-  --font-sans:
-    "Inter", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial,
-    sans-serif;
-  --font-mono: "JetBrains Mono", "Cascadia Code", "SF Mono", Consolas, monospace;
+  /* ---- TYPE · families --------------------------------------------------
+     Canonical (licensed) primaries first; the bundled @fontsource-variable
+     fallbacks (loaded in main.tsx, self-hosted — never a CDN) take over when
+     the licensed faces are absent. Display is Latin-only; Russian copy always
+     rides the mono face. */
+  --display: "PP Neue Machina", "Space Grotesk Variable", "Space Grotesk",
+    system-ui, sans-serif;
+  --mono: "Departure Mono", "JetBrains Mono Variable", "JetBrains Mono",
+    "IBM Plex Mono", ui-monospace, monospace;
 
+  /* ---- TYPE · scale (px) ---- */
+  --fs-word: 52px; /* connection status word          (display) */
+  --fs-kpi: 26px; /* stat value                       (display) */
+  --fs-sku: 22px; /* current-node code                (display) */
+  --fs-brand: 17px; /* brand wordmark                 (display) */
+  --fs-body: 13px; /* node row code / default body    (mono)    */
+  --fs-data: 12px; /* dense table data                (mono)    */
+  --fs-meta: 11px; /* labels, chips, buttons          (mono)    */
+  --fs-label: 10px; /* section labels, tiny meta      (mono)    */
+
+  /* ---- TYPE · tracking ---- */
+  --track-word: -0.03em; /* the big status word */
+  --track-kpi: -0.02em; /* stat values */
+  --track-sku: -0.01em; /* node codes */
+  --track-body: 0.04em; /* mono body / data */
+  --track-label: 0.12em; /* uppercase labels */
+  --track-cap: 0.18em; /* most-tracked section headers */
+
+  /* ---- SPACING · 4px base ---- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px; /* minimum gap between elements */
+  --sp-5: 22px;
+  --sp-6: 28px; /* card / pane padding */
+  --sp-7: 32px; /* grid gutters */
+  --sp-8: 36px;
+
+  /* ---- GEOMETRY ---- */
+  --radius: 0px; /* sharp corners, everywhere */
+  --radius-max: 2px; /* the absolute maximum, rarely used */
+  --bw: 1px; /* default border weight */
+  --bw-emphasis: 2px; /* connect button / warning border */
+
+  /* ---- MOTION (near-zero budget) ----
+     The ONLY animations allowed: live-dot blink 2.2s, pending blink 1s steps,
+     caret 1s steps. State colour/border changes are instant or <=100ms linear. */
+  --t-fast: 80ms linear; /* chip colour / border */
+  --t-base: 100ms linear; /* button fill / row background */
+
+  /* Status-word tints. The 52px hero word in pure --good/--text reads harsh, so
+     it's softened (desaturated toward the text colour). Defined in terms of the
+     theme vars below, so it adapts to dark and light on its own. The dot matches
+     the word; error stays the hard --signal — that one is meant to alarm. */
+  --word-on: color-mix(in srgb, var(--good) 58%, var(--text) 42%);
+  --word-off: color-mix(in srgb, var(--text) 50%, var(--text-dim) 50%);
+  --word-pending: color-mix(in srgb, var(--warn-soft) 60%, var(--text) 40%);
+
+  /* A flag the renderer reads to decide whether to run JS-driven motion. CSS
+     owns the media query; JS reads the computed value. Default: on. */
+  --motion-ok: 1;
+
+  /* ======================================================================
+     LEGACY COMPAT — maps the previous "Eclipse" token names onto the
+     spec-sheet system so screens not yet restyled (Settings/Profiles/Logs)
+     still render. Phase 2 restyles those and deletes this block.
+     ====================================================================== */
+  --font-sans: var(--mono);
+  --font-mono: var(--mono);
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
-  --space-5: 24px;
-  --space-6: 32px;
-  --space-7: 48px;
-
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 16px;
-  --radius-pill: 999px;
-
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
-  --shadow-glow: 0 0 0 6px color-mix(in srgb, var(--accent) 18%, transparent);
-
-  /* Motion system. A handful of durations and shared easings, reused
-     everywhere so the whole app accelerates and settles with one voice.
-     --dur-* are the timing steps; --ease-* are the character of the move.
-     prefers-reduced-motion neutralises these globally (see global.css). */
-  --dur-fast: 130ms; /* taps, hovers, presses */
-  --dur-base: 240ms; /* the default — most state changes */
-  --dur-slow: 420ms; /* deliberate moments: screen swaps, the dial settling */
-  --dur-breath: 2600ms; /* ambient loops: the dial aura breathing while connecting */
-
-  /* Emphasised ease-out: quick to leave, gentle to arrive. The workhorse. */
-  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  /* Symmetric ease for things that travel and return (toggles, sparkline). */
-  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
-  /* A short overshoot — used sparingly where a state should feel "alive"
-     (the dial snapping into "connected", a switch thumb landing). */
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-
-  /* Legacy aliases kept so existing rules keep working; both now route
-     through the motion system above. */
-  --transition-fast: var(--dur-fast) var(--ease-out);
-  --transition-med: var(--dur-base) var(--ease-out);
-
-  /* Brand accent stays constant across themes. Indigo is the resting brand;
-     a cooler aurora-teal is the "alive" companion that only blooms when the
-     tunnel is up, so connected reads as light entering the dark. */
-  --accent: #6c8cff;
-  --accent-strong: #5273ff;
-  --accent-contrast: #ffffff;
-  --aurora: #57e8d0;
-
-  --ok: #3ecf8e;
-  --warn: #f5b14c;
-  --danger: #f06767;
+  --space-5: 22px;
+  --space-6: 28px;
+  --space-7: 36px;
+  --space-8: 56px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-pill: 0px;
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: none;
+  --shadow-glow: none;
+  --dur-fast: 80ms;
+  --dur-base: 100ms;
+  --dur-slow: 100ms;
+  --dur-bloom: 100ms;
+  --dur-breath: 2200ms;
+  --ease-out: linear;
+  --ease-in-out: linear;
+  --ease-spring: linear;
+  --ease-bloom: linear;
+  --transition-fast: var(--t-fast);
+  --transition-med: var(--t-base);
 }
 
-/* Dark theme (default). */
+/* ---- DARK · canonical spec-sheet -------------------------------------- */
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --bg: #0e1014;
-  --bg-elevated: #161a21;
-  --bg-inset: #1d222b;
-  --surface: #14181f;
-  --surface-hover: #1b212a;
+  --bg: #0e0e0e; /* near-black, never pure #000 */
+  --surface: #161616; /* hovered rows */
+  --surface-2: #1e1e1e; /* active / selected row */
+  --text: #f4f4f0; /* off-white, never pure white */
+  --text-dim: #8c8c88; /* labels, metadata */
+  --text-dim-2: #5a5a57; /* deepest dim, idle / ghost */
+  --line: #2a2a2a; /* default 1px borders, dividers */
+  --line-2: #3a3a3a; /* brighter rule, window outline */
 
-  --border: #262c37;
-  --border-strong: #333b48;
+  --signal: #ff3d00; /* THE accent */
+  --signal-soft: rgba(255, 61, 0, 0.18); /* fan fill / wash */
+  --signal-faint: rgba(255, 61, 0, 0.08); /* warn-row background */
+  --good: #00e676; /* connected / protected only */
+  --warn-soft: #ffb300; /* heads-up, not critical */
+  --on-signal: #0e0e0e; /* text on a filled --signal surface */
 
-  --text: #e8ecf2;
-  --text-muted: #9aa4b2;
-  --text-faint: #69727f;
+  /* Grain over the canvas — a touch of texture so flat panels don't read as
+     dead space. Off on light. */
+  --grain-opacity: 0.04;
 
-  --ok-bg: rgba(62, 207, 142, 0.14);
-  --warn-bg: rgba(245, 177, 76, 0.14);
-  --danger-bg: rgba(240, 103, 103, 0.14);
-  --accent-bg: rgba(108, 140, 255, 0.14);
-
-  /* The well behind the dial — a touch deeper than the page so the button
-     reads as a recess in the dark that light can pool into. */
-  --dial-well: radial-gradient(
-    circle at 50% 42%,
-    #11151c 0%,
-    #0c0e12 70%
-  );
-  /* A deep inset shadow carves the recess on dark. */
-  --dial-well-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.04),
-    inset 0 -8px 24px rgba(0, 0, 0, 0.45);
-  /* Ambient "the room lights up" wash, only visible once connected. Two faint
-     pools drift behind the whole shell; kept very low so it never competes. */
-  --ambient-strength: 0.5;
+  /* Legacy colour aliases. */
+  --bg-elevated: var(--surface);
+  --bg-inset: var(--surface);
+  --surface-hover: var(--surface);
+  --border: var(--line);
+  --border-strong: var(--line-2);
+  --text-muted: var(--text-dim);
+  --text-faint: var(--text-dim-2);
+  --accent: var(--signal);
+  --accent-strong: var(--signal);
+  --accent-soft: var(--signal);
+  --accent-contrast: var(--on-signal);
+  --accent-bg: var(--signal-faint);
+  --aurora: var(--good);
+  --aurora-strong: var(--good);
+  --violet: var(--signal);
+  --ember: var(--signal);
+  --ok: var(--good);
+  --warn: var(--warn-soft);
+  --danger: var(--signal);
+  --ok-bg: var(--signal-faint);
+  --warn-bg: var(--signal-faint);
+  --danger-bg: var(--signal-faint);
+  --accent-bg: var(--signal-faint);
+  --aurora-bg: var(--signal-faint);
 }
 
-/* Light theme. */
+/* ---- LIGHT · inverted spec-sheet on paper ----------------------------- */
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --bg: #f4f6fa;
-  --bg-elevated: #ffffff;
-  --bg-inset: #eef1f6;
-  --surface: #ffffff;
-  --surface-hover: #f0f3f8;
+  --bg: #f3f2ec; /* paper */
+  --surface: #eae8df; /* hovered rows */
+  --surface-2: #e0ddd2; /* active / selected row */
+  --text: #161412; /* black ink */
+  --text-dim: #6b6760; /* labels, metadata */
+  --text-dim-2: #9a958b; /* deepest dim */
+  --line: #d5d1c5; /* dividers */
+  --line-2: #c2bdb0; /* brighter rule */
 
-  --border: #e1e6ed;
-  --border-strong: #cdd4df;
+  /* Full orange on paper screams; a calmer burnt orange holds the accent. */
+  --signal: #c8380c;
+  --signal-soft: rgba(200, 56, 12, 0.16);
+  --signal-faint: rgba(200, 56, 12, 0.07);
+  --good: #1f8a4c;
+  --warn-soft: #b8780a;
+  --on-signal: #f3f2ec;
 
-  --text: #1a1f27;
-  --text-muted: #5a6573;
-  --text-faint: #8c97a5;
-
-  --shadow-sm: 0 1px 2px rgba(20, 28, 46, 0.08);
-  --shadow-md: 0 10px 30px rgba(20, 28, 46, 0.12);
-
-  --ok-bg: rgba(36, 168, 109, 0.12);
-  --warn-bg: rgba(214, 142, 41, 0.14);
-  --danger-bg: rgba(214, 70, 70, 0.12);
-  --accent-bg: rgba(82, 115, 255, 0.12);
-
-  /* Light keeps the recess subtle and skips the ambient room-glow, which only
-     makes sense against darkness. */
-  --dial-well: radial-gradient(
-    circle at 50% 42%,
-    #ffffff 0%,
-    #eef1f6 72%
-  );
-  /* A soft, light inset instead of the heavy dark one — keeps the well clean. */
-  --dial-well-shadow: inset 0 1px 2px rgba(20, 28, 46, 0.06),
-    inset 0 -6px 18px rgba(20, 28, 46, 0.06);
-  --ambient-strength: 0;
+  --grain-opacity: 0;
 }
