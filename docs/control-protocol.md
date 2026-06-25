@@ -22,6 +22,7 @@ Three message kinds flow over the link:
 | `list_profiles`        | —                                  | `{ profiles: Profile[] }`   |
 | `import_subscription`  | `url`, `name`                      | `{ profile: Profile }`      |
 | `import_link`          | `link`, `name?`                    | `{ profile: Profile }`      |
+| `import_links`         | `links` (string[]), `name?`        | `{ profile: Profile, imported, skipped }` |
 | `remove_profile`       | `profile`                          | —                           |
 | `refresh_subscription` | `profile`                          | `{ profile: Profile }`      |
 | `connect`              | `profile`, `node?`, `auto?`        | `State`                     |
@@ -60,6 +61,33 @@ path.
 ```
 request:  {"id":7,"cmd":"connect","profile":"p1","auto":true}
 response: {"id":7,"ok":true,"data":{"state":"connecting","profile":"p1"}}
+```
+
+### Batch link import (`import_links`)
+
+`import_links` collects several share links into **one** manual profile holding
+all of them as servers — the convenience path for pasting a block of links or
+loading a `.txt` list. `links` is an array of strings; each element may be a
+single link or a multi-line block (the core splits on newlines), so a UI can pass
+the raw textarea/file body as one entry.
+
+Parsing is forgiving so one bad line never costs the user the good ones:
+
+- surrounding whitespace is trimmed;
+- blank lines and comments (a line starting with `#` or `//`) are ignored — they
+  count as neither imported nor skipped;
+- exact-duplicate links collapse to a single server (first occurrence wins,
+  preserving order);
+- a line that looks like a link but fails to parse is **skipped** (counted), not
+  fatal.
+
+The reply carries the new profile plus `imported` (servers added) and `skipped`
+(links that failed to parse) so the UI can report "imported N, skipped M". A
+batch with **no** parseable links is an error rather than an empty profile.
+
+```
+request:  {"id":7,"cmd":"import_links","links":["vless://…#a\ntrojan://…#b\nbad-line"],"name":"Mine"}
+response: {"id":7,"ok":true,"data":{"profile":{ /* …two servers… */ },"imported":2,"skipped":1}}
 ```
 
 `set_routing` and `set_split` only record the choice; like a routing change, a

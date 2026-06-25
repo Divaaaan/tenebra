@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
+  BatchImportResult,
   LogEvent,
   PingResult,
   Profile,
@@ -42,6 +43,15 @@ export const api = {
     return invoke<{ profile: Profile }>("import_link", { link, name }).then(
       (r) => r.profile,
     );
+  },
+
+  // Batch import: several share links (pasted block or a parsed .txt list) into a
+  // single multi-server profile. The core splits, de-duplicates and skips
+  // unparseable lines, returning how many it imported and skipped so the UI can
+  // report the outcome. `links` may carry multi-line strings; an empty result
+  // (no valid links) rejects.
+  importLinks(links: string[], name?: string): Promise<BatchImportResult> {
+    return invoke<BatchImportResult>("import_links", { links, name });
   },
 
   removeProfile(profile: string): Promise<void> {

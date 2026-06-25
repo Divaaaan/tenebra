@@ -9,8 +9,8 @@ use std::thread;
 use std::time::Duration;
 
 use super::{
-    Backend, ConnectionState, DnsResult, DnsStatus, EventSink, ExitMatch, LeakCheck, Node,
-    PingResult, Profile, Protocol, RoutingMode, Source, SplitMode, State, Verdict,
+    Backend, ConnectionState, DnsResult, DnsStatus, EventSink, ExitMatch, ImportLinksResult,
+    LeakCheck, Node, PingResult, Profile, Protocol, RoutingMode, Source, SplitMode, State, Verdict,
 };
 
 /// How long the fake "dial" takes before flipping to connected.
@@ -214,6 +214,54 @@ impl Backend for MockBackend {
             .log("info", &format!("imported link \"{name}\""));
         self.shared.emit_profiles();
         Ok(profile)
+    }
+
+    fn import_links(
+        &self,
+        links: Vec<String>,
+        name: Option<String>,
+    ) -> Result<ImportLinksResult, String> {
+        // Mirror the core's batch parsing well enough for the demo: split each
+        // entry on newlines, trim, drop blanks/comments and duplicates, then count
+        // a line as a server if it looks like a link (has a scheme) or skip it.
+        // The mock can't truly parse a link, so "looks like a link" stands in for
+        // the core's per-protocol parser.
+        let (nodes, skipped) = parse_links_mock(&links);
+        if nodes.is_empty() {
+            return Err(format!("no valid links found ({skipped} skipped)"));
+        }
+        let imported = nodes.len() as u32;
+        let name = name
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| "Imported links".to_string());
+        let profile = Profile {
+            id: new_id("man"),
+            name: name.clone(),
+            source: Source::Manual,
+            url: None,
+            nodes,
+            updated_at: now_rfc3339(),
+            expires_at: None,
+            traffic_used: None,
+            traffic_total: None,
+        };
+        self.shared
+            .inner
+            .lock()
+            .unwrap()
+            .profiles
+            .push(profile.clone());
+        self.shared.sink.log(
+            "info",
+            &format!("imported {imported} link(s) into \"{name}\" ({skipped} skipped)"),
+        );
+        self.shared.emit_profiles();
+        Ok(ImportLinksResult {
+            profile,
+            imported,
+            skipped,
+        })
     }
 
     fn remove_profile(&self, profile: String) -> Result<(), String> {
@@ -571,6 +619,50 @@ fn normalize_split_apps(apps: Vec<String>) -> Vec<String> {
     out
 }
 
+/// A line "looks like" a share link if it has a `scheme://` prefix. The mock
+/// uses this as a stand-in for the core's real parser when counting batch
+/// imports, so a junk line is skipped rather than silently turned into a node.
+fn looks_like_link(line: &str) -> bool {
+    match line.split_once("://") {
+        Some((scheme, rest)) => !scheme.is_empty() && !rest.is_empty(),
+        None => false,
+    }
+}
+
+/// Demo-grade batch link parser mirroring the core's `ParseLinks` shape: split on
+/// newlines, trim, drop blanks / `#` / `//` comments and exact duplicates, build a
+/// node per link-shaped line and count the rest as skipped. Returns
+/// `(nodes, skipped)`.
+fn parse_links_mock(links: &[String]) -> (Vec<Node>, u32) {
+    let mut nodes = Vec::new();
+    let mut skipped = 0u32;
+    let mut seen = std::collections::HashSet::new();
+    for raw in links {
+        for line in raw.split('\n') {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') || line.starts_with("//") {
+                continue;
+            }
+            if !seen.insert(line.to_string()) {
+                continue; // exact duplicate
+            }
+            if looks_like_link(line) {
+                let protocol = protocol_from_link(line);
+                nodes.push(node_lit(
+                    &new_id("n"),
+                    &format!("{} server", protocol_label(protocol)),
+                    protocol,
+                    "203.0.113.10",
+                    443,
+                ));
+            } else {
+                skipped += 1;
+            }
+        }
+    }
+    (nodes, skipped)
+}
+
 fn protocol_from_link(link: &str) -> Protocol {
     let scheme = link.split("://").next().unwrap_or("").to_ascii_lowercase();
     match scheme.as_str() {
@@ -851,6 +943,47 @@ mod tests {
             .unwrap();
         assert_eq!(p.name, "My SS");
         assert_eq!(p.nodes[0].protocol, Protocol::Shadowsocks);
+    }
+
+    #[test]
+    fn parse_links_mock_counts_and_dedupes() {
+        // A block with two good links, a comment, a blank, a junk line and a
+        // duplicate: two nodes, one skipped, the dup collapsed.
+        let block = "# header\nvless://a@h:443\n\n// note\ngarbage\nvless://a@h:443\nss://b@h:8388";
+        let (nodes, skipped) = parse_links_mock(&[block.to_string()]);
+        assert_eq!(nodes.len(), 2, "two unique link-shaped lines");
+        assert_eq!(skipped, 1, "one junk line skipped");
+    }
+
+    #[test]
+    fn import_links_creates_one_multi_node_profile_and_signals() {
+        let (b, sink) = backend();
+        let before = sink.profiles_count();
+        let res = b
+            .import_links(
+                vec!["vless://a@h:443\ntrojan://b@h:443\nnot-a-link".into()],
+                Some("Batch".into()),
+            )
+            .unwrap();
+        assert_eq!(res.imported, 2);
+        assert_eq!(res.skipped, 1);
+        assert_eq!(res.profile.source, Source::Manual);
+        assert_eq!(res.profile.nodes.len(), 2);
+        assert_eq!(res.profile.name, "Batch");
+        assert_eq!(sink.profiles_count(), before + 1);
+        assert!(b.list_profiles().unwrap().iter().any(|p| p.id == res.profile.id));
+    }
+
+    #[test]
+    fn import_links_defaults_name_and_rejects_all_invalid() {
+        let (b, _) = backend();
+        // No name -> a non-empty default.
+        let res = b.import_links(vec!["vless://a@h:443".into()], None).unwrap();
+        assert!(!res.profile.name.is_empty());
+        // Nothing parseable -> an error, not an empty profile.
+        assert!(b
+            .import_links(vec!["nope".into(), "also-bad".into()], None)
+            .is_err());
     }
 
     #[test]

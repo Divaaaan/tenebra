@@ -39,13 +39,17 @@ release.
     best-effort DNS probe, with a verdict that never reports a false pass.
   - The line-delimited JSON control protocol and the daemon that drives it, with
     a 6-hour background subscription auto-refresh.
+  - Batch link import (`import_links`): several share links (a pasted block or a
+    `.txt` list) collapse into one profile, skipping blank/comment/duplicate and
+    unparseable lines and reporting how many were imported and skipped.
 - **Windows adapter** that spawns and supervises the sing-box process and reads
   traffic counters from its clash API.
 - **`tenebra-core` sidecar** speaking the control protocol over stdin/stdout.
 - **Desktop app (Tauri 2 — Rust shell + React/TypeScript).**
   - Home, Profiles, Settings and Logs screens.
-  - Import via subscription URL, raw link, `.txt` file, clipboard, or QR code
-    (image file or pasted image).
+  - Import via subscription URL, a single link, several links at once (pasted
+    block or `.txt` list, gathered into one profile), clipboard, or QR code
+    (image file or pasted image), with an imported/skipped summary for batches.
   - Connect/disconnect with automatic or manual node selection, per-node ping,
     and "select fastest".
   - Live traffic graphs, routing and split-tunnel controls, and a leak-check

@@ -114,6 +114,17 @@ pub struct Profile {
     pub traffic_total: Option<u64>,
 }
 
+/// Result of a batch link import (`import_links`): the single profile created
+/// from all the valid links, plus how many links were imported and how many were
+/// skipped because they didn't parse. Mirrors the core's wrapped response so the
+/// UI can report "imported N, skipped M".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportLinksResult {
+    pub profile: Profile,
+    pub imported: u32,
+    pub skipped: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PingResult {
@@ -228,6 +239,16 @@ pub trait Backend: Send + Sync + 'static {
     fn list_profiles(&self) -> Result<Vec<Profile>, String>;
     fn import_subscription(&self, url: String, name: String) -> Result<Profile, String>;
     fn import_link(&self, link: String, name: Option<String>) -> Result<Profile, String>;
+    /// Import several share links at once into a single multi-node profile.
+    /// `links` may hold pasted multi-line blocks or individual links; the core
+    /// splits, de-duplicates, skips comments/blanks, and counts unparseable lines
+    /// in the returned `skipped` rather than failing. An empty result (no valid
+    /// links) is an error.
+    fn import_links(
+        &self,
+        links: Vec<String>,
+        name: Option<String>,
+    ) -> Result<ImportLinksResult, String>;
     fn remove_profile(&self, profile: String) -> Result<(), String>;
     fn refresh_subscription(&self, profile: String) -> Result<Profile, String>;
     /// Start a connection. With an explicit `node` the core uses exactly that

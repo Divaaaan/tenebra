@@ -27,6 +27,7 @@ const (
 	CmdListProfiles       = "list_profiles"
 	CmdImportSubscription = "import_subscription"
 	CmdImportLink         = "import_link"
+	CmdImportLinks        = "import_links"
 	CmdRemoveProfile      = "remove_profile"
 	CmdRefreshSub         = "refresh_subscription"
 	CmdConnect            = "connect"
@@ -85,7 +86,12 @@ type Request struct {
 	URL string `json:"url,omitempty"`
 	// Link is the single share link for import_link.
 	Link string `json:"link,omitempty"`
-	// Name names the profile for import_subscription and import_link.
+	// Links is the batch of share links for import_links. Each element may itself
+	// be a multi-line string (a pasted block) or a single link; the daemon splits
+	// on newlines, drops blanks/comments/duplicates, and counts unparseable lines
+	// as skipped rather than failing the whole import.
+	Links []string `json:"links,omitempty"`
+	// Name names the profile for import_subscription, import_link and import_links.
 	Name string `json:"name,omitempty"`
 	// Mode is the routing mode for set_routing (smart/global/direct) and also the
 	// split mode for set_split (off/exclude/include).

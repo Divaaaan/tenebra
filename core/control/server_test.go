@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -327,6 +328,88 @@ func TestImportLinkBadLink(t *testing.T) {
 	r := h.await()
 	if r.Ok {
 		t.Error("bad link should fail")
+	}
+}
+
+func TestImportLinksBatchOneProfileManyServers(t *testing.T) {
+	h := newHarness(t)
+	// A pasted block: two good links of different protocols, one comment, one
+	// blank line, and one junk line that must be skipped (not fatal).
+	block := strings.Join([]string{
+		"# my nodes",
+		fakeVLESSLink(),
+		"",
+		"trojan://pw@b.example.com:443#Berlin",
+		"not-a-link",
+	}, "\n")
+
+	h.send(Request{ID: 1, Cmd: CmdImportLinks, Links: []string{block}, Name: "Batch"})
+	r := h.await()
+	var out struct {
+		Profile  profile.Profile `json:"profile"`
+		Imported int             `json:"imported"`
+		Skipped  int             `json:"skipped"`
+	}
+	h.dataInto(r, &out)
+
+	if out.Imported != 2 || out.Skipped != 1 {
+		t.Errorf("imported/skipped = %d/%d, want 2/1", out.Imported, out.Skipped)
+	}
+	if out.Profile.Source != profile.SourceManual {
+		t.Errorf("source = %q, want manual", out.Profile.Source)
+	}
+	if len(out.Profile.Servers) != 2 {
+		t.Fatalf("profile has %d servers, want 2 (one profile, many servers)", len(out.Profile.Servers))
+	}
+	if out.Profile.Name != "Batch" {
+		t.Errorf("name = %q, want Batch", out.Profile.Name)
+	}
+	// The profile must actually be in the store as a single entry.
+	h.send(Request{ID: 2, Cmd: CmdListProfiles})
+	r = h.await()
+	var list struct {
+		Profiles []profile.Profile `json:"profiles"`
+	}
+	h.dataInto(r, &list)
+	if len(list.Profiles) != 1 || list.Profiles[0].ID != out.Profile.ID {
+		t.Errorf("list = %+v, want one profile %s", list.Profiles, out.Profile.ID)
+	}
+}
+
+func TestImportLinksDefaultsNameAndDedupes(t *testing.T) {
+	h := newHarness(t)
+	// Same link twice -> one server. No name given -> a sensible default.
+	h.send(Request{ID: 1, Cmd: CmdImportLinks, Links: []string{fakeVLESSLink(), fakeVLESSLink()}})
+	r := h.await()
+	var out struct {
+		Profile  profile.Profile `json:"profile"`
+		Imported int             `json:"imported"`
+		Skipped  int             `json:"skipped"`
+	}
+	h.dataInto(r, &out)
+	if out.Imported != 1 || out.Skipped != 0 {
+		t.Errorf("imported/skipped = %d/%d, want 1/0 (deduped)", out.Imported, out.Skipped)
+	}
+	if out.Profile.Name == "" {
+		t.Error("expected a default profile name, got empty")
+	}
+}
+
+func TestImportLinksAllInvalidFails(t *testing.T) {
+	h := newHarness(t)
+	h.send(Request{ID: 1, Cmd: CmdImportLinks, Links: []string{"nope", "also-bad"}})
+	r := h.await()
+	if r.Ok {
+		t.Error("a batch with no valid links should fail rather than create an empty profile")
+	}
+}
+
+func TestImportLinksMissingFails(t *testing.T) {
+	h := newHarness(t)
+	h.send(Request{ID: 1, Cmd: CmdImportLinks, Links: nil})
+	r := h.await()
+	if r.Ok {
+		t.Error("missing links should fail")
 	}
 }
 
