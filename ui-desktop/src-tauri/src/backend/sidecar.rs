@@ -459,12 +459,17 @@ impl Backend for SidecarBackend {
         Ok(wrap.profile)
     }
 
-    fn connect(&self, profile: String, node: Option<String>) -> Result<State, String> {
+    fn connect(&self, profile: String, node: Option<String>, auto: bool) -> Result<State, String> {
+        // `auto` is sent only when set: omitting it (the common case) keeps the
+        // line minimal and the core defaults a missing field to false, the
+        // original protocol-fallback behaviour. With an explicit node the core
+        // ignores it, so there is no need to special-case that here.
         self.inner.request_into(
             "connect",
             obj([
                 ("profile", json!(profile)),
                 ("node", node.map(Value::from).unwrap_or(Value::Null)),
+                ("auto", if auto { json!(true) } else { Value::Null }),
             ]),
         )
     }

@@ -54,8 +54,12 @@ export const api = {
     }).then((r) => r.profile);
   },
 
-  connect(profile: string, node?: string): Promise<State> {
-    return invoke<State>("connect", { profile, node });
+  // `node` names an explicit exit; without one, `auto` chooses the core's
+  // candidate ordering — true ranks nodes by measured ping (fastest first),
+  // false (the default) keeps the protocol-fallback order. The core ignores
+  // `auto` when a node is given.
+  connect(profile: string, node?: string, auto?: boolean): Promise<State> {
+    return invoke<State>("connect", { profile, node, auto });
   },
 
   disconnect(): Promise<State> {

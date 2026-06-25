@@ -199,9 +199,13 @@ async fn connect(
     state: TauriState<'_, AppState>,
     profile: String,
     node: Option<String>,
+    // Optional so an older/leaner caller can omit it; Tauri maps a missing arg to
+    // None, which we treat as "not auto" — the protocol's default order.
+    auto: Option<bool>,
 ) -> Result<State, String> {
+    let auto = auto.unwrap_or(false);
     off_thread(Arc::clone(&state.backend), move |b| {
-        b.connect(profile, node)
+        b.connect(profile, node, auto)
     })
     .await
 }

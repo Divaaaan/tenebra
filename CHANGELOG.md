@@ -29,7 +29,12 @@ release.
   - A from-scratch sing-box config generator that emits plain JSON and does not
     depend on sing-box.
   - A pure protocol-fallback state machine (REALITY → Hysteria2 → AmneziaWG) that
-    remembers the last good node per profile across launches.
+    remembers the last good node per profile across launches, with an optional
+    latency ordering that walks nodes fastest-first by measured ping while
+    keeping the anti-DPI fallback.
+  - An "auto-select fastest node" mode for `connect` (`auto` flag): without an
+    explicit node the core pings every candidate and tries the lowest-RTT one
+    first, falling through to the next on a block.
   - An honest leak check: public IP from redundant echo services plus a
     best-effort DNS probe, with a verdict that never reports a false pass.
   - The line-delimited JSON control protocol and the daemon that drives it, with

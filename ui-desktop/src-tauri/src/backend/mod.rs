@@ -230,7 +230,11 @@ pub trait Backend: Send + Sync + 'static {
     fn import_link(&self, link: String, name: Option<String>) -> Result<Profile, String>;
     fn remove_profile(&self, profile: String) -> Result<(), String>;
     fn refresh_subscription(&self, profile: String) -> Result<Profile, String>;
-    fn connect(&self, profile: String, node: Option<String>) -> Result<State, String>;
+    /// Start a connection. With an explicit `node` the core uses exactly that
+    /// exit. Without one, `auto` chooses the candidate ordering the core walks:
+    /// `false` keeps the protocol-fallback order, `true` selects the fastest node
+    /// by measured ping. `auto` is ignored when `node` is set.
+    fn connect(&self, profile: String, node: Option<String>, auto: bool) -> Result<State, String>;
     fn disconnect(&self) -> Result<State, String>;
     fn ping(&self, profile: String) -> Result<Vec<PingResult>, String>;
     fn set_routing(&self, mode: RoutingMode) -> Result<State, String>;

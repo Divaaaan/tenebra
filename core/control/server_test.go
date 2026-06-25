@@ -219,6 +219,40 @@ func (h *harness) importFakeProfile() profile.Profile {
 	return out.Profile
 }
 
+// addProfile builds a profile from nodes and writes it straight to the store,
+// bypassing the import path so a test can stand up a multi-node profile with
+// controlled server addresses (the import path only yields one node per link).
+func (h *harness) addProfile(nodes []model.Node) profile.Profile {
+	h.t.Helper()
+	p, err := profile.NewProfile("Multi", profile.SourceManual, "", nodes)
+	if err != nil {
+		h.t.Fatalf("new profile: %v", err)
+	}
+	if err := h.store.Add(p); err != nil {
+		h.t.Fatalf("add profile: %v", err)
+	}
+	return p
+}
+
+// vlessNode is a minimal renderable VLESS node distinguished only by server
+// address — enough for buildCandidates/serverTags and for a per-host dialer to
+// assign it a latency. Each gets a unique UUID so their stable IDs differ.
+func vlessNode(name, server string) model.Node {
+	return model.Node{
+		Protocol: model.VLESS,
+		Name:     name,
+		Server:   server,
+		Port:     443,
+		UUID:     "11111111-1111-1111-1111-1111111111" + server[len(server)-2:],
+		Flow:     "xtls-rprx-vision",
+		TLS: &model.TLS{
+			Enabled:    true,
+			ServerName: "example.com",
+			Reality:    &model.Reality{PublicKey: "PUBKEY"},
+		},
+	}
+}
+
 func TestStatusInitiallyIdle(t *testing.T) {
 	h := newHarness(t)
 	h.send(Request{ID: 1, Cmd: CmdStatus})
@@ -442,6 +476,159 @@ func TestConnectExplicitNodeNotFound(t *testing.T) {
 	if r.Ok {
 		t.Error("connect with unknown node should fail")
 	}
+}
+
+// perHostDialer returns an injectable dialer whose dial latency depends on the
+// destination host, using the real clock so pingOne measures it. The returned
+// RTTs are coarse (tens of ms) with wide gaps so the resulting latency order is
+// deterministic despite scheduler jitter. An unknown host fails the dial,
+// modelling an unreachable candidate.
+func perHostDialer(byHost map[string]time.Duration) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, _ /*network*/, address string) (net.Conn, error) {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			host = address
+		}
+		d, ok := byHost[host]
+		if !ok {
+			return nil, errors.New("unreachable host")
+		}
+		select {
+		case <-time.After(d):
+			return fakeConn{}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
+// TestConnectAutoPicksFastestNode verifies the auto strategy: with an injected
+// per-host dialer giving each candidate a distinct RTT, connect (auto, no
+// explicit node) must establish on the fastest one — the first candidate the
+// latency-ordered fallback walk hands out, which the fake runner brings up.
+func TestConnectAutoPicksFastestNode(t *testing.T) {
+	h := newHarness(t)
+	// Three nodes; the second address is the fastest to dial.
+	p := h.addProfile([]model.Node{
+		vlessNode("slow", "203.0.113.10"),
+		vlessNode("fast", "203.0.113.20"),
+		vlessNode("mid", "203.0.113.30"),
+	})
+	h.daemon.dial = perHostDialer(map[string]time.Duration{
+		"203.0.113.10": 60 * time.Millisecond,
+		"203.0.113.20": 3 * time.Millisecond,
+		"203.0.113.30": 25 * time.Millisecond,
+	})
+
+	// The fake runner's probe succeeds on the first candidate, so the connected
+	// node must be the fastest one ("fast").
+	fastID := p.Servers[1].ID
+	h.send(Request{ID: 2, Cmd: CmdConnect, Profile: p.ID, Auto: true})
+	r := h.await()
+	var st State
+	h.dataInto(r, &st)
+	if st.State != StateConnecting {
+		t.Fatalf("connect response state = %q, want connecting", st.State)
+	}
+
+	connected := h.awaitState(StateConnected)
+	if connected["node"] != fastID {
+		t.Errorf("auto connected node = %v, want fastest %s", connected["node"], fastID)
+	}
+	h.send(Request{ID: 3, Cmd: CmdDisconnect})
+	h.await()
+}
+
+// TestConnectAutoFallsBackPastBlockedFastest proves auto keeps the anti-DPI
+// fallback: when the fastest candidate is blocked on its connect-probe, the loop
+// advances to the next fastest rather than failing. failStarts=1 blocks only the
+// first candidate handed out (the fastest), so the connection lands on the
+// second-fastest.
+func TestConnectAutoFallsBackPastBlockedFastest(t *testing.T) {
+	h := newHarness(t)
+	p := h.addProfile([]model.Node{
+		vlessNode("fast", "203.0.113.20"),
+		vlessNode("mid", "203.0.113.30"),
+		vlessNode("slow", "203.0.113.10"),
+	})
+	h.daemon.dial = perHostDialer(map[string]time.Duration{
+		"203.0.113.20": 3 * time.Millisecond,  // fastest, but will be blocked
+		"203.0.113.30": 25 * time.Millisecond, // second fastest, comes up
+		"203.0.113.10": 60 * time.Millisecond,
+	})
+	// Block the first candidate the walk hands out (the fastest); the next one
+	// connects.
+	h.runner.setFailStarts(1)
+
+	midID := p.Servers[1].ID
+	h.send(Request{ID: 2, Cmd: CmdConnect, Profile: p.ID, Auto: true})
+	h.await()
+
+	connected := h.awaitState(StateConnected)
+	if connected["node"] != midID {
+		t.Errorf("auto fallback connected node = %v, want second-fastest %s", connected["node"], midID)
+	}
+	h.send(Request{ID: 3, Cmd: CmdDisconnect})
+	h.await()
+}
+
+// TestConnectAutoIgnoredWithExplicitNode confirms an explicit node wins over
+// auto: the walk collapses to exactly that node even with Auto set, and no
+// candidate pinging reorders anything. We point the explicit node at the
+// slowest-to-dial server; if auto were (wrongly) in effect it would prefer a
+// faster one.
+func TestConnectAutoIgnoredWithExplicitNode(t *testing.T) {
+	h := newHarness(t)
+	p := h.addProfile([]model.Node{
+		vlessNode("fast", "203.0.113.20"),
+		vlessNode("slow", "203.0.113.10"),
+	})
+	h.daemon.dial = perHostDialer(map[string]time.Duration{
+		"203.0.113.20": 3 * time.Millisecond,
+		"203.0.113.10": 60 * time.Millisecond,
+	})
+
+	slowID := p.Servers[1].ID
+	h.send(Request{ID: 2, Cmd: CmdConnect, Profile: p.ID, Node: slowID, Auto: true})
+	h.await()
+
+	connected := h.awaitState(StateConnected)
+	if connected["node"] != slowID {
+		t.Errorf("explicit+auto connected node = %v, want the explicit %s", connected["node"], slowID)
+	}
+	// Exactly one candidate was ever started: the collapse held.
+	h.waitStarts(1)
+	if got := h.runner.starts(); got != 1 {
+		t.Errorf("explicit node started %d candidates, want 1", got)
+	}
+	h.send(Request{ID: 3, Cmd: CmdDisconnect})
+	h.await()
+}
+
+// TestConnectAutoAllUnreachableStillConnects checks that when no candidate
+// answers the cheap TCP ping, auto does not give up: every node is unreachable
+// in the latency sense and sorts to the back in input order, but the walk still
+// tries them and the fake runner brings the first up. (A server can refuse the
+// probe yet complete a real handshake.)
+func TestConnectAutoAllUnreachableStillConnects(t *testing.T) {
+	h := newHarness(t)
+	p := h.addProfile([]model.Node{
+		vlessNode("a", "203.0.113.20"),
+		vlessNode("b", "203.0.113.30"),
+	})
+	// Empty map: every dial fails, so no candidate has a usable RTT.
+	h.daemon.dial = perHostDialer(map[string]time.Duration{})
+
+	firstID := p.Servers[0].ID
+	h.send(Request{ID: 2, Cmd: CmdConnect, Profile: p.ID, Auto: true})
+	h.await()
+
+	connected := h.awaitState(StateConnected)
+	if connected["node"] != firstID {
+		t.Errorf("all-unreachable auto connected node = %v, want input-order first %s", connected["node"], firstID)
+	}
+	h.send(Request{ID: 3, Cmd: CmdDisconnect})
+	h.await()
 }
 
 // TestProcessExitBecomesError simulates sing-box dying during connect; the daemon

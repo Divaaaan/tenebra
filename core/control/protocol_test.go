@@ -20,6 +20,11 @@ func TestRequestRoundTrip(t *testing.T) {
 			want: Request{ID: 7, Cmd: CmdConnect, Profile: "p1", Node: "n3"},
 		},
 		{
+			name: "connect auto without node",
+			line: `{"id":8,"cmd":"connect","profile":"p1","auto":true}`,
+			want: Request{ID: 8, Cmd: CmdConnect, Profile: "p1", Auto: true},
+		},
+		{
 			name: "import_subscription",
 			line: `{"id":1,"cmd":"import_subscription","url":"https://sub.example.com/x","name":"Home"}`,
 			want: Request{ID: 1, Cmd: CmdImportSubscription, URL: "https://sub.example.com/x", Name: "Home"},

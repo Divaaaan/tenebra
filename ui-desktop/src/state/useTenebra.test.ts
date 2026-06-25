@@ -203,7 +203,20 @@ describe("actions", () => {
       await result.current.connect("p1", "node-1");
     });
 
-    expect(mockApi.connect).toHaveBeenCalledWith("p1", "node-1");
+    expect(mockApi.connect).toHaveBeenCalledWith("p1", "node-1", undefined);
+    expect(result.current.state).toEqual(next);
+  });
+
+  it("connect forwards the auto flag to api.connect", async () => {
+    const next: State = { state: "connecting", profile: "p1" };
+    mockApi.connect.mockResolvedValue(next);
+    const { result } = await mountReady();
+
+    await act(async () => {
+      await result.current.connect("p1", undefined, true);
+    });
+
+    expect(mockApi.connect).toHaveBeenCalledWith("p1", undefined, true);
     expect(result.current.state).toEqual(next);
   });
 

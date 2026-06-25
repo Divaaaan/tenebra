@@ -24,7 +24,7 @@ Three message kinds flow over the link:
 | `import_link`          | `link`, `name?`                    | `{ profile: Profile }`      |
 | `remove_profile`       | `profile`                          | —                           |
 | `refresh_subscription` | `profile`                          | `{ profile: Profile }`      |
-| `connect`              | `profile`, `node?`                 | `State`                     |
+| `connect`              | `profile`, `node?`, `auto?`        | `State`                     |
 | `disconnect`           | —                                  | `State`                     |
 | `ping`                 | `profile`                          | `{ results: PingResult[] }` |
 | `set_routing`          | `mode` (`smart`/`global`/`direct`) | `State`                     |
@@ -37,7 +37,30 @@ response: {"id":7,"ok":true,"data":{"state":"connecting","node":"n3"}}
 error:    {"id":7,"ok":false,"error":"profile not found"}
 ```
 
-If `node` is omitted from `connect`, the core picks the lowest-ping node.
+### Node selection (`connect`)
+
+`connect` chooses an exit one of three ways:
+
+- with an explicit `node`, the core uses **exactly** that server and does not
+  wander to another (an explicit exit is honoured as-is). `auto` is ignored.
+- without a `node` and with `auto:true`, the core **pings every candidate** (a
+  short, parallel TCP dial) and walks them **fastest first** by measured
+  round-trip; candidates that fail the probe sort last but are still tried.
+- without a `node` and with `auto` omitted/`false` (the default), the core walks
+  candidates by **protocol preference** (REALITY-flavoured VLESS → Hysteria2 →
+  AmneziaWG), leading with the profile's last-good node.
+
+The **anti-DPI fallback is preserved in every mode**: if the leading candidate's
+connectivity probe is blocked, the core advances to the next candidate in the
+chosen order rather than failing. In `auto` mode, RTT is authoritative — a faster
+server always leads — while the per-profile last-good node only breaks an exact
+RTT tie and is still recorded on a successful connect for the protocol-fallback
+path.
+
+```
+request:  {"id":7,"cmd":"connect","profile":"p1","auto":true}
+response: {"id":7,"ok":true,"data":{"state":"connecting","profile":"p1"}}
+```
 
 `set_routing` and `set_split` only record the choice; like a routing change, a
 new split takes effect on the **next connect** (live retuning would require

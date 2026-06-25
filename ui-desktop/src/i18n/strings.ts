@@ -168,6 +168,9 @@ export interface Strings {
     launchAtLoginHint: string;
     autoconnect: string;
     autoconnectHint: string;
+    /** "Auto-select fastest node" toggle label and its explanation. */
+    autoFastest: string;
+    autoFastestHint: string;
   };
 
   logs: {
@@ -365,6 +368,9 @@ const en: Strings = {
     launchAtLoginHint: "Start Tenebra when you sign in.",
     autoconnect: "Connect on launch",
     autoconnectHint: "Reconnect the last used profile when Tenebra starts.",
+    autoFastest: "Auto-select fastest node",
+    autoFastestHint:
+      "When you connect without picking a node, ping the servers and use the fastest one. Blocked servers are skipped automatically.",
   },
   logs: {
     title: "Logs",
@@ -551,6 +557,9 @@ const ru: Strings = {
     launchAtLoginHint: "Открывать Tenebra при входе в систему.",
     autoconnect: "Подключаться при запуске",
     autoconnectHint: "Восстанавливать последний профиль при старте Tenebra.",
+    autoFastest: "Выбирать самый быстрый узел",
+    autoFastestHint:
+      "При подключении без выбора узла пинговать серверы и использовать самый быстрый. Заблокированные серверы пропускаются автоматически.",
   },
   logs: {
     title: "Журнал",

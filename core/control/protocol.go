@@ -75,6 +75,12 @@ type Request struct {
 	Profile string `json:"profile,omitempty"`
 	// Node is the optional explicit node ID for connect.
 	Node string `json:"node,omitempty"`
+	// Auto selects the "fastest node" strategy for connect: when set and no Node
+	// is given, the daemon pings every candidate and walks them by ascending RTT
+	// (fastest first) instead of by protocol preference. It is ignored when Node
+	// is present (an explicit exit wins) and defaults to false, so an omitted
+	// field preserves the original protocol-fallback behaviour exactly.
+	Auto bool `json:"auto,omitempty"`
 	// URL is the subscription URL for import_subscription.
 	URL string `json:"url,omitempty"`
 	// Link is the single share link for import_link.
