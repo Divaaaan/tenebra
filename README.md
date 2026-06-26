@@ -1,6 +1,7 @@
 # Tenebra
 
 [![CI](https://github.com/Divaaaan/tenebra/actions/workflows/ci.yml/badge.svg)](https://github.com/Divaaaan/tenebra/actions/workflows/ci.yml)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 A cross-platform VPN client built on [sing-box](https://github.com/SagerNet/sing-box).
 Desktop first (Windows), with a shared Go core meant to extend to macOS, Linux,
