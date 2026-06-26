@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Fetch sing-box and wintun
+        run: powershell -ExecutionPolicy Bypass -File scripts/fetch-resources.ps1
+      - name: Build core sidecar
+        run: go build -o ui-desktop/src-tauri/binaries/tenebra-core-x86_64-pc-windows-msvc.exe ./cmd/tenebra-core
+      - name: Install front-end dependencies
+        working-directory: ui-desktop
+        run: npm ci
+      - name: Build the installer
+        working-directory: ui-desktop
+        run: npm run tauri build -- --bundles nsis
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ui-desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+          prerelease: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            Pre-release build of the Tenebra desktop client for Windows.
+
+            The installer is **unsigned**: Windows SmartScreen will warn on first run
+            (More info → Run anyway). The tunnel path is still being validated end to
+            end — see the README project status before relying on it.
