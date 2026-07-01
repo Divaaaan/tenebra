@@ -6,6 +6,7 @@
 const AUTOCONNECT_KEY = "tenebra.autoconnect";
 const LAST_PROFILE_KEY = "tenebra.lastProfile";
 const KILLSWITCH_KEY = "tenebra.killSwitch";
+const AUTO_FASTEST_KEY = "tenebra.autoFastest";
 
 /** Whether "connect on launch" is enabled. Off unless explicitly turned on. */
 export function getAutoconnect(): boolean {
@@ -37,4 +38,18 @@ export function getKillSwitch(): boolean {
 
 export function setKillSwitch(on: boolean): void {
   localStorage.setItem(KILLSWITCH_KEY, on ? "1" : "0");
+}
+
+/**
+ * Whether "auto-select fastest node" is enabled. When on, a connect without an
+ * explicit node asks the core to ping every candidate and pick the lowest-RTT
+ * one (anti-DPI fallback still applies). Off unless explicitly turned on, so the
+ * default stays the core's protocol-fallback order.
+ */
+export function getAutoFastest(): boolean {
+  return localStorage.getItem(AUTO_FASTEST_KEY) === "1";
+}
+
+export function setAutoFastest(on: boolean): void {
+  localStorage.setItem(AUTO_FASTEST_KEY, on ? "1" : "0");
 }

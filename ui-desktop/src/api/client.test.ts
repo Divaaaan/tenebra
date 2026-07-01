@@ -98,15 +98,27 @@ describe("api command wrappers", () => {
     expect(mockInvoke).toHaveBeenCalledWith("connect", {
       profile: "p1",
       node: "node-1",
+      auto: undefined,
     });
   });
 
-  it("connect passes an undefined node for auto-select", async () => {
+  it("connect passes undefined node/auto for the default selection", async () => {
     mockInvoke.mockResolvedValueOnce(sampleState);
     await api.connect("p1");
     expect(mockInvoke).toHaveBeenCalledWith("connect", {
       profile: "p1",
       node: undefined,
+      auto: undefined,
+    });
+  });
+
+  it("connect forwards the auto flag for fastest-node selection", async () => {
+    mockInvoke.mockResolvedValueOnce(sampleState);
+    await api.connect("p1", undefined, true);
+    expect(mockInvoke).toHaveBeenCalledWith("connect", {
+      profile: "p1",
+      node: undefined,
+      auto: true,
     });
   });
 

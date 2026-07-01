@@ -220,6 +220,8 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleImportSubscription(ctx, req)
 	case CmdImportLink:
 		return d.handleImportLink(req)
+	case CmdImportLinks:
+		return d.handleImportLinks(req)
 	case CmdRemoveProfile:
 		return d.handleRemoveProfile(req)
 	case CmdRefreshSub:
@@ -344,6 +346,53 @@ func (d *Daemon) handleImportLink(req Request) Response {
 		return newError(req.ID, err.Error())
 	}
 	return d.profileResult(req.ID, p)
+}
+
+// handleImportLinks parses a batch of share links into a single multi-node
+// manual profile. It is the convenience path for pasting several links at once
+// or loading a .txt list: every valid link becomes one server in the same
+// profile, unparseable lines are skipped (and counted) rather than aborting, and
+// duplicates/blanks/comments are dropped by ParseLinks. The reply carries the new
+// profile plus how many links were imported and skipped, so the UI can report
+// "imported N, skipped M".
+func (d *Daemon) handleImportLinks(req Request) Response {
+	if len(req.Links) == 0 {
+		return newError(req.ID, "import_links: missing links")
+	}
+	nodes, skipped := subscription.ParseLinks(req.Links)
+	if len(nodes) == 0 {
+		// Nothing parsed: surface a clear failure (and how many were skipped)
+		// instead of creating an empty profile the user can't connect to.
+		return newError(req.ID, fmt.Sprintf("import_links: no valid links found (%d skipped)", skipped))
+	}
+	name := req.Name
+	if name == "" {
+		name = "Imported links"
+	}
+	p, err := profile.NewProfile(name, profile.SourceManual, "", nodes)
+	if err != nil {
+		return newError(req.ID, err.Error())
+	}
+	if err := d.store.Add(p); err != nil {
+		return newError(req.ID, err.Error())
+	}
+	return d.importLinksResult(req.ID, p, len(nodes), skipped)
+}
+
+// importLinksResult wraps a batch import into the {profile, imported, skipped}
+// response shape. imported is the number of servers added (equal to the profile's
+// server count) and skipped the number of links that failed to parse.
+func (d *Daemon) importLinksResult(id int64, p profile.Profile, imported, skipped int) Response {
+	out := struct {
+		Profile  profile.Profile `json:"profile"`
+		Imported int             `json:"imported"`
+		Skipped  int             `json:"skipped"`
+	}{Profile: p, Imported: imported, Skipped: skipped}
+	resp, err := newResult(id, out)
+	if err != nil {
+		return newError(id, err.Error())
+	}
+	return resp
 }
 
 // handleRemoveProfile deletes a profile, first tearing down the tunnel if it is

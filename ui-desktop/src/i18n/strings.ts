@@ -124,6 +124,8 @@ export interface Strings {
       urlPlaceholder: string;
       link: string;
       linkPlaceholder: string;
+      /** Hint under the link field noting several links (one per line) are OK. */
+      linkHint: string;
       pickFile: string;
       fileHint: string;
       paste: string;
@@ -133,6 +135,11 @@ export interface Strings {
       qrScanning: string;
       submit: string;
       importing: string;
+      /**
+       * Outcome of a batch import, with `{imported}` and `{skipped}` counts
+       * substituted in.
+       */
+      batchResult: string;
     };
   };
 
@@ -168,6 +175,9 @@ export interface Strings {
     launchAtLoginHint: string;
     autoconnect: string;
     autoconnectHint: string;
+    /** "Auto-select fastest node" toggle label and its explanation. */
+    autoFastest: string;
+    autoFastestHint: string;
   };
 
   logs: {
@@ -215,6 +225,8 @@ export interface Strings {
     qrNotFound: string;
     qrUnsupported: string;
     qrDecodeFailed: string;
+    /** No line in the pasted text or chosen file parsed as a valid link. */
+    batchEmpty: string;
   };
 }
 
@@ -322,6 +334,7 @@ const en: Strings = {
       urlPlaceholder: "https://…",
       link: "Server link",
       linkPlaceholder: "vless://…  ·  hysteria2://…  ·  ss://…",
+      linkHint: "Paste one link, or several — one per line — to import them as a single profile.",
       pickFile: "Choose file…",
       fileHint: "A text file with one server link per line.",
       paste: "Paste",
@@ -331,6 +344,7 @@ const en: Strings = {
       qrScanning: "Scanning…",
       submit: "Import",
       importing: "Importing…",
+      batchResult: "Imported {imported}, skipped {skipped}.",
     },
   },
   settings: {
@@ -365,6 +379,9 @@ const en: Strings = {
     launchAtLoginHint: "Start Tenebra when you sign in.",
     autoconnect: "Connect on launch",
     autoconnectHint: "Reconnect the last used profile when Tenebra starts.",
+    autoFastest: "Auto-select fastest node",
+    autoFastestHint:
+      "When you connect without picking a node, ping the servers and use the fastest one. Blocked servers are skipped automatically.",
   },
   logs: {
     title: "Logs",
@@ -401,6 +418,7 @@ const en: Strings = {
     qrNotFound: "No QR code found in that image.",
     qrUnsupported: "QR scanning isn't available here. Paste the link instead.",
     qrDecodeFailed: "Couldn't read that image.",
+    batchEmpty: "No valid server links found.",
   },
 };
 
@@ -508,6 +526,7 @@ const ru: Strings = {
       urlPlaceholder: "https://…",
       link: "Ссылка на сервер",
       linkPlaceholder: "vless://…  ·  hysteria2://…  ·  ss://…",
+      linkHint: "Вставьте одну ссылку или сразу несколько — по одной в строке — они станут одним профилем.",
       pickFile: "Выбрать файл…",
       fileHint: "Текстовый файл: по одной ссылке на сервер в строке.",
       paste: "Вставить",
@@ -517,6 +536,7 @@ const ru: Strings = {
       qrScanning: "Сканирую…",
       submit: "Импортировать",
       importing: "Импортирую…",
+      batchResult: "Импортировано: {imported}, пропущено: {skipped}.",
     },
   },
   settings: {
@@ -551,6 +571,9 @@ const ru: Strings = {
     launchAtLoginHint: "Открывать Tenebra при входе в систему.",
     autoconnect: "Подключаться при запуске",
     autoconnectHint: "Восстанавливать последний профиль при старте Tenebra.",
+    autoFastest: "Выбирать самый быстрый узел",
+    autoFastestHint:
+      "При подключении без выбора узла пинговать серверы и использовать самый быстрый. Заблокированные серверы пропускаются автоматически.",
   },
   logs: {
     title: "Журнал",
@@ -587,6 +610,7 @@ const ru: Strings = {
     qrNotFound: "В этом изображении нет QR-кода.",
     qrUnsupported: "Сканирование QR здесь недоступно. Вставьте ссылку вручную.",
     qrDecodeFailed: "Не удалось прочитать изображение.",
+    batchEmpty: "Не найдено ни одной корректной ссылки на сервер.",
   },
 };
 

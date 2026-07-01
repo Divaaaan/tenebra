@@ -47,14 +47,32 @@ func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 	// Build the fallback candidates. An explicit node request collapses the walk
 	// to that single node: the user asked for a specific exit, so we honour it and
 	// do not silently wander to another protocol behind their back. Without an
-	// explicit node we hand the machine every server and let DefaultOrder plus the
+	// explicit node we hand the machine every server and let the ordering plus the
 	// per-profile last-good decide the sequence.
 	candidates, err := buildCandidates(p, req.Node)
 	if err != nil {
 		return newError(req.ID, err.Error())
 	}
 
-	m := fallback.New(p.ID, candidates, fallback.DefaultOrder, d.lastGood)
+	// Choose the candidate ordering. The default is protocol preference (the
+	// anti-DPI strategy). When the request asks for auto AND named no explicit
+	// node, we measure each candidate's TCP round-trip and order them fastest
+	// first instead. An explicit node already collapsed the walk to one
+	// candidate, so auto is moot there — honouring the user's exact pick. Either
+	// machine drives the same fallback loop, so the anti-DPI walk (advance to the
+	// next candidate when the lead's connect-probe is blocked) is preserved in
+	// both modes.
+	var m *fallback.Machine
+	if req.Auto && req.Node == "" {
+		// pingCandidates dials only the candidate servers, concurrently and
+		// briefly (see pingOne's pingDialTimeout), so probing never blocks the
+		// connect path for long. Unreachable candidates fall to the back of the
+		// latency order but are still tried.
+		rtt := d.pingCandidates(ctx, p, candidates)
+		m = fallback.NewByLatency(p.ID, candidates, rtt, d.lastGood)
+	} else {
+		m = fallback.New(p.ID, candidates, fallback.DefaultOrder, d.lastGood)
+	}
 
 	// Snapshot routing/tun under lock so the loop builds every per-candidate
 	// config against a consistent view even if set_routing runs meanwhile.
@@ -105,6 +123,36 @@ func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 		return newError(req.ID, err.Error())
 	}
 	return resp
+}
+
+// pingCandidates measures the TCP round-trip to each candidate's server and
+// returns a nodeID -> RTT(ms) map holding only the reachable ones; an
+// unreachable or unmeasurable candidate is simply omitted, which NewByLatency
+// reads as "sort last". It restricts the probe to the candidate set (not every
+// server in the profile) so auto only pays for nodes the walk could actually
+// pick, and reuses pingOne so the dial timeout, the injectable dialer/clock, and
+// the best-effort semantics match the ping command exactly.
+func (d *Daemon) pingCandidates(ctx context.Context, p profile.Profile, candidates []fallback.Attempt) map[string]int64 {
+	// Index the candidate IDs so we probe only those servers.
+	want := make(map[string]struct{}, len(candidates))
+	for _, a := range candidates {
+		want[a.NodeID] = struct{}{}
+	}
+	servers := make([]profile.Server, 0, len(candidates))
+	for _, s := range p.Servers {
+		if _, ok := want[s.ID]; ok {
+			servers = append(servers, s)
+		}
+	}
+
+	results := d.pingServers(ctx, servers)
+	rtt := make(map[string]int64, len(results))
+	for _, r := range results {
+		if r.Ok {
+			rtt[r.Node] = r.RTTMs
+		}
+	}
+	return rtt
 }
 
 // handleDisconnect tears the tunnel down to idle and returns the resulting

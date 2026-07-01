@@ -132,6 +132,50 @@ describe("SettingsScreen", () => {
     });
   });
 
+  describe("startup", () => {
+    // The switch's accessible name is its own text ("ON"/"OFF"), not the sibling
+    // label, so locate the row by its label text and grab the switch within it.
+    function fastestToggle(): HTMLElement {
+      const label = screen.getByText("Auto-select fastest node");
+      const row = label.closest(".set-row");
+      if (!row) {
+        throw new Error("auto-fastest row not found");
+      }
+      const toggle = row.querySelector('[role="switch"]');
+      if (!toggle) {
+        throw new Error("auto-fastest switch not found");
+      }
+      return toggle as HTMLElement;
+    }
+
+    it("auto-select-fastest reflects and persists the stored preference", async () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      const toggle = fastestToggle();
+      // Starts off (localStorage cleared in beforeEach).
+      expect(toggle).toHaveAttribute("aria-checked", "false");
+
+      await user.click(toggle);
+      expect(toggle).toHaveAttribute("aria-checked", "true");
+      // The choice is written to localStorage so the connect flow can read it.
+      expect(localStorage.getItem("tenebra.autoFastest")).toBe("1");
+
+      await user.click(toggle);
+      expect(toggle).toHaveAttribute("aria-checked", "false");
+      expect(localStorage.getItem("tenebra.autoFastest")).toBe("0");
+    });
+
+    it("auto-select-fastest starts on when previously enabled", () => {
+      localStorage.setItem("tenebra.autoFastest", "1");
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(fastestToggle()).toHaveAttribute("aria-checked", "true");
+    });
+  });
+
   describe("appearance", () => {
     it("applies the chosen theme to the document", async () => {
       const tenebra = makeTenebra({ state: { state: "idle" } as State });

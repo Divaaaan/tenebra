@@ -31,8 +31,8 @@ use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
 use super::{
-    Backend, EventSink, LeakCheck, PingResult, Profile, RoutingMode, SplitMode, State, EVENT_LOG,
-    EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
+    Backend, EventSink, ImportLinksResult, LeakCheck, PingResult, Profile, RoutingMode, SplitMode,
+    State, EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
 /// How long a request waits for its correlated response before giving up. The
@@ -446,6 +446,23 @@ impl Backend for SidecarBackend {
         Ok(wrap.profile)
     }
 
+    fn import_links(
+        &self,
+        links: Vec<String>,
+        name: Option<String>,
+    ) -> Result<ImportLinksResult, String> {
+        // The core returns {profile, imported, skipped} directly (not wrapped in a
+        // `profile` envelope like the single-import paths), so deserialize the
+        // whole data payload into the result.
+        self.inner.request_into(
+            "import_links",
+            obj([
+                ("links", json!(links)),
+                ("name", name.map(Value::from).unwrap_or(Value::Null)),
+            ]),
+        )
+    }
+
     fn remove_profile(&self, profile: String) -> Result<(), String> {
         self.inner
             .request("remove_profile", obj([("profile", json!(profile))]))?;
@@ -459,12 +476,17 @@ impl Backend for SidecarBackend {
         Ok(wrap.profile)
     }
 
-    fn connect(&self, profile: String, node: Option<String>) -> Result<State, String> {
+    fn connect(&self, profile: String, node: Option<String>, auto: bool) -> Result<State, String> {
+        // `auto` is sent only when set: omitting it (the common case) keeps the
+        // line minimal and the core defaults a missing field to false, the
+        // original protocol-fallback behaviour. With an explicit node the core
+        // ignores it, so there is no need to special-case that here.
         self.inner.request_into(
             "connect",
             obj([
                 ("profile", json!(profile)),
                 ("node", node.map(Value::from).unwrap_or(Value::Null)),
+                ("auto", if auto { json!(true) } else { Value::Null }),
             ]),
         )
     }

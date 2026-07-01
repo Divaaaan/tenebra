@@ -59,6 +59,18 @@ export interface PingResult {
   ok: boolean;
 }
 
+/**
+ * Result of a batch link import (`import_links`): the single profile built from
+ * all the valid links, plus how many links were imported and how many were
+ * skipped because they didn't parse. Mirror of the core's wrapped response — the
+ * UI surfaces "imported N, skipped M".
+ */
+export interface BatchImportResult {
+  profile: Profile;
+  imported: number;
+  skipped: number;
+}
+
 // Events the core pushes without being asked.
 
 export type LogLevel = "info" | "warn" | "error";
