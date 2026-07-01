@@ -22,9 +22,10 @@ Three message kinds flow over the link:
 | `list_profiles`        | —                                  | `{ profiles: Profile[] }`   |
 | `import_subscription`  | `url`, `name`                      | `{ profile: Profile }`      |
 | `import_link`          | `link`, `name?`                    | `{ profile: Profile }`      |
+| `import_links`         | `links` (string[]), `name?`        | `{ profile: Profile, imported, skipped }` |
 | `remove_profile`       | `profile`                          | —                           |
 | `refresh_subscription` | `profile`                          | `{ profile: Profile }`      |
-| `connect`              | `profile`, `node?`                 | `State`                     |
+| `connect`              | `profile`, `node?`, `auto?`        | `State`                     |
 | `disconnect`           | —                                  | `State`                     |
 | `ping`                 | `profile`                          | `{ results: PingResult[] }` |
 | `set_routing`          | `mode` (`smart`/`global`/`direct`) | `State`                     |
@@ -37,7 +38,57 @@ response: {"id":7,"ok":true,"data":{"state":"connecting","node":"n3"}}
 error:    {"id":7,"ok":false,"error":"profile not found"}
 ```
 
-If `node` is omitted from `connect`, the core picks the lowest-ping node.
+### Node selection (`connect`)
+
+`connect` chooses an exit one of three ways:
+
+- with an explicit `node`, the core uses **exactly** that server and does not
+  wander to another (an explicit exit is honoured as-is). `auto` is ignored.
+- without a `node` and with `auto:true`, the core **pings every candidate** (a
+  short, parallel TCP dial) and walks them **fastest first** by measured
+  round-trip; candidates that fail the probe sort last but are still tried.
+- without a `node` and with `auto` omitted/`false` (the default), the core walks
+  candidates by **protocol preference** (REALITY-flavoured VLESS → Hysteria2 →
+  AmneziaWG), leading with the profile's last-good node.
+
+The **anti-DPI fallback is preserved in every mode**: if the leading candidate's
+connectivity probe is blocked, the core advances to the next candidate in the
+chosen order rather than failing. In `auto` mode, RTT is authoritative — a faster
+server always leads — while the per-profile last-good node only breaks an exact
+RTT tie and is still recorded on a successful connect for the protocol-fallback
+path.
+
+```
+request:  {"id":7,"cmd":"connect","profile":"p1","auto":true}
+response: {"id":7,"ok":true,"data":{"state":"connecting","profile":"p1"}}
+```
+
+### Batch link import (`import_links`)
+
+`import_links` collects several share links into **one** manual profile holding
+all of them as servers — the convenience path for pasting a block of links or
+loading a `.txt` list. `links` is an array of strings; each element may be a
+single link or a multi-line block (the core splits on newlines), so a UI can pass
+the raw textarea/file body as one entry.
+
+Parsing is forgiving so one bad line never costs the user the good ones:
+
+- surrounding whitespace is trimmed;
+- blank lines and comments (a line starting with `#` or `//`) are ignored — they
+  count as neither imported nor skipped;
+- exact-duplicate links collapse to a single server (first occurrence wins,
+  preserving order);
+- a line that looks like a link but fails to parse is **skipped** (counted), not
+  fatal.
+
+The reply carries the new profile plus `imported` (servers added) and `skipped`
+(links that failed to parse) so the UI can report "imported N, skipped M". A
+batch with **no** parseable links is an error rather than an empty profile.
+
+```
+request:  {"id":7,"cmd":"import_links","links":["vless://…#a\ntrojan://…#b\nbad-line"],"name":"Mine"}
+response: {"id":7,"ok":true,"data":{"profile":{ /* …two servers… */ },"imported":2,"skipped":1}}
+```
 
 `set_routing` and `set_split` only record the choice; like a routing change, a
 new split takes effect on the **next connect** (live retuning would require

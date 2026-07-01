@@ -491,6 +491,15 @@
   color: var(--signal);
 }
 
+/* batch-import outcome = the positive tone, distinct from an error */
+.prof-success {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--track-body);
+  color: var(--good);
+}
+
 .prof-modal-actions {
   display: flex;
   justify-content: flex-end;

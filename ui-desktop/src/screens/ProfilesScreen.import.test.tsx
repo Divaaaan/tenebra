@@ -17,6 +17,9 @@ vi.mock("../api", async (importOriginal) => {
       ...actual.api,
       importSubscription: vi.fn().mockResolvedValue(makeProfileStub()),
       importLink: vi.fn().mockResolvedValue(makeProfileStub()),
+      importLinks: vi
+        .fn()
+        .mockResolvedValue({ profile: makeProfileStub(), imported: 2, skipped: 1 }),
     },
   };
 });
@@ -46,6 +49,13 @@ async function openDialog() {
 describe("ProfilesScreen import dialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The suite's restoreMocks wipes resolved values between tests, so re-arm the
+    // ones whose return value (not just call args) the assertions depend on.
+    vi.mocked(api.importLinks).mockResolvedValue({
+      profile: makeProfileStub() as never,
+      imported: 2,
+      skipped: 1,
+    });
   });
 
   describe("subscription tab", () => {
@@ -122,6 +132,73 @@ describe("ProfilesScreen import dialog", () => {
       await user.click(dialog.getByRole("button", { name: "Import" }));
 
       expect(api.importLink).toHaveBeenCalledWith(link, "My node");
+    });
+
+    it("batches several pasted links into one import and reports the counts", async () => {
+      const { user, dialog } = await goToLinkTab();
+
+      // Two links plus a comment and a blank line: the comment/blank are filtered
+      // out before the call, and because there are 2+ links it routes to the
+      // batch importer (not the single-link one).
+      const pasted = [
+        "vless://a@a.example.com:443",
+        "# a comment",
+        "",
+        "trojan://b@b.example.com:443",
+      ].join("\n");
+      const textarea = dialog.getByPlaceholderText(/vless:\/\//);
+      // Paste in one shot; typing newline-by-newline through a textarea is brittle.
+      await user.click(textarea);
+      await user.paste(pasted);
+      await user.click(dialog.getByRole("button", { name: "Import" }));
+
+      expect(api.importLink).not.toHaveBeenCalled();
+      expect(api.importLinks).toHaveBeenCalledWith(
+        ["vless://a@a.example.com:443", "trojan://b@b.example.com:443"],
+        undefined,
+      );
+      // The dialog stays open and shows the imported/skipped outcome.
+      expect(
+        await dialog.findByText("Imported 2, skipped 1."),
+      ).toBeInTheDocument();
+    });
+  });
+
+  describe("file tab", () => {
+    async function goToFileTab() {
+      const ctx = await openDialog();
+      await ctx.user.click(ctx.dialog.getByRole("tab", { name: "File" }));
+      return ctx;
+    }
+
+    it("imports the links from a chosen .txt file as one batch", async () => {
+      const { user, dialog } = await goToFileTab();
+
+      // A file with two links, a comment and a blank line. linkLines() drops the
+      // comment/blank, so the batch importer sees exactly the two links.
+      const body = [
+        "vless://a@a.example.com:443",
+        "# header",
+        "",
+        "ss://b@203.0.113.5:8388",
+      ].join("\n");
+      const file = new File([body], "servers.txt", { type: "text/plain" });
+
+      // The visible "Choose file…" button proxies to a hidden <input type=file>;
+      // upload straight to the input the dialog renders.
+      const input = dialog
+        .getByText("Choose file…")
+        .closest(".prof-field")!
+        .querySelector('input[type="file"]') as HTMLInputElement;
+      await user.upload(input, file);
+
+      expect(api.importLinks).toHaveBeenCalledWith(
+        ["vless://a@a.example.com:443", "ss://b@203.0.113.5:8388"],
+        undefined,
+      );
+      expect(
+        await dialog.findByText("Imported 2, skipped 1."),
+      ).toBeInTheDocument();
     });
   });
 });

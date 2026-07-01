@@ -19,6 +19,7 @@ import { useTrafficHistory } from "./lib/useTrafficHistory";
 import { formatMbps } from "./lib/format";
 import {
   getAutoconnect,
+  getAutoFastest,
   getKillSwitch,
   getLastProfileId,
   setKillSwitch as persistKillSwitch,
@@ -128,7 +129,14 @@ export function App() {
         if (connected || phase === "connecting") {
           await tenebra.disconnect();
         } else if (selectedProfileId) {
-          await tenebra.connect(selectedProfileId, selectedNodeId || undefined);
+          // No explicit node → let the core choose. The persisted "auto-select
+          // fastest" preference decides between ping-ranked and protocol-fallback
+          // order; it is read fresh (like autoconnect) so a Settings toggle takes
+          // effect on the next connect without prop-threading. When a node is
+          // selected, auto is moot — the core honours the explicit exit.
+          const node = selectedNodeId || undefined;
+          const auto = node ? undefined : getAutoFastest();
+          await tenebra.connect(selectedProfileId, node, auto);
         }
       } catch {
         // Surfaced on the state/log channels.
@@ -229,7 +237,9 @@ export function App() {
     }
     const lastId = getLastProfileId();
     if (lastId && profiles.some((p) => p.id === lastId)) {
-      void tenebra.connect(lastId).catch(() => {});
+      // Launch reconnect names no node, so honour the fastest-node preference
+      // here too — same source of truth as the manual connect above.
+      void tenebra.connect(lastId, undefined, getAutoFastest()).catch(() => {});
     }
   }, [tenebra.ready, profiles, phase, tenebra]);
 

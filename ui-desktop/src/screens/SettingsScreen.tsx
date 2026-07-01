@@ -6,7 +6,12 @@ import type { Tenebra } from "../state/useTenebra";
 import { useI18n } from "../i18n/I18nContext";
 import { useTheme } from "../theme/ThemeContext";
 import type { Language } from "../i18n/strings";
-import { getAutoconnect, setAutoconnect } from "../lib/settings";
+import {
+  getAutoconnect,
+  getAutoFastest,
+  setAutoconnect,
+  setAutoFastest,
+} from "../lib/settings";
 
 interface SettingsScreenProps {
   tenebra: Tenebra;
@@ -21,6 +26,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   const [launchAtLogin, setLaunchAtLogin] = useState(false);
   const [launchBusy, setLaunchBusy] = useState(false);
   const [autoconnect, setAutoconnectState] = useState(getAutoconnect);
+  const [autoFastest, setAutoFastestState] = useState(getAutoFastest);
 
   useEffect(() => {
     let active = true;
@@ -62,6 +68,14 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     setAutoconnectState((prev) => {
       const next = !prev;
       setAutoconnect(next);
+      return next;
+    });
+  }
+
+  function toggleAutoFastest() {
+    setAutoFastestState((prev) => {
+      const next = !prev;
+      setAutoFastest(next);
       return next;
     });
   }
@@ -352,6 +366,25 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
               {autoconnect ? "▣" : "▢"}
             </span>
             {autoconnect ? "ON" : "OFF"}
+          </button>
+        </div>
+
+        <div className="set-row">
+          <span className="set-row-text">
+            <span className="set-row-label">{t.settings.autoFastest}</span>
+            <span className="set-row-hint">{t.settings.autoFastestHint}</span>
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autoFastest}
+            className={`set-switch${autoFastest ? " is-on" : ""}`}
+            onClick={toggleAutoFastest}
+          >
+            <span className="set-switch-box" aria-hidden="true">
+              {autoFastest ? "▣" : "▢"}
+            </span>
+            {autoFastest ? "ON" : "OFF"}
           </button>
         </div>
       </section>

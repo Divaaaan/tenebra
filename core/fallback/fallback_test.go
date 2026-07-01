@@ -250,3 +250,160 @@ func TestCandidatesCopied(t *testing.T) {
 	cands[0] = node("mutated", model.Trojan)
 	eq(t, drain(m), []string{"re", "hy"})
 }
+
+// --- latency ordering (NewByLatency) ----------------------------------------
+
+func TestByLatencyOrdersAscending(t *testing.T) {
+	// Candidates are out of RTT order; the walk must hand them out fastest first
+	// regardless of protocol preference (the slowest here is the VLESS node that
+	// protocol-ordering would have led with).
+	cands := []Attempt{
+		node("re", model.VLESS),     // 180ms
+		node("hy", model.Hysteria2), // 40ms
+		node("wg", model.AmneziaWG), // 90ms
+	}
+	rtt := map[string]int64{"re": 180, "hy": 40, "wg": 90}
+	m := NewByLatency("p1", cands, rtt, nil)
+	eq(t, drain(m), []string{"hy", "wg", "re"})
+}
+
+func TestByLatencyUnreachableSortLast(t *testing.T) {
+	// A node missing from the map and one with a non-positive RTT are both
+	// unreachable: they trail the reachable nodes, in input order, but are still
+	// handed out (anti-DPI must not drop a server that ignored the TCP probe).
+	cands := []Attempt{
+		node("missing", model.VLESS),  // no entry -> unreachable
+		node("fast", model.Hysteria2), // 30ms
+		node("zero", model.Trojan),    // 0ms -> unreachable
+		node("mid", model.AmneziaWG),  // 120ms
+	}
+	rtt := map[string]int64{"fast": 30, "mid": 120, "zero": 0}
+	m := NewByLatency("p1", cands, rtt, nil)
+	// Reachable first by RTT (fast, mid), then unreachable in input order
+	// (missing before zero).
+	eq(t, drain(m), []string{"fast", "mid", "missing", "zero"})
+}
+
+func TestByLatencyAllUnreachableKeepsInputOrder(t *testing.T) {
+	// With no usable RTT for anyone, every candidate is equally (un)ranked, so
+	// the stable sort preserves input order — and all are still tried.
+	cands := []Attempt{
+		node("a", model.VLESS),
+		node("b", model.Hysteria2),
+		node("c", model.AmneziaWG),
+	}
+	m := NewByLatency("p1", cands, map[string]int64{}, nil)
+	eq(t, drain(m), []string{"a", "b", "c"})
+}
+
+func TestByLatencyEqualRTTStableByInput(t *testing.T) {
+	// Equal RTTs with no last-good fall back to input order.
+	cands := []Attempt{
+		node("x", model.VLESS),
+		node("y", model.Hysteria2),
+		node("z", model.AmneziaWG),
+	}
+	rtt := map[string]int64{"x": 50, "y": 50, "z": 50}
+	m := NewByLatency("p1", cands, rtt, nil)
+	eq(t, drain(m), []string{"x", "y", "z"})
+}
+
+func TestByLatencyLastGoodBreaksTieOnly(t *testing.T) {
+	// last-good "y" shares the lowest RTT with "x": it must win the tie and lead.
+	// But it must NOT jump ahead of a strictly faster node — RTT stays primary.
+	lg := NewMemLastGood()
+	lg.Set("p1", "y")
+	cands := []Attempt{
+		node("x", model.VLESS),        // 50ms
+		node("y", model.Hysteria2),    // 50ms (last-good, ties with x)
+		node("fast", model.AmneziaWG), // 20ms (strictly faster)
+	}
+	rtt := map[string]int64{"x": 50, "y": 50, "fast": 20}
+	m := NewByLatency("p1", cands, rtt, lg)
+	// fast leads on pure RTT; among the 50ms pair, last-good y precedes x.
+	eq(t, drain(m), []string{"fast", "y", "x"})
+}
+
+func TestByLatencyLastGoodDoesNotOverrideFaster(t *testing.T) {
+	// last-good is the SLOWEST node. Under "fastest" it must stay last — proving
+	// last-good never overrides a measurably faster server (the design invariant).
+	lg := NewMemLastGood()
+	lg.Set("p1", "slow")
+	cands := []Attempt{
+		node("slow", model.VLESS),     // 300ms (last-good)
+		node("mid", model.Hysteria2),  // 90ms
+		node("fast", model.AmneziaWG), // 30ms
+	}
+	rtt := map[string]int64{"slow": 300, "mid": 90, "fast": 30}
+	m := NewByLatency("p1", cands, rtt, lg)
+	eq(t, drain(m), []string{"fast", "mid", "slow"})
+}
+
+func TestByLatencyStaleLastGoodIgnored(t *testing.T) {
+	// last-good points at a node no longer offered; it simply has no effect, and
+	// pure RTT order stands.
+	lg := NewMemLastGood()
+	lg.Set("p1", "gone")
+	cands := []Attempt{
+		node("a", model.VLESS),     // 70ms
+		node("b", model.Hysteria2), // 20ms
+	}
+	rtt := map[string]int64{"a": 70, "b": 20}
+	m := NewByLatency("p1", cands, rtt, lg)
+	eq(t, drain(m), []string{"b", "a"})
+}
+
+func TestByLatencyRecordsLastGoodOnSuccess(t *testing.T) {
+	// Even in latency mode, a successful attempt is recorded as last-good so a
+	// later non-auto (protocol-preference) connect can lead with it. Success also
+	// rewinds; the rewound order is still by RTT (last-good only breaks ties).
+	lg := NewMemLastGood()
+	cands := []Attempt{
+		node("fast", model.VLESS),     // 25ms
+		node("mid", model.Hysteria2),  // 80ms
+		node("slow", model.AmneziaWG), // 150ms
+	}
+	rtt := map[string]int64{"fast": 25, "mid": 80, "slow": 150}
+	m := NewByLatency("p1", cands, rtt, lg)
+
+	// Fastest is blocked; we land on the next.
+	first, _ := m.Next()
+	if first.NodeID != "fast" {
+		t.Fatalf("lead = %q; want fast", first.NodeID)
+	}
+	m.Failure(first)
+	second, _ := m.Next()
+	if second.NodeID != "mid" {
+		t.Fatalf("second = %q; want mid", second.NodeID)
+	}
+	m.Success(second)
+
+	if id, ok := lg.Get("p1"); !ok || id != "mid" {
+		t.Fatalf("last-good = %q,%v; want mid,true", id, ok)
+	}
+	// Rewound order is unchanged by the recorded last-good: still pure RTT,
+	// because "mid" does not tie with anyone.
+	eq(t, drain(m), []string{"fast", "mid", "slow"})
+}
+
+func TestByLatencyRTTMapCopied(t *testing.T) {
+	// Mutating the caller's rtt map after construction must not change the walk.
+	cands := []Attempt{
+		node("a", model.VLESS),
+		node("b", model.Hysteria2),
+	}
+	rtt := map[string]int64{"a": 90, "b": 30}
+	m := NewByLatency("p1", cands, rtt, nil)
+	rtt["a"] = 1 // would make a fastest if the map were aliased
+	eq(t, drain(m), []string{"b", "a"})
+}
+
+func TestByLatencyEmptyCandidates(t *testing.T) {
+	m := NewByLatency("p1", nil, nil, NewMemLastGood())
+	if !m.Exhausted() {
+		t.Fatal("latency machine with no candidates not exhausted")
+	}
+	if a, ok := m.Next(); ok {
+		t.Fatalf("Next on empty = %q,true; want zero,false", a.NodeID)
+	}
+}

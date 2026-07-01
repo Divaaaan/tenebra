@@ -331,6 +331,31 @@ function ProfileCard({
 
 type ImportTab = "subscription" | "link" | "file" | "qr";
 
+// Pull the importable link lines out of a pasted block or file body: trim each
+// line and drop blanks and comments (# or //), mirroring how the core's batch
+// parser decides what even counts as a candidate. The count tells the link tab
+// whether the user pasted one link (single import) or several (batch), and feeds
+// both the textarea and the .txt-file paths so they behave identically.
+function linkLines(text: string): string[] {
+  return text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "" && !l.startsWith("#") && !l.startsWith("//"));
+}
+
+// Read a chosen file's text in the webview with FileReader. We prefer this over
+// File.text() / the Tauri fs plugin: it works inside WebView2 with no extra
+// capability or Rust file command, and degrades to a rejected promise the caller
+// can report rather than an unhandled throw.
+function readFileText(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(reader.error ?? new Error("file read failed"));
+    reader.readAsText(file);
+  });
+}
+
 // Map the typed clipboard/QR failures to a user-facing message. Kept beside the
 // dialog so both the paste button and the QR panel report failures the same way.
 function clipboardErrorMessage(err: unknown, t: Strings): string {
@@ -368,6 +393,10 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
   const [url, setUrl] = useState("");
   const [link, setLink] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // A success line for batch imports ("imported N, skipped M"). Unlike a single
+  // import — which closes the dialog on success — a batch keeps the dialog open
+  // so the user sees how many links landed and how many were skipped.
+  const [result, setResult] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
 
@@ -396,12 +425,37 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
   async function finish(action: () => Promise<unknown>) {
     setBusy(true);
     setError(null);
+    setResult(null);
     try {
       await action();
       await tenebra.refreshProfiles();
       onClose();
     } catch {
       setError(t.errors.generic);
+      setBusy(false);
+    }
+  }
+
+  // Batch import of several links. On success the dialog stays open and reports
+  // the imported/skipped counts (so the user learns a few links were dropped)
+  // rather than vanishing. An empty result — the core found no valid links —
+  // surfaces a clear message instead of the generic one.
+  async function finishBatch(links: string[]) {
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await api.importLinks(links, name.trim() || undefined);
+      await tenebra.refreshProfiles();
+      setResult(
+        t.profiles.import.batchResult
+          .replace("{imported}", String(res.imported))
+          .replace("{skipped}", String(res.skipped)),
+      );
+    } catch {
+      // The core rejects a batch with no parseable links; tell the user plainly.
+      setError(t.errors.batchEmpty);
+    } finally {
       setBusy(false);
     }
   }
@@ -419,27 +473,41 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
   }
 
   function submitLink() {
-    if (!link.trim()) {
-      setError(t.errors.linkRequired);
-      return;
-    }
-    void finish(() => api.importLink(link.trim(), name.trim() || undefined));
-  }
-
-  async function onFileChosen(file: File) {
-    const lines = (await file.text())
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean);
+    const lines = linkLines(link);
     if (lines.length === 0) {
       setError(t.errors.linkRequired);
       return;
     }
-    void finish(async () => {
-      for (const line of lines) {
-        await api.importLink(line);
-      }
-    });
+    // One link keeps the single-import path (a one-server manual profile);
+    // several links collapse into one multi-server profile via the batch import,
+    // which also reports how many were skipped.
+    if (lines.length === 1) {
+      void finish(() => api.importLink(lines[0], name.trim() || undefined));
+    } else {
+      void finishBatch(lines);
+    }
+  }
+
+  async function onFileChosen(file: File) {
+    let text: string;
+    try {
+      // Read via FileReader rather than file.text(): it needs no new Tauri
+      // plugin or Rust file command (it runs entirely in the webview), and it is
+      // the broadly-supported path. A read failure (e.g. the file vanished) is
+      // surfaced rather than thrown.
+      text = await readFileText(file);
+    } catch {
+      setError(t.errors.generic);
+      return;
+    }
+    const lines = linkLines(text);
+    if (lines.length === 0) {
+      setError(t.errors.linkRequired);
+      return;
+    }
+    // A .txt list is always a batch — even a single line — so the user gets a
+    // consistent imported/skipped report and one profile holding every server.
+    void finishBatch(lines);
   }
 
   // Fill the active field from the clipboard so the user needn't paste by hand.
@@ -530,6 +598,7 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
               onClick={() => {
                 setTab(id);
                 setError(null);
+                setResult(null);
               }}
             >
               {tabLabels[id]}
@@ -584,6 +653,7 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
                 placeholder={t.profiles.import.linkPlaceholder}
                 onChange={(e) => setLink(e.target.value)}
               />
+              <p className="prof-field-hint">{t.profiles.import.linkHint}</p>
               <div className="prof-field-actions">
                 <button
                   type="button"
@@ -672,6 +742,11 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
           {error && (
             <p className="prof-error" role="alert">
               {error}
+            </p>
+          )}
+          {result && (
+            <p className="prof-success" role="status">
+              {result}
             </p>
           )}
         </div>

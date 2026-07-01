@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
+  BatchImportResult,
   LogEvent,
   PingResult,
   Profile,
@@ -44,6 +45,15 @@ export const api = {
     );
   },
 
+  // Batch import: several share links (pasted block or a parsed .txt list) into a
+  // single multi-server profile. The core splits, de-duplicates and skips
+  // unparseable lines, returning how many it imported and skipped so the UI can
+  // report the outcome. `links` may carry multi-line strings; an empty result
+  // (no valid links) rejects.
+  importLinks(links: string[], name?: string): Promise<BatchImportResult> {
+    return invoke<BatchImportResult>("import_links", { links, name });
+  },
+
   removeProfile(profile: string): Promise<void> {
     return invoke<void>("remove_profile", { profile });
   },
@@ -54,8 +64,12 @@ export const api = {
     }).then((r) => r.profile);
   },
 
-  connect(profile: string, node?: string): Promise<State> {
-    return invoke<State>("connect", { profile, node });
+  // `node` names an explicit exit; without one, `auto` chooses the core's
+  // candidate ordering — true ranks nodes by measured ping (fastest first),
+  // false (the default) keeps the protocol-fallback order. The core ignores
+  // `auto` when a node is given.
+  connect(profile: string, node?: string, auto?: boolean): Promise<State> {
+    return invoke<State>("connect", { profile, node, auto });
   },
 
   disconnect(): Promise<State> {

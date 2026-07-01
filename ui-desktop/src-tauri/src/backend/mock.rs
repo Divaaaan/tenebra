@@ -9,8 +9,8 @@ use std::thread;
 use std::time::Duration;
 
 use super::{
-    Backend, ConnectionState, DnsResult, DnsStatus, EventSink, ExitMatch, LeakCheck, Node,
-    PingResult, Profile, Protocol, RoutingMode, Source, SplitMode, State, Verdict,
+    Backend, ConnectionState, DnsResult, DnsStatus, EventSink, ExitMatch, ImportLinksResult,
+    LeakCheck, Node, PingResult, Profile, Protocol, RoutingMode, Source, SplitMode, State, Verdict,
 };
 
 /// How long the fake "dial" takes before flipping to connected.
@@ -216,6 +216,54 @@ impl Backend for MockBackend {
         Ok(profile)
     }
 
+    fn import_links(
+        &self,
+        links: Vec<String>,
+        name: Option<String>,
+    ) -> Result<ImportLinksResult, String> {
+        // Mirror the core's batch parsing well enough for the demo: split each
+        // entry on newlines, trim, drop blanks/comments and duplicates, then count
+        // a line as a server if it looks like a link (has a scheme) or skip it.
+        // The mock can't truly parse a link, so "looks like a link" stands in for
+        // the core's per-protocol parser.
+        let (nodes, skipped) = parse_links_mock(&links);
+        if nodes.is_empty() {
+            return Err(format!("no valid links found ({skipped} skipped)"));
+        }
+        let imported = nodes.len() as u32;
+        let name = name
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| "Imported links".to_string());
+        let profile = Profile {
+            id: new_id("man"),
+            name: name.clone(),
+            source: Source::Manual,
+            url: None,
+            nodes,
+            updated_at: now_rfc3339(),
+            expires_at: None,
+            traffic_used: None,
+            traffic_total: None,
+        };
+        self.shared
+            .inner
+            .lock()
+            .unwrap()
+            .profiles
+            .push(profile.clone());
+        self.shared.sink.log(
+            "info",
+            &format!("imported {imported} link(s) into \"{name}\" ({skipped} skipped)"),
+        );
+        self.shared.emit_profiles();
+        Ok(ImportLinksResult {
+            profile,
+            imported,
+            skipped,
+        })
+    }
+
     fn remove_profile(&self, profile: String) -> Result<(), String> {
         let mut inner = self.shared.inner.lock().unwrap();
         let before = inner.profiles.len();
@@ -259,7 +307,7 @@ impl Backend for MockBackend {
         Ok(updated)
     }
 
-    fn connect(&self, profile: String, node: Option<String>) -> Result<State, String> {
+    fn connect(&self, profile: String, node: Option<String>, auto: bool) -> Result<State, String> {
         let mut inner = self.shared.inner.lock().unwrap();
         let p = inner
             .profiles
@@ -270,12 +318,15 @@ impl Backend for MockBackend {
         if p.nodes.is_empty() {
             return Err("profile has no nodes".into());
         }
-        // Honour the requested node, else fall back to the first — the protocol
-        // says the core picks the lowest-ping node, which for the mock is just
-        // the head of the list.
+        // Honour an explicit node. Without one, `auto` decides: the fastest node
+        // by the same synthetic ping the `ping` command reports (so the demo's
+        // "auto" actually reflects the latencies the user sees), or just the head
+        // of the list for the default protocol-fallback order. An explicit node
+        // overrides `auto`, mirroring the core.
         let chosen = match node {
             Some(id) if p.nodes.iter().any(|n| n.id == id) => id,
             Some(id) => return Err(format!("node {id} not in profile")),
+            None if auto => fastest_node(&p).unwrap_or_else(|| p.nodes[0].id.clone()),
             None => p.nodes[0].id.clone(),
         };
         let node_name = p
@@ -322,23 +373,7 @@ impl Backend for MockBackend {
             .iter()
             .find(|p| p.id == profile)
             .ok_or("profile not found")?;
-        let mut seed: u64 = 0x2545_f491_4f6c_dd1d ^ (p.nodes.len() as u64);
-        let results = p
-            .nodes
-            .iter()
-            .map(|n| {
-                seed = next_rand(seed);
-                let r = (seed >> 33) % 100;
-                // ~1 in 12 nodes looks unreachable, the rest 20–260 ms.
-                let ok = r % 12 != 0;
-                PingResult {
-                    node: n.id.clone(),
-                    rtt_ms: if ok { 20 + (r as i64 * 24 % 240) } else { 0 },
-                    ok,
-                }
-            })
-            .collect();
-        Ok(results)
+        Ok(synth_ping(p))
     }
 
     fn set_routing(&self, mode: RoutingMode) -> Result<State, String> {
@@ -439,6 +474,38 @@ const GIB: u64 = 1024 * 1024 * 1024;
 fn next_rand(seed: u64) -> u64 {
     seed.wrapping_mul(6_364_136_223_846_793_005)
         .wrapping_add(1_442_695_040_888_963_407)
+}
+
+/// Deterministic synthetic ping for a profile's nodes: ~1 in 12 looks
+/// unreachable, the rest land in 20–260 ms. Factored out so `ping` and the
+/// auto-connect node pick (`fastest_node`) read the same latencies — otherwise
+/// the demo could "auto-select fastest" a node the ping panel shows as slow.
+fn synth_ping(p: &Profile) -> Vec<PingResult> {
+    let mut seed: u64 = 0x2545_f491_4f6c_dd1d ^ (p.nodes.len() as u64);
+    p.nodes
+        .iter()
+        .map(|n| {
+            seed = next_rand(seed);
+            let r = (seed >> 33) % 100;
+            let ok = r % 12 != 0;
+            PingResult {
+                node: n.id.clone(),
+                rtt_ms: if ok { 20 + (r as i64 * 24 % 240) } else { 0 },
+                ok,
+            }
+        })
+        .collect()
+}
+
+/// The id of the reachable node with the lowest synthetic ping, or `None` when
+/// none answered. Mirrors the core's auto strategy for the mock: rank by RTT,
+/// skip the unreachable. Ties resolve to the earlier node (first wins).
+fn fastest_node(p: &Profile) -> Option<String> {
+    synth_ping(p)
+        .into_iter()
+        .filter(|r| r.ok)
+        .min_by_key(|r| r.rtt_ms)
+        .map(|r| r.node)
 }
 
 fn demo_profiles() -> Vec<Profile> {
@@ -550,6 +617,50 @@ fn normalize_split_apps(apps: Vec<String>) -> Vec<String> {
     out.sort();
     out.dedup();
     out
+}
+
+/// A line "looks like" a share link if it has a `scheme://` prefix. The mock
+/// uses this as a stand-in for the core's real parser when counting batch
+/// imports, so a junk line is skipped rather than silently turned into a node.
+fn looks_like_link(line: &str) -> bool {
+    match line.split_once("://") {
+        Some((scheme, rest)) => !scheme.is_empty() && !rest.is_empty(),
+        None => false,
+    }
+}
+
+/// Demo-grade batch link parser mirroring the core's `ParseLinks` shape: split on
+/// newlines, trim, drop blanks / `#` / `//` comments and exact duplicates, build a
+/// node per link-shaped line and count the rest as skipped. Returns
+/// `(nodes, skipped)`.
+fn parse_links_mock(links: &[String]) -> (Vec<Node>, u32) {
+    let mut nodes = Vec::new();
+    let mut skipped = 0u32;
+    let mut seen = std::collections::HashSet::new();
+    for raw in links {
+        for line in raw.split('\n') {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') || line.starts_with("//") {
+                continue;
+            }
+            if !seen.insert(line.to_string()) {
+                continue; // exact duplicate
+            }
+            if looks_like_link(line) {
+                let protocol = protocol_from_link(line);
+                nodes.push(node_lit(
+                    &new_id("n"),
+                    &format!("{} server", protocol_label(protocol)),
+                    protocol,
+                    "203.0.113.10",
+                    443,
+                ));
+            } else {
+                skipped += 1;
+            }
+        }
+    }
+    (nodes, skipped)
 }
 
 fn protocol_from_link(link: &str) -> Protocol {
@@ -835,6 +946,47 @@ mod tests {
     }
 
     #[test]
+    fn parse_links_mock_counts_and_dedupes() {
+        // A block with two good links, a comment, a blank, a junk line and a
+        // duplicate: two nodes, one skipped, the dup collapsed.
+        let block = "# header\nvless://a@h:443\n\n// note\ngarbage\nvless://a@h:443\nss://b@h:8388";
+        let (nodes, skipped) = parse_links_mock(&[block.to_string()]);
+        assert_eq!(nodes.len(), 2, "two unique link-shaped lines");
+        assert_eq!(skipped, 1, "one junk line skipped");
+    }
+
+    #[test]
+    fn import_links_creates_one_multi_node_profile_and_signals() {
+        let (b, sink) = backend();
+        let before = sink.profiles_count();
+        let res = b
+            .import_links(
+                vec!["vless://a@h:443\ntrojan://b@h:443\nnot-a-link".into()],
+                Some("Batch".into()),
+            )
+            .unwrap();
+        assert_eq!(res.imported, 2);
+        assert_eq!(res.skipped, 1);
+        assert_eq!(res.profile.source, Source::Manual);
+        assert_eq!(res.profile.nodes.len(), 2);
+        assert_eq!(res.profile.name, "Batch");
+        assert_eq!(sink.profiles_count(), before + 1);
+        assert!(b.list_profiles().unwrap().iter().any(|p| p.id == res.profile.id));
+    }
+
+    #[test]
+    fn import_links_defaults_name_and_rejects_all_invalid() {
+        let (b, _) = backend();
+        // No name -> a non-empty default.
+        let res = b.import_links(vec!["vless://a@h:443".into()], None).unwrap();
+        assert!(!res.profile.name.is_empty());
+        // Nothing parseable -> an error, not an empty profile.
+        assert!(b
+            .import_links(vec!["nope".into(), "also-bad".into()], None)
+            .is_err());
+    }
+
+    #[test]
     fn import_subscription_creates_subscription_and_signals() {
         let (b, sink) = backend();
         let before = sink.profiles_count();
@@ -859,9 +1011,9 @@ mod tests {
     #[test]
     fn connect_transitions_to_connecting() {
         let (b, sink) = backend();
-        let s = b.connect("demo-sub".into(), None).unwrap();
+        let s = b.connect("demo-sub".into(), None, false).unwrap();
         assert_eq!(s.state, ConnectionState::Connecting);
-        // Auto node selection picks the head of the list.
+        // Default (non-auto) node selection picks the head of the list.
         assert_eq!(s.node, Some("demo-nl".into()));
         assert_eq!(s.profile, Some("demo-sub".into()));
         // The synchronous transition was emitted.
@@ -877,23 +1029,56 @@ mod tests {
     fn connect_honours_an_explicit_node() {
         let (b, _) = backend();
         let s = b
-            .connect("demo-sub".into(), Some("demo-de".into()))
+            .connect("demo-sub".into(), Some("demo-de".into()), false)
             .unwrap();
         assert_eq!(s.node, Some("demo-de".into()));
         let _ = b.disconnect();
     }
 
     #[test]
-    fn connect_rejects_unknown_node_and_profile() {
+    fn connect_explicit_node_overrides_auto() {
+        // With both an explicit node and auto set, the explicit node wins —
+        // matching the core, where auto is ignored when a node is named.
         let (b, _) = backend();
-        assert!(b.connect("demo-sub".into(), Some("nope".into())).is_err());
-        assert!(b.connect("does-not-exist".into(), None).is_err());
+        let s = b
+            .connect("demo-sub".into(), Some("demo-de".into()), true)
+            .unwrap();
+        assert_eq!(s.node, Some("demo-de".into()));
+        let _ = b.disconnect();
+    }
+
+    #[test]
+    fn connect_auto_picks_the_lowest_ping_node() {
+        // Auto must select the reachable node with the smallest synthetic ping,
+        // exactly what the ping panel would surface for the same profile.
+        let (b, _) = backend();
+        let profiles = b.list_profiles().unwrap();
+        let sub = profiles.iter().find(|p| p.id == "demo-sub").unwrap();
+        let expected = fastest_node(sub).expect("at least one reachable demo node");
+
+        let s = b.connect("demo-sub".into(), None, true).unwrap();
+        assert_eq!(s.node, Some(expected));
+        let _ = b.disconnect();
+    }
+
+    #[test]
+    fn connect_rejects_unknown_node_and_profile() {
+        assert!(b_connect_err(Some("nope".into())));
+        let (b, _) = backend();
+        assert!(b.connect("does-not-exist".into(), None, false).is_err());
+    }
+
+    /// Helper: a connect to demo-sub with the given node that is expected to
+    /// fail, returning whether it did. Keeps the rejection test terse.
+    fn b_connect_err(node: Option<String>) -> bool {
+        let (b, _) = backend();
+        b.connect("demo-sub".into(), node, false).is_err()
     }
 
     #[test]
     fn disconnect_returns_to_idle() {
         let (b, _) = backend();
-        let _ = b.connect("demo-sub".into(), None).unwrap();
+        let _ = b.connect("demo-sub".into(), None, false).unwrap();
         let s = b.disconnect().unwrap();
         assert_eq!(s.state, ConnectionState::Idle);
         assert_eq!(s.node, None);
@@ -953,7 +1138,7 @@ mod tests {
     #[test]
     fn removing_the_active_profile_tears_down_the_tunnel() {
         let (b, sink) = backend();
-        let _ = b.connect("demo-sub".into(), None).unwrap();
+        let _ = b.connect("demo-sub".into(), None, false).unwrap();
         let states_before = sink.state_count();
         b.remove_profile("demo-sub".into()).unwrap();
         // Removing the connected profile emits an extra idle state event.

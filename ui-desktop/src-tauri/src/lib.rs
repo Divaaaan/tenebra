@@ -14,8 +14,8 @@ use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, State as TauriState, WindowEvent};
 
 use backend::{
-    Backend, ConnectionState, EventSink, LeakCheck, PingResult, Profile, RoutingMode, SplitMode,
-    State, EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
+    Backend, ConnectionState, EventSink, ImportLinksResult, LeakCheck, PingResult, Profile,
+    RoutingMode, SplitMode, State, EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
 /// Held in Tauri's managed state and shared by every command handler. The
@@ -176,6 +176,18 @@ async fn import_link(
 }
 
 #[tauri::command]
+async fn import_links(
+    state: TauriState<'_, AppState>,
+    links: Vec<String>,
+    name: Option<String>,
+) -> Result<ImportLinksResult, String> {
+    off_thread(Arc::clone(&state.backend), move |b| {
+        b.import_links(links, name)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn remove_profile(state: TauriState<'_, AppState>, profile: String) -> Result<(), String> {
     off_thread(Arc::clone(&state.backend), move |b| {
         b.remove_profile(profile)
@@ -199,9 +211,13 @@ async fn connect(
     state: TauriState<'_, AppState>,
     profile: String,
     node: Option<String>,
+    // Optional so an older/leaner caller can omit it; Tauri maps a missing arg to
+    // None, which we treat as "not auto" — the protocol's default order.
+    auto: Option<bool>,
 ) -> Result<State, String> {
+    let auto = auto.unwrap_or(false);
     off_thread(Arc::clone(&state.backend), move |b| {
-        b.connect(profile, node)
+        b.connect(profile, node, auto)
     })
     .await
 }
@@ -303,6 +319,7 @@ pub fn run() {
             list_profiles,
             import_subscription,
             import_link,
+            import_links,
             remove_profile,
             refresh_subscription,
             connect,
