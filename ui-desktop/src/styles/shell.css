@@ -204,7 +204,7 @@
   position: absolute;
   inset: 0;
   z-index: 20;
-  background: rgba(0, 0, 0, 0.62);
+  background: var(--scrim);
   display: flex;
   align-items: flex-start;
   justify-content: center;

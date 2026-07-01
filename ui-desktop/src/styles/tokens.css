@@ -130,6 +130,7 @@
   --good: #00e676; /* connected / protected only */
   --warn-soft: #ffb300; /* heads-up, not critical */
   --on-signal: #0e0e0e; /* text on a filled --signal surface */
+  --scrim: rgba(0, 0, 0, 0.62); /* dim layer behind overlays / modals */
 
   /* Grain over the canvas — a touch of texture so flat panels don't read as
      dead space. Off on light. */
@@ -182,6 +183,10 @@
   --good: #1f8a4c;
   --warn-soft: #b8780a;
   --on-signal: #f3f2ec;
+
+  /* A 62% black scrim reads as a hole punched in the paper; ink at a lighter
+     weight dims without going murky. */
+  --scrim: rgba(22, 20, 18, 0.4);
 
   --grain-opacity: 0;
 }
