@@ -1,5 +1,7 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
+import { getVersion } from "@tauri-apps/api/app";
+import type { Update } from "@tauri-apps/plugin-updater";
 
 import type { RoutingMode, SplitMode } from "../api";
 import type { Tenebra } from "../state/useTenebra";
@@ -12,6 +14,7 @@ import {
   setAutoconnect,
   setAutoFastest,
 } from "../lib/settings";
+import { checkForUpdate, installUpdate, type UpdateStatus } from "../lib/updates";
 
 interface SettingsScreenProps {
   tenebra: Tenebra;
@@ -27,6 +30,17 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   const [launchBusy, setLaunchBusy] = useState(false);
   const [autoconnect, setAutoconnectState] = useState(getAutoconnect);
   const [autoFastest, setAutoFastestState] = useState(getAutoFastest);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ kind: "idle" });
+  const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null);
+  const [appVersion, setAppVersion] = useState("");
+
+  useEffect(() => {
+    getVersion()
+      .then(setAppVersion)
+      .catch(() => {
+        // The version line is cosmetic; leave it blank if the host call fails.
+      });
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -79,6 +93,64 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
       return next;
     });
   }
+
+  async function checkUpdates() {
+    setUpdateStatus({ kind: "checking" });
+    try {
+      const update = await checkForUpdate();
+      if (!update) {
+        setPendingUpdate(null);
+        setUpdateStatus({ kind: "uptodate" });
+        return;
+      }
+      setPendingUpdate(update);
+      setUpdateStatus({ kind: "available", version: update.version });
+    } catch (e) {
+      setUpdateStatus({ kind: "error", message: String(e) });
+    }
+  }
+
+  async function applyUpdate() {
+    if (!pendingUpdate) {
+      return;
+    }
+    setUpdateStatus({ kind: "downloading", percent: null });
+    try {
+      await installUpdate(pendingUpdate, (percent) =>
+        setUpdateStatus({ kind: "downloading", percent }),
+      );
+      // relaunch() normally ends the process; reaching here means the install
+      // completed and the restart is imminent.
+      setUpdateStatus({ kind: "installing" });
+    } catch (e) {
+      setUpdateStatus({ kind: "error", message: String(e) });
+    }
+  }
+
+  const updateBusy =
+    updateStatus.kind === "checking" || updateStatus.kind === "downloading";
+  const updateStatusText = ((): string => {
+    switch (updateStatus.kind) {
+      case "checking":
+        return t.settings.updatesChecking;
+      case "uptodate":
+        return t.settings.updatesUpToDate;
+      case "available":
+        return t.settings.updatesAvailable.replace("{version}", updateStatus.version);
+      case "downloading":
+        return updateStatus.percent == null
+          ? t.settings.updatesDownloading
+          : `${t.settings.updatesDownloading} ${updateStatus.percent}%`;
+      case "installing":
+        return t.settings.updatesInstalling;
+      case "error":
+        return t.settings.updatesError;
+      default:
+        return appVersion
+          ? t.settings.updatesCurrent.replace("{version}", appVersion)
+          : "";
+    }
+  })();
 
   const routing = tenebra.state.routing ?? "smart";
 
@@ -386,6 +458,39 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             </span>
             {autoFastest ? "ON" : "OFF"}
           </button>
+        </div>
+      </section>
+
+      <section className="set-section">
+        <div className="set-section-head">
+          <h2 className="set-eyebrow">{t.settings.updates}</h2>
+        </div>
+        <div className="set-row">
+          <span className="set-row-text">
+            <span className="set-row-label">{t.settings.updatesCheck}</span>
+            <span className="set-row-hint">{updateStatusText}</span>
+          </span>
+          {pendingUpdate &&
+          (updateStatus.kind === "available" || updateStatus.kind === "error") ? (
+            <button
+              type="button"
+              className="set-btn"
+              onClick={() => void applyUpdate()}
+            >
+              {t.settings.updatesInstall}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="set-btn"
+              onClick={() => void checkUpdates()}
+              disabled={updateBusy}
+            >
+              {updateStatus.kind === "checking"
+                ? t.settings.updatesChecking
+                : t.settings.updatesCheck}
+            </button>
+          )}
         </div>
       </section>
     </section>

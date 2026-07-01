@@ -28,6 +28,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "externalBin": ["binaries/tenebra-core"],
     "resources": [
@@ -45,5 +46,13 @@
     "category": "Utility",
     "shortDescription": "Tenebra VPN client",
     "longDescription": "Cross-platform VPN client built on sing-box."
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Divaaaan/tenebra/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZGNTZCNDcxMUM2Q0IwRkUKUldUK3NHd2NjYlJXYjljMy9lbkVPa0tHQWYzWDNBR3ErVlU5NEFWdkt2SWNZNllBNU1jcWFRamkK"
+    }
   }
 }

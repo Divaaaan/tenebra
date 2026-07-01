@@ -7,6 +7,7 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import { makeTenebra } from "../test/fixtures";
 import type { State } from "../api";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
+import { getVersion } from "@tauri-apps/api/app";
 
 // The screen reads the OS autostart registration on mount; stub it so no real
 // platform call happens and the toggle starts off.
@@ -14,6 +15,18 @@ vi.mock("@tauri-apps/plugin-autostart", () => ({
   enable: vi.fn(),
   disable: vi.fn(),
   isEnabled: vi.fn(),
+}));
+
+// The updates row reads the app version on mount and calls the updater/process
+// plugins on click; stub all three so the screen mounts without a Tauri host.
+vi.mock("@tauri-apps/api/app", () => ({
+  getVersion: vi.fn().mockResolvedValue("0.1.0"),
+}));
+vi.mock("@tauri-apps/plugin-updater", () => ({
+  check: vi.fn(),
+}));
+vi.mock("@tauri-apps/plugin-process", () => ({
+  relaunch: vi.fn(),
 }));
 
 describe("SettingsScreen", () => {
@@ -25,6 +38,9 @@ describe("SettingsScreen", () => {
     vi.mocked(isEnabled).mockResolvedValue(false);
     vi.mocked(enable).mockResolvedValue();
     vi.mocked(disable).mockResolvedValue();
+    // The updates row reads the app version on mount; restoreMocks wipes the
+    // factory impl between tests, so re-arm it here like the autostart stubs.
+    vi.mocked(getVersion).mockResolvedValue("0.1.0");
   });
 
   describe("routing", () => {
