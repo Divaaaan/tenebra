@@ -202,6 +202,23 @@ describe("SettingsScreen", () => {
       expect(document.documentElement.dataset.theme).toBe("light");
     });
 
+    it("persists the theme and reflects it in the segment control", async () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      const light = screen.getByRole("button", { name: "Light" });
+      const dark = screen.getByRole("button", { name: "Dark" });
+      expect(dark).toHaveAttribute("aria-pressed", "true");
+
+      await user.click(light);
+      expect(light).toHaveAttribute("aria-pressed", "true");
+      expect(dark).toHaveAttribute("aria-pressed", "false");
+      // Written through to localStorage so the next launch (which reads it
+      // before first paint) comes up light.
+      expect(localStorage.getItem("tenebra.theme")).toBe("light");
+    });
+
     it("switches the UI language", async () => {
       const tenebra = makeTenebra({ state: { state: "idle" } as State });
       const user = userEvent.setup();

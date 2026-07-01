@@ -8,9 +8,14 @@ import {
   type ReactNode,
 } from "react";
 
-export type Theme = "dark" | "light";
+import {
+  applyTheme,
+  loadTheme,
+  saveTheme,
+  type Theme,
+} from "./persistence";
 
-const STORAGE_KEY = "tenebra.theme";
+export type { Theme } from "./persistence";
 
 interface ThemeValue {
   theme: Theme;
@@ -20,30 +25,24 @@ interface ThemeValue {
 
 const ThemeContext = createContext<ThemeValue | null>(null);
 
-function initialTheme(): Theme {
-  const saved = localStorage.getItem(STORAGE_KEY);
-  // Dark is the product default; only an explicit "light" opts out.
-  return saved === "light" ? "light" : "dark";
-}
-
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>(initialTheme);
+  const [theme, setThemeState] = useState<Theme>(loadTheme);
 
   const setTheme = useCallback((next: Theme) => {
     setThemeState(next);
-    localStorage.setItem(STORAGE_KEY, next);
+    saveTheme(next);
   }, []);
 
   const toggle = useCallback(() => {
     setThemeState((prev) => {
       const next = prev === "dark" ? "light" : "dark";
-      localStorage.setItem(STORAGE_KEY, next);
+      saveTheme(next);
       return next;
     });
   }, []);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
+    applyTheme(theme);
   }, [theme]);
 
   const value = useMemo<ThemeValue>(

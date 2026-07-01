@@ -4,6 +4,7 @@ import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { I18nProvider } from "./i18n/I18nContext";
 import { ThemeProvider } from "./theme/ThemeContext";
+import { applySavedTheme } from "./theme/persistence";
 
 // Self-hosted display + mono faces (bundled by Vite, never fetched at runtime —
 // a remote font CDN is both a privacy leak and, from Russia, a startup-blocking
@@ -19,6 +20,12 @@ import "./styles/servers.css";
 import "./styles/settings.css";
 import "./styles/profiles.css";
 import "./styles/logs.css";
+
+// Apply the persisted theme before anything renders. index.html hardcodes
+// data-theme="dark" (the canonical default must survive without JS), so a
+// light-theme user would otherwise watch a dark frame until React's effects
+// run. Doing it here, synchronously, keeps the first paint on the right side.
+applySavedTheme();
 
 const root = document.getElementById("root");
 if (!root) {
