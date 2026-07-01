@@ -20,19 +20,11 @@ import { formatMbps } from "./lib/format";
 import {
   getAutoconnect,
   getAutoFastest,
-  getKillSwitch,
   getLastProfileId,
-  setKillSwitch as persistKillSwitch,
   setLastProfileId,
 } from "./lib/settings";
 
 type Overlay = "profiles" | "settings" | "logs" | null;
-
-// The kill-switch UI exists, but the core doesn't yet honour it at connect time
-// (it's a routing option with no control-protocol command). Until that's wired,
-// the toggle is shown disabled and the "armed" banner is suppressed — we never
-// claim a protection we don't actually deliver. Flip this when the wiring lands.
-const KILL_SWITCH_WIRED = false;
 
 export function App() {
   const tenebra = useTenebra();
@@ -48,9 +40,13 @@ export function App() {
   const [selectedNodeId, setSelectedNodeId] = useState("");
   const [region, setRegion] = useState<Region | null>(null);
   const [query, setQuery] = useState("");
-  const [killSwitch, setKillSwitchState] = useState(getKillSwitch);
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [busy, setBusy] = useState(false);
+
+  // The kill switch is core-owned: the daemon persists it, arms strict_route in
+  // the tunnel config, and restarts a tunnel whose process dies while armed.
+  // The UI just reflects the reported state and toggles it over the protocol.
+  const killSwitch = state.kill_switch ?? false;
 
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -170,12 +166,9 @@ export function App() {
   );
 
   const handleToggleKill = useCallback(() => {
-    setKillSwitchState((prev) => {
-      const next = !prev;
-      persistKillSwitch(next);
-      return next;
-    });
-  }, []);
+    // Failures surface on the state/log channels the UI already renders.
+    void tenebra.setKillSwitch(!killSwitch).catch(() => {});
+  }, [tenebra, killSwitch]);
 
   const focusSearch = useCallback(() => {
     searchRef.current?.focus();
@@ -247,7 +240,7 @@ export function App() {
     <div className="app" data-conn={phase}>
       <TopBar activeProfile={metaProfile} />
 
-      {connected && killSwitch && KILL_SWITCH_WIRED && (
+      {connected && killSwitch && (
         <div className="kill-banner" role="status">
           ⚠ {t.bottom.killBanner}
         </div>
@@ -293,7 +286,6 @@ export function App() {
         onSetRouting={handleSetRouting}
         killSwitch={killSwitch}
         onToggleKillSwitch={handleToggleKill}
-        killSwitchDisabled={!KILL_SWITCH_WIRED}
         onLeakCheck={() => setOverlay("logs")}
         onSettings={() => setOverlay("settings")}
       />

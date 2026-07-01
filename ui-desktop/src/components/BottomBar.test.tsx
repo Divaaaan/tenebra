@@ -45,17 +45,25 @@ describe("BottomBar", () => {
   });
 
   describe("kill-switch", () => {
-    it("is disabled and never pressed while killSwitchDisabled", () => {
+    it("reflects the armed state", () => {
+      renderWithProviders(<BottomBar {...baseProps({ killSwitch: true })} />);
+
+      const button = screen.getByRole("button", { name: /kill-switch/ });
+      expect(button).toBeEnabled();
+      expect(button).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("requests a toggle on click", async () => {
+      const onToggleKillSwitch = vi.fn();
+      const user = userEvent.setup();
       renderWithProviders(
-        <BottomBar
-          {...baseProps({ killSwitch: true, killSwitchDisabled: true })}
-        />,
+        <BottomBar {...baseProps({ killSwitch: false, onToggleKillSwitch })} />,
       );
 
       const button = screen.getByRole("button", { name: /kill-switch/ });
-      expect(button).toBeDisabled();
-      // Even with killSwitch=true, a disabled switch must not present as active.
       expect(button).toHaveAttribute("aria-pressed", "false");
+      await user.click(button);
+      expect(onToggleKillSwitch).toHaveBeenCalledTimes(1);
     });
   });
 

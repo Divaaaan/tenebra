@@ -3,7 +3,7 @@ import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getVersion } from "@tauri-apps/api/app";
 import type { Update } from "@tauri-apps/plugin-updater";
 
-import type { RoutingMode, SplitMode } from "../api";
+import type { RoutingMode, SplitMode, TunStack } from "../api";
 import type { Tenebra } from "../state/useTenebra";
 import { useI18n } from "../i18n/I18nContext";
 import { useTheme } from "../theme/ThemeContext";
@@ -230,6 +230,34 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     }
   }
 
+  // The tun network stack. Core-owned like routing: the daemon validates,
+  // persists, and — when a tunnel is live — re-applies it in place, so the UI
+  // just reflects tenebra.state and requests changes.
+  const tunStack = tenebra.state.tun_stack ?? "system";
+
+  const stackOptions: { stack: TunStack; label: string; hint: string }[] = [
+    { stack: "system", label: t.settings.stackSystem, hint: t.settings.stackSystemHint },
+    { stack: "gvisor", label: t.settings.stackGvisor, hint: t.settings.stackGvisorHint },
+    { stack: "mixed", label: t.settings.stackMixed, hint: t.settings.stackMixedHint },
+  ];
+
+  function chooseStack(stack: TunStack) {
+    if (stack === tunStack) {
+      return;
+    }
+    void tenebra.setTun(stack);
+  }
+
+  function onStackKey(e: KeyboardEvent, index: number) {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") {
+      return;
+    }
+    e.preventDefault();
+    const delta = e.key === "ArrowDown" ? 1 : -1;
+    const next = stackOptions[(index + delta + stackOptions.length) % stackOptions.length];
+    chooseStack(next.stack);
+  }
+
   const themeOptions: { value: "dark" | "light"; label: string }[] = [
     { value: "dark", label: t.settings.themeDark },
     { value: "light", label: t.settings.themeLight },
@@ -352,6 +380,36 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             )}
           </div>
         )}
+      </section>
+
+      <section className="set-section">
+        <div className="set-section-head">
+          <h2 className="set-eyebrow">{t.settings.tunnel}</h2>
+          <p className="set-sub">{t.settings.tunnelHint}</p>
+        </div>
+        <div className="set-options" role="radiogroup" aria-label={t.settings.tunnel}>
+          {stackOptions.map((opt, index) => {
+            const checked = tunStack === opt.stack;
+            return (
+              <button
+                key={opt.stack}
+                type="button"
+                role="radio"
+                aria-checked={checked}
+                tabIndex={checked ? 0 : -1}
+                className={`set-option${checked ? " is-checked" : ""}`}
+                onClick={() => chooseStack(opt.stack)}
+                onKeyDown={(e) => onStackKey(e, index)}
+              >
+                <span className="set-mark" aria-hidden="true">{checked ? "▣" : "▢"}</span>
+                <span className="set-option-text">
+                  <span className="set-option-label">{opt.label}</span>
+                  <span className="set-option-hint">{opt.hint}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </section>
 
       <section className="set-section">

@@ -151,6 +151,20 @@ describe("api command wrappers", () => {
     });
   });
 
+  it("setKillSwitch forwards the flag and returns the State", async () => {
+    const armed: State = { state: "connected", kill_switch: true };
+    mockInvoke.mockResolvedValueOnce(armed);
+    await expect(api.setKillSwitch(true)).resolves.toEqual(armed);
+    expect(mockInvoke).toHaveBeenCalledWith("set_kill_switch", { on: true });
+  });
+
+  it("setTun forwards the stack and returns the State", async () => {
+    const swapped: State = { state: "idle", tun_stack: "gvisor" };
+    mockInvoke.mockResolvedValueOnce(swapped);
+    await expect(api.setTun("gvisor")).resolves.toEqual(swapped);
+    expect(mockInvoke).toHaveBeenCalledWith("set_tun", { stack: "gvisor" });
+  });
+
   it("leakCheck passes the LeakCheck verdict through", async () => {
     const leak: LeakCheck = {
       connected: false,

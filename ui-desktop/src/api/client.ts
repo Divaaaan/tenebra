@@ -11,6 +11,7 @@ import type {
   State,
   StateEvent,
   TrafficEvent,
+  TunStack,
 } from "./types";
 
 // Typed wrapper over the Tauri command surface. The Rust shell forwards every
@@ -90,6 +91,19 @@ export const api = {
   // The core normalizes them, so the returned State may reorder/lowercase them.
   setSplit(mode: SplitMode, apps: string[]): Promise<State> {
     return invoke<State>("set_split", { mode, apps });
+  },
+
+  // Arm/disarm the kill switch. The core persists the choice and, when a tunnel
+  // is live, re-applies it in place (a brief connecting→connected dip while
+  // sing-box hot-swaps on the same node — not a full reconnect).
+  setKillSwitch(on: boolean): Promise<State> {
+    return invoke<State>("set_kill_switch", { on });
+  },
+
+  // Switch the tun network stack. Same live re-apply semantics as the kill
+  // switch; when idle the choice applies on the next connect.
+  setTun(stack: TunStack): Promise<State> {
+    return invoke<State>("set_tun", { stack });
   },
 
   /**

@@ -148,6 +148,58 @@ describe("SettingsScreen", () => {
     });
   });
 
+  describe("tunnel stack", () => {
+    it("marks the reported stack as checked, defaulting to system", () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(screen.getByRole("radio", { name: /^System/ })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+      expect(screen.getByRole("radio", { name: /^gVisor/ })).toHaveAttribute(
+        "aria-checked",
+        "false",
+      );
+    });
+
+    it("reflects a non-default stack from the core state", () => {
+      const tenebra = makeTenebra({
+        state: { state: "idle", tun_stack: "mixed" } as State,
+      });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(screen.getByRole("radio", { name: /^Mixed/ })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+    });
+
+    it("requests the new stack on click and skips a no-op", async () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(screen.getByRole("radio", { name: /^gVisor/ }));
+      expect(tenebra.setTun).toHaveBeenCalledWith("gvisor");
+
+      // Clicking the already-active stack must not re-apply (a live tunnel
+      // would be pointlessly hot-swapped).
+      await user.click(screen.getByRole("radio", { name: /^System/ }));
+      expect(tenebra.setTun).toHaveBeenCalledTimes(1);
+    });
+
+    it("moves to the next stack on ArrowDown", () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      fireEvent.keyDown(screen.getByRole("radio", { name: /^System/ }), {
+        key: "ArrowDown",
+      });
+      expect(tenebra.setTun).toHaveBeenCalledWith("gvisor");
+    });
+  });
+
   describe("startup", () => {
     // The switch's accessible name is its own text ("ON"/"OFF"), not the sibling
     // label, so locate the row by its label text and grab the switch within it.

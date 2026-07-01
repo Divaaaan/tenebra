@@ -66,8 +66,8 @@ export interface Strings {
     routing: string;
     killSwitch: string;
     killBanner: string;
-    /** Tooltip while the kill-switch is present but not yet core-enforced. */
-    killSwitchPending: string;
+    /** Tooltip explaining what arming actually does (and costs). */
+    killSwitchHint: string;
     leakCheck: string;
     settings: string;
   };
@@ -165,6 +165,14 @@ export interface Strings {
     splitAddPlaceholder: string;
     splitAdd: string;
     splitRemove: string;
+    tunnel: string;
+    tunnelHint: string;
+    stackSystem: string;
+    stackSystemHint: string;
+    stackGvisor: string;
+    stackGvisorHint: string;
+    stackMixed: string;
+    stackMixedHint: string;
     appearance: string;
     theme: string;
     themeDark: string;
@@ -297,7 +305,8 @@ const en: Strings = {
     routing: "Routing",
     killSwitch: "kill-switch",
     killBanner: "KILL-SWITCH ARMED · traffic blocked if the tunnel drops",
-    killSwitchPending: "Kill-switch isn't wired to the core yet",
+    killSwitchHint:
+      "Block traffic that tries to bypass the tunnel; if the tunnel dies, restart it. Applies live; connects get rougher while armed.",
     leakCheck: "leak-check",
     settings: "settings",
   },
@@ -386,6 +395,15 @@ const en: Strings = {
     splitAddPlaceholder: "chrome.exe",
     splitAdd: "Add",
     splitRemove: "Remove",
+    tunnel: "Tunnel",
+    tunnelHint:
+      "Which network stack drives the TUN device. Changing it while connected re-applies the tunnel in place (a brief reconnect on the same node).",
+    stackSystem: "System",
+    stackSystemHint: "The kernel's own TCP/IP. Fastest; the default.",
+    stackGvisor: "gVisor",
+    stackGvisorHint: "Userspace stack. Slower, but immune to TUN driver quirks.",
+    stackMixed: "Mixed",
+    stackMixedHint: "TCP on the system stack, UDP on gVisor.",
     appearance: "Appearance",
     theme: "Theme",
     themeDark: "Dark",
@@ -504,7 +522,8 @@ const ru: Strings = {
     routing: "Маршрут",
     killSwitch: "kill-switch",
     killBanner: "KILL-SWITCH ВКЛ · трафик блокируется при обрыве туннеля",
-    killSwitchPending: "Kill-switch ещё не подключён к ядру",
+    killSwitchHint:
+      "Блокировать трафик в обход туннеля; при падении туннеля — перезапустить его. Применяется сразу; коннект с ним грубее.",
     leakCheck: "проверка",
     settings: "настройки",
   },
@@ -593,6 +612,15 @@ const ru: Strings = {
     splitAddPlaceholder: "chrome.exe",
     splitAdd: "Добавить",
     splitRemove: "Удалить",
+    tunnel: "Туннель",
+    tunnelHint:
+      "Какой сетевой стек обслуживает TUN-устройство. Смена при живом туннеле применяется на месте (короткий реконнект на тот же узел).",
+    stackSystem: "Системный",
+    stackSystemHint: "TCP/IP ядра ОС. Самый быстрый; по умолчанию.",
+    stackGvisor: "gVisor",
+    stackGvisorHint: "Стек в user space. Медленнее, но не зависит от капризов TUN-драйвера.",
+    stackMixed: "Смешанный",
+    stackMixedHint: "TCP через системный стек, UDP через gVisor.",
     appearance: "Оформление",
     theme: "Тема",
     themeDark: "Тёмная",

@@ -6,9 +6,6 @@ interface BottomBarProps {
   onSetRouting: (mode: RoutingMode) => void;
   killSwitch: boolean;
   onToggleKillSwitch: () => void;
-  /** True until the core actually enforces the kill-switch; renders the toggle
-   *  disabled so we never present a protection we don't deliver. */
-  killSwitchDisabled?: boolean;
   onLeakCheck: () => void;
   onSettings: () => void;
 }
@@ -29,7 +26,6 @@ export function BottomBar({
   onSetRouting,
   killSwitch,
   onToggleKillSwitch,
-  killSwitchDisabled = false,
   onLeakCheck,
   onSettings,
 }: BottomBarProps) {
@@ -54,14 +50,13 @@ export function BottomBar({
         </div>
         <button
           type="button"
-          className={`toggle${killSwitch && !killSwitchDisabled ? " on" : ""}`}
-          aria-pressed={killSwitch && !killSwitchDisabled}
-          disabled={killSwitchDisabled}
-          title={killSwitchDisabled ? t.bottom.killSwitchPending : undefined}
+          className={`toggle${killSwitch ? " on" : ""}`}
+          aria-pressed={killSwitch}
+          title={t.bottom.killSwitchHint}
           onClick={onToggleKillSwitch}
         >
           <span className="box" aria-hidden="true">
-            {killSwitch && !killSwitchDisabled ? "▣" : "▢"}
+            {killSwitch ? "▣" : "▢"}
           </span>
           {t.bottom.killSwitch}
         </button>
