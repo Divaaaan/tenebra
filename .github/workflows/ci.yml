@@ -61,6 +61,11 @@ jobs:
         run: npm ci
       - name: Build the installer
         working-directory: ui-desktop
+        env:
+          # createUpdaterArtifacts is on, so the build signs the installer and
+          # needs the key here too — not just in the release workflow.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri build -- --bundles nsis
       - uses: actions/upload-artifact@v4
         with:
