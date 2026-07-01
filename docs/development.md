@@ -10,11 +10,11 @@ wire format, [control-protocol.md](control-protocol.md). This document is the
 | Tool | Version | Used for |
 |------|---------|----------|
 | [Go](https://go.dev/dl/) | 1.24+ | the core and the `tenebra-core` sidecar |
-| [Node.js](https://nodejs.org/) | 20+ (with npm) | the React front end |
+| [Node.js](https://nodejs.org/) | 22+ (with npm) | the React front end |
 | [Rust](https://rustup.rs/) (stable) | latest stable | the Tauri desktop shell |
 | PowerShell | Windows built-in / [PS 7+](https://github.com/PowerShell/PowerShell) | `scripts/fetch-resources.ps1` |
 
-CI builds the core on Go 1.26 and the desktop bundle with Node 22, so those are
+CI builds the core on Go 1.26 and the desktop bundle with Node 24, so those are
 known-good; the minimums above are what `go.mod` and the front end actually
 require. The desktop app currently targets **Windows**; the Go core, however,
 builds and tests on every platform (it deliberately avoids OS-specific imports).

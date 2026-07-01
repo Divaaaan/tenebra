@@ -37,7 +37,7 @@ Highest-leverage areas right now (see
 
 ## Get set up
 
-Prerequisites — **Go 1.24+**, **Node 20+**, the **Rust** toolchain — and the full
+Prerequisites — **Go 1.24+**, **Node 22+**, the **Rust** toolchain — and the full
 build/run/test walkthrough live in **[docs/development.md](docs/development.md)**.
 The short version:
 

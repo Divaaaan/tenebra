@@ -99,7 +99,7 @@ tenebra/
 
 ## Building
 
-Requirements: **Go 1.24+**, **Node 20+**, and the **Rust toolchain** (for the
+Requirements: **Go 1.24+**, **Node 22+**, and the **Rust toolchain** (for the
 desktop UI). Full walkthrough and troubleshooting in
 [docs/development.md](docs/development.md).
 
