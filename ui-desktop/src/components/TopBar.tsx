@@ -4,7 +4,7 @@ import { formatExpiry, formatTrafficUsage } from "../lib/format";
 
 // Bumped per release; mirrors tauri.conf.json / package.json. A short build mark
 // could be injected at build time later — kept literal for now.
-const VERSION = "v0.1.0";
+const VERSION = "v0.1.1";
 
 interface TopBarProps {
   /** The connected (or otherwise selected) subscription, for the meta line. */
