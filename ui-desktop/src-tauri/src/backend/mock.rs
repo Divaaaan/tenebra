@@ -10,7 +10,8 @@ use std::time::Duration;
 
 use super::{
     Backend, ConnectionState, DnsResult, DnsStatus, EventSink, ExitMatch, ImportLinksResult,
-    LeakCheck, Node, PingResult, Profile, Protocol, RoutingMode, Source, SplitMode, State, Verdict,
+    LeakCheck, Node, PingResult, Profile, Protocol, RoutingMode, Source, SplitMode, State,
+    TunStack, Verdict,
 };
 
 /// How long the fake "dial" takes before flipping to connected.
@@ -60,6 +61,9 @@ impl MockBackend {
                 routing: Some(RoutingMode::Smart),
                 split: None,
                 split_apps: None,
+                kill_switch: None,
+                // The core always names the stack once normalized; mirror that.
+                tun_stack: Some(TunStack::System),
                 error: None,
             },
             profiles: demo_profiles(),
@@ -403,6 +407,29 @@ impl Backend for MockBackend {
             inner.state.split = Some(mode);
             inner.state.split_apps = Some(apps);
         }
+        let snapshot = inner.state.clone();
+        drop(inner);
+        self.shared.emit_state(&snapshot);
+        Ok(snapshot)
+    }
+
+    fn set_kill_switch(&self, on: bool) -> Result<State, String> {
+        // Mirror the core: record and report; a live "tunnel" would hot-swap,
+        // which the mock abbreviates to just the state change.
+        let mut inner = self.shared.inner.lock().unwrap();
+        inner.state.kill_switch = if on { Some(true) } else { None };
+        let snapshot = inner.state.clone();
+        drop(inner);
+        self.shared.emit_state(&snapshot);
+        self.shared
+            .sink
+            .log("info", if on { "kill switch armed" } else { "kill switch disarmed" });
+        Ok(snapshot)
+    }
+
+    fn set_tun(&self, stack: TunStack) -> Result<State, String> {
+        let mut inner = self.shared.inner.lock().unwrap();
+        inner.state.tun_stack = Some(stack);
         let snapshot = inner.state.clone();
         drop(inner);
         self.shared.emit_state(&snapshot);
@@ -917,6 +944,32 @@ mod tests {
         let s = b.set_split(SplitMode::Off, vec!["x.exe".into()]).unwrap();
         assert_eq!(s.split, None);
         assert_eq!(s.split_apps, None);
+    }
+
+    #[test]
+    fn set_kill_switch_arms_and_disarms() {
+        let (b, sink) = backend();
+        let s = b.set_kill_switch(true).unwrap();
+        assert_eq!(s.kill_switch, Some(true));
+        assert_eq!(sink.last_state().unwrap().kill_switch, Some(true));
+
+        // Disarming drops the field entirely (off is reported as absent).
+        let s = b.set_kill_switch(false).unwrap();
+        assert_eq!(s.kill_switch, None);
+    }
+
+    #[test]
+    fn set_tun_updates_the_stack_and_emits() {
+        let (b, sink) = backend();
+        // The mock starts on the default stack, like the core reports it.
+        assert_eq!(b.status().unwrap().tun_stack, Some(TunStack::System));
+
+        let s = b.set_tun(TunStack::Gvisor).unwrap();
+        assert_eq!(s.tun_stack, Some(TunStack::Gvisor));
+        assert_eq!(
+            sink.last_state().unwrap().tun_stack,
+            Some(TunStack::Gvisor)
+        );
     }
 
     #[test]
