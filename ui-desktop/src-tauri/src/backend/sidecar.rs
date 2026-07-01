@@ -32,7 +32,7 @@ use serde_json::{json, Value};
 
 use super::{
     Backend, EventSink, ImportLinksResult, LeakCheck, PingResult, Profile, RoutingMode, SplitMode,
-    State, EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
+    State, TunStack, EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
 /// How long a request waits for its correlated response before giving up. The
@@ -522,6 +522,21 @@ impl Backend for SidecarBackend {
             "set_split",
             obj([("mode", json!(mode)), ("apps", json!(apps))]),
         )
+    }
+
+    fn set_kill_switch(&self, on: bool) -> Result<State, String> {
+        self.inner
+            .request_into("set_kill_switch", obj([("on", json!(on))]))
+    }
+
+    fn set_tun(&self, stack: TunStack) -> Result<State, String> {
+        let stack = match stack {
+            TunStack::System => "system",
+            TunStack::Gvisor => "gvisor",
+            TunStack::Mixed => "mixed",
+        };
+        self.inner
+            .request_into("set_tun", obj([("stack", json!(stack))]))
     }
 
     fn leak_check(&self) -> Result<LeakCheck, String> {

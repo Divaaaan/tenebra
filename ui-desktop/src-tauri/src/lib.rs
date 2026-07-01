@@ -15,7 +15,7 @@ use tauri::{AppHandle, Emitter, Manager, State as TauriState, WindowEvent};
 
 use backend::{
     Backend, ConnectionState, EventSink, ImportLinksResult, LeakCheck, PingResult, Profile,
-    RoutingMode, SplitMode, State, EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
+    RoutingMode, SplitMode, State, TunStack, EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
 /// Held in Tauri's managed state and shared by every command handler. The
@@ -250,6 +250,16 @@ async fn set_split(
 }
 
 #[tauri::command]
+async fn set_kill_switch(state: TauriState<'_, AppState>, on: bool) -> Result<State, String> {
+    off_thread(Arc::clone(&state.backend), move |b| b.set_kill_switch(on)).await
+}
+
+#[tauri::command]
+async fn set_tun(state: TauriState<'_, AppState>, stack: TunStack) -> Result<State, String> {
+    off_thread(Arc::clone(&state.backend), move |b| b.set_tun(stack)).await
+}
+
+#[tauri::command]
 async fn leak_check(state: TauriState<'_, AppState>) -> Result<LeakCheck, String> {
     off_thread(Arc::clone(&state.backend), |b| b.leak_check()).await
 }
@@ -329,6 +339,8 @@ pub fn run() {
             ping,
             set_routing,
             set_split,
+            set_kill_switch,
+            set_tun,
             leak_check,
             quit_app,
         ])

@@ -50,6 +50,18 @@ pub enum SplitMode {
     Include,
 }
 
+/// The tun network stack sing-box runs. `System` is the kernel's own TCP/IP
+/// (fastest, the default); `Gvisor` is a userspace stack (slower, immune to tun
+/// driver quirks); `Mixed` puts TCP on system and UDP on gvisor. Mirrors the
+/// core's stack tokens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TunStack {
+    System,
+    Gvisor,
+    Mixed,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Protocol {
@@ -83,6 +95,12 @@ pub struct State {
     /// Executable names the split applies to; absent when off.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub split_apps: Option<Vec<String>>,
+    /// Whether the kill switch is armed; absent (treated as off) when it isn't.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kill_switch: Option<bool>,
+    /// The tun network stack the current or next tunnel uses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tun_stack: Option<TunStack>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -260,6 +278,13 @@ pub trait Backend: Send + Sync + 'static {
     fn ping(&self, profile: String) -> Result<Vec<PingResult>, String>;
     fn set_routing(&self, mode: RoutingMode) -> Result<State, String>;
     fn set_split(&self, mode: SplitMode, apps: Vec<String>) -> Result<State, String>;
+    /// Arm or disarm the kill switch. The core persists the choice and, when a
+    /// tunnel is live, re-applies it in place by hot-swapping sing-box on the
+    /// same node (a brief connecting→connected dip, not a full reconnect).
+    fn set_kill_switch(&self, on: bool) -> Result<State, String>;
+    /// Switch the tun network stack. Same live re-apply semantics as the kill
+    /// switch; when idle the choice simply applies on the next connect.
+    fn set_tun(&self, stack: TunStack) -> Result<State, String>;
     fn leak_check(&self) -> Result<LeakCheck, String>;
 }
 
@@ -304,6 +329,13 @@ mod tests {
         assert_token(SplitMode::Off, "off");
         assert_token(SplitMode::Exclude, "exclude");
         assert_token(SplitMode::Include, "include");
+    }
+
+    #[test]
+    fn tun_stack_tokens() {
+        assert_token(TunStack::System, "system");
+        assert_token(TunStack::Gvisor, "gvisor");
+        assert_token(TunStack::Mixed, "mixed");
     }
 
     #[test]
@@ -354,6 +386,8 @@ mod tests {
             routing: Some(RoutingMode::Smart),
             split: Some(SplitMode::Exclude),
             split_apps: Some(vec!["chrome.exe".into(), "steam.exe".into()]),
+            kill_switch: Some(true),
+            tun_stack: Some(TunStack::Gvisor),
             error: None,
         };
         let json = to_value(&state).unwrap();
@@ -370,13 +404,24 @@ mod tests {
             routing: None,
             split: None,
             split_apps: None,
+            kill_switch: None,
+            tun_stack: None,
             error: None,
         };
         let obj = to_value(&state).unwrap();
         let map = obj.as_object().unwrap();
         // Only the always-present discriminant survives.
         assert_eq!(map.get("state"), Some(&json!("idle")));
-        for absent in ["node", "profile", "routing", "split", "split_apps", "error"] {
+        for absent in [
+            "node",
+            "profile",
+            "routing",
+            "split",
+            "split_apps",
+            "kill_switch",
+            "tun_stack",
+            "error",
+        ] {
             assert!(
                 !map.contains_key(absent),
                 "expected {absent} to be omitted, got {obj}"
