@@ -8,6 +8,13 @@ export type RoutingMode = "smart" | "global" | "direct";
 
 export type SplitMode = "off" | "exclude" | "include";
 
+/**
+ * The tun network stack sing-box runs: the kernel's own TCP/IP ("system",
+ * fastest, the default), a userspace stack ("gvisor", slower but immune to tun
+ * driver quirks), or TCP-on-system / UDP-on-gvisor ("mixed").
+ */
+export type TunStack = "system" | "gvisor" | "mixed";
+
 export type NodeProtocol =
   | "vless"
   | "hysteria2"
@@ -25,6 +32,10 @@ export interface State {
   split?: SplitMode;
   /** Normalized executable names the split applies to; omitted when off. */
   split_apps?: string[];
+  /** Whether the kill switch is armed; omitted (treated as off) when it isn't. */
+  kill_switch?: boolean;
+  /** The tun network stack the current or next tunnel uses. */
+  tun_stack?: TunStack;
   error?: string;
 }
 

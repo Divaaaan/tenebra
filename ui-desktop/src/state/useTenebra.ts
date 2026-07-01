@@ -14,6 +14,7 @@ import {
   type SplitMode,
   type State,
   type TrafficEvent,
+  type TunStack,
 } from "../api";
 
 export interface LogLine {
@@ -47,6 +48,8 @@ export interface Tenebra {
   disconnect: () => Promise<void>;
   setRouting: (mode: RoutingMode) => Promise<void>;
   setSplit: (mode: SplitMode, apps: string[]) => Promise<void>;
+  setKillSwitch: (on: boolean) => Promise<void>;
+  setTun: (stack: TunStack) => Promise<void>;
   refreshProfiles: () => Promise<void>;
   clearLogs: () => void;
 }
@@ -174,6 +177,16 @@ export function useTenebra(): Tenebra {
     setState(next);
   }, []);
 
+  const setKillSwitch = useCallback(async (on: boolean) => {
+    const next = await api.setKillSwitch(on);
+    setState(next);
+  }, []);
+
+  const setTun = useCallback(async (stack: TunStack) => {
+    const next = await api.setTun(stack);
+    setState(next);
+  }, []);
+
   const clearLogs = useCallback(() => setLogs([]), []);
 
   return {
@@ -186,6 +199,8 @@ export function useTenebra(): Tenebra {
     disconnect,
     setRouting,
     setSplit,
+    setKillSwitch,
+    setTun,
     refreshProfiles,
     clearLogs,
   };
