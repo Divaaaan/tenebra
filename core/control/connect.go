@@ -29,9 +29,10 @@ const (
 )
 
 // handleConnect starts a connection to a profile. It validates the profile,
-// builds the fallback candidate list (collapsed to a single node when the
-// request names one), and kicks off the background fallback loop. It returns as
-// soon as the attempt is launched; progress arrives as state events.
+// then hands off to startConnect, which builds the fallback candidate list
+// (collapsed to a single node when the request names one) and kicks off the
+// background fallback loop. It returns as soon as the attempt is launched;
+// progress arrives as state events.
 func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 	if req.Profile == "" {
 		return newError(req.ID, "connect: missing profile")
@@ -44,14 +45,37 @@ func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 		return newError(req.ID, "connect: profile has no servers")
 	}
 
+	// A user-driven connect opens a fresh kill-switch relaunch budget.
+	d.mu.Lock()
+	d.relaunches = 0
+	d.mu.Unlock()
+
+	st, err := d.startConnect(ctx, p, req.Node, req.Auto)
+	if err != nil {
+		return newError(req.ID, err.Error())
+	}
+	resp, err := newResult(req.ID, st)
+	if err != nil {
+		return newError(req.ID, err.Error())
+	}
+	return resp
+}
+
+// startConnect launches a connection attempt to profile p and returns the
+// connecting state it reported. It is the shared engine behind the connect
+// command, the live re-apply of tun/kill-switch options, and the kill-switch
+// relaunch of a dead tunnel — all three are "start sing-box against the current
+// options", differing only in how the candidate set is chosen. It returns as
+// soon as the fallback loop is launched.
+func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNode string, auto bool) (State, error) {
 	// Build the fallback candidates. An explicit node request collapses the walk
 	// to that single node: the user asked for a specific exit, so we honour it and
 	// do not silently wander to another protocol behind their back. Without an
 	// explicit node we hand the machine every server and let the ordering plus the
 	// per-profile last-good decide the sequence.
-	candidates, err := buildCandidates(p, req.Node)
+	candidates, err := buildCandidates(p, explicitNode)
 	if err != nil {
-		return newError(req.ID, err.Error())
+		return State{}, err
 	}
 
 	// Choose the candidate ordering. The default is protocol preference (the
@@ -63,7 +87,7 @@ func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 	// next candidate when the lead's connect-probe is blocked) is preserved in
 	// both modes.
 	var m *fallback.Machine
-	if req.Auto && req.Node == "" {
+	if auto && explicitNode == "" {
 		// pingCandidates dials only the candidate servers, concurrently and
 		// briefly (see pingOne's pingDialTimeout), so probing never blocks the
 		// connect path for long. Unreachable candidates fall to the back of the
@@ -118,11 +142,36 @@ func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 	// state events from the loop.
 	st := State{State: StateConnecting, Profile: p.ID, Routing: string(ro.Mode)}
 	d.setState(st)
-	resp, err := newResult(req.ID, st)
-	if err != nil {
-		return newError(req.ID, err.Error())
+	return d.snapshotState(), nil
+}
+
+// reapplyLive pushes the current routing/tun options onto a live tunnel by
+// restarting sing-box on the node it is already connected to. strict_route and
+// the tun stack are startup options of the inbound — sing-box cannot change
+// them on a running process — so "apply now" necessarily means a process swap.
+// What it does NOT mean is a full reconnect: the candidate set is pinned to the
+// current node (no fallback walk, no re-selection), the state dips through
+// connecting only for the swap-and-probe, and a probe failure surfaces as an
+// error state exactly like any dropped tunnel.
+//
+// When nothing is connected this is a no-op: the recorded options simply apply
+// on the next connect. If the live profile/node has meanwhile vanished from the
+// store, the running tunnel is left untouched (old options and all) and the
+// change is logged as deferred — a settings toggle must never kill a working
+// tunnel without bringing one back.
+func (d *Daemon) reapplyLive() {
+	cur := d.snapshotState()
+	if cur.State != StateConnected || cur.Profile == "" || cur.Node == "" {
+		return
 	}
-	return resp
+	p, ok := d.store.Get(cur.Profile)
+	if !ok {
+		d.emitLog(LogWarn, "re-apply: connected profile no longer stored; the change applies on the next connect")
+		return
+	}
+	if _, err := d.startConnect(context.Background(), p, cur.Node, false); err != nil {
+		d.emitLog(LogWarn, fmt.Sprintf("re-apply: %v; the change applies on the next connect", err))
+	}
 }
 
 // pingCandidates measures the TCP round-trip to each candidate's server and
@@ -158,6 +207,12 @@ func (d *Daemon) pingCandidates(ctx context.Context, p profile.Profile, candidat
 // handleDisconnect tears the tunnel down to idle and returns the resulting
 // state. It is a no-op when nothing is connected.
 func (d *Daemon) handleDisconnect(req Request) Response {
+	// An explicit disconnect also closes any kill-switch relaunch episode: the
+	// user asked for the tunnel to be down, so nothing may bring it back.
+	d.mu.Lock()
+	d.relaunches = 0
+	d.mu.Unlock()
+
 	d.teardown(StateIdle, "", "")
 	st := d.snapshotState()
 	resp, err := newResult(req.ID, st)
@@ -363,10 +418,12 @@ func (d *Daemon) startLifecycle(ctx context.Context, gen uint64, profileID, node
 
 // watchProcess waits for either the process to exit or the connection to be torn
 // down. A process exit while this is still the live generation becomes an error
-// state (the tunnel dropped); a clean teardown just returns. Unlike before, it no
-// longer promotes connecting->connected on a timer: the fallback loop promotes to
-// connected only after a successful connectivity probe, so by the time this
-// goroutine runs the state is already connected.
+// state (the tunnel dropped) — unless the kill switch is armed, in which case
+// the daemon relaunches the tunnel on the same node (see killSwitchRelaunch). A
+// clean teardown just returns. Unlike before, it no longer promotes
+// connecting->connected on a timer: the fallback loop promotes to connected only
+// after a successful connectivity probe, so by the time this goroutine runs the
+// state is already connected.
 func (d *Daemon) watchProcess(ctx context.Context, gen uint64, profileID, nodeID string, done <-chan error) {
 	for {
 		select {
@@ -381,10 +438,71 @@ func (d *Daemon) watchProcess(ctx context.Context, gen uint64, profileID, nodeID
 				msg = err.Error()
 			}
 			d.emitLog(LogError, "tunnel process exited: "+msg)
+			if d.killSwitchRelaunch(gen, profileID, nodeID) {
+				return // the relaunch owns the state from here
+			}
 			d.setState(State{State: StateError, Profile: profileID, Node: nodeID, Error: msg, Routing: d.snapshotState().Routing})
 			return
 		}
 	}
+}
+
+// maxRelaunches bounds consecutive kill-switch relaunches so a tunnel that dies
+// on every start can't churn processes forever. The counter resets on an
+// explicit connect or disconnect, so a user retry always gets a fresh budget.
+const maxRelaunches = 5
+
+// killSwitchRelaunch restarts a tunnel whose process died unexpectedly, if (and
+// only if) the kill switch is armed. It reports whether it took ownership of the
+// state; false means the caller should fall through to the plain error state.
+//
+// Why restart at all: strict_route only holds while sing-box runs — the moment
+// the process dies, its filter rules and the tun route die with it, and traffic
+// would fall back to the physical interface. The honest mitigation the daemon
+// can offer is to put the tunnel (and its filters) back immediately, pinned to
+// the node the user was on. During the gap the OS is unprotected; that window
+// is why this relaunches eagerly rather than waiting for the user.
+//
+// The relaunch reuses startConnect, which tears down the old connection and
+// waits for its goroutines — including the watcher that called us — so it must
+// run on a fresh goroutine, not on the watcher's own stack (that would
+// deadlock on wg.Wait). The generation is re-checked on that goroutine: if a
+// user connect/disconnect landed meanwhile, the relaunch yields to it.
+func (d *Daemon) killSwitchRelaunch(gen uint64, profileID, nodeID string) bool {
+	d.mu.Lock()
+	armed := d.routing.KillSwitch
+	spent := d.relaunches
+	if armed && spent < maxRelaunches {
+		d.relaunches++
+	}
+	d.mu.Unlock()
+
+	if !armed {
+		return false
+	}
+	if spent >= maxRelaunches {
+		d.emitLog(LogError, fmt.Sprintf("kill switch: tunnel died %d times in a row; giving up on restarts", spent))
+		return false
+	}
+	p, ok := d.store.Get(profileID)
+	if !ok {
+		d.emitLog(LogError, "kill switch: cannot restart, profile no longer stored")
+		return false
+	}
+
+	d.emitLog(LogWarn, "kill switch: tunnel process died, restarting it on the same node")
+	go func() {
+		if !d.isCurrent(gen) {
+			return // a user action superseded the dead connection; let it win
+		}
+		if _, err := d.startConnect(context.Background(), p, nodeID, false); err != nil {
+			d.emitLog(LogError, fmt.Sprintf("kill switch: restart failed: %v", err))
+			d.setState(State{State: StateError, Profile: profileID, Node: nodeID,
+				Error: "tunnel died and could not be restarted: " + err.Error(),
+				Routing: d.snapshotState().Routing})
+		}
+	}()
+	return true
 }
 
 // pollTraffic polls cumulative counters every interval and emits a traffic event
@@ -465,11 +583,12 @@ func (d *Daemon) setState(s State) {
 	if s.Routing == "" {
 		s.Routing = d.state.Routing
 	}
-	// The split config is a daemon-wide setting, not a per-connection one, so it
-	// always tracks the live routing options rather than whatever the transient
-	// State value carried. This keeps status reporting the split correctly across
-	// connect/disconnect transitions without every call site restating it.
-	applySplitToState(&s, d.routing)
+	// The split/kill-switch/tun preferences are daemon-wide settings, not
+	// per-connection ones, so they always track the live options rather than
+	// whatever the transient State value carried. This keeps status reporting
+	// them correctly across connect/disconnect transitions without every call
+	// site restating them.
+	applySettingsToState(&s, d.routing, d.tun)
 	d.state = s
 	emit := d.emit
 	d.mu.Unlock()
