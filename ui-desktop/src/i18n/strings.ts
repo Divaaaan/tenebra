@@ -240,6 +240,10 @@ export interface Strings {
     qrDecodeFailed: string;
     /** No line in the pasted text or chosen file parsed as a valid link. */
     batchEmpty: string;
+    /** Import failure causes, shown instead of the raw (URL-bearing) error. */
+    importUnreachable: string;
+    importBadStatus: string;
+    importBadContent: string;
   };
 }
 
@@ -442,6 +446,11 @@ const en: Strings = {
     qrUnsupported: "QR scanning isn't available here. Paste the link instead.",
     qrDecodeFailed: "Couldn't read that image.",
     batchEmpty: "No valid server links found.",
+    importUnreachable:
+      "Couldn't download the subscription — the server is unreachable. Check your connection or turn on a VPN.",
+    importBadStatus: "The subscription server returned an error. Check the link.",
+    importBadContent:
+      "Couldn't read the subscription — no servers found, or the format isn't supported.",
   },
 };
 
@@ -644,6 +653,11 @@ const ru: Strings = {
     qrUnsupported: "Сканирование QR здесь недоступно. Вставьте ссылку вручную.",
     qrDecodeFailed: "Не удалось прочитать изображение.",
     batchEmpty: "Не найдено ни одной корректной ссылки на сервер.",
+    importUnreachable:
+      "Не удалось скачать подписку — сервер недоступен. Проверьте соединение или включите VPN.",
+    importBadStatus: "Сервер подписки ответил ошибкой. Проверьте ссылку.",
+    importBadContent:
+      "Не удалось разобрать подписку — серверы не найдены или формат не поддерживается.",
   },
 };
 

@@ -13,6 +13,7 @@ import {
   QrError,
 } from "../lib/qr";
 import { PingBadge } from "../components/PingBadge";
+import { importErrorMessage } from "../lib/importError";
 
 interface ProfilesScreenProps {
   tenebra: Tenebra;
@@ -430,8 +431,10 @@ function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
       await action();
       await tenebra.refreshProfiles();
       onClose();
-    } catch {
-      setError(t.errors.generic);
+    } catch (e) {
+      // The raw error is English and often carries the subscription URL, so we
+      // classify it into a plain, localized cause instead of showing it.
+      setError(importErrorMessage(e, t));
       setBusy(false);
     }
   }
