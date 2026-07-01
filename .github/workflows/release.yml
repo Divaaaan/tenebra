@@ -28,19 +28,24 @@ jobs:
       - name: Install front-end dependencies
         working-directory: ui-desktop
         run: npm ci
-      - name: Build the installer
-        working-directory: ui-desktop
-        run: npm run tauri build -- --bundles nsis
-      - name: Publish release
-        uses: softprops/action-gh-release@v2
+      - name: Build, sign, and publish the release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          files: ui-desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
-          prerelease: true
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          body: |
-            Pre-release build of the Tenebra desktop client for Windows.
+          projectPath: ui-desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: Tenebra ${{ github.ref_name }}
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
+          args: --bundles nsis
+          releaseBody: |
+            Windows desktop build of Tenebra.
 
-            The installer is **unsigned**: Windows SmartScreen will warn on first run
-            (More info → Run anyway). The tunnel path is still being validated end to
-            end — see the README project status before relying on it.
+            The installer is unsigned — Windows SmartScreen will warn on first
+            install (More info -> Run anyway). From this version on, updates are
+            delivered in-app (Settings -> Updates) and verified against the
+            project's signing key before they install.

@@ -10,6 +10,8 @@
     "autostart:allow-enable",
     "autostart:allow-disable",
     "autostart:allow-is-enabled",
+    "updater:default",
+    "process:allow-restart",
     {
       "identifier": "shell:allow-spawn",
       "allow": [{ "name": "binaries/tenebra-core", "sidecar": true }]

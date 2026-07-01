@@ -178,6 +178,19 @@ export interface Strings {
     /** "Auto-select fastest node" toggle label and its explanation. */
     autoFastest: string;
     autoFastestHint: string;
+    /** Updates section: check button plus the status line beside it. */
+    updates: string;
+    updatesCheck: string;
+    updatesChecking: string;
+    updatesUpToDate: string;
+    /** "{version}" interpolated by the caller. */
+    updatesAvailable: string;
+    updatesDownloading: string;
+    updatesInstall: string;
+    updatesInstalling: string;
+    updatesError: string;
+    /** "Current version {version}", shown while idle. */
+    updatesCurrent: string;
   };
 
   logs: {
@@ -382,6 +395,16 @@ const en: Strings = {
     autoFastest: "Auto-select fastest node",
     autoFastestHint:
       "When you connect without picking a node, ping the servers and use the fastest one. Blocked servers are skipped automatically.",
+    updates: "Updates",
+    updatesCheck: "Check for updates",
+    updatesChecking: "Checking…",
+    updatesUpToDate: "You're on the latest version.",
+    updatesAvailable: "Version {version} is available.",
+    updatesDownloading: "Downloading update…",
+    updatesInstall: "Install and restart",
+    updatesInstalling: "Installing…",
+    updatesError: "Couldn't check for updates. Try again later.",
+    updatesCurrent: "Current version {version}",
   },
   logs: {
     title: "Logs",
@@ -574,6 +597,16 @@ const ru: Strings = {
     autoFastest: "Выбирать самый быстрый узел",
     autoFastestHint:
       "При подключении без выбора узла пинговать серверы и использовать самый быстрый. Заблокированные серверы пропускаются автоматически.",
+    updates: "Обновления",
+    updatesCheck: "Проверить обновление",
+    updatesChecking: "Проверяю…",
+    updatesUpToDate: "Установлена последняя версия.",
+    updatesAvailable: "Доступна версия {version}.",
+    updatesDownloading: "Загрузка обновления…",
+    updatesInstall: "Установить и перезапустить",
+    updatesInstalling: "Устанавливаю…",
+    updatesError: "Не удалось проверить обновление. Попробуйте позже.",
+    updatesCurrent: "Текущая версия {version}",
   },
   logs: {
     title: "Журнал",
