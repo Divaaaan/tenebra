@@ -244,6 +244,18 @@ func validateNode(n model.Node) error {
 	return nil
 }
 
+// ValidateNode reports whether a node carries the minimum fields sing-box needs
+// to build a working outbound/endpoint for its protocol — the same semantic
+// check buildNodes applies before emitting a node (see validateNode). It is the
+// canonical, exported predicate so callers that mirror the builder's node walk
+// (the control package's selector-tag and fallback-candidate computations) drop
+// exactly the nodes the builder drops. Without a shared check those mirrors keep
+// a tag for a node the builder skips, and the selector default then points at the
+// wrong exit.
+func ValidateNode(n model.Node) bool {
+	return validateNode(n) == nil
+}
+
 // tunInbound renders the single tun inbound. auto_route always routes traffic
 // into the tunnel; strict_route follows the kill-switch option. strict_route is
 // what makes the kill switch real — sing-box installs firewall rules that drop

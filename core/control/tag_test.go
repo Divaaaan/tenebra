@@ -54,6 +54,25 @@ func TestServerTagsMatchBuilder(t *testing.T) {
 			chosenIdx: 2,
 		},
 		{
+			// The same free must happen for a KNOWN protocol whose node fails
+			// validateNode: a VLESS with an empty UUID. The builder allocates "Y-2"
+			// for it, validateNode rejects it, and the tag is freed for a later node
+			// named "Y-2" to reclaim. serverTags once skipped only unknown protocols,
+			// so it kept "Y-2" for the invalid VLESS and pushed the real node to
+			// "Y-2-2" — a tag absent from the built config, so the selector default
+			// silently fell back to the first node: the wrong exit. This case fails
+			// unless serverTags mirrors the builder's validateNode skip.
+			name: "invalid node (known protocol, bad params) frees a tag a later node reclaims",
+			servers: []profile.Server{
+				srv("a", model.VLESS, "Y"),
+				// VLESS with no UUID: a known protocol that fails validateNode, so the
+				// builder drops it and frees "Y-2".
+				{ID: "b", Node: model.Node{Protocol: model.VLESS, Name: "Y", Server: "y.example.com", Port: 443}},
+				srv("c", model.Hysteria2, "Y-2"), // reclaims "Y-2"
+			},
+			chosenIdx: 2,
+		},
+		{
 			name: "zero protocol skipped",
 			servers: []profile.Server{
 				srv("a", model.VLESS, "Node"),
