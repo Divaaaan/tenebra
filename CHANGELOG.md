@@ -1,16 +1,39 @@
 # Changelog
 
 All notable changes to Tenebra are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims to
-follow [Semantic Versioning](https://semver.org/) once it reaches a tagged
-release.
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
+[Semantic Versioning](https://semver.org/).
 
-> **Pre-release.** Tenebra has not had a versioned release yet. Everything below
-> lives under *Unreleased* and may change before the first tag. The desktop
-> client (Windows) is the current focus and the real tunnel path is still being
-> validated — see the [project status](README.md#project-status).
+> **Early days.** Tenebra is at 0.1.x: the desktop client (Windows) is the current
+> focus and the real tunnel path is still being validated — see the
+> [project status](README.md#project-status). Expect breaking changes between
+> 0.x releases.
 
 ## [Unreleased]
+
+### Fixed
+
+- Node selection could drift onto the wrong server when a profile held a node with
+  a known protocol but invalid parameters (a REALITY entry with no public key, a
+  VLESS entry missing its UUID, a bad port). The config generator drops such nodes,
+  but the selector-tag and fallback-candidate walks did not, so a tag could land on
+  a node the tunnel never built — routing through a different exit than the one the
+  UI showed. All three walks now drop the same nodes.
+
+## [0.1.1] - 2026-07-01
+
+### Fixed
+
+- Subscription import failing on some networks. Cloudflare and some panels ask for
+  a TLS renegotiation mid-handshake, which Go refuses by default and turned into a
+  silent failure where `curl` and browsers succeeded; one client-initiated
+  renegotiation is now allowed. Import failures are also classified into a plain,
+  localized reason instead of a generic message, and the fetch cause (host only) is
+  logged to `core.log`.
+
+## [0.1.0] - 2026-07-01
+
+Initial tagged release.
 
 ### Added
 
@@ -56,6 +79,8 @@ release.
     panel.
   - System tray (quick connect/disconnect/show/quit), launch-at-login,
     single-instance, light/dark themes, and English / Russian UI.
+  - In-app auto-updater (Settings → Updates) that verifies each update's minisign
+    signature against the bundled public key before installing.
   - A mock backend (`TENEBRA_MOCK=1`) for UI-only development.
 - **Docs**: architecture, control-protocol, and development guides;
   `CONTRIBUTING.md`, `SECURITY.md` and this changelog.
@@ -63,9 +88,10 @@ release.
   for the front end (lib helpers, API client, state hook and screens), Rust unit
   tests for the backend, and a real-binary end-to-end test that round-trips the
   control protocol against the actual `tenebra-core`.
-- **CI**: Go build/vet/test (with the race detector) plus `staticcheck`, the
-  front-end type-check and tests, the Rust tests, and a Windows desktop build
-  producing an unsigned NSIS installer.
+- **CI/Release**: Go build/vet/test (with the race detector) plus `staticcheck`,
+  the front-end type-check and tests, the Rust tests, and a Windows desktop build.
+  A tagged `release` workflow builds the NSIS installer, signs the updater
+  artifacts, and publishes a GitHub release with the updater manifest.
 
 ### Known limitations
 
@@ -74,6 +100,10 @@ release.
 - Only the Windows adapter exists; macOS, Linux, Android and iOS are planned.
 - The kill-switch and LAN bypass are core routing options; the kill-switch is not
   yet exposed in the UI.
-- Installers are unsigned and there is no release pipeline.
+- The installer is not Authenticode code-signed, so Windows SmartScreen warns on
+  first run. Updates delivered in-app are minisign-verified against the bundled
+  key; only the initial download is unsigned.
 
-[Unreleased]: https://github.com/Divaaaan/tenebra/commits/main
+[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Divaaaan/tenebra/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/Divaaaan/tenebra/releases/tag/v0.1.0
