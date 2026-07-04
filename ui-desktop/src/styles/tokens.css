@@ -73,41 +73,6 @@
   /* A flag the renderer reads to decide whether to run JS-driven motion. CSS
      owns the media query; JS reads the computed value. Default: on. */
   --motion-ok: 1;
-
-  /* ======================================================================
-     LEGACY COMPAT — maps the previous "Eclipse" token names onto the
-     spec-sheet system so screens not yet restyled (Settings/Profiles/Logs)
-     still render. Phase 2 restyles those and deletes this block.
-     ====================================================================== */
-  --font-sans: var(--mono);
-  --font-mono: var(--mono);
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 22px;
-  --space-6: 28px;
-  --space-7: 36px;
-  --space-8: 56px;
-  --radius-sm: 0px;
-  --radius-md: 0px;
-  --radius-lg: 0px;
-  --radius-pill: 0px;
-  --shadow-sm: none;
-  --shadow-md: none;
-  --shadow-lg: none;
-  --shadow-glow: none;
-  --dur-fast: 80ms;
-  --dur-base: 100ms;
-  --dur-slow: 100ms;
-  --dur-bloom: 100ms;
-  --dur-breath: 2200ms;
-  --ease-out: linear;
-  --ease-in-out: linear;
-  --ease-spring: linear;
-  --ease-bloom: linear;
-  --transition-fast: var(--t-fast);
-  --transition-med: var(--t-base);
 }
 
 /* ---- DARK · canonical spec-sheet -------------------------------------- */

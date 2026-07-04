@@ -1,0 +1,40 @@
+/* Ping badge — the per-node RTT chip (PingBadge.tsx).
+
+   A small mono chip that reads a measured round-trip and colours itself by
+   quality: green when good, amber when fair, orange when poor or down, and a
+   dim dash when there's no measurement yet. All four states share the same
+   faint wash so the row stays calm; only the text colour carries the signal. */
+
+.ping-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  padding: 2px var(--sp-2);
+  border-radius: var(--radius);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: var(--surface);
+  color: var(--text-dim);
+}
+
+.ping-badge--empty {
+  color: var(--text-dim-2);
+}
+
+.ping-good {
+  background: var(--signal-faint);
+  color: var(--good);
+}
+
+.ping-fair {
+  background: var(--signal-faint);
+  color: var(--warn-soft);
+}
+
+.ping-poor,
+.ping-badge--down {
+  background: var(--signal-faint);
+  color: var(--signal);
+}
