@@ -57,10 +57,10 @@ describe("importErrorMessage", () => {
 
   it("never echoes the raw subscription URL (domain masking)", () => {
     const out = importErrorMessage(
-      'Get "https://vpsxd.pro/sub/secret-token": dial tcp',
+      'Get "https://sub.example.com/redacted-token": dial tcp',
       t,
     );
-    expect(out).not.toContain("vpsxd.pro");
-    expect(out).not.toContain("secret-token");
+    expect(out).not.toContain("example.com");
+    expect(out).not.toContain("redacted-token");
   });
 });

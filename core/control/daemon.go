@@ -753,11 +753,12 @@ func buildCandidates(p profile.Profile, explicit string) ([]fallback.Attempt, er
 // serverTags computes, for every renderable server in the profile, the sing-box
 // selector tag it will carry, keyed by the server's stable ID. The builder
 // derives each tag from the node name, uniquing collisions with a numeric suffix
-// and skipping nodes it can't render; this mirrors that walk exactly so the tag
-// the loop hands Build as the selector default points at the intended exit and
-// not a namesake. Getting it wrong would route through the wrong server, so the
-// duplication is deliberate. Non-renderable servers get no entry, matching the
-// builder dropping them.
+// and skipping nodes it can't render — a zero/unknown protocol, or a known one
+// that fails singbox.ValidateNode; this mirrors that walk exactly so the tag the
+// loop hands Build as the selector default points at the intended exit and not a
+// namesake. Getting it wrong would route through the wrong server, so the
+// duplication is deliberate. Skipped servers get no entry, matching the builder
+// dropping them.
 func serverTags(p profile.Profile) map[string]string {
 	seen := map[string]int{}
 	uniq := func(name string) string {
@@ -782,6 +783,17 @@ func serverTags(p profile.Profile) map[string]string {
 			continue // builder skips zero-protocol nodes; no tag assigned
 		}
 		tag := uniq(s.Node.Name)
+		if !singbox.ValidateNode(s.Node) {
+			// The builder validates every node before emitting it and, on failure,
+			// allocates then frees its tag (delete(seen, tag) in buildNodes) — a
+			// known protocol carrying bad params (out-of-range port, missing
+			// credentials, keyless REALITY) is dropped exactly like an unknown one.
+			// Skipping this check here (only knownProtocol below) would keep a tag
+			// the builder never emits, drifting the suffix counter so a later tag —
+			// and thus the selector default — points at the wrong exit.
+			delete(seen, tag)
+			continue
+		}
 		if !knownProtocol(s.Protocol) {
 			// The builder allocates a tag then frees it for protocols it can't
 			// render (delete(seen, tag) in buildNodes), so no tag survives and the
@@ -795,9 +807,14 @@ func serverTags(p profile.Profile) map[string]string {
 }
 
 // renderable reports whether the builder can turn this server into a working
-// outbound: it must have a known, non-zero protocol.
+// outbound: it must have a known, non-zero protocol AND carry the parameters
+// that protocol needs (singbox.ValidateNode). A node with a known protocol but
+// invalid params — a keyless REALITY VLESS, a zero/oversized port, missing
+// credentials — is dropped by the builder, so it must not become a fallback
+// candidate either: probing it would build a config that silently omits it and
+// measure a different exit.
 func renderable(s profile.Server) bool {
-	return s.Protocol != "" && knownProtocol(s.Protocol)
+	return s.Protocol != "" && knownProtocol(s.Protocol) && singbox.ValidateNode(s.Node)
 }
 
 // knownProtocol reports whether the builder can render a node of this protocol

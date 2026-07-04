@@ -23,8 +23,9 @@ Highest-leverage areas right now (see
 1. **Live tunnel bring-up** on Windows (wintun + sing-box, elevated).
 2. **New platform adapters** — macOS/Linux (utun), Android (`VpnService`),
    iOS (Network Extension). The Go core is already platform-agnostic.
-3. **Release packaging** — the NSIS installer is unsigned and there's no release
-   pipeline yet.
+3. **Installer code-signing** — the NSIS installer isn't Authenticode-signed, so
+   Windows SmartScreen warns on first run. The release workflow and the
+   minisign-verified in-app updater already exist; Authenticode signing is the gap.
 
 ## Before you start
 

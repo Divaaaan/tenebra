@@ -314,7 +314,10 @@ For contributors deciding where to dig in, the honest open items:
 - **Non-Windows adapters.** Only `adapters/windows` exists. macOS/Linux (utun),
   Android (`VpnService`) and iOS (Network Extension) are unwritten; the core is
   ready for them.
-- **Release signing.** Installers are unsigned and there is no release pipeline.
+- **Installer code-signing.** The installer is not Authenticode-signed, so Windows
+  SmartScreen warns on first run. The tagged `release` workflow already builds and
+  publishes it and minisign-signs the in-app updater artifacts; Authenticode
+  signing of the initial download is the remaining gap.
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for how to pick something up and propose
 a change.

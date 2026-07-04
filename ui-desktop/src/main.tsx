@@ -13,7 +13,7 @@ import "@fontsource-variable/space-grotesk";
 import "@fontsource-variable/jetbrains-mono";
 
 import "./styles/global.css";
-import "./styles/app.css";
+import "./styles/ping-badge.css";
 import "./styles/shell.css";
 import "./styles/connection.css";
 import "./styles/servers.css";
