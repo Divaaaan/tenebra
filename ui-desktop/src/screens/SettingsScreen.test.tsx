@@ -83,6 +83,38 @@ describe("SettingsScreen", () => {
       // smart is index 0; ArrowDown advances to global.
       expect(tenebra.setRouting).toHaveBeenCalledWith("global");
     });
+
+    it("carries focus with selection so repeated ArrowDown reaches every mode", async () => {
+      const tenebra = makeTenebra({
+        state: { state: "idle", routing: "smart" } as State,
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      const smart = screen.getByRole("radio", { name: /Smart/ });
+      const global = screen.getByRole("radio", { name: /Global/ });
+      const direct = screen.getByRole("radio", { name: /Direct/ });
+
+      // Start where the roving tabIndex parks the caret: on the checked option.
+      smart.focus();
+      expect(smart).toHaveFocus();
+
+      // Each ArrowDown must move focus AND selection onward. The focus move is
+      // what re-anchors the index; without it the second press would recompute
+      // from smart and stall on global (the reported defect).
+      await user.keyboard("{ArrowDown}");
+      expect(global).toHaveFocus();
+      expect(tenebra.setRouting).toHaveBeenLastCalledWith("global");
+
+      await user.keyboard("{ArrowDown}");
+      expect(direct).toHaveFocus();
+      expect(tenebra.setRouting).toHaveBeenLastCalledWith("direct");
+
+      // A third press wraps around to the first option.
+      await user.keyboard("{ArrowDown}");
+      expect(smart).toHaveFocus();
+      expect(tenebra.setRouting).toHaveBeenLastCalledWith("smart");
+    });
   });
 
   describe("split tunnelling", () => {
@@ -146,6 +178,33 @@ describe("SettingsScreen", () => {
         "firefox.exe",
       ]);
     });
+
+    it("carries focus with selection so repeated ArrowDown reaches every mode", async () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      const off = screen.getByRole("radio", { name: /^Off/ });
+      const exclude = screen.getByRole("radio", { name: /Exclude apps/ });
+      const include = screen.getByRole("radio", { name: /Only these apps/ });
+
+      // off is index 0 (the default split mode).
+      off.focus();
+      expect(off).toHaveFocus();
+
+      await user.keyboard("{ArrowDown}");
+      expect(exclude).toHaveFocus();
+      expect(tenebra.setSplit).toHaveBeenLastCalledWith("exclude", []);
+
+      await user.keyboard("{ArrowDown}");
+      expect(include).toHaveFocus();
+      expect(tenebra.setSplit).toHaveBeenLastCalledWith("include", []);
+
+      // Wraps back to off; re-selecting the already-active mode is a no-op in
+      // the core, but focus must still travel so the group stays navigable.
+      await user.keyboard("{ArrowDown}");
+      expect(off).toHaveFocus();
+    });
   });
 
   describe("tunnel stack", () => {
@@ -197,6 +256,33 @@ describe("SettingsScreen", () => {
         key: "ArrowDown",
       });
       expect(tenebra.setTun).toHaveBeenCalledWith("gvisor");
+    });
+
+    it("carries focus with selection so repeated ArrowDown reaches every stack", async () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      const system = screen.getByRole("radio", { name: /^System/ });
+      const gvisor = screen.getByRole("radio", { name: /^gVisor/ });
+      const mixed = screen.getByRole("radio", { name: /^Mixed/ });
+
+      // system is index 0 (the default stack).
+      system.focus();
+      expect(system).toHaveFocus();
+
+      await user.keyboard("{ArrowDown}");
+      expect(gvisor).toHaveFocus();
+      expect(tenebra.setTun).toHaveBeenLastCalledWith("gvisor");
+
+      await user.keyboard("{ArrowDown}");
+      expect(mixed).toHaveFocus();
+      expect(tenebra.setTun).toHaveBeenLastCalledWith("mixed");
+
+      // Wraps back to system; re-selecting the active stack is a no-op in the
+      // core, but focus must still travel so the group stays navigable.
+      await user.keyboard("{ArrowDown}");
+      expect(system).toHaveFocus();
     });
   });
 
