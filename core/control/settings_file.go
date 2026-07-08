@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/Divaaaan/tenebra/core/routing"
+	"github.com/Divaaaan/tenebra/core/singbox"
 )
 
 // settingsFile is the name of the JSON file persisting user routing preferences
@@ -17,10 +18,11 @@ import (
 // so they survive a restart.
 const settingsFile = "settings.json"
 
-// persistedSettings is the on-disk shape. Only the split configuration is stored
-// today; the struct is versioned so new preference fields can be added without a
-// migration. A field added later defaults to its zero value when reading an old
-// file, which Normalize then turns into the sane default.
+// persistedSettings is the on-disk shape: the split configuration, the kill
+// switch, and the tun stack. The struct is versioned so new preference fields
+// can be added without a migration. A field added later defaults to its zero
+// value when reading an old file, which the loading path then turns into the
+// sane default.
 type persistedSettings struct {
 	// Version guards the format. Bump it only on an incompatible change; readers
 	// of an unknown future version fall back to defaults rather than guessing.
@@ -28,6 +30,14 @@ type persistedSettings struct {
 
 	SplitMode string   `json:"split_mode,omitempty"`
 	SplitApps []string `json:"split_apps,omitempty"`
+
+	// KillSwitch remembers whether the user armed the kill switch. Absent in
+	// files written before the field existed, which reads back as false — off,
+	// matching the pre-kill-switch behaviour.
+	KillSwitch bool `json:"kill_switch,omitempty"`
+	// TunStack remembers the chosen tun network stack (system/gvisor/mixed).
+	// Absent or unrecognized keeps the default; SetSettings validates it.
+	TunStack string `json:"tun_stack,omitempty"`
 }
 
 // settingsVersion is the current persisted-settings format version.
@@ -139,13 +149,15 @@ func splitFromSettings(ps persistedSettings) (routing.SplitMode, []string) {
 	return o.SplitMode, o.SplitApps
 }
 
-// settingsFromRouting projects the split portion of routing options into the
-// persisted shape.
-func settingsFromRouting(ro routing.Options) persistedSettings {
+// settingsFrom projects the persisted preferences out of the live routing and
+// tun options.
+func settingsFrom(ro routing.Options, tun singbox.TunOptions) persistedSettings {
 	return persistedSettings{
-		Version:   settingsVersion,
-		SplitMode: string(ro.SplitMode),
-		SplitApps: ro.SplitApps,
+		Version:    settingsVersion,
+		SplitMode:  string(ro.SplitMode),
+		SplitApps:  ro.SplitApps,
+		KillSwitch: ro.KillSwitch,
+		TunStack:   tun.Stack,
 	}
 }
 

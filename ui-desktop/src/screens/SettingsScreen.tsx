@@ -1,9 +1,9 @@
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getVersion } from "@tauri-apps/api/app";
 import type { Update } from "@tauri-apps/plugin-updater";
 
-import type { RoutingMode, SplitMode } from "../api";
+import type { RoutingMode, SplitMode, TunStack } from "../api";
 import type { Tenebra } from "../state/useTenebra";
 import { useI18n } from "../i18n/I18nContext";
 import { useTheme } from "../theme/ThemeContext";
@@ -160,14 +160,22 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     { mode: "direct", label: t.settings.routingDirect, hint: t.settings.routingDirectHint },
   ];
 
+  // One ref slot per radio button so an arrow key can move DOM focus onto the
+  // newly selected option. Focus has to travel with the selection: the roving
+  // tabIndex re-anchors on whatever holds focus, so without this the next key
+  // press would recompute from the original (now stale) index and stall.
+  const routingRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
   function onRoutingKey(e: KeyboardEvent, index: number) {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") {
       return;
     }
     e.preventDefault();
     const delta = e.key === "ArrowDown" ? 1 : -1;
-    const next = routingOptions[(index + delta + routingOptions.length) % routingOptions.length];
-    void tenebra.setRouting(next.mode);
+    const nextIndex =
+      (index + delta + routingOptions.length) % routingOptions.length;
+    void tenebra.setRouting(routingOptions[nextIndex].mode);
+    routingRefs.current[nextIndex]?.focus();
   }
 
   // Split tunnelling. The core owns the canonical list (it normalizes names), so
@@ -190,14 +198,19 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     void tenebra.setSplit(mode, splitApps);
   }
 
+  // See routingRefs: arrow keys move focus along with the selection here too.
+  const splitRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
   function onSplitKey(e: KeyboardEvent, index: number) {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") {
       return;
     }
     e.preventDefault();
     const delta = e.key === "ArrowDown" ? 1 : -1;
-    const next = splitOptions[(index + delta + splitOptions.length) % splitOptions.length];
-    chooseSplitMode(next.mode);
+    const nextIndex =
+      (index + delta + splitOptions.length) % splitOptions.length;
+    chooseSplitMode(splitOptions[nextIndex].mode);
+    splitRefs.current[nextIndex]?.focus();
   }
 
   // Normalize the draft the same way the core does for the dedupe check, so the
@@ -230,6 +243,39 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     }
   }
 
+  // The tun network stack. Core-owned like routing: the daemon validates,
+  // persists, and — when a tunnel is live — re-applies it in place, so the UI
+  // just reflects tenebra.state and requests changes.
+  const tunStack = tenebra.state.tun_stack ?? "system";
+
+  const stackOptions: { stack: TunStack; label: string; hint: string }[] = [
+    { stack: "system", label: t.settings.stackSystem, hint: t.settings.stackSystemHint },
+    { stack: "gvisor", label: t.settings.stackGvisor, hint: t.settings.stackGvisorHint },
+    { stack: "mixed", label: t.settings.stackMixed, hint: t.settings.stackMixedHint },
+  ];
+
+  function chooseStack(stack: TunStack) {
+    if (stack === tunStack) {
+      return;
+    }
+    void tenebra.setTun(stack);
+  }
+
+  // See routingRefs: arrow keys move focus along with the selection here too.
+  const stackRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  function onStackKey(e: KeyboardEvent, index: number) {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") {
+      return;
+    }
+    e.preventDefault();
+    const delta = e.key === "ArrowDown" ? 1 : -1;
+    const nextIndex =
+      (index + delta + stackOptions.length) % stackOptions.length;
+    chooseStack(stackOptions[nextIndex].stack);
+    stackRefs.current[nextIndex]?.focus();
+  }
+
   const themeOptions: { value: "dark" | "light"; label: string }[] = [
     { value: "dark", label: t.settings.themeDark },
     { value: "light", label: t.settings.themeLight },
@@ -254,6 +300,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             return (
               <button
                 key={opt.mode}
+                ref={(el) => {
+                  routingRefs.current[index] = el;
+                }}
                 type="button"
                 role="radio"
                 aria-checked={checked}
@@ -285,6 +334,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             return (
               <button
                 key={opt.mode}
+                ref={(el) => {
+                  splitRefs.current[index] = el;
+                }}
                 type="button"
                 role="radio"
                 aria-checked={checked}
@@ -352,6 +404,39 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             )}
           </div>
         )}
+      </section>
+
+      <section className="set-section">
+        <div className="set-section-head">
+          <h2 className="set-eyebrow">{t.settings.tunnel}</h2>
+          <p className="set-sub">{t.settings.tunnelHint}</p>
+        </div>
+        <div className="set-options" role="radiogroup" aria-label={t.settings.tunnel}>
+          {stackOptions.map((opt, index) => {
+            const checked = tunStack === opt.stack;
+            return (
+              <button
+                key={opt.stack}
+                ref={(el) => {
+                  stackRefs.current[index] = el;
+                }}
+                type="button"
+                role="radio"
+                aria-checked={checked}
+                tabIndex={checked ? 0 : -1}
+                className={`set-option${checked ? " is-checked" : ""}`}
+                onClick={() => chooseStack(opt.stack)}
+                onKeyDown={(e) => onStackKey(e, index)}
+              >
+                <span className="set-mark" aria-hidden="true">{checked ? "▣" : "▢"}</span>
+                <span className="set-option-text">
+                  <span className="set-option-label">{opt.label}</span>
+                  <span className="set-option-hint">{opt.hint}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </section>
 
       <section className="set-section">

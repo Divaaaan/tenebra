@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Divaaaan/tenebra/core/routing"
+	"github.com/Divaaaan/tenebra/core/singbox"
 )
 
 // TestSetSplitExclude: a set_split exclude request is accepted, echoes the
@@ -112,24 +113,35 @@ func TestSetSplitDoesNotDisturbRoutingMode(t *testing.T) {
 	}
 }
 
-// TestApplySplitToState verifies the State projection directly.
-func TestApplySplitToState(t *testing.T) {
+// TestApplySettingsToState verifies the State projection directly.
+func TestApplySettingsToState(t *testing.T) {
+	tun := singbox.TunOptions{Stack: singbox.StackSystem}
+
 	var s State
-	applySplitToState(&s, routing.Options{SplitMode: routing.SplitInclude, SplitApps: []string{"a.exe"}}.Normalize())
+	applySettingsToState(&s, routing.Options{SplitMode: routing.SplitInclude, SplitApps: []string{"a.exe"}}.Normalize(), tun)
 	if s.Split != "include" || !reflect.DeepEqual(s.SplitApps, []string{"a.exe"}) {
 		t.Errorf("apply include = %q %v", s.Split, s.SplitApps)
 	}
+	if s.TunStack != "system" {
+		t.Errorf("tun stack = %q, want system", s.TunStack)
+	}
 	// Off clears prior values.
-	applySplitToState(&s, routing.Options{SplitMode: routing.SplitOff}.Normalize())
+	applySettingsToState(&s, routing.Options{SplitMode: routing.SplitOff}.Normalize(), tun)
 	if s.Split != "" || s.SplitApps != nil {
 		t.Errorf("apply off should clear, got %q %v", s.Split, s.SplitApps)
 	}
 	// The stored slice must not alias the routing options.
 	ro := routing.Options{SplitMode: routing.SplitExclude, SplitApps: []string{"x.exe", "y.exe"}}.Normalize()
-	applySplitToState(&s, ro)
+	applySettingsToState(&s, ro, tun)
 	ro.SplitApps[0] = "MUTATED"
 	if s.SplitApps[0] == "MUTATED" {
 		t.Error("State.SplitApps aliases the routing options slice")
+	}
+	// The kill switch and a non-default stack project through as-is.
+	ro.KillSwitch = true
+	applySettingsToState(&s, ro, singbox.TunOptions{Stack: singbox.StackGvisor})
+	if !s.KillSwitch || s.TunStack != "gvisor" {
+		t.Errorf("kill_switch/tun_stack = %v %q, want true gvisor", s.KillSwitch, s.TunStack)
 	}
 }
 

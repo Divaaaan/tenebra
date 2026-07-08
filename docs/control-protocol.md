@@ -30,6 +30,8 @@ Three message kinds flow over the link:
 | `ping`                 | `profile`                          | `{ results: PingResult[] }` |
 | `set_routing`          | `mode` (`smart`/`global`/`direct`) | `State`                     |
 | `set_split`            | `mode` (`off`/`exclude`/`include`), `apps?` | `State`            |
+| `set_kill_switch`      | `on` (boolean)                     | `State`                     |
+| `set_tun`              | `stack` (`system`/`gvisor`/`mixed`) | `State`                    |
 | `leak_check`           | —                                  | `LeakCheck`                 |
 
 ```
@@ -93,6 +95,70 @@ response: {"id":7,"ok":true,"data":{"profile":{ /* …two servers… */ },"impor
 `set_routing` and `set_split` only record the choice; like a routing change, a
 new split takes effect on the **next connect** (live retuning would require
 restarting sing-box). The returned `State` reflects the stored choice.
+
+`set_kill_switch` and `set_tun` go further: both are recorded and persisted the
+same way, but when a tunnel is **live** the core also re-applies them in place —
+see below.
+
+### Kill switch (`set_kill_switch`)
+
+`on: true` arms the kill switch; `false` (or an omitted field) disarms it. Armed
+means two things:
+
+- the tun inbound is built with **`strict_route`**: sing-box installs firewall
+  rules that drop any packet trying to route around the tunnel, so a dead
+  upstream node black-holes traffic instead of leaking it onto the physical
+  interface. The trade-off is a rougher connect (the rules are applied
+  system-wide the moment the tunnel comes up), which is why this is opt-in;
+- if the **tunnel process itself dies**, the core relaunches it immediately,
+  pinned to the node that was up — strict_route only holds while sing-box runs,
+  so putting the process (and its filter rules) back is the only honest
+  mitigation. Relaunches are budgeted (up to 5 for a tunnel caught in a
+  crash-loop) so one that dies on every start can't churn forever; past the
+  budget the state degrades to `error` like any dropped tunnel. The budget counts
+  only rapid, back-to-back deaths: it resets on an explicit connect/disconnect,
+  and a relaunched tunnel that then stays connected for a while refunds it, so
+  isolated drops across a long session never accumulate toward the cap.
+
+Be honest with users about the limits: **while the process is down — the gap
+before a relaunch lands, or after the budget is spent — the OS routes normally
+and traffic is not blocked.** A guarantee across that window would need an
+OS-level firewall hold owned by something that outlives sing-box; the protocol
+does not promise it.
+
+### Tun stack (`set_tun`)
+
+`stack` selects the tun network stack: `system` (the kernel's own TCP/IP —
+fastest, the default), `gvisor` (a userspace stack — slower, but immune to tun
+driver quirks), or `mixed` (TCP on system, UDP on gvisor). An unknown value is
+an error and nothing is recorded.
+
+### Live re-apply
+
+Both options are startup parameters of the tun inbound — sing-box cannot change
+them on a running process. When either command lands while `connected`, the core
+**hot-swaps** the tunnel: it rebuilds the config for the node it is already on
+and restarts sing-box against it. This is deliberately *not* a full reconnect —
+no fallback walk, no node re-selection, no ping ranking; the candidate set is
+pinned to the current node. The UI sees the ordinary `connecting` → `connected`
+dip while the swap-and-probe runs (typically a second or two); a failed probe
+surfaces as an `error` state exactly like any dropped tunnel.
+
+When nothing is connected, the commands just record the choice for the next
+connect. If the live profile/node has meanwhile disappeared from the store, the
+running tunnel is left untouched and the change is deferred to the next connect
+(a settings toggle must never tear down a working tunnel without bringing one
+back); a `log` event notes the deferral.
+
+Both preferences are **persisted** in `settings.json` alongside the split
+config, and load back into the reported `State` on launch.
+
+```
+request:  {"id":9,"cmd":"set_kill_switch","on":true}
+response: {"id":9,"ok":true,"data":{"state":"connecting","profile":"p1","kill_switch":true,"tun_stack":"system"}}
+request:  {"id":10,"cmd":"set_tun","stack":"gvisor"}
+response: {"id":10,"ok":true,"data":{"state":"idle","tun_stack":"gvisor"}}
+```
 
 ### Per-app split tunnelling (`set_split`)
 
@@ -187,6 +253,8 @@ type State = {
   routing?: "smart" | "global" | "direct";
   split?: "exclude" | "include";  // omitted when off
   split_apps?: string[];          // normalized executable names; omitted when off
+  kill_switch?: boolean;          // omitted when off
+  tun_stack?: "system" | "gvisor" | "mixed";
   error?: string;
 };
 

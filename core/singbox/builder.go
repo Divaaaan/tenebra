@@ -17,7 +17,7 @@ import (
 const (
 	defaultInterfaceName = "tenebra"
 	defaultMTU           = 9000
-	defaultStack         = "system"
+	defaultStack         = StackSystem
 	defaultClashAPIPort  = 9090
 
 	tunTag    = "tun-in"
@@ -26,6 +26,27 @@ const (
 	directTag = "direct"
 	blockTag  = "block"
 )
+
+// The tun stacks sing-box implements. system uses the kernel's own TCP/IP
+// (fastest, needs the tun driver to behave); gvisor runs a userspace stack
+// (slower, but immune to driver quirks); mixed splits TCP onto system and UDP
+// onto gvisor.
+const (
+	StackSystem = "system"
+	StackGvisor = "gvisor"
+	StackMixed  = "mixed"
+)
+
+// ValidStack reports whether s names a tun stack sing-box accepts. The empty
+// string is not valid here — callers that mean "default" should leave the
+// option unset and let normalize fill it.
+func ValidStack(s string) bool {
+	switch s {
+	case StackSystem, StackGvisor, StackMixed:
+		return true
+	}
+	return false
+}
 
 // TunOptions configures the single tun inbound and the clash API. The zero
 // value is filled with defaults by Build.

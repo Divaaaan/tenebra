@@ -35,6 +35,8 @@ const (
 	CmdPing               = "ping"
 	CmdSetRouting         = "set_routing"
 	CmdSetSplit           = "set_split"
+	CmdSetKillSwitch      = "set_kill_switch"
+	CmdSetTun             = "set_tun"
 	CmdLeakCheck          = "leak_check"
 )
 
@@ -98,6 +100,12 @@ type Request struct {
 	Mode string `json:"mode,omitempty"`
 	// Apps is the executable-name list for set_split, e.g. ["chrome.exe"].
 	Apps []string `json:"apps,omitempty"`
+	// On arms (true) or disarms (false) the kill switch for set_kill_switch. An
+	// omitted field decodes to false, so "disarm" and "field left out" coincide —
+	// which is the safe reading for a command that grants, not removes, blocking.
+	On bool `json:"on,omitempty"`
+	// Stack is the tun network stack for set_tun (system/gvisor/mixed).
+	Stack string `json:"stack,omitempty"`
 }
 
 // Response is a core -> UI reply to a Request, correlated by ID. Exactly one of
@@ -131,7 +139,14 @@ type State struct {
 	// connect will use; an empty/off split omits them.
 	Split     string   `json:"split,omitempty"`
 	SplitApps []string `json:"split_apps,omitempty"`
-	Error     string   `json:"error,omitempty"`
+	// KillSwitch reports whether the kill switch is armed (strict_route on the
+	// tun, plus an automatic relaunch if the tunnel process dies). Omitted when
+	// off, like the split fields.
+	KillSwitch bool `json:"kill_switch,omitempty"`
+	// TunStack is the tun network stack (system/gvisor/mixed) the current or
+	// next tunnel uses. Always present once the daemon has normalized it.
+	TunStack string `json:"tun_stack,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 // PingResult is one node's dial-latency probe outcome.

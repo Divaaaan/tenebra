@@ -29,6 +29,8 @@ const mockApi = vi.hoisted(() => ({
   disconnect: vi.fn(),
   setRouting: vi.fn(),
   setSplit: vi.fn(),
+  setKillSwitch: vi.fn(),
+  setTun: vi.fn(),
 }));
 
 vi.mock("../api", async (orig) => {
@@ -263,6 +265,32 @@ describe("actions", () => {
     expect(mockApi.setSplit).toHaveBeenCalledWith("exclude", ["chrome.exe"]);
     expect(result.current.state.split).toBe("exclude");
     expect(result.current.state.split_apps).toEqual(["chrome.exe"]);
+  });
+
+  it("setKillSwitch calls api.setKillSwitch and applies the returned state", async () => {
+    const next: State = { state: "idle", kill_switch: true };
+    mockApi.setKillSwitch.mockResolvedValue(next);
+    const { result } = await mountReady();
+
+    await act(async () => {
+      await result.current.setKillSwitch(true);
+    });
+
+    expect(mockApi.setKillSwitch).toHaveBeenCalledWith(true);
+    expect(result.current.state.kill_switch).toBe(true);
+  });
+
+  it("setTun calls api.setTun and applies the returned state", async () => {
+    const next: State = { state: "idle", tun_stack: "gvisor" };
+    mockApi.setTun.mockResolvedValue(next);
+    const { result } = await mountReady();
+
+    await act(async () => {
+      await result.current.setTun("gvisor");
+    });
+
+    expect(mockApi.setTun).toHaveBeenCalledWith("gvisor");
+    expect(result.current.state.tun_stack).toBe("gvisor");
   });
 });
 

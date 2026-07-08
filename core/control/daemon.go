@@ -87,9 +87,36 @@ type Daemon struct {
 	// watching guards against double-starting the lifecycle goroutines and lets
 	// disconnect wait for them to drain.
 	wg sync.WaitGroup
+	// connMu serializes connection transitions (teardown + the start that follows)
+	// so the two connects that run off the serialized command loop — the
+	// kill-switch relaunch and the connecting-window options reconcile — cannot
+	// interleave with a user connect/disconnect/Close. Held around startConnect and
+	// teardown by every such path; never held while waiting on d.wg's goroutines
+	// (they don't take it), so it introduces no deadlock. Always acquired before mu.
+	connMu sync.Mutex
+	// relaunchWG tracks in-flight off-command connect goroutines (relaunch /
+	// reconcile) separately from d.wg, so Close can wait for them to unwind without
+	// the self-deadlock that tracking them in d.wg would cause (their startConnect
+	// waits on d.wg).
+	relaunchWG sync.WaitGroup
 	// generation increments on every connect so a stale watcher from a previous
 	// connection can tell it has been superseded and stay quiet.
 	generation uint64
+	// relaunches counts kill-switch relaunches of a tunnel that keeps dying within
+	// relaunchResetAfter of coming up (a crash-loop), so it can't churn forever.
+	// Reset by an explicit connect or disconnect, and refunded when a relaunched
+	// tunnel stays up past that window — so isolated drops over a long session
+	// don't accumulate toward the cap. Guarded by mu.
+	relaunches int
+	// relaunchResetAfter is the uptime past which a relaunched tunnel's later death
+	// refunds the relaunch budget rather than spending it. Injectable for tests;
+	// defaults to defaultRelaunchReset.
+	relaunchResetAfter time.Duration
+	// beforeReconnect, when set, is called at the entry of an off-command connect
+	// goroutine (relaunch / reconcile) before it claims connMu. It is a test seam
+	// for driving the interleaving with a concurrent disconnect/Close; nil in
+	// production.
+	beforeReconnect func()
 
 	// now and dial are injectable for tests; production uses the real clock and
 	// dialer.
@@ -122,13 +149,19 @@ type Daemon struct {
 }
 
 // NewDaemon builds a Daemon over a profile store and runner. Routing defaults to
-// smart with normalized DNS; the tun options default to the singbox defaults.
+// smart with normalized DNS; the tun options default to the singbox defaults,
+// with the stack pinned explicitly so the reported state always names it.
 func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 	d := &Daemon{
-		store:    store,
-		runner:   runner,
-		routing:  routing.Options{Mode: routing.ModeSmart}.Normalize(),
-		state:    State{State: StateIdle, Routing: string(routing.ModeSmart)},
+		store:   store,
+		runner:  runner,
+		routing: routing.Options{Mode: routing.ModeSmart}.Normalize(),
+		tun:     singbox.TunOptions{Stack: singbox.StackSystem},
+		state: State{
+			State:    StateIdle,
+			Routing:  string(routing.ModeSmart),
+			TunStack: singbox.StackSystem,
+		},
 		lastGood: fallback.NewMemLastGood(),
 		now:      time.Now,
 		fetch:    subscription.Fetch,
@@ -141,6 +174,8 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 		probeRetry:   defaultProbeRetry,
 		probeTimeout: defaultProbeTimeout,
 		probeBudget:  defaultProbeBudget,
+
+		relaunchResetAfter: defaultRelaunchReset,
 	}
 	var dialer net.Dialer
 	d.dial = dialer.DialContext
@@ -163,10 +198,10 @@ func (d *Daemon) SetLastGood(lg fallback.LastGood) {
 }
 
 // SetSettings installs a persistent settings store and immediately loads any
-// saved preferences (today: the split config) into the live routing options and
-// the reported state. main wires the disk-backed store here so a split choice
-// survives a restart; tests can install a fake or skip it. Call it before
-// serving — it is not synchronised against an in-flight connect.
+// saved preferences (the split config, the kill switch, the tun stack) into the
+// live options and the reported state. main wires the disk-backed store here so
+// the choices survive a restart; tests can install a fake or skip it. Call it
+// before serving — it is not synchronised against an in-flight connect.
 func (d *Daemon) SetSettings(store settingsStore) {
 	d.settings = store
 	ps := store.Load()
@@ -175,8 +210,14 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	mode, apps := splitFromSettings(ps)
 	d.routing.SplitMode = mode
 	d.routing.SplitApps = apps
+	d.routing.KillSwitch = ps.KillSwitch
 	d.routing = d.routing.Normalize()
-	applySplitToState(&d.state, d.routing)
+	// A stack value from a corrupt or hand-edited file must not reach sing-box;
+	// anything unknown keeps the default.
+	if singbox.ValidStack(ps.TunStack) {
+		d.tun.Stack = ps.TunStack
+	}
+	applySettingsToState(&d.state, d.routing, d.tun)
 	d.mu.Unlock()
 }
 
@@ -193,16 +234,16 @@ func (d *Daemon) SetRuleSetDir(dir string) {
 	d.mu.Unlock()
 }
 
-// persistSettings saves the split portion of ro through the settings store, if
-// one is installed. Persistence is best-effort: a write failure is logged via
-// the daemon's log event but never fails the originating command, mirroring how
-// last-good tolerates a failed write.
-func (d *Daemon) persistSettings(ro routing.Options) {
+// persistSettings saves the user preferences (split, kill switch, tun stack)
+// through the settings store, if one is installed. Persistence is best-effort: a
+// write failure is logged via the daemon's log event but never fails the
+// originating command, mirroring how last-good tolerates a failed write.
+func (d *Daemon) persistSettings(ro routing.Options, tun singbox.TunOptions) {
 	if d.settings == nil {
 		return
 	}
-	if err := d.settings.Save(settingsFromRouting(ro)); err != nil {
-		d.emitLog(LogWarn, fmt.Sprintf("persist split settings: %v", err))
+	if err := d.settings.Save(settingsFrom(ro, tun)); err != nil {
+		d.emitLog(LogWarn, fmt.Sprintf("persist settings: %v", err))
 	}
 }
 
@@ -236,6 +277,10 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleSetRouting(req)
 	case CmdSetSplit:
 		return d.handleSetSplit(req)
+	case CmdSetKillSwitch:
+		return d.handleSetKillSwitch(req)
+	case CmdSetTun:
+		return d.handleSetTun(req)
 	case CmdLeakCheck:
 		return d.handleLeakCheck(ctx, req)
 	default:
@@ -402,9 +447,12 @@ func (d *Daemon) handleRemoveProfile(req Request) Response {
 		return newError(req.ID, "remove_profile: missing profile")
 	}
 	// If we're connected to this profile, tear the tunnel down first so we don't
-	// leave an orphaned process bound to a profile that no longer exists.
+	// leave an orphaned process bound to a profile that no longer exists. Under
+	// connMu so the transition is authoritative over an in-flight relaunch/reconcile.
 	if cur := d.snapshotState(); cur.Profile == req.Profile && cur.State != StateIdle {
+		d.connMu.Lock()
 		d.teardown(StateIdle, "", "")
+		d.connMu.Unlock()
 	}
 	if err := d.store.Remove(req.Profile); err != nil {
 		return newError(req.ID, err.Error())
@@ -578,12 +626,13 @@ func (d *Daemon) handleSetSplit(req Request) Response {
 	d.routing.SplitMode = mode
 	d.routing.SplitApps = req.Apps
 	d.routing = d.routing.Normalize()
-	applySplitToState(&d.state, d.routing)
+	applySettingsToState(&d.state, d.routing, d.tun)
 	cur := d.state
 	ro := d.routing
+	tun := d.tun
 	d.mu.Unlock()
 
-	d.persistSettings(ro)
+	d.persistSettings(ro, tun)
 
 	resp, err := newResult(req.ID, cur)
 	if err != nil {
@@ -592,18 +641,78 @@ func (d *Daemon) handleSetSplit(req Request) Response {
 	return resp
 }
 
-// applySplitToState mirrors the normalized split config onto a State. Off
+// handleSetKillSwitch arms or disarms the kill switch. The choice is recorded,
+// persisted, and — unlike set_routing/set_split — applied to a live tunnel in
+// place: the daemon rebuilds the config for the node it is already on and
+// hot-swaps the sing-box process (see reapplyLive), so arming doesn't wait for
+// the user to reconnect. Armed means strict_route on the tun (sing-box installs
+// filter rules that drop any packet trying to escape the tunnel) plus an
+// automatic relaunch if the tunnel process itself dies (see watchProcess).
+func (d *Daemon) handleSetKillSwitch(req Request) Response {
+	d.mu.Lock()
+	changed := d.routing.KillSwitch != req.On
+	d.routing.KillSwitch = req.On
+	applySettingsToState(&d.state, d.routing, d.tun)
+	ro := d.routing
+	tun := d.tun
+	d.mu.Unlock()
+
+	d.persistSettings(ro, tun)
+	if changed {
+		d.reapplyLive()
+	}
+
+	resp, err := newResult(req.ID, d.snapshotState())
+	if err != nil {
+		return newError(req.ID, err.Error())
+	}
+	return resp
+}
+
+// handleSetTun switches the tun network stack (system/gvisor/mixed). Recorded,
+// persisted, and applied to a live tunnel in place via reapplyLive — the stack
+// is a startup option of the tun inbound, so the swap restarts sing-box on the
+// same node rather than walking the whole fallback order again.
+func (d *Daemon) handleSetTun(req Request) Response {
+	if !singbox.ValidStack(req.Stack) {
+		return newError(req.ID, fmt.Sprintf("set_tun: unknown stack %q", req.Stack))
+	}
+
+	d.mu.Lock()
+	changed := d.tun.Stack != req.Stack
+	d.tun.Stack = req.Stack
+	applySettingsToState(&d.state, d.routing, d.tun)
+	ro := d.routing
+	tun := d.tun
+	d.mu.Unlock()
+
+	d.persistSettings(ro, tun)
+	if changed {
+		d.reapplyLive()
+	}
+
+	resp, err := newResult(req.ID, d.snapshotState())
+	if err != nil {
+		return newError(req.ID, err.Error())
+	}
+	return resp
+}
+
+// applySettingsToState mirrors the daemon-wide preferences onto a State: the
+// normalized split config, the kill switch, and the tun stack. Split off
 // collapses to empty fields so the wire form omits them, keeping a no-op split
-// invisible to the UI. The app slice is copied so the State never aliases the
+// invisible to the UI; the app slice is copied so the State never aliases the
 // daemon's live routing options.
-func applySplitToState(s *State, ro routing.Options) {
+func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions) {
 	if ro.SplitMode == routing.SplitOff || len(ro.SplitApps) == 0 {
 		s.Split = ""
 		s.SplitApps = nil
-		return
+	} else {
+		s.Split = string(ro.SplitMode)
+		s.SplitApps = append([]string(nil), ro.SplitApps...)
 	}
-	s.Split = string(ro.SplitMode)
-	s.SplitApps = append([]string(nil), ro.SplitApps...)
+	s.KillSwitch = ro.KillSwitch
+	s.TunStack = tun.Stack
 }
 
 // handlePing measures dial latency to every server in a profile and returns the
