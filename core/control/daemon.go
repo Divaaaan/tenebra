@@ -87,13 +87,36 @@ type Daemon struct {
 	// watching guards against double-starting the lifecycle goroutines and lets
 	// disconnect wait for them to drain.
 	wg sync.WaitGroup
+	// connMu serializes connection transitions (teardown + the start that follows)
+	// so the two connects that run off the serialized command loop — the
+	// kill-switch relaunch and the connecting-window options reconcile — cannot
+	// interleave with a user connect/disconnect/Close. Held around startConnect and
+	// teardown by every such path; never held while waiting on d.wg's goroutines
+	// (they don't take it), so it introduces no deadlock. Always acquired before mu.
+	connMu sync.Mutex
+	// relaunchWG tracks in-flight off-command connect goroutines (relaunch /
+	// reconcile) separately from d.wg, so Close can wait for them to unwind without
+	// the self-deadlock that tracking them in d.wg would cause (their startConnect
+	// waits on d.wg).
+	relaunchWG sync.WaitGroup
 	// generation increments on every connect so a stale watcher from a previous
 	// connection can tell it has been superseded and stay quiet.
 	generation uint64
-	// relaunches counts consecutive kill-switch relaunches of a dying tunnel
-	// process, so a tunnel that crashes on every start can't churn forever. Reset
-	// by an explicit connect or disconnect. Guarded by mu.
+	// relaunches counts kill-switch relaunches of a tunnel that keeps dying within
+	// relaunchResetAfter of coming up (a crash-loop), so it can't churn forever.
+	// Reset by an explicit connect or disconnect, and refunded when a relaunched
+	// tunnel stays up past that window — so isolated drops over a long session
+	// don't accumulate toward the cap. Guarded by mu.
 	relaunches int
+	// relaunchResetAfter is the uptime past which a relaunched tunnel's later death
+	// refunds the relaunch budget rather than spending it. Injectable for tests;
+	// defaults to defaultRelaunchReset.
+	relaunchResetAfter time.Duration
+	// beforeReconnect, when set, is called at the entry of an off-command connect
+	// goroutine (relaunch / reconcile) before it claims connMu. It is a test seam
+	// for driving the interleaving with a concurrent disconnect/Close; nil in
+	// production.
+	beforeReconnect func()
 
 	// now and dial are injectable for tests; production uses the real clock and
 	// dialer.
@@ -151,6 +174,8 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 		probeRetry:   defaultProbeRetry,
 		probeTimeout: defaultProbeTimeout,
 		probeBudget:  defaultProbeBudget,
+
+		relaunchResetAfter: defaultRelaunchReset,
 	}
 	var dialer net.Dialer
 	d.dial = dialer.DialContext
@@ -422,9 +447,12 @@ func (d *Daemon) handleRemoveProfile(req Request) Response {
 		return newError(req.ID, "remove_profile: missing profile")
 	}
 	// If we're connected to this profile, tear the tunnel down first so we don't
-	// leave an orphaned process bound to a profile that no longer exists.
+	// leave an orphaned process bound to a profile that no longer exists. Under
+	// connMu so the transition is authoritative over an in-flight relaunch/reconcile.
 	if cur := d.snapshotState(); cur.Profile == req.Profile && cur.State != StateIdle {
+		d.connMu.Lock()
 		d.teardown(StateIdle, "", "")
+		d.connMu.Unlock()
 	}
 	if err := d.store.Remove(req.Profile); err != nil {
 		return newError(req.ID, err.Error())
