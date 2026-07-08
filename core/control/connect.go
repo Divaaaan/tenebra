@@ -50,7 +50,13 @@ func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 	d.relaunches = 0
 	d.mu.Unlock()
 
+	// Hold connMu across the transition so an in-flight kill-switch relaunch or
+	// connecting-window reconcile (the only connects that run off this serialized
+	// command loop) cannot interleave: it re-checks the generation under the same
+	// lock and yields to this connect.
+	d.connMu.Lock()
 	st, err := d.startConnect(ctx, p, req.Node, req.Auto)
+	d.connMu.Unlock()
 	if err != nil {
 		return newError(req.ID, err.Error())
 	}
@@ -160,6 +166,10 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 // change is logged as deferred — a settings toggle must never kill a working
 // tunnel without bringing one back.
 func (d *Daemon) reapplyLive() {
+	// Serialize with the off-command relaunch/reconcile connects (connMu), same as
+	// the connect command, so the hot-swap can't race one of them.
+	d.connMu.Lock()
+	defer d.connMu.Unlock()
 	cur := d.snapshotState()
 	if cur.State != StateConnected || cur.Profile == "" || cur.Node == "" {
 		return
@@ -213,7 +223,12 @@ func (d *Daemon) handleDisconnect(req Request) Response {
 	d.relaunches = 0
 	d.mu.Unlock()
 
+	// The teardown runs under connMu so its generation bump is authoritative over
+	// an in-flight relaunch/reconcile: that goroutine, blocked on connMu, wakes to
+	// find the generation moved and yields instead of resurrecting the tunnel.
+	d.connMu.Lock()
 	d.teardown(StateIdle, "", "")
+	d.connMu.Unlock()
 	st := d.snapshotState()
 	resp, err := newResult(req.ID, st)
 	if err != nil {
@@ -227,6 +242,11 @@ func (d *Daemon) handleDisconnect(req Request) Response {
 // newState carrying profile/node. Passing StateConnecting is how connect
 // transitions an old connection out before the new one starts; StateIdle is a
 // plain disconnect.
+//
+// Callers hold connMu so the whole transition (this teardown plus whatever start
+// follows it) is serialized against the off-command relaunch/reconcile connects.
+// It waits on d.wg, which never tracks those goroutines (they run under
+// relaunchWG), so the wait cannot deadlock against a connMu holder.
 func (d *Daemon) teardown(newState ConnState, profileID, nodeID string) {
 	d.mu.Lock()
 	cancel := d.cancel
@@ -320,10 +340,16 @@ func (d *Daemon) runFallback(ctx context.Context, loop fallbackLoop) {
 			if d.lastGood != nil {
 				d.lastGood.Set(loop.profileID, attempt.NodeID)
 			}
+			// Capture the connected instant before publishing it, so the uptime the
+			// relaunch budget reads later is measured from a fixed point.
+			connectedAt := d.now()
 			d.setState(State{State: StateConnected, Profile: loop.profileID,
 				Node: attempt.NodeID, Routing: d.snapshotState().Routing})
 			// Hand the live connection off to the watcher/poller and stop looping.
-			d.startLifecycle(ctx, loop.gen, loop.profileID, attempt.NodeID)
+			d.startLifecycle(ctx, loop.gen, loop.profileID, attempt.NodeID, connectedAt)
+			// A kill-switch/tun toggle that landed during the connecting window was
+			// recorded but not baked into this config; reconcile it now.
+			d.reconcileConnectingOptions(loop, attempt.NodeID)
 			return
 		}
 
@@ -399,14 +425,15 @@ const proxySelectorTag = "proxy"
 // connection: a process watcher that turns an unexpected sing-box exit into an
 // error state, and a traffic poller that emits traffic events. Both stop when ctx
 // is cancelled or the generation moves on. It is called once, after a probe has
-// already promoted the state to connected.
-func (d *Daemon) startLifecycle(ctx context.Context, gen uint64, profileID, nodeID string) {
+// already promoted the state to connected; connectedAt is that moment, threaded
+// to the watcher so a later relaunch can tell a recovered tunnel from a crash-loop.
+func (d *Daemon) startLifecycle(ctx context.Context, gen uint64, profileID, nodeID string, connectedAt time.Time) {
 	done := d.runner.Done()
 
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
-		d.watchProcess(ctx, gen, profileID, nodeID, done)
+		d.watchProcess(ctx, gen, profileID, nodeID, connectedAt, done)
 	}()
 
 	d.wg.Add(1)
@@ -424,7 +451,7 @@ func (d *Daemon) startLifecycle(ctx context.Context, gen uint64, profileID, node
 // connecting->connected on a timer: the fallback loop promotes to connected only
 // after a successful connectivity probe, so by the time this goroutine runs the
 // state is already connected.
-func (d *Daemon) watchProcess(ctx context.Context, gen uint64, profileID, nodeID string, done <-chan error) {
+func (d *Daemon) watchProcess(ctx context.Context, gen uint64, profileID, nodeID string, connectedAt time.Time, done <-chan error) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -438,7 +465,7 @@ func (d *Daemon) watchProcess(ctx context.Context, gen uint64, profileID, nodeID
 				msg = err.Error()
 			}
 			d.emitLog(LogError, "tunnel process exited: "+msg)
-			if d.killSwitchRelaunch(gen, profileID, nodeID) {
+			if d.killSwitchRelaunch(gen, profileID, nodeID, d.now().Sub(connectedAt)) {
 				return // the relaunch owns the state from here
 			}
 			d.setState(State{State: StateError, Profile: profileID, Node: nodeID, Error: msg, Routing: d.snapshotState().Routing})
@@ -447,14 +474,25 @@ func (d *Daemon) watchProcess(ctx context.Context, gen uint64, profileID, nodeID
 	}
 }
 
-// maxRelaunches bounds consecutive kill-switch relaunches so a tunnel that dies
-// on every start can't churn processes forever. The counter resets on an
-// explicit connect or disconnect, so a user retry always gets a fresh budget.
+// maxRelaunches bounds kill-switch relaunches of a tunnel stuck in a crash-loop
+// (connect, die within seconds, repeat) so it can't churn processes forever. The
+// counter resets on an explicit connect or disconnect, and also whenever a
+// relaunched tunnel stays connected past relaunchResetAfter — a drop after a
+// healthy stretch is not part of a crash-loop, so it opens a fresh budget (see
+// killSwitchRelaunch). Only rapid, back-to-back deaths spend the budget down.
 const maxRelaunches = 5
+
+// defaultRelaunchReset is how long a relaunched tunnel must hold the connection
+// for its later death to count as a genuine recovery rather than one more turn of
+// a crash-loop: a death after at least this long refunds the relaunch budget, a
+// death sooner keeps spending it. It seeds the daemon's relaunchResetAfter, which
+// is a field so tests can shorten it.
+const defaultRelaunchReset = 30 * time.Second
 
 // killSwitchRelaunch restarts a tunnel whose process died unexpectedly, if (and
 // only if) the kill switch is armed. It reports whether it took ownership of the
 // state; false means the caller should fall through to the plain error state.
+// uptime is how long the dead tunnel held the connection.
 //
 // Why restart at all: strict_route only holds while sing-box runs — the moment
 // the process dies, its filter rules and the tun route die with it, and traffic
@@ -463,14 +501,26 @@ const maxRelaunches = 5
 // the node the user was on. During the gap the OS is unprotected; that window
 // is why this relaunches eagerly rather than waiting for the user.
 //
-// The relaunch reuses startConnect, which tears down the old connection and
-// waits for its goroutines — including the watcher that called us — so it must
-// run on a fresh goroutine, not on the watcher's own stack (that would
-// deadlock on wg.Wait). The generation is re-checked on that goroutine: if a
-// user connect/disconnect landed meanwhile, the relaunch yields to it.
-func (d *Daemon) killSwitchRelaunch(gen uint64, profileID, nodeID string) bool {
+// The budget: a relaunch that held the tunnel up past relaunchResetAfter proved a
+// recovery, not one more turn of a crash-loop, so its eventual death refunds the
+// budget. Only rapid deaths (connect, die within seconds, repeat) spend it down,
+// so a long healthy session survives many isolated drops while a tunnel that
+// truly can't stay up still stops churning after maxRelaunches.
+//
+// The relaunch reuses startConnect, which tears down the old connection and waits
+// for its goroutines — including the watcher that called us — so it must run on a
+// fresh goroutine, not on the watcher's own stack (that would deadlock on
+// wg.Wait). startConnectIfCurrent runs it there, re-checking the generation under
+// connMu so a user connect/disconnect/Close that raced the death wins cleanly.
+func (d *Daemon) killSwitchRelaunch(gen uint64, profileID, nodeID string, uptime time.Duration) bool {
 	d.mu.Lock()
 	armed := d.routing.KillSwitch
+	// Refund the budget when the dead tunnel had stayed up long enough to count as
+	// a recovery; a quick death leaves the counter alone so a crash-loop keeps
+	// spending it.
+	if armed && uptime >= d.relaunchResetAfter {
+		d.relaunches = 0
+	}
 	spent := d.relaunches
 	if armed && spent < maxRelaunches {
 		d.relaunches++
@@ -481,7 +531,7 @@ func (d *Daemon) killSwitchRelaunch(gen uint64, profileID, nodeID string) bool {
 		return false
 	}
 	if spent >= maxRelaunches {
-		d.emitLog(LogError, fmt.Sprintf("kill switch: tunnel died %d times in a row; giving up on restarts", spent))
+		d.emitLog(LogError, fmt.Sprintf("kill switch: relaunched %d times but the tunnel keeps dying within seconds; giving up on automatic restarts", spent))
 		return false
 	}
 	p, ok := d.store.Get(profileID)
@@ -491,18 +541,81 @@ func (d *Daemon) killSwitchRelaunch(gen uint64, profileID, nodeID string) bool {
 	}
 
 	d.emitLog(LogWarn, "kill switch: tunnel process died, restarting it on the same node")
+	d.startConnectIfCurrent(gen, p, nodeID, func(err error) {
+		d.emitLog(LogError, fmt.Sprintf("kill switch: restart failed: %v", err))
+		d.setState(State{State: StateError, Profile: profileID, Node: nodeID,
+			Error:   "tunnel died and could not be restarted: " + err.Error(),
+			Routing: d.snapshotState().Routing})
+	})
+	return true
+}
+
+// startConnectIfCurrent runs a connect to (p, node) on a fresh goroutine, but
+// only if gen is still the live generation when the goroutine wins connMu. It is
+// the single connect path that runs off the serialized command loop — the
+// kill-switch relaunch and the connecting-window options reconcile both use it —
+// so it must not race a user connect/disconnect/Close. connMu serializes it
+// against those (they all hold it); the generation re-check inside that exclusion
+// is what makes a user action authoritative: one that already ran bumped the
+// generation and this yields, one that runs after this claim supersedes the
+// connection it starts through the normal teardown. The goroutine is tracked in
+// relaunchWG (not d.wg, which teardown waits on — that would deadlock) so Close
+// can drain it and never let a connect outlive the daemon. onErr handles a start
+// failure, which each caller logs differently.
+func (d *Daemon) startConnectIfCurrent(gen uint64, p profile.Profile, node string, onErr func(error)) {
+	d.relaunchWG.Add(1)
 	go func() {
-		if !d.isCurrent(gen) {
-			return // a user action superseded the dead connection; let it win
+		defer d.relaunchWG.Done()
+		// Test seam: lets a test park this goroutine before it claims connMu so a
+		// concurrent disconnect/Close is guaranteed to win the race. nil in production.
+		if d.beforeReconnect != nil {
+			d.beforeReconnect()
 		}
-		if _, err := d.startConnect(context.Background(), p, nodeID, false); err != nil {
-			d.emitLog(LogError, fmt.Sprintf("kill switch: restart failed: %v", err))
-			d.setState(State{State: StateError, Profile: profileID, Node: nodeID,
-				Error: "tunnel died and could not be restarted: " + err.Error(),
-				Routing: d.snapshotState().Routing})
+		d.connMu.Lock()
+		defer d.connMu.Unlock()
+		if !d.isCurrent(gen) {
+			return // a user action superseded us between the death and this claim
+		}
+		if _, err := d.startConnect(context.Background(), p, node, false); err != nil {
+			onErr(err)
 		}
 	}()
-	return true
+}
+
+// reconcileConnectingOptions re-applies the kill-switch/tun options to a tunnel
+// that has just come up, if they changed while it was still connecting. The
+// fallback loop pins its routing/tun snapshot at the start of the connect so every
+// candidate builds against a consistent view; the price is that a set_kill_switch
+// or set_tun landing during the warmup+probe window is recorded and reported but
+// not baked into the config that actually came up — and reapplyLive no-ops while
+// the state is still "connecting". Left alone, the live tunnel would run the old
+// options while the state advertises the new ones (e.g. armed in the UI but no
+// strict_route on the wire). Here, right after the state reaches connected, we
+// compare what this loop built against the live options and, on a divergence,
+// hot-swap onto the same node exactly as a post-connect toggle would.
+//
+// It converges: the hot-swap's own connect re-runs this check, and once the
+// options settle it finds no divergence and stops — so a burst of toggles costs at
+// most one extra swap per settled value, not an endless loop. Only the live-reapply
+// options (kill switch, tun stack) are compared; routing mode and split are
+// deferred-to-next-connect by design, matching what reapplyLive itself applies.
+func (d *Daemon) reconcileConnectingOptions(loop fallbackLoop, nodeID string) {
+	d.mu.Lock()
+	curRo := d.routing
+	curTun := d.tun
+	d.mu.Unlock()
+	if loop.ro.KillSwitch == curRo.KillSwitch && loop.tun.Stack == curTun.Stack {
+		return // nothing that applies live changed during the connecting window
+	}
+	p, ok := d.store.Get(loop.profileID)
+	if !ok {
+		d.emitLog(LogWarn, "re-apply: connected profile no longer stored; the change applies on the next connect")
+		return
+	}
+	d.emitLog(LogInfo, "re-apply: options changed while connecting; hot-swapping to apply them")
+	d.startConnectIfCurrent(loop.gen, p, nodeID, func(err error) {
+		d.emitLog(LogWarn, fmt.Sprintf("re-apply: %v; the change applies on the next connect", err))
+	})
 }
 
 // pollTraffic polls cumulative counters every interval and emits a traffic event
@@ -646,7 +759,14 @@ func (d *Daemon) emitProfiles() {
 
 // Close tears down any active connection. The server calls it on shutdown.
 func (d *Daemon) Close() error {
+	d.connMu.Lock()
 	d.teardown(StateIdle, "", "")
+	d.connMu.Unlock()
+	// The teardown above bumped the generation, so any kill-switch relaunch or
+	// connecting-window reconcile still in flight will observe it and abort instead
+	// of starting a tunnel. Wait for those goroutines to unwind (after releasing
+	// connMu, which a parked one needs to make its check) so none outlives us.
+	d.relaunchWG.Wait()
 	return nil
 }
 

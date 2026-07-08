@@ -1,9 +1,11 @@
 package control
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -309,8 +311,10 @@ func TestKillSwitchRelaunchBudget(t *testing.T) {
 		h.runner.exit(errors.New("boom"))
 		h.awaitState(StateConnected) // each death within budget is answered
 	}
+	// Back-to-back deaths never clear the reset window, so the budget still runs
+	// out and the daemon gives up (see the honest wording in killSwitchRelaunch).
 	h.runner.exit(errors.New("boom"))
-	h.awaitLogContains("giving up on restarts")
+	h.awaitLogContains("giving up on automatic restarts")
 	h.awaitState(StateError)
 	if got, want := h.runner.starts(), 1+maxRelaunches; got != want {
 		t.Errorf("starts = %d, want %d (initial + budgeted relaunches)", got, want)
@@ -405,5 +409,259 @@ func TestKillSwitchAndTunPersistAcrossRestart(t *testing.T) {
 	h3.daemon.SetSettings(st3)
 	if got := h3.daemon.snapshotState().TunStack; got != "system" {
 		t.Errorf("tun stack = %q, want the system default for a bogus persisted value", got)
+	}
+}
+
+// waitFor polls cond until it is true, failing the test after 3s. It backs the
+// assertions that watch an asynchronous relaunch/reconcile settle.
+func waitFor(t *testing.T, cond func() bool, what string) {
+	t.Helper()
+	deadline := time.After(3 * time.Second)
+	for {
+		if cond() {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for %s", what)
+		case <-time.After(2 * time.Millisecond):
+		}
+	}
+}
+
+// TestSetKillSwitchDuringConnectingReconciles: a set_kill_switch that lands while
+// a connect is still in its warmup+probe window is applied to the tunnel that
+// comes up, not merely recorded. The fallback loop pins its options snapshot at
+// the start of the connect, so without the connecting-window reconcile the live
+// tunnel would run without strict_route while the state reports armed — core and
+// UI would disagree with the wire. The reconcile hot-swaps once the connect
+// settles, so the final live config carries strict_route and the reported state
+// matches reality.
+func TestSetKillSwitchDuringConnectingReconciles(t *testing.T) {
+	h := newHarness(t)
+	p := seedMultiProto(t, h)
+
+	// Park the first connect inside its probe so the toggle below is guaranteed to
+	// land while the state is still "connecting" (its config already built without
+	// strict_route). Later probes — including the reconcile's — run unblocked.
+	release := make(chan struct{})
+	probing := make(chan struct{}, 1)
+	h.runner.onProbe = func(_ context.Context, n int) {
+		if n != 1 {
+			return
+		}
+		select {
+		case probing <- struct{}{}:
+		default:
+		}
+		<-release
+	}
+
+	h.send(Request{ID: 1, Cmd: CmdConnect, Profile: p.ID})
+	h.await()
+	h.awaitState(StateConnecting)
+	<-probing // first connect is inside its probe; config[0] is built (no strict_route)
+
+	// Arm the kill switch mid-connect. reapplyLive no-ops while connecting, so this
+	// is only recorded here — the reconcile must be what applies it live.
+	h.send(Request{ID: 2, Cmd: CmdSetKillSwitch, On: true})
+	var armed State
+	h.dataInto(h.await(), &armed)
+	if !armed.KillSwitch {
+		t.Fatal("set_kill_switch response kill_switch = false, want true")
+	}
+
+	close(release) // let the first connect finish; the reconcile then hot-swaps
+
+	// The reconcile starts a second process, pinned to the same node; its config
+	// must carry the strict_route the toggle asked for.
+	h.waitStarts(2)
+	cfgs := h.runner.startCfgs()
+	if strict, _ := tunFromConfig(t, cfgs[0]); strict {
+		t.Error("first (connecting-window) config already had strict_route")
+	}
+	if strict, _ := tunFromConfig(t, cfgs[len(cfgs)-1]); !strict {
+		t.Error("reconciled config lacks strict_route; the mid-connect toggle was not applied to the live tunnel")
+	}
+	if connectedNodeTag(t, cfgs[0]) != connectedNodeTag(t, cfgs[len(cfgs)-1]) {
+		t.Error("reconcile moved the selector; it must pin the node that came up")
+	}
+
+	// The live state settles back to connected and genuinely armed — report and
+	// reality now agree.
+	waitFor(t, func() bool {
+		st := h.daemon.snapshotState()
+		return st.State == StateConnected && st.KillSwitch && h.runner.starts() == 2
+	}, "reconcile to settle connected and armed")
+}
+
+// TestKillSwitchDisconnectBeatsRelaunch: an explicit disconnect that lands while a
+// kill-switch relaunch is in flight wins — the tunnel must not come back after the
+// user asked for it to be down. The relaunch goroutine is parked at its entry so
+// the disconnect deterministically claims connMu first; when the relaunch resumes
+// it finds the generation moved and yields instead of resurrecting the tunnel.
+func TestKillSwitchDisconnectBeatsRelaunch(t *testing.T) {
+	h := newHarness(t)
+	p := seedMultiProto(t, h)
+
+	relaunching := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	h.daemon.beforeReconnect = func() {
+		once.Do(func() { close(relaunching) })
+		<-release
+	}
+
+	h.send(Request{ID: 1, Cmd: CmdSetKillSwitch, On: true})
+	h.await()
+	h.send(Request{ID: 2, Cmd: CmdConnect, Profile: p.ID})
+	h.await()
+	h.awaitState(StateConnected)
+	h.waitStarts(1)
+
+	// The process dies with the switch armed: a relaunch is spawned, then parks.
+	h.runner.exit(errors.New("boom"))
+	h.awaitLogContains("kill switch: tunnel process died")
+	<-relaunching
+	startsBefore := h.runner.starts()
+
+	// The user disconnects while the relaunch is parked.
+	h.send(Request{ID: 3, Cmd: CmdDisconnect})
+	var st State
+	h.dataInto(h.await(), &st)
+	if st.State != StateIdle {
+		t.Fatalf("disconnect state = %q, want idle", st.State)
+	}
+	h.awaitState(StateIdle)
+
+	// Release the relaunch: it must observe the bumped generation and abort, not
+	// start a tunnel back up.
+	close(release)
+	time.Sleep(50 * time.Millisecond) // give the goroutine a chance to (wrongly) act
+	if got := h.runner.starts(); got != startsBefore {
+		t.Errorf("relaunch started a tunnel after disconnect (starts %d -> %d); disconnect must win", startsBefore, got)
+	}
+	if got := h.daemon.snapshotState().State; got != StateIdle {
+		t.Errorf("state after disconnect+relaunch = %q, want idle (the tunnel must not resurrect)", got)
+	}
+}
+
+// TestKillSwitchCloseWaitsForRelaunch: Close must not let a kill-switch relaunch
+// outlive the daemon and leak a sing-box process. With the relaunch parked in
+// flight, Close blocks until it unwinds; the relaunch then observes the
+// generation Close bumped and aborts without starting anything, and every started
+// process has been stopped.
+func TestKillSwitchCloseWaitsForRelaunch(t *testing.T) {
+	h := newHarness(t)
+	p := seedMultiProto(t, h)
+
+	relaunching := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	h.daemon.beforeReconnect = func() {
+		once.Do(func() { close(relaunching) })
+		<-release
+	}
+
+	h.send(Request{ID: 1, Cmd: CmdSetKillSwitch, On: true})
+	h.await()
+	h.send(Request{ID: 2, Cmd: CmdConnect, Profile: p.ID})
+	h.await()
+	h.awaitState(StateConnected)
+	h.waitStarts(1)
+
+	h.runner.exit(errors.New("boom"))
+	h.awaitLogContains("kill switch: tunnel process died")
+	<-relaunching // relaunch parked at its gate, tracked so Close waits for it
+	startsBefore := h.runner.starts()
+
+	// Close must block while the relaunch goroutine is still in flight.
+	closed := make(chan error, 1)
+	go func() { closed <- h.daemon.Close() }()
+	select {
+	case <-closed:
+		t.Fatal("Close returned while an in-flight relaunch was still parked")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// Release it: on the generation Close bumped, it aborts without starting a
+	// tunnel, and Close then returns.
+	close(release)
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("close: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close did not return after the relaunch unwound; the goroutine leaked")
+	}
+
+	if got := h.runner.starts(); got != startsBefore {
+		t.Errorf("relaunch started a tunnel across Close (starts %d -> %d)", startsBefore, got)
+	}
+	if stops, starts := h.runner.stops(), h.runner.starts(); stops < starts {
+		t.Errorf("stops(%d) < starts(%d): a sing-box process leaked past Close", stops, starts)
+	}
+}
+
+// TestKillSwitchRelaunchBudgetRefundedByUptime: a tunnel that keeps dropping but
+// stays connected past the reset window between drops is not a crash-loop, so the
+// relaunch budget is refunded each time and never runs out — even across far more
+// deaths than maxRelaunches. Without the time-gated refund the sixth death would
+// degrade to error and stop auto-restarting. A fake clock supplies the uptime.
+func TestKillSwitchRelaunchBudgetRefundedByUptime(t *testing.T) {
+	h := newHarness(t)
+	p := seedMultiProto(t, h)
+
+	var clkMu sync.Mutex
+	now := time.Unix(1_000_000, 0)
+	h.daemon.now = func() time.Time { clkMu.Lock(); defer clkMu.Unlock(); return now }
+	advance := func(d time.Duration) { clkMu.Lock(); now = now.Add(d); clkMu.Unlock() }
+
+	h.send(Request{ID: 1, Cmd: CmdSetKillSwitch, On: true})
+	h.await()
+	h.send(Request{ID: 2, Cmd: CmdConnect, Profile: p.ID})
+	h.await()
+	h.awaitState(StateConnected)
+
+	// Far more deaths than the budget. Each current tunnel has been up well past
+	// the reset window before it dies (we jump the clock forward first), so every
+	// death reads as a recovery and refunds the budget rather than spending it.
+	for i := 0; i < maxRelaunches+3; i++ {
+		advance(2 * defaultRelaunchReset)
+		h.runner.exit(errors.New("boom"))
+		h.awaitState(StateConnected) // relaunched, not degraded to error
+	}
+}
+
+// TestKillSwitchRelaunchProfileGoneErrors: if the connected profile has vanished
+// from the store by the time its process dies, the armed relaunch can't rebuild a
+// config, so it gives up honestly — logging the reason and degrading to error
+// rather than silently leaving the tunnel down while claiming to be armed.
+func TestKillSwitchRelaunchProfileGoneErrors(t *testing.T) {
+	h := newHarness(t)
+	p := seedMultiProto(t, h)
+
+	h.send(Request{ID: 1, Cmd: CmdSetKillSwitch, On: true})
+	h.await()
+	h.send(Request{ID: 2, Cmd: CmdConnect, Profile: p.ID})
+	h.await()
+	h.awaitState(StateConnected)
+	h.waitStarts(1)
+
+	// Drop the profile straight from the store — not via remove_profile, which
+	// would tear the tunnel down first — so the relaunch's own lookup is what fails.
+	if err := h.store.Remove(p.ID); err != nil {
+		t.Fatalf("remove profile: %v", err)
+	}
+
+	h.runner.exit(errors.New("boom"))
+	h.awaitLogContains("cannot restart, profile no longer stored")
+	errState := h.awaitState(StateError)
+	if errState["error"] == nil || errState["error"] == "" {
+		t.Errorf("error state missing message: %+v", errState)
+	}
+	if got := h.runner.starts(); got != 1 {
+		t.Errorf("starts = %d, want 1 (no relaunch when the profile is gone)", got)
 	}
 }

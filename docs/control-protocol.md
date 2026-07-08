@@ -113,9 +113,12 @@ means two things:
 - if the **tunnel process itself dies**, the core relaunches it immediately,
   pinned to the node that was up — strict_route only holds while sing-box runs,
   so putting the process (and its filter rules) back is the only honest
-  mitigation. Relaunches are budgeted (5 in a row, reset by an explicit
-  connect/disconnect) so a tunnel that dies on every start can't churn forever;
-  past the budget the state degrades to `error` like any dropped tunnel.
+  mitigation. Relaunches are budgeted (up to 5 for a tunnel caught in a
+  crash-loop) so one that dies on every start can't churn forever; past the
+  budget the state degrades to `error` like any dropped tunnel. The budget counts
+  only rapid, back-to-back deaths: it resets on an explicit connect/disconnect,
+  and a relaunched tunnel that then stays connected for a while refunds it, so
+  isolated drops across a long session never accumulate toward the cap.
 
 Be honest with users about the limits: **while the process is down — the gap
 before a relaunch lands, or after the budget is spent — the OS routes normally
