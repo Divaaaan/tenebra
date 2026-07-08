@@ -11,6 +11,15 @@ Project overview and quick-start live in the top-level
 - **[development.md](development.md)** — the full set-up, build, run and test
   walkthrough, the environment variables, coding conventions and troubleshooting.
 
+Platform ports (plans, not yet shipped):
+
+- **[porting/macos.md](porting/macos.md)** — the macOS desktop port: same sidecar
+  model as Windows, with a privileged helper for the `utun` tunnel and a
+  DMG/notarization distribution path.
+- **[porting/ios.md](porting/ios.md)** — the iOS port: the engine linked in-process
+  via gomobile inside a Network Extension, the ~50 MB memory budget that dominates
+  the design, and the provisioning and distribution constraints.
+
 Also at the repository root:
 
 - **[CONTRIBUTING.md](../CONTRIBUTING.md)** — how to get set up and propose a
