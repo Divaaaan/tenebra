@@ -1,35 +1,40 @@
 // Small client-side settings backed by localStorage. These are renderer-owned
-// preferences (the core doesn't know or care about them): whether to reconnect
-// on launch, and which profile to reconnect to. Kept here so the components that
-// read and write them share one source of truth and one set of keys.
+// preferences (the core doesn't know or care about them). Kept here so the
+// components that read and write them share one source of truth and one set of
+// keys.
 
-const AUTOCONNECT_KEY = "tenebra.autoconnect";
-const LAST_PROFILE_KEY = "tenebra.lastProfile";
 const AUTO_FASTEST_KEY = "tenebra.autoFastest";
 const AUTO_INSTALL_UPDATES_KEY = "tenebra.autoInstallUpdates";
-
-/** Whether "connect on launch" is enabled. Off unless explicitly turned on. */
-export function getAutoconnect(): boolean {
-  return localStorage.getItem(AUTOCONNECT_KEY) === "1";
-}
-
-export function setAutoconnect(on: boolean): void {
-  localStorage.setItem(AUTOCONNECT_KEY, on ? "1" : "0");
-}
-
-/** The last profile that connected successfully, or null if none is recorded. */
-export function getLastProfileId(): string | null {
-  const id = localStorage.getItem(LAST_PROFILE_KEY);
-  return id && id.length > 0 ? id : null;
-}
-
-export function setLastProfileId(id: string): void {
-  localStorage.setItem(LAST_PROFILE_KEY, id);
-}
 
 // The kill switch used to be a renderer-side flag here ("tenebra.killSwitch");
 // it is now core-owned: the daemon persists it in its settings.json, arms it in
 // the tunnel config, and reports it back through State.kill_switch.
+
+// Autoconnect and the last-connected profile followed it: the daemon persists
+// both, reconnects when it starts (service mode: at boot, before any UI), and
+// reports the preference back through State.autoconnect. The legacy keys below
+// survive only long enough to be migrated.
+const LEGACY_AUTOCONNECT_KEY = "tenebra.autoconnect";
+const LEGACY_LAST_PROFILE_KEY = "tenebra.lastProfile";
+
+/**
+ * One-shot migration of the legacy renderer-owned autoconnect flag. If the old
+ * key says "on" while the core reports the preference off, `arm` is awaited
+ * once to turn it on in the core; the stale keys are then removed. When arming
+ * fails the keys are left in place — the next launch retries — and the error
+ * propagates to the caller. The last-profile key is only dropped, never
+ * transplanted: the core records its own last connect on the next success.
+ */
+export async function migrateLegacyAutoconnect(
+  coreOn: boolean,
+  arm: () => Promise<void>,
+): Promise<void> {
+  if (localStorage.getItem(LEGACY_AUTOCONNECT_KEY) === "1" && !coreOn) {
+    await arm();
+  }
+  localStorage.removeItem(LEGACY_AUTOCONNECT_KEY);
+  localStorage.removeItem(LEGACY_LAST_PROFILE_KEY);
+}
 
 /**
  * Whether "auto-select fastest node" is enabled. When on, a connect without an

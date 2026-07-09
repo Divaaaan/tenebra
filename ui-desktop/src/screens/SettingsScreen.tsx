@@ -9,10 +9,8 @@ import { useI18n } from "../i18n/I18nContext";
 import { useTheme } from "../theme/ThemeContext";
 import type { Language } from "../i18n/strings";
 import {
-  getAutoconnect,
   getAutoFastest,
   getAutoInstallUpdates,
-  setAutoconnect,
   setAutoFastest,
   setAutoInstallUpdates,
 } from "../lib/settings";
@@ -30,7 +28,6 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   // state on mount so the toggle reflects what the system actually has set.
   const [launchAtLogin, setLaunchAtLogin] = useState(false);
   const [launchBusy, setLaunchBusy] = useState(false);
-  const [autoconnect, setAutoconnectState] = useState(getAutoconnect);
   const [autoFastest, setAutoFastestState] = useState(getAutoFastest);
   const [autoInstall, setAutoInstallState] = useState(getAutoInstallUpdates);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ kind: "idle" });
@@ -81,12 +78,14 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     }
   }
 
+  // Autoconnect is core-owned, like the kill switch: the daemon persists it and
+  // reconnects the last profile when it starts (service mode: at boot). The UI
+  // reflects the reported state and toggles it over the protocol.
+  const autoconnect = tenebra.state.autoconnect ?? false;
+
   function toggleAutoconnect() {
-    setAutoconnectState((prev) => {
-      const next = !prev;
-      setAutoconnect(next);
-      return next;
-    });
+    // Failures surface on the state/log channels the UI already renders.
+    void tenebra.setAutoconnect(!autoconnect).catch(() => {});
   }
 
   function toggleAutoFastest() {

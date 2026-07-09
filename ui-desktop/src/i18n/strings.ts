@@ -430,7 +430,8 @@ const en: Strings = {
     launchAtLogin: "Launch at login",
     launchAtLoginHint: "Start Tenebra when you sign in.",
     autoconnect: "Connect on launch",
-    autoconnectHint: "Reconnect the last used profile when Tenebra starts.",
+    autoconnectHint:
+      "Reconnect the last used profile when the Tenebra core starts — with the service installed, at system boot.",
     autoFastest: "Auto-select fastest node",
     autoFastestHint:
       "When you connect without picking a node, ping the servers and use the fastest one. Blocked servers are skipped automatically.",
@@ -655,7 +656,8 @@ const ru: Strings = {
     launchAtLogin: "Запускать при входе",
     launchAtLoginHint: "Открывать Tenebra при входе в систему.",
     autoconnect: "Подключаться при запуске",
-    autoconnectHint: "Восстанавливать последний профиль при старте Tenebra.",
+    autoconnectHint:
+      "Восстанавливать последний профиль при старте ядра Tenebra — со службой это происходит при загрузке системы.",
     autoFastest: "Выбирать самый быстрый узел",
     autoFastestHint:
       "При подключении без выбора узла пинговать серверы и использовать самый быстрый. Заблокированные серверы пропускаются автоматически.",

@@ -291,18 +291,65 @@ describe("SettingsScreen", () => {
   describe("startup", () => {
     // The switch's accessible name is its own text ("ON"/"OFF"), not the sibling
     // label, so locate the row by its label text and grab the switch within it.
-    function fastestToggle(): HTMLElement {
-      const label = screen.getByText("Auto-select fastest node");
-      const row = label.closest(".set-row");
+    function toggleInRow(label: string): HTMLElement {
+      const row = screen.getByText(label).closest(".set-row");
       if (!row) {
-        throw new Error("auto-fastest row not found");
+        throw new Error(`${label} row not found`);
       }
       const toggle = row.querySelector('[role="switch"]');
       if (!toggle) {
-        throw new Error("auto-fastest switch not found");
+        throw new Error(`${label} switch not found`);
       }
       return toggle as HTMLElement;
     }
+
+    function fastestToggle(): HTMLElement {
+      return toggleInRow("Auto-select fastest node");
+    }
+
+    // Autoconnect is core-owned: the toggle mirrors State.autoconnect and asks
+    // the core to change it, instead of a renderer-side localStorage flag.
+    function autoconnectToggle(): HTMLElement {
+      return toggleInRow("Connect on launch");
+    }
+
+    it("autoconnect reflects the core-reported state", () => {
+      const tenebra = makeTenebra({
+        state: { state: "idle", autoconnect: true } as State,
+      });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(autoconnectToggle()).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("autoconnect starts off when the core omits the field", () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(autoconnectToggle()).toHaveAttribute("aria-checked", "false");
+    });
+
+    it("autoconnect toggles through the core, not localStorage", async () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(autoconnectToggle());
+      expect(tenebra.setAutoconnect).toHaveBeenCalledWith(true);
+      // The choice lives in the core's settings now; nothing is written here.
+      expect(localStorage.getItem("tenebra.autoconnect")).toBeNull();
+    });
+
+    it("autoconnect disarms from the reported on state", async () => {
+      const tenebra = makeTenebra({
+        state: { state: "idle", autoconnect: true } as State,
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(autoconnectToggle());
+      expect(tenebra.setAutoconnect).toHaveBeenCalledWith(false);
+    });
 
     it("auto-select-fastest reflects and persists the stored preference", async () => {
       const tenebra = makeTenebra({ state: { state: "idle" } as State });

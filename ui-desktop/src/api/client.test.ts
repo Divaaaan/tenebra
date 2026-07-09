@@ -173,6 +173,13 @@ describe("api command wrappers", () => {
     expect(mockInvoke).toHaveBeenCalledWith("set_tun", { stack: "gvisor" });
   });
 
+  it("setAutoconnect forwards the flag and returns the State", async () => {
+    const armed: State = { state: "idle", autoconnect: true };
+    mockInvoke.mockResolvedValueOnce(armed);
+    await expect(api.setAutoconnect(true)).resolves.toEqual(armed);
+    expect(mockInvoke).toHaveBeenCalledWith("set_autoconnect", { on: true });
+  });
+
   it("leakCheck passes the LeakCheck verdict through", async () => {
     const leak: LeakCheck = {
       connected: false,
