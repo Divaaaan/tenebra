@@ -51,10 +51,25 @@ At startup the GUI probes the pipe once: if a core is listening it attaches
 (and opens the session with the `status` re-sync above); if nothing is
 listening it spawns the core as its stdio sidecar, exactly the pre-service
 behaviour. When a pipe session ends mid-run — the service restarted, or
-another client displaced this one — the GUI reports the loss as an error
-state, redials with capped exponential backoff, and re-syncs when it gets
-back in; it never falls back to a sidecar mid-run, since the service owns the
-tunnel. `TENEBRA_PIPE` overrides the probe: an alternate pipe name, or `off`
+another client displaced this one — the GUI redials with capped exponential
+backoff and re-syncs when it gets back in; it never falls back to a sidecar
+mid-run, since the service owns the tunnel.
+
+While disconnected the GUI synthesizes `state` events of its own, since the
+core cannot speak for a connection that is gone. The moment the session drops
+it pushes `{"state":"connecting","error":"Reconnecting to the Tenebra
+service…"}` — the tunnel may or may not still be up (a restarting service
+tears it down, a displaced session leaves it), so neither `connected` nor
+`idle` would be honest, and commands fail fast with a matching "reconnecting"
+error the whole time. Only if the service stays away past a short grace
+window (8 s — enough for a service restart under an update or a displaced
+session to come back, so those never read as failures) does it escalate to a
+synthetic `{"state":"error", ...}`. Either way the `status` re-sync replaces
+the synthetic state with the real one as soon as a session is back. These
+events are a client-side presentation detail, not part of the core's wire
+contract.
+
+`TENEBRA_PIPE` overrides the probe: an alternate pipe name, or `off`
 to force the sidecar (useful in development, where a running service would
 otherwise capture the session meant for a freshly built core).
 

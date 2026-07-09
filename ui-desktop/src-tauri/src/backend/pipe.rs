@@ -13,8 +13,11 @@
 //!   pushes the answer at the UI.
 //! - **Reconnect on loss.** The session ending (service restarted or died, or
 //!   another client displaced us — the pipe is last-writer-wins) is not fatal:
-//!   a supervisor thread reports the loss to the UI and redials with capped
-//!   exponential backoff until the pipe answers again, then re-syncs. While
+//!   a supervisor thread pushes a synthetic "reconnecting" state at the UI and
+//!   redials with capped exponential backoff until the pipe answers again,
+//!   then re-syncs. Only a loss that outlasts [`RECONNECT_GRACE`] is escalated
+//!   to an error state — a planned service restart or a displaced session is
+//!   back well inside the window and never reads as a failure. While
 //!   disconnected, commands fail fast instead of timing out.
 //!
 //! # Why the reader polls
@@ -63,6 +66,16 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// a ceiling so a stopped service is probed gently, not hammered.
 const INITIAL_BACKOFF: Duration = Duration::from_millis(250);
 const MAX_BACKOFF: Duration = Duration::from_secs(5);
+
+/// How long a lost session may present itself as "reconnecting" before the
+/// loss is reported as an error. The interruptions worth staying quiet for —
+/// the service restarting under an update, a crash the service manager
+/// restarts, a displaced session redialing — are back within a couple of
+/// seconds. Eight seconds comfortably outlasts all of those and spans the
+/// first five dial attempts (backoff puts them ~0.25 s to ~7.75 s after the
+/// loss), while still reporting a genuinely stopped service in single-digit
+/// seconds.
+const RECONNECT_GRACE: Duration = Duration::from_secs(8);
 
 /// How long a dial tolerates `ERROR_PIPE_BUSY` before giving up. Busy means the
 /// server exists but has no free instance this instant (it is between accepting
@@ -131,15 +144,19 @@ impl PipeBackend {
             stop: Arc::clone(&stop),
         };
         let first = dialer.dial()?;
-        Self::start(first, dialer, sink, stop)
+        Self::start(first, dialer, sink, stop, RECONNECT_GRACE)
     }
 
     /// Wire up the supervisor around an already-dialed first connection.
+    /// `grace` is how long a lost session may stay "reconnecting" before it is
+    /// reported as an error — [`RECONNECT_GRACE`] in production, shortened by
+    /// the tests that exercise the expiry path.
     fn start(
         first: Conn,
         dialer: impl Dial,
         sink: Arc<dyn EventSink>,
         stop: Arc<AtomicBool>,
+        grace: Duration,
     ) -> Result<Self, String> {
         let shared = Arc::new(PipeShared {
             session: Mutex::new(None),
@@ -149,7 +166,7 @@ impl PipeBackend {
         let sup_stop = Arc::clone(&stop);
         let supervisor = thread::Builder::new()
             .name("tenebra-pipe-supervisor".into())
-            .spawn(move || supervise(first, dialer, sup_shared, sink, sup_stop, stop_rx))
+            .spawn(move || supervise(first, dialer, sup_shared, sink, sup_stop, stop_rx, grace))
             .map_err(|e| format!("failed to start the pipe supervisor thread: {e}"))?;
         Ok(Self {
             shared,
@@ -189,11 +206,34 @@ impl Drop for PipeBackend {
     }
 }
 
-/// The synthetic state pushed when the control connection drops. `Error` is the
-/// honest choice of the protocol's four states: the tunnel may or may not still
-/// be up (a restarting service tears it down; a displaced session leaves it),
-/// and the UI must not claim either. The re-sync after reconnecting replaces
-/// this with the real state.
+/// The synthetic state pushed the moment the control connection drops. The
+/// tunnel may or may not still be up (a restarting service tears it down; a
+/// displaced session leaves it), so neither `Connected` nor `Idle` would be
+/// honest — and `Error` is premature while the redial usually lands within a
+/// second or two. `Connecting` is the truthful in-between: nothing is claimed
+/// about the tunnel, session-bound commands already fail fast with their own
+/// "reconnecting" error, and the message says what is actually going on. The
+/// re-sync after reconnecting replaces this with the real state; [`lost_state`]
+/// replaces it if the grace window runs out first.
+fn reconnecting_state() -> State {
+    State {
+        state: ConnectionState::Connecting,
+        node: None,
+        profile: None,
+        routing: None,
+        split: None,
+        split_apps: None,
+        kill_switch: None,
+        tun_stack: None,
+        error: Some("Reconnecting to the Tenebra service…".to_string()),
+    }
+}
+
+/// The synthetic state pushed when the service has not answered within the
+/// grace window. By now the outage is not a restart blip, the tunnel state is
+/// unknown, and `Error` is the honest choice of the protocol's four states —
+/// the UI must not claim the tunnel is either up or cleanly down. The re-sync
+/// after an eventual reconnect replaces this with the real state.
 fn lost_state() -> State {
     State {
         state: ConnectionState::Error,
@@ -213,11 +253,13 @@ fn next_backoff(current: Duration) -> Duration {
 }
 
 /// Run sessions until the backend is dropped: serve the current connection to
-/// its end, report the loss, then redial with backoff and serve again. EOF from
-/// a displacement (another client took the pipe) is indistinguishable from a
+/// its end, present the loss as a reconnect in progress, then redial with
+/// backoff and serve again. Only when the service stays away past `grace` is
+/// the loss escalated to an error state, once per outage. EOF from a
+/// displacement (another client took the pipe) is indistinguishable from a
 /// service restart on this side and is handled identically — retry, never
 /// panic; the single-instance GUI makes a genuine takeover war impossible in
-/// practice.
+/// practice, and both causes normally redial well inside the grace window.
 fn supervise(
     first: Conn,
     mut dialer: impl Dial,
@@ -225,9 +267,9 @@ fn supervise(
     sink: Arc<dyn EventSink>,
     stop: Arc<AtomicBool>,
     stop_rx: Receiver<()>,
+    grace: Duration,
 ) {
     let mut conn = Some(first);
-    let mut backoff = INITIAL_BACKOFF;
     while let Some(current) = conn.take() {
         serve_session(current, &shared, &sink);
         if stop.load(Ordering::SeqCst) {
@@ -235,30 +277,60 @@ fn supervise(
         }
 
         // The session is gone and already cleared, so commands now fail fast;
-        // tell the UI before spending time redialing.
-        sink.state(&lost_state());
+        // tell the UI before spending time redialing — as a reconnect under
+        // way, not yet a failure.
+        sink.state(&reconnecting_state());
         sink.log(
             "warn",
             "lost the connection to the Tenebra service; reconnecting",
         );
 
+        let deadline = Instant::now() + grace;
+        let mut reported = false;
+        let mut backoff = INITIAL_BACKOFF;
         loop {
-            match stop_rx.recv_timeout(backoff) {
-                Err(RecvTimeoutError::Timeout) => {}
-                Ok(()) | Err(RecvTimeoutError::Disconnected) => return,
+            let dial_at = Instant::now() + backoff;
+            // If the grace window closes before the next dial, wake for it:
+            // the escalation should land at the deadline, not whenever the
+            // (up to MAX_BACKOFF) wait happens to end.
+            if !reported && deadline < dial_at {
+                if !wait_until(&stop_rx, &stop, deadline) {
+                    return;
+                }
+                sink.state(&lost_state());
+                sink.log("warn", "the Tenebra service is still unreachable");
+                reported = true;
             }
-            if stop.load(Ordering::SeqCst) {
+            if !wait_until(&stop_rx, &stop, dial_at) {
                 return;
             }
             match dialer.dial() {
                 Ok(next) => {
                     sink.log("info", "reconnected to the Tenebra service");
-                    backoff = INITIAL_BACKOFF;
                     conn = Some(next);
                     break;
                 }
                 Err(_) => backoff = next_backoff(backoff),
             }
+        }
+    }
+}
+
+/// Park until `until`, waking early only for shutdown: `false` means the
+/// backend is stopping (its drop raised the flag and hung up the channel),
+/// `true` means the deadline passed.
+fn wait_until(stop_rx: &Receiver<()>, stop: &AtomicBool, until: Instant) -> bool {
+    loop {
+        if stop.load(Ordering::SeqCst) {
+            return false;
+        }
+        let remaining = until.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return true;
+        }
+        match stop_rx.recv_timeout(remaining) {
+            Err(RecvTimeoutError::Timeout) => {}
+            Ok(()) | Err(RecvTimeoutError::Disconnected) => return false,
         }
     }
 }
@@ -536,6 +608,7 @@ mod tests {
             dialer,
             Arc::clone(&sink) as Arc<dyn EventSink>,
             Arc::clone(&stop),
+            RECONNECT_GRACE,
         )
         .expect("start pipe backend");
 
@@ -565,7 +638,7 @@ mod tests {
     }
 
     #[test]
-    fn a_lost_session_reports_reconnects_and_resyncs() {
+    fn a_lost_session_reconnects_within_grace_without_an_error() {
         let stop = Arc::new(AtomicBool::new(false));
         let (ours1, theirs1) = duplex(&stop);
         let (ours2, theirs2) = duplex(&stop);
@@ -578,7 +651,7 @@ mod tests {
 
         let sink = Arc::new(Rec::default());
         // First redial fails (the service is still coming back), the next one
-        // lands on the new instance.
+        // lands on the new instance — well inside the production grace window.
         let dialer = ScriptDialer {
             script: VecDeque::from([
                 Err("the service is still down".to_string()),
@@ -590,22 +663,29 @@ mod tests {
             dialer,
             Arc::clone(&sink) as Arc<dyn EventSink>,
             Arc::clone(&stop),
+            RECONNECT_GRACE,
         )
         .expect("start pipe backend");
 
-        // connected (re-sync 1) → error (loss) → connected (re-sync 2).
+        // connected (re-sync 1) → connecting (loss) → connected (re-sync 2).
         let states = sink.wait_for_states(3, WAIT);
         assert_eq!(states[0].state, ConnectionState::Connected);
-        assert_eq!(states[1].state, ConnectionState::Error);
+        assert_eq!(states[1].state, ConnectionState::Connecting);
         assert!(
             states[1]
                 .error
                 .as_deref()
-                .is_some_and(|e| e.contains("reconnecting")),
+                .is_some_and(|e| e.contains("Reconnecting")),
             "the loss state should say it is reconnecting: {:?}",
             states[1]
         );
         assert_eq!(states[2].state, ConnectionState::Connected);
+        // The redial landed inside the grace window, so the loss must never
+        // have been escalated to an error.
+        assert!(
+            states.iter().all(|s| s.state != ConnectionState::Error),
+            "a redial inside the grace window must not report an error: {states:?}"
+        );
 
         // The new session re-synced with its own status request.
         let cmds2: Vec<String> = requests2
@@ -620,6 +700,117 @@ mod tests {
         assert!(
             logs.iter().any(|(_, msg)| msg.contains("reconnected")),
             "expected a reconnect log, got {logs:?}"
+        );
+
+        drop(backend);
+        stub1.join().expect("stub core 1");
+        stub2.join().expect("stub core 2");
+    }
+
+    #[test]
+    fn a_displaced_session_redials_at_once_and_stays_quiet() {
+        // A displacement (another client took the pipe — last-writer-wins) is
+        // an EOF with the listener still up, so the very first redial lands.
+        // The UI sees a brief reconnecting state and then the re-synced real
+        // state; nothing about the blip reads as a failure.
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ours1, theirs1) = duplex(&stop);
+        let (ours2, theirs2) = duplex(&stop);
+        let requests1 = Arc::new(Mutex::new(Vec::new()));
+        let requests2 = Arc::new(Mutex::new(Vec::new()));
+        let stub1 = spawn_stub_core(theirs1, Arc::clone(&requests1), connected_state, Some(1));
+        let stub2 = spawn_stub_core(theirs2, Arc::clone(&requests2), connected_state, None);
+
+        let sink = Arc::new(Rec::default());
+        let dialer = ScriptDialer {
+            script: VecDeque::from([Ok(conn_from(ours2))]),
+        };
+        let backend = PipeBackend::start(
+            conn_from(ours1),
+            dialer,
+            Arc::clone(&sink) as Arc<dyn EventSink>,
+            Arc::clone(&stop),
+            RECONNECT_GRACE,
+        )
+        .expect("start pipe backend");
+
+        let states = sink.wait_for_states(3, WAIT);
+        assert_eq!(states[0].state, ConnectionState::Connected);
+        assert_eq!(states[1].state, ConnectionState::Connecting);
+        assert_eq!(states[2].state, ConnectionState::Connected);
+        assert!(
+            states.iter().all(|s| s.state != ConnectionState::Error),
+            "an instant redial must not report an error: {states:?}"
+        );
+
+        // The retaken session re-synced, so the UI holds the real state again.
+        let cmds2: Vec<String> = requests2
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| r["cmd"].as_str().unwrap_or_default().to_string())
+            .collect();
+        assert_eq!(cmds2.first().map(String::as_str), Some("status"));
+
+        drop(backend);
+        stub1.join().expect("stub core 1");
+        stub2.join().expect("stub core 2");
+    }
+
+    #[test]
+    fn a_loss_outlasting_the_grace_reports_an_error_once() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ours1, theirs1) = duplex(&stop);
+        let (ours2, theirs2) = duplex(&stop);
+        let requests1 = Arc::new(Mutex::new(Vec::new()));
+        let requests2 = Arc::new(Mutex::new(Vec::new()));
+        let stub1 = spawn_stub_core(theirs1, Arc::clone(&requests1), connected_state, Some(1));
+        let stub2 = spawn_stub_core(theirs2, Arc::clone(&requests2), connected_state, None);
+
+        let sink = Arc::new(Rec::default());
+        // Two failed dials (~0.25 s and ~0.75 s in), success on the third
+        // (~1.75 s in). A 600 ms grace expires between the first and second
+        // dial — in the middle of a backoff wait, which must wake for it.
+        let grace = Duration::from_millis(600);
+        let dialer = ScriptDialer {
+            script: VecDeque::from([
+                Err("still down".to_string()),
+                Err("still down".to_string()),
+                Ok(conn_from(ours2)),
+            ]),
+        };
+        let backend = PipeBackend::start(
+            conn_from(ours1),
+            dialer,
+            Arc::clone(&sink) as Arc<dyn EventSink>,
+            Arc::clone(&stop),
+            grace,
+        )
+        .expect("start pipe backend");
+
+        // connected (re-sync 1) → connecting (loss) → error (grace expired) →
+        // connected (re-sync 2 replaces the error).
+        let states = sink.wait_for_states(4, WAIT);
+        assert_eq!(states[0].state, ConnectionState::Connected);
+        assert_eq!(states[1].state, ConnectionState::Connecting);
+        assert_eq!(states[2].state, ConnectionState::Error);
+        assert!(
+            states[2]
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains("Lost")),
+            "the escalated state should name the loss: {:?}",
+            states[2]
+        );
+        assert_eq!(states[3].state, ConnectionState::Connected);
+        // Later failed dials in the same outage must not repeat the report.
+        assert_eq!(
+            states
+                .iter()
+                .filter(|s| s.state == ConnectionState::Error)
+                .count(),
+            1,
+            "the loss is escalated once per outage: {states:?}"
         );
 
         drop(backend);
@@ -645,14 +836,16 @@ mod tests {
             dialer,
             Arc::clone(&sink) as Arc<dyn EventSink>,
             Arc::clone(&stop),
+            RECONNECT_GRACE,
         )
         .expect("start pipe backend");
 
-        // Once the loss state is out, the session is guaranteed cleared (the
-        // supervisor clears it before reporting), so a command must fail fast
-        // with the reconnecting error rather than riding out a timeout.
+        // Once the reconnecting state is out, the session is guaranteed cleared
+        // (the supervisor clears it before reporting), so a command must fail
+        // fast with the reconnecting error rather than riding out a timeout —
+        // the grace window softens the presentation, never the semantics.
         let states = sink.wait_for_states(2, WAIT);
-        assert_eq!(states[1].state, ConnectionState::Error);
+        assert_eq!(states[1].state, ConnectionState::Connecting);
         let err = backend.status().expect_err("no session to serve this");
         assert!(
             err.contains("reconnecting"),
@@ -833,10 +1026,11 @@ mod tests {
         let sink = Arc::new(Rec::default());
         let backend = retry_connect(&name, Arc::clone(&sink));
 
-        // connected → error (hangup) → connected (redial + re-sync).
+        // connected → connecting (hangup, the redial lands inside the grace
+        // window) → connected (redial + re-sync).
         let states = sink.wait_for_states(3, WAIT);
         assert_eq!(states[0].state, ConnectionState::Connected);
-        assert_eq!(states[1].state, ConnectionState::Error);
+        assert_eq!(states[1].state, ConnectionState::Connecting);
         assert_eq!(states[2].state, ConnectionState::Connected);
 
         // Both sessions opened with the status re-sync.

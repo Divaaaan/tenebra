@@ -77,13 +77,37 @@ describe("ConnectionPanel", () => {
   });
 
   describe("connecting", () => {
-    it("shows the connecting status and the abort label", () => {
+    it("shows the connecting status, the abort label and the generic sub-line", () => {
       renderWithProviders(
         <ConnectionPanel {...baseProps({ phase: "connecting" })} />,
       );
 
       expect(screen.getByText("Connecting…")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /ABORT/ })).toBeInTheDocument();
+      expect(
+        screen.getByText("establishing tunnel · negotiating · · ·"),
+      ).toBeInTheDocument();
+    });
+
+    it("shows a backend transport notice in place of the generic sub-line", () => {
+      // The GUI synthesizes a connecting state with a message while it
+      // re-dials a restarted service; that message must reach the user
+      // instead of the (untrue) tunnel-negotiation line.
+      renderWithProviders(
+        <ConnectionPanel
+          {...baseProps({
+            phase: "connecting",
+            errorMsg: "Reconnecting to the Tenebra service…",
+          })}
+        />,
+      );
+
+      expect(
+        screen.getByText("Reconnecting to the Tenebra service…"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText("establishing tunnel · negotiating · · ·"),
+      ).not.toBeInTheDocument();
     });
   });
 
