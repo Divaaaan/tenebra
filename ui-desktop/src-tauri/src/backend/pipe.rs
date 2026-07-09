@@ -891,4 +891,68 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
     }
+
+    // --- the real core over the real pipe ------------------------------------
+
+    /// Locate the built core binary, or `None` if it isn't present yet — the
+    /// same skip contract as `tests/sidecar_e2e.rs`, so `cargo test` stays
+    /// green on a fresh checkout.
+    fn core_binary() -> Option<std::path::PathBuf> {
+        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let exe = std::env::consts::EXE_SUFFIX;
+        let triple = env!("TENEBRA_TARGET_TRIPLE");
+        [
+            manifest.join(format!("binaries/tenebra-core-{triple}{exe}")),
+            manifest.join(format!("binaries/tenebra-core{exe}")),
+        ]
+        .into_iter()
+        .find(|p| p.exists())
+    }
+
+    /// The full cross-implementation round-trip: this client against the real
+    /// Go core serving `--pipe`, on the well-known name — the exact production
+    /// wiring of the service transport. Catches framing or session-semantics
+    /// drift between the two sides that the in-process stub server cannot.
+    ///
+    /// `--pipe` always serves `\\.\pipe\tenebra`, so this test would collide
+    /// with an actually-installed service; the core fails to claim the name in
+    /// that case (FILE_FLAG_FIRST_PIPE_INSTANCE) and the test surfaces it
+    /// rather than silently driving the wrong daemon.
+    #[test]
+    fn real_core_serves_the_well_known_pipe() {
+        let Some(program) = core_binary() else {
+            eprintln!("SKIP: tenebra-core binary not built; see tests/sidecar_e2e.rs");
+            return;
+        };
+
+        // Isolate the profile store; a bogus sing-box path is fine because
+        // nothing here starts a tunnel.
+        let store = std::env::temp_dir().join(format!("tenebra-pipe-e2e-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&store);
+        let mut core = std::process::Command::new(&program)
+            .arg("--pipe")
+            .env("TENEBRA_SINGBOX", "sing-box-not-needed-for-this-test")
+            .env("TENEBRA_CONFIG_DIR", &store)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn tenebra-core --pipe");
+
+        // The listener takes a moment to come up; retry_connect covers it.
+        let sink = Arc::new(Rec::default());
+        let backend = retry_connect(PIPE_NAME, Arc::clone(&sink));
+
+        // The re-sync pushed the core's actual state (idle on a fresh store).
+        let states = sink.wait_for_states(1, WAIT);
+        assert_eq!(states[0].state, ConnectionState::Idle);
+
+        // And a command round-trips against the real dispatcher.
+        let state = backend.status().expect("status against the real core");
+        assert_eq!(state.state, ConnectionState::Idle);
+
+        drop(backend);
+        let _ = core.kill();
+        let _ = core.wait();
+    }
 }
