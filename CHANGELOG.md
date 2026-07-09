@@ -9,7 +9,7 @@ All notable changes to Tenebra are documented here. The format follows
 > [project status](README.md#project-status). Expect breaking changes between
 > 0.x releases.
 
-## [Unreleased]
+## [0.3.0] - 2026-07-09
 
 ### Added
 
@@ -77,6 +77,20 @@ All notable changes to Tenebra are documented here. The format follows
   A service restart during an update, or another client briefly taking the
   session over, comes back well inside the window and no longer flashes
   "Connection failed" while the tunnel is in fact fine.
+- The installer artwork now matches the app: a branded sidebar and header on
+  the installer pages, and the eclipse mark as the installer icon.
+- The version badge in the top bar is derived from `package.json` at build
+  time instead of a hand-bumped literal, which had been left at v0.1.1 in the
+  0.2.0 release.
+
+### Fixed
+
+- The installer's service registration silently failed on every install: the
+  `binPath` quoting collapsed into a form that `sc.exe` splits at the space in
+  "Program Files", so it printed its usage text (exit 1639) instead of
+  creating the service, and `nsExec` swallowed the output. The path is now
+  escaped so it survives argv splitting in one piece — and the registered
+  image path is quoted, closing the unquoted-service-path gap as well.
 
 ## [0.2.0] - 2026-07-09
 
