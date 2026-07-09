@@ -1,0 +1,15 @@
+# The Xcode project is generated from project.yml by XcodeGen — never committed.
+#   cd ui-ios && xcodegen generate
+*.xcodeproj/
+
+# gomobile build outputs (scripts/build-libbox.sh). These are tens of MB because
+# they statically bundle the Go runtime + gVisor + quic-go. Ignored by default so
+# they are rebuilt on the Mac; if you prefer to cache them (to avoid running the
+# gomobile toolchain on every build), track them via Git LFS and remove this line.
+Frameworks/*.xcframework/
+
+# Xcode local state
+xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+build/

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Host app entitlements. SCAFFOLD — not validated against a real provisioning
+  profile. The container app that manages the tunnel needs the Network Extension
+  entitlement (to create/save the NETunnelProviderManager configuration) and must
+  share the App Group with the extension.
+
+  The packet-tunnel-provider capability is SELF-SERVE: enable "Network Extensions"
+  in Xcode > Signing & Capabilities (or on the developer portal). It needs a real
+  Apple Developer team; it is not a special-approval entitlement.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.developer.networking.networkextension</key>
+	<array>
+		<string>packet-tunnel-provider</string>
+	</array>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.tenebra.ios</string>
+	</array>
+</dict>
+</plist>
