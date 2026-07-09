@@ -24,6 +24,10 @@ interface ConnectionPanelProps {
   /** Cumulative session bytes. */
   cumulativeDown: number;
   cumulativeUp: number;
+  /**
+   * Backend-supplied detail line: the failure reason in the error phase, or a
+   * transport notice (e.g. reconnecting to the service) while connecting.
+   */
   errorMsg?: string;
   /** Connect / disconnect / abort, depending on phase. */
   onPrimary: () => void;
@@ -65,7 +69,11 @@ export function ConnectionPanel({
       {protocolLabel} · <span className="b">{t.conn.subConnected}</span>
     </span>
   ) : pending ? (
-    <span className="sig">{t.conn.subPending}</span>
+    // A connecting state normally means a tunnel handshake (the generic
+    // negotiating line); when the backend attaches a message — e.g. the GUI is
+    // re-dialing a restarted service — that message is the honest thing to
+    // show instead.
+    <span className="sig">{errorMsg || t.conn.subPending}</span>
   ) : phase === "error" && errorMsg ? (
     <span className="sig">{errorMsg}</span>
   ) : (
