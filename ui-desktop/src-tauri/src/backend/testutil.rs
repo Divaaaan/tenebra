@@ -7,7 +7,7 @@ use std::io::{self, Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::{EventSink, State};
 
@@ -100,13 +100,38 @@ impl Read for ChanReader {
 }
 
 /// A recording sink: stores everything the backend pushes so tests can assert
-/// on it.
+/// on it. `wait_for_states` covers the asynchronous paths (reader threads, the
+/// pipe supervisor) without sprinkling sleeps through the tests.
 #[derive(Default)]
 pub struct Rec {
     pub states: Mutex<Vec<State>>,
     pub traffic: Mutex<Vec<(u64, u64, u64, u64)>>,
     pub logs: Mutex<Vec<(String, String)>>,
     pub profiles: AtomicUsize,
+}
+
+impl Rec {
+    /// Block until at least `n` state events arrived, returning a snapshot of
+    /// them. Panics after `timeout` so a wedged path fails the test instead of
+    /// hanging it.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn wait_for_states(&self, n: usize, timeout: Duration) -> Vec<State> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            {
+                let states = self.states.lock().unwrap();
+                if states.len() >= n {
+                    return states.clone();
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {n} state events; got {:?}",
+                self.states.lock().unwrap()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
 }
 
 impl EventSink for Rec {

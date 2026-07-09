@@ -1,0 +1,894 @@
+//! The named-pipe transport: a client of the core running detached from the
+//! GUI — as the Windows service, or via `tenebra-core --pipe`.
+//!
+//! The core listens on `\\.\pipe\tenebra` (see `core/control/pipe_windows.go`
+//! and the Transports section of `docs/control-protocol.md`); this type dials
+//! it and runs the same [`wire`](super::wire) client the sidecar uses. What is
+//! different from the sidecar is the lifecycle: the service outlives any one
+//! GUI process, so the connection — not the process — is the thing to manage.
+//!
+//! - **Re-sync on connect.** The pipe serves exactly one session at a time and
+//!   buffers no events between sessions, so the state on connect is whatever it
+//!   already is. Every new session therefore opens with a `status` request and
+//!   pushes the answer at the UI.
+//! - **Reconnect on loss.** The session ending (service restarted or died, or
+//!   another client displaced us — the pipe is last-writer-wins) is not fatal:
+//!   a supervisor thread reports the loss to the UI and redials with capped
+//!   exponential backoff until the pipe answers again, then re-syncs. While
+//!   disconnected, commands fail fast instead of timing out.
+//!
+//! # Why the reader polls
+//!
+//! The pipe handle is opened synchronously (no `FILE_FLAG_OVERLAPPED`), and
+//! Windows serializes I/O on a synchronous file object: a `ReadFile` parked
+//! waiting for data holds the file-object lock and blocks any `WriteFile` on
+//! the same object — including one through a duplicated handle, which shares
+//! it. A thread camping in a blocking read would deadlock every request. So
+//! the reader never blocks in `read`: it asks `PeekNamedPipe` how many bytes
+//! are ready and only reads that fast path, sleeping a short tick otherwise.
+//! Reads then always complete immediately, writes only ever wait out a quick
+//! read, and the tick doubles as a prompt shutdown check. (The overlapped
+//! alternative is a pile of unsafe I/O plumbing for the same result; the Go
+//! side needs go-winio for exactly this reason.)
+
+use std::fs::{File, OpenOptions};
+use std::io::{self, Read, Write};
+use std::os::windows::fs::OpenOptionsExt;
+use std::os::windows::io::AsRawHandle;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
+
+use windows_sys::Win32::Foundation::{
+    ERROR_BROKEN_PIPE, ERROR_NO_DATA, ERROR_PIPE_BUSY, ERROR_PIPE_NOT_CONNECTED,
+};
+use windows_sys::Win32::Storage::FileSystem::{SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT};
+use windows_sys::Win32::System::Pipes::PeekNamedPipe;
+
+use super::wire::{obj, read_loop, WireClient, WireSession};
+use super::{ConnectionState, EventSink, State};
+
+/// The well-known control pipe, mirroring `control.PipeName` on the Go side.
+pub const PIPE_NAME: &str = r"\\.\pipe\tenebra";
+
+/// How often the reader re-peeks an idle pipe (and rechecks shutdown). Events
+/// and responses arrive at most this much late — imperceptible next to the
+/// commands' own latency — and an idle GUI costs one no-op syscall per tick.
+const POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+/// Reconnect backoff: first retry comes quickly (the common loss is a service
+/// restart or a displaced session, both back within a second), then doubles to
+/// a ceiling so a stopped service is probed gently, not hammered.
+const INITIAL_BACKOFF: Duration = Duration::from_millis(250);
+const MAX_BACKOFF: Duration = Duration::from_secs(5);
+
+/// How long a dial tolerates `ERROR_PIPE_BUSY` before giving up. Busy means the
+/// server exists but has no free instance this instant (it is between accepting
+/// a client and creating the next instance), so a short retry is enough.
+const DIAL_BUSY_WAIT: Duration = Duration::from_secs(2);
+const DIAL_BUSY_TICK: Duration = Duration::from_millis(50);
+
+/// The pipe name the GUI should use, or `None` to skip the pipe transport
+/// entirely. Honors `TENEBRA_PIPE`: unset or empty means the well-known name,
+/// `off`/`0` disables it (handy in development, where a running service would
+/// otherwise capture a `tauri dev` session meant for a freshly built sidecar),
+/// anything else names an alternate pipe.
+pub fn configured_name() -> Option<String> {
+    let value = std::env::var("TENEBRA_PIPE").ok();
+    name_from(value.as_deref())
+}
+
+fn name_from(value: Option<&str>) -> Option<String> {
+    match value {
+        None | Some("") => Some(PIPE_NAME.to_string()),
+        Some("off") | Some("0") => None,
+        Some(name) => Some(name.to_string()),
+    }
+}
+
+/// One dialed connection, as the halves the wire client consumes.
+struct Conn {
+    reader: Box<dyn Read + Send>,
+    writer: Box<dyn Write + Send>,
+}
+
+/// How the supervisor re-establishes a connection. The real implementation
+/// opens the named pipe; tests substitute scripted in-memory streams to drive
+/// the reconnect logic without an OS pipe.
+trait Dial: Send + 'static {
+    fn dial(&mut self) -> Result<Conn, String>;
+}
+
+/// Backend over the core's named pipe.
+pub struct PipeBackend {
+    shared: Arc<PipeShared>,
+    /// Raised on drop; the reader's poll tick and the dialer's busy loop check
+    /// it, so every blocking path unwinds promptly.
+    stop: Arc<AtomicBool>,
+    /// Dropped on drop, waking a supervisor parked in its backoff wait.
+    stop_tx: Mutex<Option<Sender<()>>>,
+    supervisor: Mutex<Option<JoinHandle<()>>>,
+}
+
+/// State shared with the supervisor thread.
+struct PipeShared {
+    /// The live session, absent while disconnected. Commands clone it out and
+    /// fail fast when it is gone.
+    session: Mutex<Option<Arc<WireClient>>>,
+}
+
+impl PipeBackend {
+    /// Dial `name` and start serving. The dial happens synchronously so the
+    /// caller can fall back to another transport when no core is listening;
+    /// after that the connection is supervised — lost sessions reconnect with
+    /// backoff and re-sync — until the backend is dropped.
+    pub fn connect(name: &str, sink: Arc<dyn EventSink>) -> Result<Self, String> {
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut dialer = PipeDialer {
+            name: name.to_string(),
+            stop: Arc::clone(&stop),
+        };
+        let first = dialer.dial()?;
+        Self::start(first, dialer, sink, stop)
+    }
+
+    /// Wire up the supervisor around an already-dialed first connection.
+    fn start(
+        first: Conn,
+        dialer: impl Dial,
+        sink: Arc<dyn EventSink>,
+        stop: Arc<AtomicBool>,
+    ) -> Result<Self, String> {
+        let shared = Arc::new(PipeShared {
+            session: Mutex::new(None),
+        });
+        let (stop_tx, stop_rx) = mpsc::channel();
+        let sup_shared = Arc::clone(&shared);
+        let sup_stop = Arc::clone(&stop);
+        let supervisor = thread::Builder::new()
+            .name("tenebra-pipe-supervisor".into())
+            .spawn(move || supervise(first, dialer, sup_shared, sink, sup_stop, stop_rx))
+            .map_err(|e| format!("failed to start the pipe supervisor thread: {e}"))?;
+        Ok(Self {
+            shared,
+            stop,
+            stop_tx: Mutex::new(Some(stop_tx)),
+            supervisor: Mutex::new(Some(supervisor)),
+        })
+    }
+}
+
+impl WireSession for PipeBackend {
+    fn session(&self) -> Result<Arc<WireClient>, String> {
+        self.shared
+            .session
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| "not connected to the Tenebra service; reconnecting".to_string())
+    }
+}
+
+impl Drop for PipeBackend {
+    fn drop(&mut self) {
+        // Closing the GUI leaves the service — and a live tunnel — running by
+        // design; only the connection is torn down. Raise stop for the poll
+        // loops, wake a backoff wait by dropping its sender, fail any in-flight
+        // request, and wait the supervisor out (all its waits are ticked, so
+        // this is prompt).
+        self.stop.store(true, Ordering::SeqCst);
+        self.stop_tx.lock().unwrap().take();
+        if let Some(client) = self.shared.session.lock().unwrap().clone() {
+            client.close();
+        }
+        if let Some(handle) = self.supervisor.lock().unwrap().take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// The synthetic state pushed when the control connection drops. `Error` is the
+/// honest choice of the protocol's four states: the tunnel may or may not still
+/// be up (a restarting service tears it down; a displaced session leaves it),
+/// and the UI must not claim either. The re-sync after reconnecting replaces
+/// this with the real state.
+fn lost_state() -> State {
+    State {
+        state: ConnectionState::Error,
+        node: None,
+        profile: None,
+        routing: None,
+        split: None,
+        split_apps: None,
+        kill_switch: None,
+        tun_stack: None,
+        error: Some("Lost the connection to the Tenebra service; reconnecting.".to_string()),
+    }
+}
+
+fn next_backoff(current: Duration) -> Duration {
+    current.saturating_mul(2).min(MAX_BACKOFF)
+}
+
+/// Run sessions until the backend is dropped: serve the current connection to
+/// its end, report the loss, then redial with backoff and serve again. EOF from
+/// a displacement (another client took the pipe) is indistinguishable from a
+/// service restart on this side and is handled identically — retry, never
+/// panic; the single-instance GUI makes a genuine takeover war impossible in
+/// practice.
+fn supervise(
+    first: Conn,
+    mut dialer: impl Dial,
+    shared: Arc<PipeShared>,
+    sink: Arc<dyn EventSink>,
+    stop: Arc<AtomicBool>,
+    stop_rx: Receiver<()>,
+) {
+    let mut conn = Some(first);
+    let mut backoff = INITIAL_BACKOFF;
+    while let Some(current) = conn.take() {
+        serve_session(current, &shared, &sink);
+        if stop.load(Ordering::SeqCst) {
+            return;
+        }
+
+        // The session is gone and already cleared, so commands now fail fast;
+        // tell the UI before spending time redialing.
+        sink.state(&lost_state());
+        sink.log(
+            "warn",
+            "lost the connection to the Tenebra service; reconnecting",
+        );
+
+        loop {
+            match stop_rx.recv_timeout(backoff) {
+                Err(RecvTimeoutError::Timeout) => {}
+                Ok(()) | Err(RecvTimeoutError::Disconnected) => return,
+            }
+            if stop.load(Ordering::SeqCst) {
+                return;
+            }
+            match dialer.dial() {
+                Ok(next) => {
+                    sink.log("info", "reconnected to the Tenebra service");
+                    backoff = INITIAL_BACKOFF;
+                    conn = Some(next);
+                    break;
+                }
+                Err(_) => backoff = next_backoff(backoff),
+            }
+        }
+    }
+}
+
+/// Serve one connection to its end: install the session, start the reader,
+/// re-sync, and wait the reader out. On return the session is already cleared,
+/// so the supervisor's loss report never races a command onto a dead client.
+fn serve_session(conn: Conn, shared: &Arc<PipeShared>, sink: &Arc<dyn EventSink>) {
+    let client = WireClient::new(conn.writer);
+    *shared.session.lock().unwrap() = Some(Arc::clone(&client));
+
+    let reader_client = Arc::clone(&client);
+    let reader_sink = Arc::clone(sink);
+    let reader_stream = conn.reader;
+    let reader = match thread::Builder::new()
+        .name("tenebra-pipe-reader".into())
+        .spawn(move || read_loop(reader_stream, reader_client, reader_sink))
+    {
+        Ok(handle) => handle,
+        Err(e) => {
+            *shared.session.lock().unwrap() = None;
+            client.close();
+            sink.log("error", &format!("could not start the pipe reader: {e}"));
+            return;
+        }
+    };
+
+    // The pipe buffers no events between sessions, so the state on connect is
+    // whatever it already was: ask, and push the answer at the UI. A failure
+    // here just means the session died at birth; the reader is about to end
+    // and the supervisor will handle it.
+    match client.request_into::<State>("status", obj([])) {
+        Ok(state) => sink.state(&state),
+        Err(e) => sink.log("warn", &format!("status re-sync failed: {e}")),
+    }
+
+    let _ = reader.join();
+    *shared.session.lock().unwrap() = None;
+}
+
+/// Dials the OS pipe. Each dial produces a polling reader and an independent
+/// writer handle over one connection.
+struct PipeDialer {
+    name: String,
+    stop: Arc<AtomicBool>,
+}
+
+impl Dial for PipeDialer {
+    fn dial(&mut self) -> Result<Conn, String> {
+        let file =
+            open_pipe(&self.name, &self.stop).map_err(|e| format!("open {}: {e}", self.name))?;
+        let writer = file
+            .try_clone()
+            .map_err(|e| format!("clone the pipe handle: {e}"))?;
+        Ok(Conn {
+            reader: Box::new(PollReader {
+                file,
+                stop: Arc::clone(&self.stop),
+            }),
+            writer: Box::new(writer),
+        })
+    }
+}
+
+/// Open the pipe as a plain file, retrying briefly through `ERROR_PIPE_BUSY`
+/// (no free instance right now). Any other failure — including
+/// `ERROR_FILE_NOT_FOUND`, meaning no core is listening — is the caller's to
+/// judge: at startup it selects the sidecar fallback, mid-run it feeds the
+/// reconnect backoff.
+fn open_pipe(name: &str, stop: &Arc<AtomicBool>) -> io::Result<File> {
+    let deadline = Instant::now() + DIAL_BUSY_WAIT;
+    loop {
+        let attempt = OpenOptions::new()
+            .read(true)
+            .write(true)
+            // GENERIC_READ|WRITE matches the GRGW the pipe's DACL grants
+            // interactive users. The SQOS flags cap impersonation at
+            // identification: if something else ever squats an instance of the
+            // name (the DACL admits any interactive user), it may learn who we
+            // are but cannot act as us.
+            .custom_flags(SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION)
+            .open(name);
+        match attempt {
+            Err(e)
+                if e.raw_os_error() == Some(ERROR_PIPE_BUSY as i32)
+                    && Instant::now() < deadline
+                    && !stop.load(Ordering::SeqCst) =>
+            {
+                thread::sleep(DIAL_BUSY_TICK)
+            }
+            other => return other,
+        }
+    }
+}
+
+/// `Read` over the pipe that never parks in `ReadFile` — see the module docs
+/// for why that would deadlock writes. EOF (`Ok(0)`) covers both the peer
+/// closing the pipe and our own shutdown flag, which is exactly the signal
+/// `read_loop` ends on.
+struct PollReader {
+    file: File,
+    stop: Arc<AtomicBool>,
+}
+
+impl Read for PollReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        loop {
+            if self.stop.load(Ordering::SeqCst) {
+                return Ok(0);
+            }
+            match pipe_bytes_available(&self.file) {
+                // Data is ready, so this read returns immediately with some of
+                // it; the brief file-object lock is exactly what keeps writers
+                // safe alongside us.
+                Ok(n) if n > 0 => return self.file.read(buf),
+                Ok(_) => thread::sleep(POLL_INTERVAL),
+                Err(e) if pipe_is_gone(&e) => return Ok(0),
+                Err(e) => return Err(e),
+            }
+        }
+    }
+}
+
+/// How many bytes a read could take right now without blocking.
+fn pipe_bytes_available(file: &File) -> io::Result<u32> {
+    let mut available: u32 = 0;
+    // SAFETY: the handle is owned by `file` and outlives the call; a null
+    // buffer with zero length is the documented way to only query availability.
+    let ok = unsafe {
+        PeekNamedPipe(
+            file.as_raw_handle(),
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            &mut available,
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(available)
+    }
+}
+
+/// Whether an error from the pipe means the peer is gone (EOF for our
+/// purposes) rather than something being wrong with the call itself.
+fn pipe_is_gone(e: &io::Error) -> bool {
+    matches!(
+        e.raw_os_error().map(|code| code as u32),
+        Some(ERROR_BROKEN_PIPE) | Some(ERROR_PIPE_NOT_CONNECTED) | Some(ERROR_NO_DATA)
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::testutil::{duplex, ChanEnd, Rec};
+    use super::super::Backend;
+    use super::*;
+    use serde_json::{json, Value};
+    use std::collections::VecDeque;
+    use std::io::{BufRead, BufReader};
+    use std::time::Duration;
+
+    /// A generous ceiling for the asynchronous assertions: reconnects take a
+    /// few backoff steps (sub-second), so this only bounds a genuine hang.
+    const WAIT: Duration = Duration::from_secs(10);
+
+    #[test]
+    fn name_from_maps_the_env_convention() {
+        assert_eq!(name_from(None).as_deref(), Some(PIPE_NAME));
+        assert_eq!(name_from(Some("")).as_deref(), Some(PIPE_NAME));
+        assert_eq!(name_from(Some("off")), None);
+        assert_eq!(name_from(Some("0")), None);
+        assert_eq!(
+            name_from(Some(r"\\.\pipe\tenebra-test")).as_deref(),
+            Some(r"\\.\pipe\tenebra-test")
+        );
+    }
+
+    #[test]
+    fn backoff_doubles_and_caps() {
+        let mut delay = INITIAL_BACKOFF;
+        let mut seen = Vec::new();
+        for _ in 0..8 {
+            seen.push(delay);
+            delay = next_backoff(delay);
+        }
+        assert_eq!(seen[0], Duration::from_millis(250));
+        assert_eq!(seen[1], Duration::from_millis(500));
+        assert_eq!(seen[2], Duration::from_millis(1000));
+        assert!(seen.iter().all(|d| *d <= MAX_BACKOFF));
+        assert_eq!(next_backoff(MAX_BACKOFF), MAX_BACKOFF);
+    }
+
+    // --- supervisor behaviour over in-memory streams ------------------------
+
+    /// Hands out pre-built connections (or failures) in order; exhausted means
+    /// the service stays unreachable.
+    struct ScriptDialer {
+        script: VecDeque<Result<Conn, String>>,
+    }
+
+    impl Dial for ScriptDialer {
+        fn dial(&mut self) -> Result<Conn, String> {
+            self.script
+                .pop_front()
+                .unwrap_or_else(|| Err("script exhausted".into()))
+        }
+    }
+
+    fn conn_from(end: ChanEnd) -> Conn {
+        Conn {
+            reader: Box::new(end.reader),
+            writer: Box::new(end.writer),
+        }
+    }
+
+    /// A stub core on the far end of a duplex: answers every request `ok:true`
+    /// with `data` from `respond`, records what it saw, and hangs up after
+    /// `response_limit` responses (`None` = serve until the client goes away).
+    fn spawn_stub_core(
+        end: ChanEnd,
+        requests: Arc<Mutex<Vec<Value>>>,
+        respond: fn(&str) -> Value,
+        response_limit: Option<usize>,
+    ) -> thread::JoinHandle<()> {
+        thread::spawn(move || {
+            let mut writer = end.writer;
+            let mut served = 0usize;
+            for line in BufReader::new(end.reader).lines() {
+                let Ok(line) = line else { break };
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let req: Value = serde_json::from_str(&line).expect("request is JSON");
+                let id = req["id"].as_u64().expect("request carries an id");
+                let cmd = req["cmd"]
+                    .as_str()
+                    .expect("request carries a cmd")
+                    .to_string();
+                requests.lock().unwrap().push(req);
+                let reply = json!({ "id": id, "ok": true, "data": respond(&cmd) });
+                if writeln!(writer, "{reply}").is_err() {
+                    break;
+                }
+                served += 1;
+                if response_limit.is_some_and(|limit| served >= limit) {
+                    break; // dropping both halves hangs up on the client
+                }
+            }
+        })
+    }
+
+    fn connected_state(cmd: &str) -> Value {
+        match cmd {
+            "disconnect" => json!({ "state": "idle" }),
+            _ => json!({ "state": "connected", "node": "n1" }),
+        }
+    }
+
+    #[test]
+    fn a_new_session_resyncs_with_status_and_serves_commands() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ours, theirs) = duplex(&stop);
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let stub = spawn_stub_core(theirs, Arc::clone(&requests), connected_state, None);
+
+        let sink = Arc::new(Rec::default());
+        let dialer = ScriptDialer {
+            script: VecDeque::new(),
+        };
+        let backend = PipeBackend::start(
+            conn_from(ours),
+            dialer,
+            Arc::clone(&sink) as Arc<dyn EventSink>,
+            Arc::clone(&stop),
+        )
+        .expect("start pipe backend");
+
+        // The re-sync pushes the service's current state without the UI asking.
+        let states = sink.wait_for_states(1, WAIT);
+        assert_eq!(states[0].state, ConnectionState::Connected);
+        assert_eq!(states[0].node.as_deref(), Some("n1"));
+
+        // Commands flow through the same session.
+        let state = backend.disconnect().expect("disconnect over the pipe");
+        assert_eq!(state.state, ConnectionState::Idle);
+
+        let cmds: Vec<String> = requests
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| r["cmd"].as_str().unwrap_or_default().to_string())
+            .collect();
+        assert_eq!(
+            cmds,
+            vec!["status".to_string(), "disconnect".to_string()],
+            "the first request on a new session must be the status re-sync"
+        );
+
+        drop(backend);
+        stub.join().expect("stub core thread");
+    }
+
+    #[test]
+    fn a_lost_session_reports_reconnects_and_resyncs() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ours1, theirs1) = duplex(&stop);
+        let (ours2, theirs2) = duplex(&stop);
+        let requests1 = Arc::new(Mutex::new(Vec::new()));
+        let requests2 = Arc::new(Mutex::new(Vec::new()));
+        // The first service instance answers exactly one request (the re-sync)
+        // and hangs up — a restart. The second serves normally.
+        let stub1 = spawn_stub_core(theirs1, Arc::clone(&requests1), connected_state, Some(1));
+        let stub2 = spawn_stub_core(theirs2, Arc::clone(&requests2), connected_state, None);
+
+        let sink = Arc::new(Rec::default());
+        // First redial fails (the service is still coming back), the next one
+        // lands on the new instance.
+        let dialer = ScriptDialer {
+            script: VecDeque::from([
+                Err("the service is still down".to_string()),
+                Ok(conn_from(ours2)),
+            ]),
+        };
+        let backend = PipeBackend::start(
+            conn_from(ours1),
+            dialer,
+            Arc::clone(&sink) as Arc<dyn EventSink>,
+            Arc::clone(&stop),
+        )
+        .expect("start pipe backend");
+
+        // connected (re-sync 1) → error (loss) → connected (re-sync 2).
+        let states = sink.wait_for_states(3, WAIT);
+        assert_eq!(states[0].state, ConnectionState::Connected);
+        assert_eq!(states[1].state, ConnectionState::Error);
+        assert!(
+            states[1]
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains("reconnecting")),
+            "the loss state should say it is reconnecting: {:?}",
+            states[1]
+        );
+        assert_eq!(states[2].state, ConnectionState::Connected);
+
+        // The new session re-synced with its own status request.
+        let cmds2: Vec<String> = requests2
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| r["cmd"].as_str().unwrap_or_default().to_string())
+            .collect();
+        assert_eq!(cmds2.first().map(String::as_str), Some("status"));
+
+        let logs = sink.logs.lock().unwrap().clone();
+        assert!(
+            logs.iter().any(|(_, msg)| msg.contains("reconnected")),
+            "expected a reconnect log, got {logs:?}"
+        );
+
+        drop(backend);
+        stub1.join().expect("stub core 1");
+        stub2.join().expect("stub core 2");
+    }
+
+    #[test]
+    fn commands_fail_fast_while_disconnected() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ours, theirs) = duplex(&stop);
+        // The only session answers one request and hangs up; every redial
+        // fails, so the backend stays disconnected.
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let stub = spawn_stub_core(theirs, Arc::clone(&requests), connected_state, Some(1));
+
+        let sink = Arc::new(Rec::default());
+        let dialer = ScriptDialer {
+            script: VecDeque::new(),
+        };
+        let backend = PipeBackend::start(
+            conn_from(ours),
+            dialer,
+            Arc::clone(&sink) as Arc<dyn EventSink>,
+            Arc::clone(&stop),
+        )
+        .expect("start pipe backend");
+
+        // Once the loss state is out, the session is guaranteed cleared (the
+        // supervisor clears it before reporting), so a command must fail fast
+        // with the reconnecting error rather than riding out a timeout.
+        let states = sink.wait_for_states(2, WAIT);
+        assert_eq!(states[1].state, ConnectionState::Error);
+        let err = backend.status().expect_err("no session to serve this");
+        assert!(
+            err.contains("reconnecting"),
+            "expected the fail-fast reconnect error, got: {err}"
+        );
+
+        drop(backend);
+        stub.join().expect("stub core thread");
+    }
+
+    // --- the real OS pipe ----------------------------------------------------
+    //
+    // An in-process named-pipe server (the same CreateNamedPipeW surface the
+    // core's winio listener uses, byte mode, one instance) proves the client
+    // against real npfs semantics: that the poll-reader and concurrent writes
+    // coexist on one synchronous handle, that a server hangup surfaces as the
+    // loss/reconnect path, and that a dial with nobody listening fails cleanly.
+
+    use std::os::windows::io::FromRawHandle;
+    use std::sync::atomic::AtomicUsize;
+    use windows_sys::Win32::Foundation::{ERROR_PIPE_CONNECTED, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX,
+    };
+    use windows_sys::Win32::System::Pipes::{
+        ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
+    };
+
+    /// A pipe name unique to this test process and case, so parallel test runs
+    /// never collide on the namespace.
+    fn unique_pipe_name(tag: &str) -> String {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        format!(
+            r"\\.\pipe\tenebra-test-{}-{}-{}",
+            std::process::id(),
+            tag,
+            COUNTER.fetch_add(1, Ordering::SeqCst)
+        )
+    }
+
+    /// Create one byte-mode duplex instance of `name` and block until a client
+    /// connects, returning the connected stream as a `File`. Runs entirely on
+    /// the calling (server) thread.
+    fn accept_one(name: &str, first_instance: bool) -> File {
+        let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut open_mode = PIPE_ACCESS_DUPLEX;
+        if first_instance {
+            open_mode |= FILE_FLAG_FIRST_PIPE_INSTANCE;
+        }
+        // SAFETY: the name is a valid NUL-terminated wide string for the
+        // duration of the call; null security attributes take the defaults.
+        let handle = unsafe {
+            CreateNamedPipeW(
+                wide.as_ptr(),
+                open_mode,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                1,
+                64 * 1024,
+                64 * 1024,
+                0,
+                std::ptr::null(),
+            )
+        };
+        assert!(
+            handle != INVALID_HANDLE_VALUE,
+            "CreateNamedPipeW({name}) failed: {}",
+            io::Error::last_os_error()
+        );
+        // SAFETY: the handle is a valid pipe instance we own.
+        let connected = unsafe { ConnectNamedPipe(handle, std::ptr::null_mut()) };
+        if connected == 0 {
+            let err = io::Error::last_os_error();
+            assert_eq!(
+                err.raw_os_error().map(|code| code as u32),
+                Some(ERROR_PIPE_CONNECTED),
+                "ConnectNamedPipe({name}) failed: {err}"
+            );
+        }
+        // SAFETY: ownership of the connected instance handle moves into the
+        // File, which closes it on drop.
+        unsafe { File::from_raw_handle(handle as _) }
+    }
+
+    /// Serve requests on a connected instance until EOF or `response_limit`,
+    /// pushing `extra_event` (if any) right after the first response.
+    fn serve_requests(
+        conn: &File,
+        requests: &Arc<Mutex<Vec<Value>>>,
+        response_limit: Option<usize>,
+        extra_event: Option<&str>,
+    ) {
+        let mut served = 0usize;
+        let mut lines = BufReader::new(conn).lines();
+        while let Some(Ok(line)) = lines.next() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let req: Value = serde_json::from_str(&line).expect("request is JSON");
+            let id = req["id"].as_u64().expect("request carries an id");
+            let cmd = req["cmd"].as_str().unwrap_or_default().to_string();
+            requests.lock().unwrap().push(req);
+            let reply = json!({ "id": id, "ok": true, "data": connected_state(&cmd) });
+            let mut writer = conn;
+            if writeln!(writer, "{reply}").is_err() {
+                break;
+            }
+            if served == 0 {
+                if let Some(event) = extra_event {
+                    if writeln!(writer, "{event}").is_err() {
+                        break;
+                    }
+                }
+            }
+            served += 1;
+            if response_limit.is_some_and(|limit| served >= limit) {
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn real_pipe_serves_commands_and_events() {
+        let name = unique_pipe_name("serve");
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let server_requests = Arc::clone(&requests);
+        let server_name = name.clone();
+        let server = thread::spawn(move || {
+            let conn = accept_one(&server_name, true);
+            serve_requests(
+                &conn,
+                &server_requests,
+                None,
+                Some(r#"{"event":"log","level":"info","msg":"hello from the service"}"#),
+            );
+        });
+
+        let sink = Arc::new(Rec::default());
+        let backend = retry_connect(&name, Arc::clone(&sink));
+
+        // Re-sync state arrived without any command from us.
+        let states = sink.wait_for_states(1, WAIT);
+        assert_eq!(states[0].state, ConnectionState::Connected);
+
+        // An unsolicited event crossed the same stream.
+        wait_until(WAIT, || {
+            sink.logs
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(_, msg)| msg.contains("hello from the service"))
+        });
+
+        // A command round-trips while the poll-reader idles on the same handle
+        // — the write would deadlock if reads parked blocking (module docs).
+        let state = backend.status().expect("status over the real pipe");
+        assert_eq!(state.state, ConnectionState::Connected);
+
+        drop(backend); // closes the client end; the server sees EOF
+        server.join().expect("pipe server thread");
+    }
+
+    #[test]
+    fn real_pipe_reconnects_after_a_server_restart() {
+        let name = unique_pipe_name("restart");
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let server_requests = Arc::clone(&requests);
+        let server_name = name.clone();
+        let server = thread::spawn(move || {
+            // First life: answer the re-sync, then hang up (restart).
+            let conn = accept_one(&server_name, true);
+            serve_requests(&conn, &server_requests, Some(1), None);
+            drop(conn);
+            // Second life: a fresh instance on the same name.
+            let conn = accept_one(&server_name, true);
+            serve_requests(&conn, &server_requests, None, None);
+        });
+
+        let sink = Arc::new(Rec::default());
+        let backend = retry_connect(&name, Arc::clone(&sink));
+
+        // connected → error (hangup) → connected (redial + re-sync).
+        let states = sink.wait_for_states(3, WAIT);
+        assert_eq!(states[0].state, ConnectionState::Connected);
+        assert_eq!(states[1].state, ConnectionState::Error);
+        assert_eq!(states[2].state, ConnectionState::Connected);
+
+        // Both sessions opened with the status re-sync.
+        let cmds: Vec<String> = requests
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| r["cmd"].as_str().unwrap_or_default().to_string())
+            .collect();
+        assert!(
+            cmds.len() >= 2 && cmds[0] == "status" && cmds[1] == "status",
+            "both sessions must re-sync first, got {cmds:?}"
+        );
+
+        drop(backend);
+        server.join().expect("pipe server thread");
+    }
+
+    #[test]
+    fn connect_fails_cleanly_with_nobody_listening() {
+        let name = unique_pipe_name("absent");
+        let sink: Arc<dyn EventSink> = Arc::new(Rec::default());
+        let err = match PipeBackend::connect(&name, sink) {
+            Ok(_) => panic!("dialing a nonexistent pipe must fail"),
+            Err(e) => e,
+        };
+        assert!(err.contains(&name), "the error should name the pipe: {err}");
+    }
+
+    /// Dial until the server thread's instance is up — the tests create it on
+    /// another thread, so the very first dial can lose the race.
+    fn retry_connect(name: &str, sink: Arc<Rec>) -> PipeBackend {
+        let deadline = Instant::now() + WAIT;
+        loop {
+            match PipeBackend::connect(name, Arc::clone(&sink) as Arc<dyn EventSink>) {
+                Ok(backend) => return backend,
+                Err(e) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "could not connect to {name} in time: {e}"
+                    );
+                    thread::sleep(Duration::from_millis(20));
+                }
+            }
+        }
+    }
+
+    fn wait_until(timeout: Duration, check: impl Fn() -> bool) {
+        let deadline = Instant::now() + timeout;
+        while !check() {
+            assert!(Instant::now() < deadline, "condition not met in time");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+}

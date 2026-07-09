@@ -1,9 +1,10 @@
 //! Tauri shell. It owns the backend, exposes the control protocol as Tauri
 //! commands, and bridges backend events onto the webview event bus.
 //!
-//! The backend is hidden behind the [`Backend`](backend::Backend) trait. Today
-//! it is a [`MockBackend`](backend::mock::MockBackend); see `make_backend` for
-//! the single place to swap in the real sidecar client.
+//! The backend is hidden behind the [`Backend`](backend::Backend) trait; see
+//! `make_backend` for the single place a transport is chosen (the service's
+//! named pipe when one is listening, the spawned sidecar otherwise, or the
+//! in-process mock on request).
 
 mod backend;
 mod deeplink;
@@ -101,18 +102,45 @@ impl EventSink for TauriSink {
 // =============================================================================
 // Backend selection.
 //
-// The ONE switch between the real core sidecar and the demo fake. By default we
-// spawn the `tenebra-core` sidecar and drive the real tunnel; set TENEBRA_MOCK=1
-// to fall back to the in-process mock (useful for UI work without the core, or
-// when the sidecar binary isn't built). Both implement the same `Backend` trait,
-// so nothing else in this file or the front end changes.
+// The ONE place a transport is chosen, tried in order:
+//
+//  1. TENEBRA_MOCK=1 forces the in-process demo fake (UI work without the
+//     core, or when the sidecar binary isn't built).
+//  2. On Windows, if a core is already listening on the control pipe (the
+//     installed service, or `tenebra-core --pipe` in a console), attach to it.
+//     The tunnel then outlives this process and the GUI needs no elevation.
+//     TENEBRA_PIPE renames the pipe or (`off`) skips it — see
+//     backend::pipe::configured_name.
+//  3. Otherwise spawn the `tenebra-core` sidecar and own it — today's default
+//     and the development path.
 //
 // If the sidecar fails to spawn (e.g. the binary is missing), we log and fall
-// back to the mock rather than leaving the UI with no backend at all.
+// back to the mock rather than leaving the UI with no backend at all. Every
+// choice implements the same `Backend` trait and is logged on the UI's own log
+// channel, so nothing else in this file or the front end changes.
 // =============================================================================
 fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
     if std::env::var_os("TENEBRA_MOCK").is_some() {
         return Arc::new(backend::mock::MockBackend::new(sink));
+    }
+
+    #[cfg(windows)]
+    if let Some(name) = backend::pipe::configured_name() {
+        match backend::pipe::PipeBackend::connect(&name, Arc::clone(&sink)) {
+            Ok(backend) => {
+                sink.log(
+                    "info",
+                    &format!("attached to the Tenebra service on {name}"),
+                );
+                return Arc::new(backend);
+            }
+            // No service (or an unreachable pipe) is the normal development
+            // case, not an error: fall through to the sidecar.
+            Err(e) => sink.log(
+                "info",
+                &format!("no Tenebra service on {name} ({e}); spawning the core as a sidecar"),
+            ),
+        }
     }
 
     let program = backend::sidecar::SidecarBackend::default_program();

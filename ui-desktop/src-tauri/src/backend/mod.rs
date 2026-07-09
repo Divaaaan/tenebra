@@ -12,6 +12,8 @@
 //! in `src/api/types.ts` expect.
 
 pub mod mock;
+#[cfg(windows)]
+pub mod pipe;
 pub mod sidecar;
 #[cfg(test)]
 pub mod testutil;
