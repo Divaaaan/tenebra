@@ -4,12 +4,48 @@ All notable changes to Tenebra are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
-> **Early days.** Tenebra is at 0.1.x: the desktop client (Windows) is the current
+> **Early days.** Tenebra is at 0.2.x: the desktop client (Windows) is the current
 > focus and the real tunnel path is still being validated — see the
 > [project status](README.md#project-status). Expect breaking changes between
 > 0.x releases.
 
 ## [Unreleased]
+
+## [0.2.0] - 2026-07-09
+
+### Added
+
+- **Kill switch**, now armable from the UI. While it is on, the tunnel's
+  `strict_route` blocks traffic that would otherwise leak, and an unexpectedly
+  dead sing-box process is relaunched automatically on the same node (bounded so a
+  crash-loop can't churn forever, with the budget refunded once a relaunched tunnel
+  stays up). It is best-effort by design: in the brief window between the process
+  dying and the relaunch, the OS routes normally — documented, not hidden.
+- **Switchable TUN stack** (`system` / `gvisor` / `mixed`) in Settings, applied to
+  a live tunnel without a manual reconnect.
+- **Reactive tray**: the tray icon reflects the connection state (idle / connected /
+  error) and the Connect / Disconnect items enable and disable to match.
+- **Desktop notifications** on real connection transitions (connected, disconnected,
+  error, kill switch engaged), debounced so a steady state never repeats a toast.
+- **Deep links**: `tenebra://import?url=…` opens the import flow pre-filled, and
+  `tenebra://connect?profile=…` connects a profile. Links are parsed in one place
+  and delivered to the app whether it is already running or launched by the link.
+- **Launch minimized**: with autostart enabled, a login launch starts hidden in the
+  tray while auto-connect still runs.
+- **DoH fallback for subscription fetch.** When a subscription host fails to fetch
+  at the transport layer — the fingerprint of DNS tampering — the client retries
+  once over a resolver reached by DNS-over-HTTPS, dialed to the resolver's literal
+  IP so it bypasses the system resolver while keeping the original TLS SNI. No new
+  dependency; the primary path is unchanged.
+- **macOS and iOS porting plans** under `docs/porting/`.
+
+### Changed
+
+- New application icon: an eclipse-corona mark replacing the placeholder set.
+- Release pipeline hardening: tagged releases are gated on the full test suite and a
+  version/tag consistency check, the update-signing key is confined to the tagged
+  release instead of every CI run, the version lives in one script across its four
+  files, and eslint, clippy and rustfmt now run in CI.
 
 ### Fixed
 
@@ -24,6 +60,13 @@ All notable changes to Tenebra are documented here. The format follows
   tunnel looked connected while its handshake silently mismatched. Such a node is now
   recognised as unsupported and skipped like any other node the config generator
   can't render, rather than connecting without the plugin.
+- Kill-switch races: a toggle during the connecting window is now reconciled onto the
+  tunnel that comes up (instead of being reported but not applied), and a relaunch
+  can no longer resurrect a tunnel after an explicit disconnect or outlive shutdown.
+- The Settings radio groups now move focus with the selection, so arrow keys traverse
+  the full set instead of stalling after one step.
+- `cargo test` no longer fails on macOS and Linux (a test hardcoded a Windows-only
+  child process).
 
 ### Security
 
@@ -33,6 +76,11 @@ All notable changes to Tenebra are documented here. The format follows
   switch the selected outbound over `127.0.0.1`. The secret is drawn from a
   cryptographic RNG on each run and presented as a bearer token by the client's own
   polling, so the app keeps working while other local processes are turned away.
+- The update-signing key is no longer exposed to routine CI: it was injected into the
+  desktop build on every push and pull request, and is now confined to the tagged
+  release workflow. CI builds the installer with updater artifacts turned off.
+- `SECURITY.md` now documents the update-signing key's custody, rotation and
+  leak-response plan.
 
 ## [0.1.1] - 2026-07-01
 
@@ -118,6 +166,7 @@ Initial tagged release.
   first run. Updates delivered in-app are minisign-verified against the bundled
   key; only the initial download is unsigned.
 
-[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Divaaaan/tenebra/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/Divaaaan/tenebra/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Divaaaan/tenebra/releases/tag/v0.1.0

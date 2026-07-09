@@ -54,12 +54,15 @@ Everything below is implemented in this repo today (the UI features are desktop)
   services and runs a best-effort DNS probe, then reports a verdict that never
   fakes a pass — it tells you what it could *not* measure rather than claiming
   "safe". See [docs/control-protocol.md](docs/control-protocol.md#leak-check-leak_check).
-- **Desktop niceties.** System tray with quick connect/disconnect, launch at
-  login, single-instance, live traffic graphs, light/dark themes, and English /
-  Russian UI.
+- **Desktop niceties.** System tray that reflects the connection state (with quick
+  connect/disconnect), desktop notifications on state changes, `tenebra://` deep
+  links (import a subscription or connect a profile), launch at login (optionally
+  minimized to the tray), single-instance, live traffic graphs, light/dark themes,
+  and English / Russian UI.
 
-A kill-switch (drop proxied traffic instead of leaking when the tunnel drops) and
-LAN bypass exist as core routing options; the kill-switch is not yet a UI toggle.
+The kill-switch (drop proxied traffic instead of leaking when the tunnel drops) is a
+UI toggle — best-effort by design, with the exact guarantee described in the
+[changelog](CHANGELOG.md); LAN bypass is a core routing option.
 
 ## Project status
 
@@ -67,7 +70,7 @@ LAN bypass exist as core routing options; the kill-switch is not yet a UI toggle
 |------|-------|
 | Go core (parsing, profiles, routing, config gen, fallback, leak logic) | Implemented, unit-tested, no third-party deps |
 | Control protocol (core ↔ UI) | Implemented; covered by Go tests **and** a real-binary e2e |
-| Desktop UI (Tauri 2 + React) | Implemented: all screens, tray, autostart, i18n, themes |
+| Desktop UI (Tauri 2 + React) | Implemented: all screens, reactive tray, notifications, deep links, autostart, i18n, themes |
 | Real tunnel (wintun + sing-box, elevated) | **Needs a live, admin run to validate**; not yet signed off |
 | macOS / Linux / Android / iOS | Planned — the core is shared and platform-agnostic |
 | Release pipeline | Tag-triggered `release` workflow builds the NSIS installer, minisign-signs the in-app updater artifacts, and publishes a GitHub release |
