@@ -225,6 +225,7 @@ fn reconnecting_state() -> State {
         split_apps: None,
         kill_switch: None,
         tun_stack: None,
+        autoconnect: None,
         error: Some("Reconnecting to the Tenebra service…".to_string()),
     }
 }
