@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 
 	"github.com/Divaaaan/tenebra/core/control"
@@ -54,6 +55,10 @@ type coreService struct{}
 func (coreService) Execute(args []string, req <-chan svc.ChangeRequest, status chan<- svc.Status) (svcSpecificEC bool, exitCode uint32) {
 	status <- svc.Status{State: svc.StartPending}
 
+	if err := configureServicePaths(); err != nil {
+		log.Printf("fatal: %v", err)
+		return false, 1
+	}
 	daemon, err := buildDaemon()
 	if err != nil {
 		log.Printf("fatal: %v", err)
@@ -123,6 +128,109 @@ func openServiceLog() (*os.File, error) {
 	}
 	fmt.Fprintln(f, "\n--- tenebra-core service start ---")
 	return f, nil
+}
+
+// configureServicePaths pins the machine-scoped locations before buildDaemon
+// reads them. A service runs as LocalSystem, so the per-user defaults would
+// silently land in the SYSTEM profile where no interactive user (or installer)
+// ever looks; instead the store lives under %ProgramData%\Tenebra\data and the
+// bundled sing-box is resolved from the install layout around
+// tenebra-core.exe. Both knobs are the environment variables every mode
+// already honours, set process-wide here so the existing readers — configDir,
+// the runner, ruleSetDir — pick them up unchanged; a machine environment set
+// by an operator still wins, matching the override semantics everywhere else.
+// Console and sidecar runs never come through here and keep their per-user
+// paths.
+func configureServicePaths() error {
+	if os.Getenv("TENEBRA_CONFIG_DIR") == "" {
+		base := os.Getenv("ProgramData")
+		if base == "" {
+			// Unlike the service log this is the credential store: refusing
+			// to start beats scattering profiles into a temp fallback.
+			return errors.New("service: ProgramData not set; cannot place the data directory")
+		}
+		dir := filepath.Join(base, "Tenebra", "data")
+		if err := secureDataDir(dir); err != nil {
+			return fmt.Errorf("service: prepare data dir %s: %w", dir, err)
+		}
+		os.Setenv("TENEBRA_CONFIG_DIR", dir)
+	}
+	if os.Getenv("TENEBRA_SINGBOX") == "" {
+		exe, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("service: locate executable: %w", err)
+		}
+		if bin := findBundledSingbox(filepath.Dir(exe)); bin != "" {
+			// Setting the variable rather than the runner field also lights up
+			// ruleSetDir, which probes the directory this path points into.
+			os.Setenv("TENEBRA_SINGBOX", bin)
+		} else {
+			// Not fatal: the runner falls back to sing-box.exe next to the
+			// executable and reports precisely, at connect time, if it is
+			// missing.
+			log.Printf("tenebra-core: no bundled sing-box near %s", exe)
+		}
+	}
+	return nil
+}
+
+// findBundledSingbox resolves the sing-box binary from the installed layout
+// around the core executable: the Tauri bundle installs tenebra-core.exe into
+// the install root with the bundled resources in resources\ next to it, while
+// a flat layout (a dev checkout, a hand-rolled install) keeps sing-box beside
+// the executable. Returns "" when neither location has it.
+func findBundledSingbox(exeDir string) string {
+	for _, p := range []string{
+		filepath.Join(exeDir, "resources", "sing-box.exe"),
+		filepath.Join(exeDir, "sing-box.exe"),
+	} {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+// dataDirSecurityDescriptor is the DACL stamped on the service's data
+// directory: full control for LocalSystem and Administrators, nothing for
+// anyone else, and no inherited grants (P). Profiles hold subscription
+// credentials, and unprivileged users reach that data through the pipe
+// protocol, never the files. OICI carries the grants down to everything the
+// store writes inside.
+const dataDirSecurityDescriptor = "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
+
+// secureDataDir creates dir (with parents) and clamps its security descriptor
+// to dataDirSecurityDescriptor. The clamp is re-applied on every start, not
+// just on creation: %ProgramData% lets any user pre-create the path, and
+// re-stamping the DACL evicts such a squatter before the store writes
+// anything. Ownership moves to LocalSystem for the same reason — an owner
+// keeps the implicit right to rewrite the DACL — but only best-effort, since
+// assigning that owner needs privileges the service has in production and an
+// unelevated developer run does not.
+func secureDataDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	sd, err := windows.SecurityDescriptorFromString(dataDirSecurityDescriptor)
+	if err != nil {
+		return fmt.Errorf("parse security descriptor: %w", err)
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		return fmt.Errorf("read DACL: %w", err)
+	}
+	if system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid); err == nil {
+		if err := windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
+			windows.OWNER_SECURITY_INFORMATION, system, nil, nil, nil); err != nil {
+			log.Printf("tenebra-core: keeping the existing owner of %s (%v)", dir, err)
+		}
+	}
+	if err := windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil); err != nil {
+		return fmt.Errorf("apply DACL: %w", err)
+	}
+	return nil
 }
 
 // servePipe serves the control protocol on the tenebra named pipe from a
