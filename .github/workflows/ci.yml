@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 jobs:
   core:
@@ -28,12 +29,17 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: ui-desktop/package-lock.json
+      - name: Check the version files agree
+        run: node scripts/set-version.mjs --check
       - name: Install front-end dependencies
         working-directory: ui-desktop
         run: npm ci
       - name: Type-check
         working-directory: ui-desktop
         run: npm run typecheck
+      - name: Lint
+        working-directory: ui-desktop
+        run: npm run lint
       - name: Run front-end tests
         working-directory: ui-desktop
         run: npm test
@@ -49,10 +55,18 @@ jobs:
         with:
           node-version: 24
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check Rust formatting
+        working-directory: ui-desktop/src-tauri
+        run: cargo fmt --check
       - name: Fetch sing-box and wintun
         run: powershell -ExecutionPolicy Bypass -File scripts/fetch-resources.ps1
       - name: Build core sidecar
         run: go build -o ui-desktop/src-tauri/binaries/tenebra-core-x86_64-pc-windows-msvc.exe ./cmd/tenebra-core
+      - name: Lint the Rust backend
+        working-directory: ui-desktop/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
       - name: Test the Rust backend
         working-directory: ui-desktop/src-tauri
         run: cargo test --all-targets
@@ -61,12 +75,11 @@ jobs:
         run: npm ci
       - name: Build the installer
         working-directory: ui-desktop
-        env:
-          # createUpdaterArtifacts is on, so the build signs the installer and
-          # needs the key here too — not just in the release workflow.
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npm run tauri build -- --bundles nsis
+        # CI only needs to prove the installer builds. It overrides the bundle
+        # config to skip updater artifacts, so the release signing key is never
+        # exposed to routine push and pull-request builds — the tagged release
+        # workflow is the only place that signs.
+        run: npm run tauri build -- --bundles nsis --config src-tauri/tauri.ci.conf.json
       - uses: actions/upload-artifact@v6
         with:
           name: tenebra-windows-installer

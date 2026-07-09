@@ -45,7 +45,7 @@
     ],
     "category": "Utility",
     "shortDescription": "Tenebra VPN client",
-    "longDescription": "Cross-platform VPN client built on sing-box."
+    "longDescription": "Windows VPN client built on sing-box, with macOS, Linux, Android and iOS planned."
   },
   "plugins": {
     "updater": {
