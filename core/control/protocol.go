@@ -37,6 +37,7 @@ const (
 	CmdSetSplit           = "set_split"
 	CmdSetKillSwitch      = "set_kill_switch"
 	CmdSetTun             = "set_tun"
+	CmdSetAutoconnect     = "set_autoconnect"
 	CmdLeakCheck          = "leak_check"
 )
 
@@ -100,9 +101,10 @@ type Request struct {
 	Mode string `json:"mode,omitempty"`
 	// Apps is the executable-name list for set_split, e.g. ["chrome.exe"].
 	Apps []string `json:"apps,omitempty"`
-	// On arms (true) or disarms (false) the kill switch for set_kill_switch. An
-	// omitted field decodes to false, so "disarm" and "field left out" coincide —
-	// which is the safe reading for a command that grants, not removes, blocking.
+	// On arms (true) or disarms (false) the kill switch for set_kill_switch, and
+	// likewise the connect-on-start preference for set_autoconnect. An omitted
+	// field decodes to false, so "disarm" and "field left out" coincide — which
+	// is the safe reading for a command that grants, not removes, behaviour.
 	On bool `json:"on,omitempty"`
 	// Stack is the tun network stack for set_tun (system/gvisor/mixed).
 	Stack string `json:"stack,omitempty"`
@@ -146,7 +148,10 @@ type State struct {
 	// TunStack is the tun network stack (system/gvisor/mixed) the current or
 	// next tunnel uses. Always present once the daemon has normalized it.
 	TunStack string `json:"tun_stack,omitempty"`
-	Error    string `json:"error,omitempty"`
+	// Autoconnect reports whether the daemon reconnects the last profile when it
+	// starts (see AutoconnectOnStart). Omitted when off, like the kill switch.
+	Autoconnect bool   `json:"autoconnect,omitempty"`
+	Error       string `json:"error,omitempty"`
 }
 
 // PingResult is one node's dial-latency probe outcome.

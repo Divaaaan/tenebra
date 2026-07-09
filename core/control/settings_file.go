@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"github.com/Divaaaan/tenebra/core/routing"
-	"github.com/Divaaaan/tenebra/core/singbox"
 )
 
 // settingsFile is the name of the JSON file persisting user routing preferences
@@ -38,6 +37,18 @@ type persistedSettings struct {
 	// TunStack remembers the chosen tun network stack (system/gvisor/mixed).
 	// Absent or unrecognized keeps the default; SetSettings validates it.
 	TunStack string `json:"tun_stack,omitempty"`
+
+	// Autoconnect remembers whether the daemon reconnects the last profile when
+	// it starts (see AutoconnectOnStart). Absent reads back as false — off,
+	// matching the pre-autoconnect behaviour.
+	Autoconnect bool `json:"autoconnect,omitempty"`
+	// LastProfile and LastNode record the last successful user-commanded
+	// connect: the profile, and the node only when the request pinned an
+	// explicit exit (empty when the fallback walk chose). Autoconnect re-issues
+	// exactly this intent at the next daemon start. A vanished profile or node
+	// is tolerated at load time and simply leaves the daemon idle.
+	LastProfile string `json:"last_profile,omitempty"`
+	LastNode    string `json:"last_node,omitempty"`
 }
 
 // settingsVersion is the current persisted-settings format version.
@@ -147,18 +158,6 @@ func splitFromSettings(ps persistedSettings) (routing.SplitMode, []string) {
 		SplitApps: ps.SplitApps,
 	}.Normalize()
 	return o.SplitMode, o.SplitApps
-}
-
-// settingsFrom projects the persisted preferences out of the live routing and
-// tun options.
-func settingsFrom(ro routing.Options, tun singbox.TunOptions) persistedSettings {
-	return persistedSettings{
-		Version:    settingsVersion,
-		SplitMode:  string(ro.SplitMode),
-		SplitApps:  ro.SplitApps,
-		KillSwitch: ro.KillSwitch,
-		TunStack:   tun.Stack,
-	}
 }
 
 var _ settingsStore = (*fileSettings)(nil)

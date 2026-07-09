@@ -118,6 +118,15 @@ func buildDaemon() (*control.Daemon, error) {
 	} else {
 		log.Printf("tenebra-core: bundled RU rule-sets not found; falling back to remote download")
 	}
+	// Autoconnect: if the preference is armed and a last connect is recorded,
+	// re-issue it now. This is the daemon's own start — shared by the sidecar,
+	// the --pipe console and the Windows service — so with the service the
+	// tunnel comes up with the machine, before anyone logs in or a UI attaches.
+	// The attempt runs in the background and never delays the control plane; a
+	// client connecting mid-attempt simply sees the connecting state.
+	if daemon.AutoconnectOnStart() {
+		log.Printf("tenebra-core: autoconnect: reconnecting the last profile")
+	}
 	return daemon, nil
 }
 
