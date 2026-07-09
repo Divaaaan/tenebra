@@ -11,6 +11,16 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Update prompt on launch.** The desktop app now checks for a new signed
+  release once at startup and offers it in a slim banner under the top bar —
+  "Update" installs and restarts, "Later" hides it until the next launch. An
+  offline or failed check stays silent. A new Settings toggle ("Install updates
+  automatically") skips the banner and applies a found update right away,
+  restarting into the new version; if that silent install fails, the banner is
+  shown instead.
+
 ## [0.2.0] - 2026-07-09
 
 ### Added

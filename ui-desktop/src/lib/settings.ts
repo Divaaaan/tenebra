@@ -6,6 +6,7 @@
 const AUTOCONNECT_KEY = "tenebra.autoconnect";
 const LAST_PROFILE_KEY = "tenebra.lastProfile";
 const AUTO_FASTEST_KEY = "tenebra.autoFastest";
+const AUTO_INSTALL_UPDATES_KEY = "tenebra.autoInstallUpdates";
 
 /** Whether "connect on launch" is enabled. Off unless explicitly turned on. */
 export function getAutoconnect(): boolean {
@@ -42,4 +43,17 @@ export function getAutoFastest(): boolean {
 
 export function setAutoFastest(on: boolean): void {
   localStorage.setItem(AUTO_FASTEST_KEY, on ? "1" : "0");
+}
+
+/**
+ * Whether an update found by the launch check installs on its own instead of
+ * being offered in the banner. Off unless explicitly turned on: installing
+ * restarts the app, so it has to be an opt-in.
+ */
+export function getAutoInstallUpdates(): boolean {
+  return localStorage.getItem(AUTO_INSTALL_UPDATES_KEY) === "1";
+}
+
+export function setAutoInstallUpdates(on: boolean): void {
+  localStorage.setItem(AUTO_INSTALL_UPDATES_KEY, on ? "1" : "0");
 }
