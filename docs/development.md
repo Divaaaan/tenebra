@@ -26,7 +26,7 @@ If `npm run tauri build` complains about a missing system dependency, check the
 ## Repository layout
 
 ```
-core/           Go, platform-agnostic, stdlib-only:
+core/           Go, platform-agnostic (Windows service/pipe plumbing aside):
   model/        normalized proxy node + config types
   subscription/ parse vless/hysteria2/ss/trojan/vmess links and subscription bodies
   profile/      named profiles and their atomic on-disk store (profiles.json)
@@ -37,7 +37,7 @@ core/           Go, platform-agnostic, stdlib-only:
 adapters/
   windows/      spawn & supervise the sing-box process; read traffic via its clash API
 cmd/
-  tenebra-core/ the sidecar binary; speaks the protocol on stdin/stdout
+  tenebra-core/ the core binary; protocol on stdin/stdout, or a named pipe on Windows
 ui-desktop/
   src-tauri/    the Rust/Tauri shell (sidecar bridge, tray, autostart)
   src/          the React + TypeScript front end
@@ -47,10 +47,18 @@ scripts/
 
 ## The Go core
 
-The core has **no third-party dependencies** — it is standard library only — and
-everything in it runs offline. It does not link sing-box; it *generates* a
-sing-box config as plain JSON, which the sidecar hands to a real sing-box
-process at runtime.
+The core's only third-party dependencies are **go-winio** and **x/sys**, both
+Windows plumbing (the named-pipe transport and the service entry point);
+everything else is standard library, and everything in it runs offline. It does
+not link sing-box; it *generates* a sing-box config as plain JSON, which the
+sidecar hands to a real sing-box process at runtime.
+
+To exercise the named-pipe transport without installing a service, run the core
+from a console with `go run ./cmd/tenebra-core --pipe` and connect a client to
+`\\.\pipe\tenebra`; transports and the pipe ACL are documented in
+[control-protocol.md](control-protocol.md#transports). The Windows-only paths
+(`//go:build windows`) are covered by `go test` on a Windows machine — CI's
+ubuntu/macos jobs compile around them.
 
 Build and vet:
 

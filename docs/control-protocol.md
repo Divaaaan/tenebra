@@ -1,11 +1,9 @@
 # Control protocol
 
-The desktop UI never touches the tunnel directly. A core sidecar process owns
-sing-box and the wintun tunnel; the UI drives it over the sidecar's **stdin /
-stdout** using **line-delimited JSON** — one JSON object per line, UTF-8.
-Requests go in on stdin, responses and events come back on stdout, and the
-sidecar's logs go to stderr. (For where this sits in the system, see
-[architecture.md](architecture.md).)
+The desktop UI never touches the tunnel directly. A core process owns sing-box
+and the wintun tunnel; the UI drives it with **line-delimited JSON** — one JSON
+object per line, UTF-8 — over one of the [transports](#transports) below. (For
+where this sits in the system, see [architecture.md](architecture.md).)
 
 Three message kinds flow over the link:
 
@@ -13,6 +11,71 @@ Three message kinds flow over the link:
 - **responses** (core → UI) echo the `id` with `ok`, plus `data` or `error`;
 - **events** (core → UI) are unsolicited, carry no `id`, and have an `event`
   field.
+
+## Transports
+
+The protocol is transport-agnostic byte-stream framing; nothing about the
+messages changes between transports.
+
+- **stdio** (the default). The UI spawns `tenebra-core` as a sidecar and owns
+  its stdin/stdout: requests go in on stdin, responses and events come back on
+  stdout, diagnostics go to stderr. One process, one client — stdin reaching
+  EOF tears the tunnel down and ends the core. Because the sidecar opens the
+  tunnel itself, this mode needs the whole app to run elevated on Windows.
+- **named pipe** (Windows): `\\.\pipe\tenebra`. Used when the core runs
+  detached from the UI — as the Windows service, or via `tenebra-core --pipe`
+  from a console for development. The tunnel then outlives any one UI process,
+  and the UI does not need administrator rights. Diagnostics go to
+  `%ProgramData%\Tenebra\service.log` in service mode (a service has no
+  stderr), and to stderr under `--pipe`.
+
+### Named-pipe sessions
+
+Exactly one client session is active at a time. A **new connection displaces
+the current one**: the old stream is closed and the new client takes over.
+This is deliberately last-writer-wins — the common case is the UI restarting
+(upgrade, crash, user relaunch) and reconnecting while its old connection has
+not been reaped yet.
+
+Unlike stdio EOF, the end of a pipe session does **not** touch the daemon: the
+tunnel, profiles and settings stay exactly as they are. Only the service
+stopping tears the tunnel down. Two consequences for clients:
+
+- on connect, the state is whatever it already was — send `status` (and
+  `list_profiles`) first instead of assuming `idle`;
+- events emitted while no client is connected are dropped, not queued.
+
+### Pipe security
+
+The pipe is created with the SDDL
+`D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)`, admitting exactly three
+identities:
+
+- **SYSTEM** — the service itself;
+- **Administrators** — elevated processes;
+- **INTERACTIVE** — any locally logged-in user. This is what lets the
+  unprivileged GUI drive the privileged service, and it is the same trust
+  decision Tailscale's LocalAPI pipe makes on Windows.
+
+The honest limits of that model:
+
+- the tunnel is machine-wide, and so is control over it: *any* interactive
+  local user — not just the one who started the GUI — can drive the tunnel,
+  see its state and events, and take the session over. On a genuinely
+  multi-user machine that is a real sharing of control, not an oversight.
+- processes of the same user are not defended against each other; same-user
+  malware already owns the session.
+- remote (network-logon) callers never carry the INTERACTIVE SID, so reaching
+  the pipe remotely requires administrator credentials — a caller that already
+  administers the machine.
+
+The listener claims the name with `FILE_FLAG_FIRST_PIPE_INSTANCE`, so if
+something else already holds it the service fails loudly at start instead of
+silently sharing the name. That flag does not stop an *already-admitted*
+identity from adding instances to the bound name later (on pipes,
+`GENERIC_WRITE` implies `FILE_CREATE_PIPE_INSTANCE`) — which is another face
+of the same trust statement: interactive users are trusted with this control
+surface.
 
 ## Requests
 
