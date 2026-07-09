@@ -1,12 +1,10 @@
-//! Real backend: a thin client over the `tenebra-core` sidecar.
+//! The sidecar transport: a `tenebra-core` child process owned by the GUI.
 //!
 //! The core owns sing-box and the tunnel; this type owns the core process and
-//! speaks the line-delimited JSON control protocol to it over stdin/stdout (see
-//! `docs/control-protocol.md`). Every [`Backend`] method turns into one request
-//! line on the child's stdin and blocks on the correlated response; a background
-//! reader frames the child's stdout by newline, completes pending requests by
-//! `id`, and forwards id-less events to the webview through the same
-//! [`EventSink`] the mock uses.
+//! wires its stdin/stdout to the transport-agnostic protocol client in
+//! [`wire`](super::wire) — requests go in on the child's stdin, the reader
+//! thread frames its stdout and completes them. The [`Backend`] impl comes from
+//! the blanket impl over [`WireSession`]; nothing protocol-shaped lives here.
 //!
 //! Spawning uses `std::process` rather than the shell plugin's `sidecar()`
 //! helper: that helper is async and tied to an `AppHandle`, whereas the
@@ -17,55 +15,18 @@
 //! naming (`tenebra-core-<target-triple>`), with a plain `tenebra-core` and the
 //! repo's build output as fallbacks.
 
-use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
 
-use serde::de::DeserializeOwned;
-use serde_json::{json, Value};
-
-use super::{
-    Backend, EventSink, ImportLinksResult, LeakCheck, PingResult, Profile, RoutingMode, SplitMode,
-    State, TunStack, EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
-};
-
-/// How long a request waits for its correlated response before giving up. The
-/// core answers control commands locally and fast; the few that touch the
-/// network (subscription fetch, ping) bound themselves, so a generous ceiling
-/// here only guards against the child wedging or dying without notice.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// A response delivered back to a waiting request: `Ok(data)` for a successful
-/// reply (the raw `data` payload, or `null` when the command returns nothing),
-/// `Err(message)` for a protocol-level error.
-type ReplyResult = Result<Value, String>;
-type Pending = Arc<Mutex<HashMap<u64, Sender<ReplyResult>>>>;
+use super::wire::{read_loop, WireClient, WireSession};
+use super::EventSink;
 
 /// Client over a running `tenebra-core` child process.
 pub struct SidecarBackend {
-    inner: Arc<Shared>,
-}
-
-/// State shared between the public façade and the background reader thread.
-struct Shared {
-    /// The child's stdin, guarded so concurrent command calls can't interleave
-    /// two half-written lines.
-    stdin: Mutex<ChildStdin>,
-    /// In-flight requests awaiting a response, keyed by request id.
-    pending: Pending,
-    /// Monotonic request-id source. Starts at 1 so ids match the protocol's
-    /// examples and never collide with the "unknown id" 0 the core uses for a
-    /// malformed line.
-    next_id: AtomicU64,
-    /// Set once the child has exited or its stdout closed; further requests fail
-    /// fast instead of blocking until the timeout.
-    closed: AtomicBool,
+    client: Arc<WireClient>,
     /// The child handle, kept so dropping the backend kills the core.
     child: Mutex<Child>,
 }
@@ -114,22 +75,17 @@ impl SidecarBackend {
             .take()
             .ok_or_else(|| "tenebra-core stdout was not captured".to_string())?;
 
-        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
-        let shared = Arc::new(Shared {
-            stdin: Mutex::new(stdin),
-            pending: Arc::clone(&pending),
-            next_id: AtomicU64::new(1),
-            closed: AtomicBool::new(false),
-            child: Mutex::new(child),
-        });
-
-        let reader_shared = Arc::clone(&shared);
+        let client = WireClient::new(stdin);
+        let reader_client = Arc::clone(&client);
         thread::Builder::new()
             .name("tenebra-core-reader".into())
-            .spawn(move || read_loop(stdout, reader_shared, sink))
+            .spawn(move || read_loop(stdout, reader_client, sink))
             .map_err(|e| format!("failed to start core reader thread: {e}"))?;
 
-        Ok(Self { inner: shared })
+        Ok(Self {
+            client,
+            child: Mutex::new(child),
+        })
     }
 
     /// Resolve the path to the core binary the way the GUI ships it: Tauri lays
@@ -158,6 +114,15 @@ impl SidecarBackend {
             }
         }
         PathBuf::from("tenebra-core")
+    }
+}
+
+impl WireSession for SidecarBackend {
+    /// The sidecar has exactly one session for its whole life: the child's
+    /// stdio. Once the child dies the client is closed and requests fail fast
+    /// with the wire layer's own message.
+    fn session(&self) -> Result<Arc<WireClient>, String> {
+        Ok(Arc::clone(&self.client))
     }
 }
 
@@ -196,672 +161,45 @@ fn core_log_stderr() -> Stdio {
 
 impl Drop for SidecarBackend {
     fn drop(&mut self) {
-        // Closing stdin lets the core's Serve loop return on EOF and tear the
-        // tunnel down cleanly; killing the child is the backstop if it doesn't.
-        self.inner.closed.store(true, Ordering::SeqCst);
-        if let Ok(mut child) = self.inner.child.lock() {
+        // Fail any in-flight requests first so no caller blocks on a child
+        // we're about to kill. Closing stdin lets the core's Serve loop return
+        // on EOF and tear the tunnel down cleanly; killing the child is the
+        // backstop if it doesn't.
+        self.client.close();
+        if let Ok(mut child) = self.child.lock() {
             let _ = child.kill();
             let _ = child.wait();
         }
     }
 }
 
-impl Shared {
-    /// Send one request line and block for the correlated response. `params`
-    /// must serialize to a JSON object; the `id` and `cmd` are spliced in. The
-    /// returned value is the response's `data` payload (or `null`).
-    fn request(&self, cmd: &str, params: Value) -> Result<Value, String> {
-        if self.closed.load(Ordering::SeqCst) {
-            return Err("tenebra-core is not running".into());
-        }
-
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let line = build_request(id, cmd, params)?;
-
-        let (tx, rx): (Sender<ReplyResult>, Receiver<ReplyResult>) = mpsc::channel();
-        self.pending.lock().unwrap().insert(id, tx);
-
-        if let Err(e) = self.write_line(&line) {
-            self.pending.lock().unwrap().remove(&id);
-            return Err(e);
-        }
-
-        match rx.recv_timeout(REQUEST_TIMEOUT) {
-            Ok(reply) => reply,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                self.pending.lock().unwrap().remove(&id);
-                Err(format!("tenebra-core did not respond to {cmd} in time"))
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                self.pending.lock().unwrap().remove(&id);
-                Err("tenebra-core exited before responding".into())
-            }
-        }
-    }
-
-    /// A typed request: send and decode the `data` payload into `T`.
-    fn request_into<T: DeserializeOwned>(&self, cmd: &str, params: Value) -> Result<T, String> {
-        let data = self.request(cmd, params)?;
-        serde_json::from_value(data)
-            .map_err(|e| format!("malformed {cmd} response from tenebra-core: {e}"))
-    }
-
-    fn write_line(&self, line: &[u8]) -> Result<(), String> {
-        let mut stdin = self.stdin.lock().unwrap();
-        stdin
-            .write_all(line)
-            .and_then(|_| stdin.flush())
-            .map_err(|e| format!("failed to send request to tenebra-core: {e}"))
-    }
-}
-
-/// Serialize `params` (an object) into a single request line with `id`/`cmd`
-/// merged in, terminated by a newline.
-fn build_request(id: u64, cmd: &str, params: Value) -> Result<Vec<u8>, String> {
-    let mut obj = match params {
-        Value::Object(map) => map,
-        Value::Null => serde_json::Map::new(),
-        other => {
-            return Err(format!(
-                "internal: request params for {cmd} must be an object, got {other}"
-            ))
-        }
-    };
-    obj.insert("id".into(), json!(id));
-    obj.insert("cmd".into(), json!(cmd));
-    let mut line = serde_json::to_vec(&Value::Object(obj))
-        .map_err(|e| format!("failed to encode {cmd} request: {e}"))?;
-    line.push(b'\n');
-    Ok(line)
-}
-
-/// Read the child's stdout to EOF, framing by newline. Each complete line is a
-/// JSON object: one carrying an `id` completes the matching pending request; one
-/// carrying an `event` is forwarded to the UI. When the loop ends — normal EOF,
-/// a read error, OR a panic in a sink call unwinding the thread — the backend is
-/// marked closed and every still-pending request is failed so no caller hangs
-/// out the full timeout. That cleanup lives in `ReaderGuard::drop`, which runs on
-/// every exit path including a panic, so the "reader stops ⇒ pending drained +
-/// closed set" invariant holds unconditionally.
-fn read_loop(stdout: impl std::io::Read, shared: Arc<Shared>, sink: Arc<dyn EventSink>) {
-    // Fail-fast cleanup, guaranteed to run even if `forward_event` panics: the
-    // guard's Drop fires during unwind, so a sink panic can't leave callers
-    // blocked on a reader that's no longer reading.
-    let _guard = ReaderGuard {
-        shared: Arc::clone(&shared),
-    };
-
-    let reader = BufReader::new(stdout);
-    // read_line frames on '\n' and buffers partial chunks internally, so a line
-    // split across OS reads still arrives whole.
-    for line in reader.lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => break, // stdout broke; treat as the child going away
-        };
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let value: Value = match serde_json::from_str(trimmed) {
-            Ok(v) => v,
-            Err(_) => {
-                // A non-JSON line on the protocol channel is a core bug; surface
-                // it as a log rather than crashing the reader.
-                sink.log(
-                    "warn",
-                    &format!("ignored non-JSON line from core: {trimmed}"),
-                );
-                continue;
-            }
-        };
-
-        if value.get("event").is_some() {
-            forward_event(&value, sink.as_ref());
-        } else if let Some(id) = value.get("id").and_then(Value::as_u64) {
-            complete_request(&shared.pending, id, &value);
-        }
-        // Anything else (no id, no event) is unexpected and ignored.
-    }
-}
-
-/// Runs the reader's close-and-drain on drop so it fires on every exit path,
-/// panic included. Marks the backend closed and fails outstanding requests, so a
-/// blocked caller returns an error immediately instead of waiting out the
-/// timeout when the reader stops for any reason.
-struct ReaderGuard {
-    shared: Arc<Shared>,
-}
-
-impl Drop for ReaderGuard {
-    fn drop(&mut self) {
-        self.shared.closed.store(true, Ordering::SeqCst);
-        fail_all_pending(&self.shared.pending);
-    }
-}
-
-/// Fail every outstanding request with the "core gone" error and clear the map.
-/// Pulled out of the guard so it can be exercised directly. Recovers from a
-/// poisoned lock: if a holder panicked mid-mutation we still must drain, a
-/// poisoned mutex being no reason to strand callers for the full timeout.
-fn fail_all_pending(pending: &Pending) {
-    let mut map = match pending.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    for (_, tx) in map.drain() {
-        let _ = tx.send(Err("tenebra-core exited before responding".into()));
-    }
-}
-
-/// Hand a response back to the request waiting on `id`. A `data` field (or its
-/// absence, for commands that return nothing) becomes `Ok`; an `error` becomes
-/// `Err`. Responses for unknown ids (e.g. id 0 for a line the core could not
-/// parse) have no waiter and are dropped.
-fn complete_request(pending: &Pending, id: u64, value: &Value) {
-    let tx = match pending.lock().unwrap().remove(&id) {
-        Some(tx) => tx,
-        None => return,
-    };
-    let ok = value.get("ok").and_then(Value::as_bool).unwrap_or(false);
-    let reply = if ok {
-        Ok(value.get("data").cloned().unwrap_or(Value::Null))
-    } else {
-        let msg = value
-            .get("error")
-            .and_then(Value::as_str)
-            .unwrap_or("tenebra-core reported an error")
-            .to_string();
-        Err(msg)
-    };
-    let _ = tx.send(reply);
-}
-
-/// Forward a protocol event to the webview on the same channel the mock uses, so
-/// the front-end listeners don't care which backend produced it. Events are flat
-/// objects: `{"event":"state", ...state fields}`.
-fn forward_event(value: &Value, sink: &dyn EventSink) {
-    match value.get("event").and_then(Value::as_str) {
-        Some(EVENT_STATE) => {
-            if let Ok(state) = serde_json::from_value::<State>(value.clone()) {
-                sink.state(&state);
-            }
-        }
-        Some(EVENT_TRAFFIC) => {
-            let n = |k: &str| value.get(k).and_then(Value::as_u64).unwrap_or(0);
-            sink.traffic(n("up"), n("down"), n("up_rate"), n("down_rate"));
-        }
-        Some(EVENT_LOG) => {
-            let level = value.get("level").and_then(Value::as_str).unwrap_or("info");
-            let msg = value.get("msg").and_then(Value::as_str).unwrap_or_default();
-            sink.log(level, msg);
-        }
-        Some(EVENT_PROFILES) => {
-            // Signal-only: the body (if any) is ignored; the UI re-fetches.
-            sink.profiles();
-        }
-        _ => {} // unknown event kind: ignore rather than guess
-    }
-}
-
-/// Drop `None` values so optional request fields are simply absent, matching the
-/// protocol (the core treats a missing field and an empty one the same, but
-/// omitting keeps lines minimal and the wire form clean).
-fn obj(pairs: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
-    let mut map = serde_json::Map::new();
-    for (k, v) in pairs {
-        if !v.is_null() {
-            map.insert(k.into(), v);
-        }
-    }
-    Value::Object(map)
-}
-
-impl Backend for SidecarBackend {
-    fn status(&self) -> Result<State, String> {
-        self.inner.request_into("status", obj([]))
-    }
-
-    fn list_profiles(&self) -> Result<Vec<Profile>, String> {
-        let wrap: ProfileList = self.inner.request_into("list_profiles", obj([]))?;
-        Ok(wrap.profiles)
-    }
-
-    fn import_subscription(&self, url: String, name: String) -> Result<Profile, String> {
-        let wrap: ProfileWrap = self.inner.request_into(
-            "import_subscription",
-            obj([("url", json!(url)), ("name", json!(name))]),
-        )?;
-        Ok(wrap.profile)
-    }
-
-    fn import_link(&self, link: String, name: Option<String>) -> Result<Profile, String> {
-        let wrap: ProfileWrap = self.inner.request_into(
-            "import_link",
-            obj([
-                ("link", json!(link)),
-                ("name", name.map(Value::from).unwrap_or(Value::Null)),
-            ]),
-        )?;
-        Ok(wrap.profile)
-    }
-
-    fn import_links(
-        &self,
-        links: Vec<String>,
-        name: Option<String>,
-    ) -> Result<ImportLinksResult, String> {
-        // The core returns {profile, imported, skipped} directly (not wrapped in a
-        // `profile` envelope like the single-import paths), so deserialize the
-        // whole data payload into the result.
-        self.inner.request_into(
-            "import_links",
-            obj([
-                ("links", json!(links)),
-                ("name", name.map(Value::from).unwrap_or(Value::Null)),
-            ]),
-        )
-    }
-
-    fn remove_profile(&self, profile: String) -> Result<(), String> {
-        self.inner
-            .request("remove_profile", obj([("profile", json!(profile))]))?;
-        Ok(())
-    }
-
-    fn refresh_subscription(&self, profile: String) -> Result<Profile, String> {
-        let wrap: ProfileWrap = self
-            .inner
-            .request_into("refresh_subscription", obj([("profile", json!(profile))]))?;
-        Ok(wrap.profile)
-    }
-
-    fn connect(&self, profile: String, node: Option<String>, auto: bool) -> Result<State, String> {
-        // `auto` is sent only when set: omitting it (the common case) keeps the
-        // line minimal and the core defaults a missing field to false, the
-        // original protocol-fallback behaviour. With an explicit node the core
-        // ignores it, so there is no need to special-case that here.
-        self.inner.request_into(
-            "connect",
-            obj([
-                ("profile", json!(profile)),
-                ("node", node.map(Value::from).unwrap_or(Value::Null)),
-                ("auto", if auto { json!(true) } else { Value::Null }),
-            ]),
-        )
-    }
-
-    fn disconnect(&self) -> Result<State, String> {
-        self.inner.request_into("disconnect", obj([]))
-    }
-
-    fn ping(&self, profile: String) -> Result<Vec<PingResult>, String> {
-        let wrap: PingList = self
-            .inner
-            .request_into("ping", obj([("profile", json!(profile))]))?;
-        Ok(wrap.results)
-    }
-
-    fn set_routing(&self, mode: RoutingMode) -> Result<State, String> {
-        let mode = match mode {
-            RoutingMode::Smart => "smart",
-            RoutingMode::Global => "global",
-            RoutingMode::Direct => "direct",
-        };
-        self.inner
-            .request_into("set_routing", obj([("mode", json!(mode))]))
-    }
-
-    fn set_split(&self, mode: SplitMode, apps: Vec<String>) -> Result<State, String> {
-        let mode = match mode {
-            SplitMode::Off => "off",
-            SplitMode::Exclude => "exclude",
-            SplitMode::Include => "include",
-        };
-        self.inner.request_into(
-            "set_split",
-            obj([("mode", json!(mode)), ("apps", json!(apps))]),
-        )
-    }
-
-    fn set_kill_switch(&self, on: bool) -> Result<State, String> {
-        self.inner
-            .request_into("set_kill_switch", obj([("on", json!(on))]))
-    }
-
-    fn set_tun(&self, stack: TunStack) -> Result<State, String> {
-        let stack = match stack {
-            TunStack::System => "system",
-            TunStack::Gvisor => "gvisor",
-            TunStack::Mixed => "mixed",
-        };
-        self.inner
-            .request_into("set_tun", obj([("stack", json!(stack))]))
-    }
-
-    fn leak_check(&self) -> Result<LeakCheck, String> {
-        // The core runs the IP/DNS probes itself and returns the assembled
-        // verdict; we just deserialize it. It can touch the network, but the core
-        // bounds each echo request, so the generous request timeout above is
-        // ample.
-        self.inner.request_into("leak_check", obj([]))
-    }
-}
-
-// Response envelopes mirroring the core's wrapped payloads. The inner `Profile`
-// / `PingResult` / `State` types live in `backend::mod` and deserialize from the
-// core's JSON (extra node fields the UI doesn't model are ignored).
-#[derive(serde::Deserialize)]
-struct ProfileList {
-    profiles: Vec<Profile>,
-}
-
-#[derive(serde::Deserialize)]
-struct ProfileWrap {
-    profile: Profile,
-}
-
-#[derive(serde::Deserialize)]
-struct PingList {
-    results: Vec<PingResult>,
-}
-
 #[cfg(test)]
 mod tests {
-    //! Exercises the pure framing/correlation helpers in isolation — no child
-    //! process. Real process spawning and the round-trip against the core are
-    //! covered by `tests/sidecar_e2e.rs`; here we pin the wire encoding, the
-    //! request/response correlation, and event dispatch.
+    //! The protocol machinery is covered in `wire.rs`; the round-trip against
+    //! the real core binary in `tests/sidecar_e2e.rs`. Here we only pin the
+    //! spawn-failure surface `make_backend` relies on for its mock fallback.
 
     use super::*;
-    use std::sync::atomic::AtomicUsize;
-    use std::sync::Mutex;
-
-    /// Parse the bytes `build_request` produced back into a `Value`, asserting the
-    /// trailing newline framing along the way.
-    fn parse_line(bytes: &[u8]) -> Value {
-        assert_eq!(bytes.last(), Some(&b'\n'), "request line must end in '\\n'");
-        serde_json::from_slice(&bytes[..bytes.len() - 1]).expect("request line is JSON")
-    }
+    use crate::backend::testutil::Rec;
 
     #[test]
-    fn build_request_merges_id_and_cmd_into_params() {
-        let line = build_request(7, "connect", json!({ "profile": "p", "node": "n" })).unwrap();
-        let value = parse_line(&line);
-        assert_eq!(
-            value,
-            json!({ "id": 7, "cmd": "connect", "profile": "p", "node": "n" })
-        );
-    }
-
-    #[test]
-    fn build_request_treats_null_params_as_empty() {
-        let line = build_request(1, "status", Value::Null).unwrap();
-        let value = parse_line(&line);
-        assert_eq!(value, json!({ "id": 1, "cmd": "status" }));
-    }
-
-    #[test]
-    fn build_request_rejects_non_object_params() {
-        let err = build_request(1, "x", json!("notanobject")).unwrap_err();
-        assert!(err.contains("must be an object"), "unexpected error: {err}");
-    }
-
-    #[test]
-    fn obj_drops_null_values() {
-        let value = obj([("a", json!(1)), ("b", Value::Null), ("c", json!("x"))]);
-        assert_eq!(value, json!({ "a": 1, "c": "x" }));
-        assert_eq!(obj([]), json!({}));
-    }
-
-    /// Build a `Pending` map and register a waiter for `id`, returning the
-    /// receiver so the test can read what `complete_request` delivers.
-    fn pending_with(id: u64) -> (Pending, Receiver<ReplyResult>) {
-        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
-        let (tx, rx) = mpsc::channel();
-        pending.lock().unwrap().insert(id, tx);
-        (pending, rx)
-    }
-
-    fn recv(rx: &Receiver<ReplyResult>) -> ReplyResult {
-        rx.recv_timeout(Duration::from_secs(1))
-            .expect("a reply within the timeout")
-    }
-
-    #[test]
-    fn complete_request_delivers_ok_data() {
-        let (pending, rx) = pending_with(5);
-        complete_request(
-            &pending,
-            5,
-            &json!({ "id": 5, "ok": true, "data": { "x": 1 } }),
-        );
-        assert_eq!(recv(&rx), Ok(json!({ "x": 1 })));
-        // The waiter is consumed once delivered.
-        assert!(pending.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn complete_request_ok_without_data_is_null() {
-        let (pending, rx) = pending_with(5);
-        complete_request(&pending, 5, &json!({ "id": 5, "ok": true }));
-        assert_eq!(recv(&rx), Ok(Value::Null));
-    }
-
-    #[test]
-    fn complete_request_error_carries_message() {
-        let (pending, rx) = pending_with(5);
-        complete_request(
-            &pending,
-            5,
-            &json!({ "id": 5, "ok": false, "error": "boom" }),
-        );
-        assert_eq!(recv(&rx), Err("boom".to_string()));
-    }
-
-    #[test]
-    fn complete_request_error_without_message_falls_back() {
-        let (pending, rx) = pending_with(5);
-        complete_request(&pending, 5, &json!({ "id": 5, "ok": false }));
-        assert_eq!(recv(&rx), Err("tenebra-core reported an error".to_string()));
-    }
-
-    #[test]
-    fn complete_request_unknown_id_is_a_noop() {
-        let (pending, _rx) = pending_with(5);
-        // No waiter for id 9; must not panic and must leave id 5 untouched.
-        complete_request(&pending, 9, &json!({ "id": 9, "ok": true, "data": null }));
-        assert!(pending.lock().unwrap().contains_key(&5));
-    }
-
-    /// A recording sink for the event-forwarding tests.
-    #[derive(Default)]
-    struct Rec {
-        states: Mutex<Vec<State>>,
-        traffic: Mutex<Vec<(u64, u64, u64, u64)>>,
-        logs: Mutex<Vec<(String, String)>>,
-        profiles: AtomicUsize,
-    }
-
-    impl EventSink for Rec {
-        fn state(&self, state: &State) {
-            self.states.lock().unwrap().push(state.clone());
-        }
-        fn traffic(&self, up: u64, down: u64, up_rate: u64, down_rate: u64) {
-            self.traffic
-                .lock()
-                .unwrap()
-                .push((up, down, up_rate, down_rate));
-        }
-        fn log(&self, level: &str, msg: &str) {
-            self.logs
-                .lock()
-                .unwrap()
-                .push((level.to_string(), msg.to_string()));
-        }
-        fn profiles(&self) {
-            self.profiles.fetch_add(1, Ordering::SeqCst);
-        }
-    }
-
-    #[test]
-    fn forward_event_routes_state() {
-        let sink = Rec::default();
-        forward_event(&json!({ "event": "state", "state": "connected" }), &sink);
-        let states = sink.states.lock().unwrap();
-        assert_eq!(states.len(), 1);
-        assert_eq!(states[0].state, super::super::ConnectionState::Connected);
-    }
-
-    #[test]
-    fn forward_event_routes_traffic() {
-        let sink = Rec::default();
-        forward_event(
-            &json!({ "event": "traffic", "up": 1, "down": 2, "up_rate": 3, "down_rate": 4 }),
-            &sink,
-        );
-        assert_eq!(*sink.traffic.lock().unwrap(), vec![(1, 2, 3, 4)]);
-    }
-
-    #[test]
-    fn forward_event_routes_log() {
-        let sink = Rec::default();
-        forward_event(
-            &json!({ "event": "log", "level": "warn", "msg": "hi" }),
-            &sink,
-        );
-        assert_eq!(
-            *sink.logs.lock().unwrap(),
-            vec![("warn".to_string(), "hi".to_string())]
-        );
-    }
-
-    #[test]
-    fn forward_event_routes_profiles_signal() {
-        let sink = Rec::default();
-        forward_event(&json!({ "event": "profiles" }), &sink);
-        assert_eq!(sink.profiles.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn forward_event_ignores_unknown_kind() {
-        let sink = Rec::default();
-        forward_event(&json!({ "event": "bogus" }), &sink);
-        assert!(sink.states.lock().unwrap().is_empty());
-        assert!(sink.traffic.lock().unwrap().is_empty());
-        assert!(sink.logs.lock().unwrap().is_empty());
-        assert_eq!(sink.profiles.load(Ordering::SeqCst), 0);
-    }
-
-    #[test]
-    fn forward_event_drops_a_malformed_state() {
-        let sink = Rec::default();
-        // An unparseable state (bad discriminant) is swallowed, not forwarded.
-        forward_event(&json!({ "event": "state", "state": "???" }), &sink);
-        assert!(sink.states.lock().unwrap().is_empty());
-    }
-
-    /// A sink that panics the first time the reader forwards a state event,
-    /// standing in for any Tauri sink call (`app.emit`, tray) blowing up on the
-    /// reader thread.
-    struct PanickingSink;
-
-    impl EventSink for PanickingSink {
-        fn state(&self, _state: &State) {
-            panic!("sink boom");
-        }
-        fn traffic(&self, _up: u64, _down: u64, _up_rate: u64, _down_rate: u64) {}
-        fn log(&self, _level: &str, _msg: &str) {}
-        fn profiles(&self) {}
-    }
-
-    /// Build a `Shared` with a throwaway child just to populate the `child` /
-    /// `stdin` fields; `read_loop` never touches them — it only drives the
-    /// `stdout` reader we pass in and `pending` / `closed`. The child is killed
-    /// when the returned `Shared` is dropped.
-    fn shared_with_dummy_child() -> Arc<Shared> {
-        // Any long-lived process with a stdin pipe works; we never write to or
-        // read from it. `dummy_child_command` picks one that blocks on stdin so
-        // the child stays put on whichever platform the tests run on.
-        let mut child = dummy_child_command()
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn dummy child for test");
-        let stdin = child.stdin.take().expect("dummy stdin");
-        Arc::new(Shared {
-            stdin: Mutex::new(stdin),
-            pending: Arc::new(Mutex::new(HashMap::new())),
-            next_id: AtomicU64::new(1),
-            closed: AtomicBool::new(false),
-            child: Mutex::new(child),
-        })
-    }
-
-    /// A `Command` for a throwaway process that stays alive blocking on its
-    /// stdin, portable across the platforms the tests run on: `cmd` on Windows,
-    /// `sh -c cat` elsewhere. Both read stdin and exit only when it closes (or
-    /// the test kills them), which is exactly the long-lived child the reader
-    /// tests need without depending on a Windows-only binary.
-    fn dummy_child_command() -> Command {
-        #[cfg(windows)]
-        let command = Command::new("cmd");
-        #[cfg(not(windows))]
-        let command = {
-            let mut c = Command::new("sh");
-            c.arg("-c").arg("cat");
-            c
+    fn spawn_failure_reports_the_program() {
+        let sink: Arc<dyn EventSink> = Arc::new(Rec::default());
+        let err = match SidecarBackend::spawn(
+            "tenebra-core-that-does-not-exist",
+            "sing-box-irrelevant",
+            sink,
+        ) {
+            Ok(_) => panic!("spawning a nonexistent program must fail"),
+            Err(e) => e,
         };
-        command
-    }
-
-    #[test]
-    fn read_loop_drains_pending_when_a_sink_panics() {
-        let shared = shared_with_dummy_child();
-
-        // A caller is blocked waiting on id 1, exactly as `Shared::request` would
-        // leave it.
-        let (tx, rx) = mpsc::channel();
-        shared.pending.lock().unwrap().insert(1, tx);
-
-        // One line: a state event whose dispatch will panic inside the sink.
-        let stdout = b"{\"event\":\"state\",\"state\":\"connected\"}\n".to_vec();
-        let sink: Arc<dyn EventSink> = Arc::new(PanickingSink);
-
-        // The reader thread would unwind here; the panic-safety guarantee is that
-        // its cleanup still runs. Swallow the backtrace noise for a clean run.
-        let prev = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            read_loop(&stdout[..], Arc::clone(&shared), sink);
-        }));
-        std::panic::set_hook(prev);
-
         assert!(
-            result.is_err(),
-            "the sink panic must propagate, not be hidden"
-        );
-        // Despite the panic: closed is set and the pending caller is failed
-        // immediately instead of hanging out the 60s timeout.
-        assert!(
-            shared.closed.load(Ordering::SeqCst),
-            "closed must be set even when the reader unwinds"
-        );
-        assert_eq!(
-            rx.recv_timeout(Duration::from_secs(1)),
-            Ok(Err("tenebra-core exited before responding".to_string())),
-            "the in-flight request must be drained on a reader panic"
+            err.contains("failed to start tenebra-core"),
+            "unexpected error: {err}"
         );
         assert!(
-            shared.pending.lock().unwrap().is_empty(),
-            "pending must be empty after the drain"
+            err.contains("tenebra-core-that-does-not-exist"),
+            "error should name the program: {err}"
         );
-
-        // Reap the dummy child explicitly: a bare `Shared` has no Drop, and `cmd`
-        // would otherwise linger waiting on its stdin pipe.
-        let mut child = shared.child.lock().unwrap();
-        let _ = child.kill();
-        let _ = child.wait();
     }
 }

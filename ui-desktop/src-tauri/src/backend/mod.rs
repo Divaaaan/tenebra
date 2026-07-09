@@ -1,10 +1,11 @@
 //! The boundary the UI talks to.
 //!
-//! Today this is served by [`mock::MockBackend`], an in-process fake. The real
-//! build will replace it with a client that speaks line-delimited JSON to the
-//! core sidecar over a local socket (see `docs/control-protocol.md`). Both
-//! implement the same [`Backend`] trait, so the Tauri command layer in `lib.rs`
-//! never has to know which one is wired in.
+//! Every implementation of the [`Backend`] trait drives the same control
+//! protocol (see `docs/control-protocol.md`); the Tauri command layer in
+//! `lib.rs` never has to know which one is wired in. [`wire`] holds the
+//! transport-agnostic protocol client; [`sidecar`] runs it over a spawned
+//! core's stdin/stdout; [`mock`] is an in-process fake for UI work without the
+//! core. `make_backend` in `lib.rs` picks one at startup.
 //!
 //! The structs below mirror the protocol's `State`, `Node`, `Profile` and
 //! `PingResult` shapes. They serialize to exactly the JSON the front-end types
@@ -12,6 +13,9 @@
 
 pub mod mock;
 pub mod sidecar;
+#[cfg(test)]
+pub mod testutil;
+pub mod wire;
 
 use serde::{Deserialize, Serialize};
 
