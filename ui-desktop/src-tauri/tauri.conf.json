@@ -48,6 +48,8 @@
     "longDescription": "Windows VPN client built on sing-box, with macOS, Linux, Android and iOS planned.",
     "windows": {
       "nsis": {
+        "installMode": "perMachine",
+        "installerHooks": "./installer-hooks.nsh",
         "installerIcon": "icons/icon.ico",
         "headerImage": "icons/nsis-header.bmp",
         "sidebarImage": "icons/nsis-sidebar.bmp"
