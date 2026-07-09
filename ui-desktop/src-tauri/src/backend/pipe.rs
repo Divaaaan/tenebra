@@ -909,6 +909,17 @@ mod tests {
         .find(|p| p.exists())
     }
 
+    /// Kills the spawned core on drop, so a failed assertion can't leak a
+    /// process that keeps holding the well-known pipe name.
+    struct KillOnDrop(std::process::Child);
+
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
     /// The full cross-implementation round-trip: this client against the real
     /// Go core serving `--pipe`, on the well-known name — the exact production
     /// wiring of the service transport. Catches framing or session-semantics
@@ -929,15 +940,17 @@ mod tests {
         // nothing here starts a tunnel.
         let store = std::env::temp_dir().join(format!("tenebra-pipe-e2e-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&store);
-        let mut core = std::process::Command::new(&program)
-            .arg("--pipe")
-            .env("TENEBRA_SINGBOX", "sing-box-not-needed-for-this-test")
-            .env("TENEBRA_CONFIG_DIR", &store)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn tenebra-core --pipe");
+        let _core = KillOnDrop(
+            std::process::Command::new(&program)
+                .arg("--pipe")
+                .env("TENEBRA_SINGBOX", "sing-box-not-needed-for-this-test")
+                .env("TENEBRA_CONFIG_DIR", &store)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("spawn tenebra-core --pipe"),
+        );
 
         // The listener takes a moment to come up; retry_connect covers it.
         let sink = Arc::new(Rec::default());
@@ -951,8 +964,8 @@ mod tests {
         let state = backend.status().expect("status against the real core");
         assert_eq!(state.state, ConnectionState::Idle);
 
+        // Drop order: the backend disconnects first, then KillOnDrop reaps the
+        // core.
         drop(backend);
-        let _ = core.kill();
-        let _ = core.wait();
     }
 }

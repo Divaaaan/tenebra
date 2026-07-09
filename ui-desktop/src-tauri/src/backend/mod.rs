@@ -4,8 +4,10 @@
 //! protocol (see `docs/control-protocol.md`); the Tauri command layer in
 //! `lib.rs` never has to know which one is wired in. [`wire`] holds the
 //! transport-agnostic protocol client; [`sidecar`] runs it over a spawned
-//! core's stdin/stdout; [`mock`] is an in-process fake for UI work without the
-//! core. `make_backend` in `lib.rs` picks one at startup.
+//! core's stdin/stdout; [`pipe`] (Windows) runs it over the named pipe of a
+//! core that outlives the GUI — the service or `tenebra-core --pipe`; [`mock`]
+//! is an in-process fake for UI work without the core. `make_backend` in
+//! `lib.rs` picks one at startup.
 //!
 //! The structs below mirror the protocol's `State`, `Node`, `Profile` and
 //! `PingResult` shapes. They serialize to exactly the JSON the front-end types
