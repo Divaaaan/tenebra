@@ -1,12 +1,16 @@
-// Command tenebra-core is the sidecar that owns sing-box and the tunnel. The
-// desktop UI speaks to it over stdin/stdout using the line-delimited JSON
-// control protocol; stdout therefore carries protocol traffic only and every
-// diagnostic goes to stderr.
+// Command tenebra-core is the process that owns sing-box and the tunnel. The
+// desktop UI drives it with the line-delimited JSON control protocol over one
+// of two transports: by default the core is a sidecar speaking on stdin/stdout
+// (stdout carries protocol traffic only and every diagnostic goes to stderr);
+// on Windows it can instead serve the protocol on a named pipe — as a Windows
+// service, or in a console with --pipe — so the tunnel can outlive any one UI
+// process. See docs/control-protocol.md for the transports.
 package main
 
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -18,25 +22,69 @@ import (
 	"github.com/Divaaaan/tenebra/core/profile"
 )
 
+// pipeMode switches the console process from stdin/stdout to the named-pipe
+// transport (Windows only): the development way to exercise the service's
+// transport without installing a service.
+var pipeMode = flag.Bool("pipe", false, "serve the control protocol on the named pipe instead of stdin/stdout (Windows only)")
+
 func main() {
-	if err := run(); err != nil {
+	flag.Parse()
+	// The service control manager starts us with no console and no usable
+	// stdio, so the service path must be detected before anything touches
+	// them. Off Windows this is always a no-op.
+	if handled, err := maybeRunService(); handled || err != nil {
+		if err != nil {
+			log.Printf("fatal: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if err := run(*pipeMode); err != nil {
 		log.Printf("fatal: %v", err)
 		os.Exit(1)
 	}
 }
 
-// run wires up the core: it opens the profile store, builds the runner and
-// control daemon, restores persisted last-good and routing settings, and serves
-// the JSON protocol on stdin/stdout until EOF or a shutdown signal.
-func run() error {
-	// stdout is the protocol channel; keep all logging off it.
+// run is the console entry point: it wires up the core and serves the JSON
+// protocol — on stdin/stdout by default, on the named pipe with --pipe — until
+// EOF or a shutdown signal.
+func run(usePipe bool) error {
+	// stdout is the protocol channel in sidecar mode; keep all logging off it.
 	log.SetOutput(os.Stderr)
 	log.SetFlags(log.LstdFlags)
 
+	daemon, err := buildDaemon()
+	if err != nil {
+		return err
+	}
+
+	// Cancel on Ctrl-C / SIGTERM so the tunnel is torn down cleanly; serving
+	// also ends on a clean stdin EOF (the UI closing the pipe).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if usePipe {
+		err = servePipe(ctx, daemon)
+	} else {
+		server := control.NewServer(daemon, os.Stdin, os.Stdout)
+		err = server.Serve(ctx)
+	}
+	// A signal-driven shutdown surfaces as context.Canceled; that is a normal
+	// exit, not a failure.
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
+}
+
+// buildDaemon opens the profile store and wires a daemon with its persisted
+// state — the setup shared by the console (stdio or --pipe) and the Windows
+// service entry points.
+func buildDaemon() (*control.Daemon, error) {
 	dir := configDir()
 	store, err := profile.Open(dir)
 	if err != nil {
-		return fmt.Errorf("open profile store: %w", err)
+		return nil, fmt.Errorf("open profile store: %w", err)
 	}
 
 	// newRunner is chosen at build time per platform (runner_darwin.go for macOS,
@@ -70,20 +118,7 @@ func run() error {
 	} else {
 		log.Printf("tenebra-core: bundled RU rule-sets not found; falling back to remote download")
 	}
-	server := control.NewServer(daemon, os.Stdin, os.Stdout)
-
-	// Cancel on Ctrl-C / SIGTERM so the tunnel is torn down cleanly; Serve also
-	// returns on a clean stdin EOF (the UI closing the pipe).
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	err = server.Serve(ctx)
-	// A signal-driven shutdown surfaces as context.Canceled; that is a normal
-	// exit, not a failure.
-	if errors.Is(err, context.Canceled) {
-		return nil
-	}
-	return err
+	return daemon, nil
 }
 
 // ruleSetFiles are the bundled RU rule-set binaries expected next to the

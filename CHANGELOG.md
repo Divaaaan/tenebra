@@ -11,6 +11,18 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Windows service mode for the core.** Started by the service control manager,
+  `tenebra-core` serves the control protocol on the `\\.\pipe\tenebra` named pipe
+  (DACL: SYSTEM, Administrators, the interactive user — the Tailscale LocalAPI
+  trust model) instead of stdin/stdout, logs to `%ProgramData%\Tenebra\service.log`,
+  and tears the tunnel down on service stop. One client session is active at a
+  time: a new connection displaces the old, and a client disconnecting leaves the
+  tunnel up. `tenebra-core --pipe` serves the same transport from a console for
+  development. The desktop app still spawns the stdio sidecar; moving it onto the
+  service (installer, unprivileged GUI) is a separate step.
+
 ## [0.2.0] - 2026-07-09
 
 ### Added

@@ -24,10 +24,12 @@ Everything that isn't tied to a specific OS lives here:
   REALITY → Hysteria2 → AmneziaWG and remembers the last good one.
 - **control** — the JSON protocol the UI uses to drive the core.
 
-The core has no third-party dependencies. It generates sing-box configuration
-as plain JSON rather than linking sing-box as a library; sing-box itself is the
-runtime. That keeps the core pure, fully unit-testable offline, and free of the
-sing-box dependency tree.
+The core's only third-party dependencies are `github.com/Microsoft/go-winio`
+and `golang.org/x/sys` — Windows plumbing for the named-pipe transport and the
+service entry point; everything else is standard library. It generates sing-box
+configuration as plain JSON rather than linking sing-box as a library; sing-box
+itself is the runtime. That keeps the core pure, fully unit-testable offline,
+and free of the sing-box dependency tree.
 
 ### Adapters — `adapters/`
 
@@ -62,6 +64,14 @@ the wintun tunnel and the sing-box lifecycle. The wire format is specified in
  (React)                                                    |
                                                             +-- wintun tunnel
 ```
+
+On Windows the same core can also run detached from the UI — as a Windows
+service serving the identical protocol on the `\\.\pipe\tenebra` named pipe
+(`tenebra-core --pipe` serves it from a console for development). That is the
+path to the WireGuard/Tailscale privilege model, where the tunnel lives in a
+SYSTEM service and the GUI runs unprivileged; the desktop shell does not use it
+yet. Transports and the pipe's security model are described in
+[control-protocol.md](control-protocol.md#transports).
 
 ### Mobile (later)
 
