@@ -1,0 +1,113 @@
+# Tenebra iOS — XcodeGen project spec.
+#
+# XcodeGen (https://github.com/yonaskolb/XcodeGen) turns this declarative YAML
+# into Tenebra.xcodeproj. The .xcodeproj is NOT committed — it is generated:
+#
+#     brew install xcodegen         # macOS only
+#     cd ui-ios && xcodegen generate
+#
+# STATUS: this manifest is written to be a valid XcodeGen spec, but it has NOT
+# been run through `xcodegen generate` on the host it was authored on (Windows —
+# no Xcode). It is the most structurally-checkable iOS artifact in this scaffold
+# (it is plain YAML), but "parses as YAML" is not "produces a building project".
+# Treat every path, bundle id and build setting below as a reviewed starting
+# point to validate on a Mac, not a finished configuration. See ui-ios/README.md.
+#
+# The frameworks referenced under each target (Frameworks/Libbox.xcframework and
+# Frameworks/TenebraCore.xcframework) do NOT exist until scripts/build-libbox.sh
+# is run on a Mac; XcodeGen will warn about the missing paths until then.
+
+name: Tenebra
+
+options:
+  # Bundle ids follow the desktop convention (com.tenebra.desktop) — neutral, no
+  # private infrastructure. The App Group derives from the app id below.
+  bundleIdPrefix: com.tenebra.ios
+  deploymentTarget:
+    iOS: "15.0"        # NE packet-tunnel gets the 50 MB cap (not 15 MB) on iOS 15+
+  developmentLanguage: en
+  createIntermediateGroups: true
+  # Fill this in on the Mac from your Apple Developer account, or set it per-target
+  # in Xcode's Signing & Capabilities. Left blank so the spec carries no identity.
+  # settingPresets: all
+
+# No Swift Package Manager dependencies: the engine (Libbox) and Tenebra's core
+# (TenebraCore) come in as prebuilt gomobile xcframeworks, not SPM packages.
+packages: {}
+
+# Shared build settings applied to every target unless overridden.
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+    TARGETED_DEVICE_FAMILY: "1,2"        # iPhone + iPad
+    ENABLE_BITCODE: NO                   # bitcode is removed as of Xcode 14
+    CODE_SIGN_STYLE: Automatic
+    # DEVELOPMENT_TEAM is intentionally unset — provide it on the Mac (a real
+    # Apple Developer team is required to sign the Network Extension entitlement).
+    DEVELOPMENT_TEAM: ""
+
+targets:
+
+  # ---------------------------------------------------------------------------
+  # Host app — the SwiftUI client. Thin: it provisions and observes the tunnel
+  # via NETunnelProviderManager, generates configs via TenebraCore, and talks to
+  # the running extension via libbox's CommandClient. It never touches packets.
+  # ---------------------------------------------------------------------------
+  Tenebra:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+    info:
+      path: Support/App/Info.plist
+    entitlements:
+      path: Support/App/Tenebra.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tenebra.ios
+        PRODUCT_NAME: Tenebra
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    dependencies:
+      # Embed the Network Extension into the app bundle (PlugIns/).
+      - target: TenebraTunnel
+        embed: true
+      # The app links libbox for the CommandClient side of the app<->extension IPC
+      # and TenebraCore for GenerateConfig. Both are gomobile xcframeworks built by
+      # scripts/build-libbox.sh. Embedding for BOTH the app and the extension is the
+      # single most likely thing to need adjustment on a Mac (duplicate-dylib vs
+      # @rpath sharing); this mirrors SagerNet/sing-box-for-apple as the starting
+      # point — validate the embed/link split against a real build.
+      - framework: Frameworks/TenebraCore.xcframework
+        embed: true
+      - framework: Frameworks/Libbox.xcframework
+        embed: true
+
+  # ---------------------------------------------------------------------------
+  # Packet-tunnel Network Extension — the sandboxed daemon that links libbox and
+  # runs sing-box in-process. It is where the whole engine lives and where the
+  # 50 MB jetsam cap applies. In sing-box-for-apple the NE target is a 4-line
+  # shim over a shared library; here the logic is inlined into the two files
+  # under Extension/ for the scaffold.
+  # ---------------------------------------------------------------------------
+  TenebraTunnel:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Extension
+    info:
+      path: Support/Extension/Info.plist
+    entitlements:
+      path: Support/Extension/PacketTunnel.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tenebra.ios.tunnel
+        PRODUCT_NAME: TenebraTunnel
+    dependencies:
+      # The extension runs the engine, so it links + embeds libbox (CommandServer
+      # + the sing-box core). It does NOT link TenebraCore: it receives the already
+      # generated config JSON from the app over the CommandServer IPC.
+      - framework: Frameworks/Libbox.xcframework
+        embed: true

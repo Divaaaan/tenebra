@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Network Extension entitlements. SCAFFOLD — not validated against a real
+  provisioning profile. The extension needs the same packet-tunnel-provider
+  capability as the app and must share the App Group so the config JSON, the
+  command.sock IPC socket, and the cached .srs rule-sets are reachable from both
+  sandboxes (see docs/porting/ios.md#entitlements-and-provisioning).
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.developer.networking.networkextension</key>
+	<array>
+		<string>packet-tunnel-provider</string>
+	</array>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.tenebra.ios</string>
+	</array>
+</dict>
+</plist>
