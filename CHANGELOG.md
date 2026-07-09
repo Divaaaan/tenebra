@@ -55,6 +55,16 @@ All notable changes to Tenebra are documented here. The format follows
   restarting into the new version; if that silent install fails, the banner is
   shown instead.
 
+### Changed
+
+- **A dropped service connection is no longer an instant error.** When the
+  control-pipe session ends mid-run, the app now shows a "Reconnecting to the
+  Tenebra service…" status while it redials, and only reports an error (state
+  and notification) if the service stays away past a short grace window (8 s).
+  A service restart during an update, or another client briefly taking the
+  session over, comes back well inside the window and no longer flashes
+  "Connection failed" while the tunnel is in fact fine.
+
 ## [0.2.0] - 2026-07-09
 
 ### Added
