@@ -233,7 +233,6 @@ export interface Strings {
 
   units: {
     ms: string;
-    perSecond: string;
   };
 
   errors: {
@@ -451,7 +450,6 @@ const en: Strings = {
   },
   units: {
     ms: "ms",
-    perSecond: "/s",
   },
   errors: {
     generic: "Something went wrong.",
@@ -668,7 +666,6 @@ const ru: Strings = {
   },
   units: {
     ms: "мс",
-    perSecond: "/с",
   },
   errors: {
     generic: "Что-то пошло не так.",

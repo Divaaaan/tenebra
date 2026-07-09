@@ -20,7 +20,6 @@ export type { Theme } from "./persistence";
 interface ThemeValue {
   theme: Theme;
   setTheme: (theme: Theme) => void;
-  toggle: () => void;
 }
 
 const ThemeContext = createContext<ThemeValue | null>(null);
@@ -33,21 +32,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     saveTheme(next);
   }, []);
 
-  const toggle = useCallback(() => {
-    setThemeState((prev) => {
-      const next = prev === "dark" ? "light" : "dark";
-      saveTheme(next);
-      return next;
-    });
-  }, []);
-
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
 
   const value = useMemo<ThemeValue>(
-    () => ({ theme, setTheme, toggle }),
-    [theme, setTheme, toggle],
+    () => ({ theme, setTheme }),
+    [theme, setTheme],
   );
 
   return (

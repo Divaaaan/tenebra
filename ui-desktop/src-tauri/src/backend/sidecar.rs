@@ -780,9 +780,10 @@ mod tests {
     /// `stdout` reader we pass in and `pending` / `closed`. The child is killed
     /// when the returned `Shared` is dropped.
     fn shared_with_dummy_child() -> Arc<Shared> {
-        // Any program with a stdin pipe works; we never write to or read from it.
-        // `cmd` exists on every Windows runner and stays put waiting on stdin.
-        let mut child = Command::new("cmd")
+        // Any long-lived process with a stdin pipe works; we never write to or
+        // read from it. `dummy_child_command` picks one that blocks on stdin so
+        // the child stays put on whichever platform the tests run on.
+        let mut child = dummy_child_command()
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -796,6 +797,23 @@ mod tests {
             closed: AtomicBool::new(false),
             child: Mutex::new(child),
         })
+    }
+
+    /// A `Command` for a throwaway process that stays alive blocking on its
+    /// stdin, portable across the platforms the tests run on: `cmd` on Windows,
+    /// `sh -c cat` elsewhere. Both read stdin and exit only when it closes (or
+    /// the test kills them), which is exactly the long-lived child the reader
+    /// tests need without depending on a Windows-only binary.
+    fn dummy_child_command() -> Command {
+        #[cfg(windows)]
+        let command = Command::new("cmd");
+        #[cfg(not(windows))]
+        let command = {
+            let mut c = Command::new("sh");
+            c.arg("-c").arg("cat");
+            c
+        };
+        command
     }
 
     #[test]
