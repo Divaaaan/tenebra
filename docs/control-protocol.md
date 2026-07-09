@@ -112,6 +112,7 @@ surface.
 | `set_split`            | `mode` (`off`/`exclude`/`include`), `apps?` | `State`            |
 | `set_kill_switch`      | `on` (boolean)                     | `State`                     |
 | `set_tun`              | `stack` (`system`/`gvisor`/`mixed`) | `State`                    |
+| `set_autoconnect`      | `on` (boolean)                     | `State`                     |
 | `leak_check`           | —                                  | `LeakCheck`                 |
 
 ```
@@ -180,6 +181,10 @@ restarting sing-box). The returned `State` reflects the stored choice.
 same way, but when a tunnel is **live** the core also re-applies them in place —
 see below.
 
+`set_autoconnect` is recorded and persisted the same way but changes nothing
+about a live tunnel; it takes effect when the daemon itself next starts (see
+[Autoconnect](#autoconnect-set_autoconnect)).
+
 ### Kill switch (`set_kill_switch`)
 
 `on: true` arms the kill switch; `false` (or an omitted field) disarms it. Armed
@@ -238,6 +243,37 @@ request:  {"id":9,"cmd":"set_kill_switch","on":true}
 response: {"id":9,"ok":true,"data":{"state":"connecting","profile":"p1","kill_switch":true,"tun_stack":"system"}}
 request:  {"id":10,"cmd":"set_tun","stack":"gvisor"}
 response: {"id":10,"ok":true,"data":{"state":"idle","tun_stack":"gvisor"}}
+```
+
+### Autoconnect (`set_autoconnect`)
+
+`on: true` makes the core reconnect on its own the next time the **daemon**
+starts; `false` (or an omitted field) turns that off. The preference is
+persisted in `settings.json` like the kill switch and reported back as
+`autoconnect` in `State`. Nothing about a live tunnel changes when the command
+lands — it only matters at daemon startup.
+
+What the core reconnects to is the **last successful user connect**, which it
+records on its own: the profile, plus the node only when that connect named an
+explicit one. A connect that let the core choose is re-issued the same way, so
+the startup connect walks the ordinary fallback order (led by the profile's
+last-good node) rather than pinning whatever exit happened to be up last.
+Kill-switch relaunches and live re-applies do not rewrite this record — they
+pin the current node as a mechanism, not as the user's intent.
+
+Because the trigger is the daemon's start, the behaviour follows the
+transport: a spawned sidecar autoconnects when the app launches (the old
+UI-driven behaviour, now core-owned), while the Windows service autoconnects
+at **system boot** — before any user logs in — and after service restarts,
+e.g. across an update. A client that attaches mid-attempt simply observes the
+`connecting` state. The attempt never delays the control plane, a user command
+that arrives first wins, and a recorded profile or node that no longer exists
+leaves the core idle (with a `log` event) rather than in `error` — it never
+guesses a different exit than the user last chose.
+
+```
+request:  {"id":11,"cmd":"set_autoconnect","on":true}
+response: {"id":11,"ok":true,"data":{"state":"idle","tun_stack":"system","autoconnect":true}}
 ```
 
 ### Per-app split tunnelling (`set_split`)
@@ -335,6 +371,7 @@ type State = {
   split_apps?: string[];          // normalized executable names; omitted when off
   kill_switch?: boolean;          // omitted when off
   tun_stack?: "system" | "gvisor" | "mixed";
+  autoconnect?: boolean;          // reconnect at daemon start; omitted when off
   error?: string;
 };
 
