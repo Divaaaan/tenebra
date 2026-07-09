@@ -118,11 +118,20 @@
   ; The name must stay "tenebra": it is the name svc.Run answers to in
   ; tenebra-core. Idempotent across updates: create is a benign failure when
   ; the service already exists, and config then re-points the registration at
-  ; this install directory (healing a relocated install). binPath embeds its
-  ; own quotes so the image path survives the space in "Program Files".
-  nsExec::Exec '"$SYSDIR\sc.exe" create tenebra binPath= "$\"$INSTDIR\tenebra-core.exe$\"" start= auto DisplayName= "Tenebra"'
+  ; this install directory (healing a relocated install).
+  ;
+  ; The binPath quoting is load-bearing. sc.exe splits its command line with
+  ; CommandLineToArgvW, so the image path must arrive as ONE argv element that
+  ; still carries its own quotes (a quoted ImagePath is also what keeps the
+  ; "Program Files" space from being interpreted at service start). On the raw
+  ; command line that is  binPath= "\"...\""  — an outer quoted region with
+  ; backslash-escaped inner quotes. Writing "$\"...$\"" (no backslashes) puts
+  ; ""..."" on the wire, which CommandLineToArgvW splits at the path's space:
+  ; sc then sees binPath= C:\Program and answers with its usage text (1639),
+  ; silently, and the service never exists.
+  nsExec::Exec '"$SYSDIR\sc.exe" create tenebra binPath= "\$\"$INSTDIR\tenebra-core.exe\$\"" start= auto DisplayName= "Tenebra"'
   Pop $0
-  nsExec::Exec '"$SYSDIR\sc.exe" config tenebra binPath= "$\"$INSTDIR\tenebra-core.exe$\"" start= auto'
+  nsExec::Exec '"$SYSDIR\sc.exe" config tenebra binPath= "\$\"$INSTDIR\tenebra-core.exe\$\"" start= auto DisplayName= "Tenebra"'
   Pop $0
   nsExec::Exec '"$SYSDIR\sc.exe" description tenebra "Runs the Tenebra VPN tunnel and serves the local control endpoint."'
   Pop $0
