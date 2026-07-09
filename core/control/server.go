@@ -35,6 +35,11 @@ func NewServer(d *Daemon, r io.Reader, w io.Writer) *Server {
 // (nil on clean EOF). Each request is handled synchronously in order; commands
 // that do network I/O (subscription fetch, ping) honour ctx.
 //
+// Serve is the single-client transport: the stream IS the daemon's lifetime, so
+// the end of the stream (the UI closing the sidecar's stdin) closes the daemon.
+// ServeListener is the multi-session alternative where the daemon outlives any
+// one stream.
+//
 // Serve also owns the daemon's background work: it starts the subscription
 // auto-refresh ticker under a child context and waits for it to stop before
 // returning, so the ticker's lifetime is exactly the serving session.
@@ -52,11 +57,23 @@ func (s *Server) Serve(ctx context.Context) error {
 	defer bg.Wait()
 	defer stopBg()
 
+	err := s.serveStream(ctx)
+	_ = s.daemon.Close()
+	return err
+}
+
+// serveStream runs the request loop over the server's stream until the reader
+// ends or ctx is cancelled, returning ctx.Err() on cancellation and the
+// scanner's error (nil on clean EOF) otherwise. It owns only the stream: the
+// daemon's connection state and background work belong to the caller, which is
+// what lets ServeListener run many streams against one daemon.
+func (s *Server) serveStream(ctx context.Context) error {
 	scan := newRequestScanner(s.r)
 
 	// Reading from s.r blocks, so cancellation can't interrupt a blocked Scan
-	// directly. We run the read loop in a goroutine and select on ctx so Serve
-	// returns promptly on cancel; the goroutine ends when the reader closes.
+	// directly. We run the read loop in a goroutine and select on ctx so
+	// serveStream returns promptly on cancel; the goroutine ends when the reader
+	// closes.
 	lines := make(chan []byte)
 	scanErr := make(chan error, 1)
 	go func() {
@@ -78,11 +95,9 @@ func (s *Server) Serve(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			_ = s.daemon.Close()
 			return ctx.Err()
 		case line, ok := <-lines:
 			if !ok {
-				_ = s.daemon.Close()
 				return <-scanErr
 			}
 			s.handleLine(ctx, line)
