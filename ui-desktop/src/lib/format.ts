@@ -16,11 +16,6 @@ export function formatBytes(bytes: number): string {
   return `${value.toFixed(digits)} ${BYTE_UNITS[exp]}`;
 }
 
-/** Byte rate suffixed with a localized "/s". */
-export function formatRate(bytesPerSecond: number, perSecond: string): string {
-  return `${formatBytes(bytesPerSecond)}${perSecond}`;
-}
-
 /** A byte/sec rate as a bare megabit-per-second number, e.g. 11_775_000 → "94.2".
  *  The unit ("Mbps") is rendered separately by the stat cell. */
 export function formatMbps(bytesPerSecond: number): string {

@@ -73,6 +73,10 @@ type Runner struct {
 	done    chan error
 	cfgPath string // temp config file for the running process, removed on stop
 	ring    *ringBuffer
+	// clashSecret is the clash API token baked into the running process's config.
+	// Stats and Probe send it as a bearer so the authenticated external controller
+	// answers them; set on each Start, read under mu.
+	clashSecret string
 }
 
 // New builds a Runner with defaults: the sing-box binary is resolved from
@@ -106,6 +110,10 @@ func (r *Runner) Start(ctx context.Context, configJSON []byte) error {
 	if err != nil {
 		return err
 	}
+
+	// The clash API secret travels inside the config we were handed; read it back
+	// so Stats/Probe authenticate to the same controller this process exposes.
+	secret := clashSecretFromConfig(configJSON)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -141,6 +149,7 @@ func (r *Runner) Start(ctx context.Context, configJSON []byte) error {
 	r.cancel = cancel
 	r.done = done
 	r.cfgPath = cfgPath
+	r.clashSecret = secret
 
 	// Drain both streams into the ring buffer; the goroutines end when the pipes
 	// close on process exit.
@@ -214,8 +223,14 @@ func (r *Runner) Stats() (up, down int64, err error) {
 	}
 	url := fmt.Sprintf("http://127.0.0.1:%d/connections", port)
 
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return 0, 0, fmt.Errorf("windows: clash stats: %w", err)
+	}
+	setClashAuth(req, r.clashAuth())
+
 	client := &http.Client{Timeout: statsTimeout}
-	resp, err := client.Get(url)
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0, 0, fmt.Errorf("windows: clash stats: %w", err)
 	}
@@ -252,6 +267,7 @@ func (r *Runner) Probe(ctx context.Context, tag string) (delayMs int, err error)
 	if err != nil {
 		return 0, fmt.Errorf("windows: clash delay request: %w", err)
 	}
+	setClashAuth(req, r.clashAuth())
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("windows: clash delay: %w", err)
@@ -297,6 +313,42 @@ func trimBody(b []byte) string {
 		s = s[:max]
 	}
 	return s
+}
+
+// clashAuth returns the clash API bearer secret for the running process, or ""
+// when the config carried none (an unauthenticated API).
+func (r *Runner) clashAuth() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.clashSecret
+}
+
+// setClashAuth attaches the clash API secret as a bearer token when one is set.
+// sing-box's external controller answers 401 to any request missing it once a
+// secret is configured, which is what keeps other local processes off the
+// tunnel's control surface.
+func setClashAuth(req *http.Request, secret string) {
+	if secret != "" {
+		req.Header.Set("Authorization", "Bearer "+secret)
+	}
+}
+
+// clashSecretFromConfig extracts the clash API secret from a sing-box config so
+// Stats and Probe can authenticate to the external controller the running
+// process exposes. It returns "" for a config without one (or an unparseable
+// config), in which case the callers send no Authorization header.
+func clashSecretFromConfig(configJSON []byte) string {
+	var cfg struct {
+		Experimental struct {
+			ClashAPI struct {
+				Secret string `json:"secret"`
+			} `json:"clash_api"`
+		} `json:"experimental"`
+	}
+	if err := json.Unmarshal(configJSON, &cfg); err != nil {
+		return ""
+	}
+	return cfg.Experimental.ClashAPI.Secret
 }
 
 // Logs returns a copy of the most recent sing-box output lines, newest last, for

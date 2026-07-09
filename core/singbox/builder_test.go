@@ -523,6 +523,53 @@ func TestExperimentalBlock(t *testing.T) {
 	}
 }
 
+// TestClashAPISecretPresentAndRandom is the config half of the clash API auth
+// fix: every build must carry a non-empty clash_api secret, and two builds must
+// not share one (crypto-random per run), so another local process can't reach
+// the external controller by guessing a fixed token.
+func TestClashAPISecretPresentAndRandom(t *testing.T) {
+	clashOf := func() map[string]any {
+		return buildFake(t)["experimental"].(map[string]any)["clash_api"].(map[string]any)
+	}
+	secret, ok := clashOf()["secret"].(string)
+	if !ok || secret == "" {
+		t.Fatalf("clash_api secret missing or empty: %v", clashOf()["secret"])
+	}
+	if other := clashOf()["secret"].(string); secret == other {
+		t.Errorf("two builds shared clash_api secret %q; it must be per-run random", secret)
+	}
+}
+
+// TestShadowsocksPluginSkipped covers fix #1: a Shadowsocks node carrying a
+// transport plugin (v2ray-plugin / obfs / shadow-tls) can't be rendered — the
+// outbound emits no plugin/plugin_opts — so it must be dropped like any other
+// unsupported node rather than built into a plain outbound that fails the
+// handshake in silence. The healthy node it shares a profile with must survive.
+func TestShadowsocksPluginSkipped(t *testing.T) {
+	plugin := goodSSNode("plugin-ss")
+	plugin.Extra = map[string]string{"plugin": "v2ray-plugin;tls"}
+	cfg, err := Build([]model.Node{plugin, goodSSNode("plain")}, "",
+		routing.Options{Mode: routing.ModeGlobal}, TunOptions{})
+	if err != nil {
+		t.Fatalf("plugin node should be skipped, not error: %v", err)
+	}
+	by := outboundsByTag(t, cfg)
+	if _, has := by["plugin-ss"]; has {
+		t.Error("shadowsocks node with a plugin must not appear in outbounds")
+	}
+	if _, has := by["plain"]; !has {
+		t.Errorf("plain shadowsocks node must survive; tags %v", keys(by))
+	}
+	// validateNode must name the plugin so the skip reason is explicit.
+	if err := validateNode(plugin); err == nil || !strings.Contains(err.Error(), "plugin") {
+		t.Errorf("validateNode(plugin ss) = %v, want an error mentioning the plugin", err)
+	}
+	// The canonical exported predicate the control walks use must agree.
+	if ValidateNode(plugin) {
+		t.Error("ValidateNode should reject a shadowsocks node with a plugin")
+	}
+}
+
 func TestNoUsableNodes(t *testing.T) {
 	_, err := Build(nil, "", routing.Options{Mode: routing.ModeSmart}, TunOptions{})
 	if err == nil {

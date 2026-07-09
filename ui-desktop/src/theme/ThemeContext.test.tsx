@@ -4,17 +4,17 @@ import userEvent from "@testing-library/user-event";
 
 import { ThemeProvider, useTheme } from "./ThemeContext";
 
-// A minimal consumer: shows the current theme and exposes both mutators.
+// A minimal consumer: shows the current theme and exposes the setter.
 function Probe() {
-  const { theme, setTheme, toggle } = useTheme();
+  const { theme, setTheme } = useTheme();
   return (
     <div>
       <span data-testid="theme">{theme}</span>
       <button type="button" onClick={() => setTheme("light")}>
         set light
       </button>
-      <button type="button" onClick={toggle}>
-        toggle
+      <button type="button" onClick={() => setTheme("dark")}>
+        set dark
       </button>
     </div>
   );
@@ -60,20 +60,19 @@ describe("ThemeProvider", () => {
     expect(localStorage.getItem("tenebra.theme")).toBe("light");
   });
 
-  it("toggle round-trips dark -> light -> dark, persisting each step", async () => {
+  it("setTheme round-trips dark -> light -> dark, persisting each step", async () => {
     const user = userEvent.setup();
     render(
       <ThemeProvider>
         <Probe />
       </ThemeProvider>,
     );
-    const toggle = screen.getByRole("button", { name: "toggle" });
 
-    await user.click(toggle);
+    await user.click(screen.getByRole("button", { name: "set light" }));
     expect(localStorage.getItem("tenebra.theme")).toBe("light");
     expect(document.documentElement.dataset.theme).toBe("light");
 
-    await user.click(toggle);
+    await user.click(screen.getByRole("button", { name: "set dark" }));
     expect(localStorage.getItem("tenebra.theme")).toBe("dark");
     expect(document.documentElement.dataset.theme).toBe("dark");
   });

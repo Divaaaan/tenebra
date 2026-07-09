@@ -19,6 +19,20 @@ All notable changes to Tenebra are documented here. The format follows
   but the selector-tag and fallback-candidate walks did not, so a tag could land on
   a node the tunnel never built — routing through a different exit than the one the
   UI showed. All three walks now drop the same nodes.
+- Shadowsocks nodes that require a transport plugin (v2ray-plugin, obfs, shadow-tls)
+  were imported and then built into a plain outbound with the plugin dropped, so the
+  tunnel looked connected while its handshake silently mismatched. Such a node is now
+  recognised as unsupported and skipped like any other node the config generator
+  can't render, rather than connecting without the plugin.
+
+### Security
+
+- The sing-box clash API — the loopback control surface the client polls for
+  traffic counters and connectivity probes — now requires a per-run secret.
+  Without one, any other local process could read the active connection list or
+  switch the selected outbound over `127.0.0.1`. The secret is drawn from a
+  cryptographic RNG on each run and presented as a bearer token by the client's own
+  polling, so the app keeps working while other local processes are turned away.
 
 ## [0.1.1] - 2026-07-01
 

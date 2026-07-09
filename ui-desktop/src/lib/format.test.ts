@@ -4,7 +4,6 @@ import {
   formatBytes,
   formatDate,
   formatExpiry,
-  formatRate,
   formatTime,
   formatTrafficUsage,
 } from "./format";
@@ -42,13 +41,6 @@ describe("formatBytes", () => {
   it("clamps past the largest unit instead of inventing one", () => {
     // 1 PB has no unit; it stays expressed in TB (the last entry).
     expect(formatBytes(1024 ** 5)).toBe("1024 TB");
-  });
-});
-
-describe("formatRate", () => {
-  it("suffixes the byte size with the localized per-second string", () => {
-    expect(formatRate(1536, "/s")).toBe("1.5 KB/s");
-    expect(formatRate(0, "/с")).toBe("0 B/с");
   });
 });
 
