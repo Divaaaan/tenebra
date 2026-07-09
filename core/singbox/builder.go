@@ -6,6 +6,7 @@
 package singbox
 
 import (
+	"crypto/rand"
 	"fmt"
 
 	"github.com/Divaaaan/tenebra/core/model"
@@ -117,6 +118,14 @@ func Build(nodes []model.Node, selectedTag string, ro routing.Options, tun TunOp
 		map[string]any{"type": "block", "tag": blockTag},
 	)
 
+	// A per-run secret gates the clash API's external controller. Without it any
+	// local process could read the user's live connections (GET /connections) or
+	// flip the selected outbound (PUT /proxies) over 127.0.0.1 — a browsing-
+	// metadata leak on a privacy client. rand.Text draws from crypto/rand, so the
+	// token is unguessable; the runner reads it back out of this config to
+	// authenticate its own stats/probe calls.
+	clashSecret := rand.Text()
+
 	cfg := map[string]any{
 		"log": map[string]any{
 			// warn, not info: at info sing-box logs (and formats) every connection
@@ -133,6 +142,7 @@ func Build(nodes []model.Node, selectedTag string, ro routing.Options, tun TunOp
 		"experimental": map[string]any{
 			"clash_api": map[string]any{
 				"external_controller": fmt.Sprintf("127.0.0.1:%d", tun.ClashAPIPort),
+				"secret":              clashSecret,
 			},
 			"cache_file": map[string]any{
 				"enabled": true,
@@ -228,7 +238,10 @@ func buildNodes(nodes []model.Node) (outs, endpoints []map[string]any, tags []st
 // logged-skip rather than a fatal so one bad node can't poison the shared
 // config. The checks mirror sing-box's own decode-time requirements:
 //   - port must be a valid uint16 (1..65535), for every protocol;
-//   - Shadowsocks needs a method AND a password;
+//   - Shadowsocks needs a method AND a password, and must carry no transport
+//     plugin — shadowsocksOutbound emits none of sing-box's plugin/plugin_opts
+//     fields, so a plugin node would build a plain outbound that fails its
+//     handshake in silence;
 //   - Trojan and Hysteria2 need a password;
 //   - VLESS and VMess need a UUID;
 //   - a REALITY node (TLS.Reality set) needs a non-empty public_key — a keyless
@@ -244,6 +257,14 @@ func validateNode(n model.Node) error {
 	case model.Shadowsocks:
 		if n.Method == "" || n.Password == "" {
 			return fmt.Errorf("node %q: shadowsocks needs method and password", n.Name)
+		}
+		// A plugin (v2ray-plugin, obfs, shadow-tls, ...) changes the wire protocol,
+		// and shadowsocksOutbound emits no plugin/plugin_opts, so the node would
+		// build a plain outbound and mismatch the server's handshake. Refuse it
+		// outright: an honest "unsupported plugin" beats a tunnel that looks
+		// connected but silently passes no traffic.
+		if n.Extra["plugin"] != "" {
+			return fmt.Errorf("node %q: shadowsocks plugin %q is not supported", n.Name, n.Extra["plugin"])
 		}
 	case model.Trojan:
 		if n.Password == "" {
