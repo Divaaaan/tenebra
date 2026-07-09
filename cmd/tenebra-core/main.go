@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/Divaaaan/tenebra/adapters/windows"
 	"github.com/Divaaaan/tenebra/core/control"
 	"github.com/Divaaaan/tenebra/core/profile"
 )
@@ -40,7 +39,9 @@ func run() error {
 		return fmt.Errorf("open profile store: %w", err)
 	}
 
-	runner := windows.New()
+	// newRunner is chosen at build time per platform (runner_darwin.go for macOS,
+	// runner_other.go for Windows and the Linux CI build).
+	runner := newRunner()
 	daemon := control.NewDaemon(store, runner)
 	// Persist last-good per profile next to the store so the node that last
 	// connected leads the fallback walk on the next launch. A failure to open it

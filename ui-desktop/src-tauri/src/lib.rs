@@ -131,18 +131,25 @@ fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
 
 /// Path passed to the core as TENEBRA_SINGBOX so it can locate sing-box. An
 /// explicit env var wins (handy in development); otherwise we use the copy
-/// shipped beside the app as a bundle resource, with wintun.dll in the same
-/// directory for the tun device to load.
+/// shipped beside the app as a bundle resource. The bundled binary is named per
+/// platform: `sing-box.exe` on Windows (with wintun.dll in the same directory
+/// for the tun device to load), plain `sing-box` on macOS.
 fn singbox_path(app: &AppHandle) -> std::path::PathBuf {
     if let Some(p) = std::env::var_os("TENEBRA_SINGBOX") {
         return std::path::PathBuf::from(p);
     }
+    #[cfg(windows)]
+    let (resource, fallback) = ("resources/sing-box.exe", "sing-box.exe");
+    #[cfg(target_os = "macos")]
+    let (resource, fallback) = ("resources/sing-box", "sing-box");
+    // Other targets aren't a bundled platform yet; fall back to a bare name so
+    // the shell still compiles everywhere the workspace is checked.
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let (resource, fallback) = ("resources/sing-box", "sing-box");
+
     app.path()
-        .resolve(
-            "resources/sing-box.exe",
-            tauri::path::BaseDirectory::Resource,
-        )
-        .unwrap_or_else(|_| std::path::PathBuf::from("sing-box.exe"))
+        .resolve(resource, tauri::path::BaseDirectory::Resource)
+        .unwrap_or_else(|_| std::path::PathBuf::from(fallback))
 }
 
 // --- command handlers ---------------------------------------------------------

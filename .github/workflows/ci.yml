@@ -84,3 +84,23 @@ jobs:
         with:
           name: tenebra-windows-installer
           path: ui-desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+  macos:
+    # Proves the Go core plus the darwin-tagged macOS adapter (adapters/macos)
+    # compile and pass their tests on a real Apple Silicon runner — the macOS
+    # files are gated on `//go:build darwin`, so this is the only job that
+    # exercises them. The hosted macOS runners are all arm64.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache: false
+      - run: go vet ./...
+      - run: go build ./...
+      - run: go test ./... -race -count=1
+      # TODO(macos): add the Tauri universal-DMG bundle build here once the
+      # darwin resource fetch (scripts/fetch-resources.sh: sing-box darwin +
+      # lipo) and the externalBin/notarization caveat are resolved. See
+      # docs/porting/macos.md; kept out for now to keep this job fast and
+      # network-light.
