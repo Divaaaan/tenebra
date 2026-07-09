@@ -376,6 +376,52 @@ describe("SettingsScreen", () => {
   });
 
   describe("updates", () => {
+    // Same shape as fastestToggle above: the switch's accessible name is its
+    // own ON/OFF text, so find the row by label and take the switch inside it.
+    function autoInstallToggle(): HTMLElement {
+      const label = screen.getByText("Install updates automatically");
+      const row = label.closest(".set-row");
+      if (!row) {
+        throw new Error("auto-install row not found");
+      }
+      const toggle = row.querySelector('[role="switch"]');
+      if (!toggle) {
+        throw new Error("auto-install switch not found");
+      }
+      return toggle as HTMLElement;
+    }
+
+    it("auto-install reflects and persists the stored preference", async () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      const toggle = autoInstallToggle();
+      // Starts off (localStorage cleared in beforeEach): installing restarts
+      // the app, so it must be opted into.
+      expect(toggle).toHaveAttribute("aria-checked", "false");
+
+      await user.click(toggle);
+      expect(toggle).toHaveAttribute("aria-checked", "true");
+      // Written through so the next launch's update check reads it.
+      expect(localStorage.getItem("tenebra.autoInstallUpdates")).toBe("1");
+
+      await user.click(toggle);
+      expect(toggle).toHaveAttribute("aria-checked", "false");
+      expect(localStorage.getItem("tenebra.autoInstallUpdates")).toBe("0");
+    });
+
+    it("auto-install starts on when previously enabled", async () => {
+      localStorage.setItem("tenebra.autoInstallUpdates", "1");
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(autoInstallToggle()).toHaveAttribute("aria-checked", "true");
+      // Let the mount-time getVersion/isEnabled promises settle inside the
+      // test so their state updates land wrapped in act.
+      await screen.findByText("Current version 0.1.0");
+    });
+
     it("moves from checking to available when the updater finds a release", async () => {
       const update = { version: "9.9.9", downloadAndInstall: vi.fn() };
       // Hold the check open so the transient "checking" state is observable
