@@ -45,7 +45,14 @@
     ],
     "category": "Utility",
     "shortDescription": "Tenebra VPN client",
-    "longDescription": "Windows VPN client built on sing-box, with macOS, Linux, Android and iOS planned."
+    "longDescription": "Windows VPN client built on sing-box, with macOS, Linux, Android and iOS planned.",
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "icons/nsis-header.bmp",
+        "sidebarImage": "icons/nsis-sidebar.bmp"
+      }
+    }
   },
   "plugins": {
     "updater": {
