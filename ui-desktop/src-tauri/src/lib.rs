@@ -6,12 +6,15 @@
 //! the single place to swap in the real sidecar client.
 
 mod backend;
+mod deeplink;
 mod tray;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, State as TauriState, WindowEvent};
+use tauri_plugin_deep_link::DeepLinkExt;
+use tauri_plugin_notification::NotificationExt;
 
 use backend::{
     Backend, ConnectionState, EventSink, ImportLinksResult, LeakCheck, PingResult, Profile,
@@ -30,13 +33,44 @@ struct AppState {
 /// each onto the matching event channel with the protocol's exact payload shape.
 struct TauriSink {
     app: AppHandle,
+    /// The last connection state delivered here, so a desktop notification fires
+    /// only on a real transition — not on every snapshot that leaves the state
+    /// unchanged (e.g. a live kill-switch or tun re-apply).
+    last_state: Mutex<Option<ConnectionState>>,
+}
+
+impl TauriSink {
+    /// Show a desktop notification when the connection state meaningfully
+    /// changes. Records the new state and, if the transition is noteworthy, shows
+    /// the toast. Debounced against the previous state via [`transition_notice`].
+    fn notify_transition(&self, state: &State) {
+        let prev = {
+            let mut last = self.last_state.lock().unwrap();
+            let prev = *last;
+            *last = Some(state.state);
+            prev
+        };
+        if let Some((title, body)) = transition_notice(prev, state) {
+            // A missing notification (permission denied, headless test host) is
+            // non-fatal; the state event still drives the UI.
+            let _ = self
+                .app
+                .notification()
+                .builder()
+                .title(title)
+                .body(body)
+                .show();
+        }
+    }
 }
 
 impl EventSink for TauriSink {
     fn state(&self, state: &State) {
-        // The tray tooltip mirrors the live connection state; this is the one
-        // place backend state flows through, so we refresh it here.
+        // The tray mirrors the live connection state (tooltip, icon, menu); this
+        // is the one place backend state flows through, so we refresh it here and
+        // fire any notification the transition warrants.
         tray::sync_state(&self.app, state);
+        self.notify_transition(state);
         let _ = self.app.emit(EVENT_STATE, state);
     }
 
@@ -297,23 +331,47 @@ struct PingList {
 pub fn run() {
     tauri::Builder::default()
         // Single-instance must be the FIRST plugin so a second launch is caught
-        // before any window or other plugin spins up; it just focuses the window
-        // we already have.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        // before any window or other plugin spins up. It focuses the window we
+        // already have and, as a fallback for tauri#12726 (the plugin's own
+        // forwarding may not reach the primary instance on Windows), routes any
+        // tenebra:// link the second launch carried in its argv. The deep-link
+        // feature also forwards that argv to the deep-link plugin, so the same
+        // link can arrive twice — deliver_live de-dups it.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             focus_main_window(app);
+            deeplink::deliver_live(app, &deeplink::find_urls(&argv));
         }))
-        .plugin(tauri_plugin_autostart::Builder::new().build())
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                // Autostart brings Tenebra up straight into the tray; the window
+                // unhides on demand. A manual launch (no flag) opens normally.
+                .arg("--minimized")
+                .build(),
+        )
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let sink: Arc<dyn EventSink> = Arc::new(TauriSink {
                 app: app.handle().clone(),
+                last_state: Mutex::new(None),
             });
             let backend = make_backend(app.handle(), sink);
             app.manage(AppState { backend });
+            app.manage(deeplink::DeepLinkState::default());
             tray::create(app.handle())?;
+            setup_deep_link(app.handle());
+            // Launch-minimized: autostart passes --minimized so we come up in the
+            // tray. The webview still mounts (hidden), so the existing
+            // auto-connect effect runs and reconnects silently.
+            if std::env::args().any(|a| a == "--minimized") {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -343,9 +401,51 @@ pub fn run() {
             set_tun,
             leak_check,
             quit_app,
+            take_launch_deep_links,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tenebra");
+}
+
+/// Wire up `tenebra://` deep links: register the scheme in development, capture
+/// any link the app launched with (cold start), and forward links that arrive
+/// while it runs. Pulled out of `run` so the setup closure stays readable.
+fn setup_deep_link(app: &AppHandle) {
+    // Development only: register the tenebra:// scheme at runtime so links work
+    // from a `tauri dev` build. In a release build the installer owns
+    // registration, pointing the scheme at the installed executable.
+    #[cfg(debug_assertions)]
+    {
+        let _ = app.deep_link().register_all();
+    }
+
+    // Cold start: the OS launches us with the link as a CLI argument. Collect it
+    // from the plugin (get_current) and, defensively, the raw argv, then queue it
+    // for the front end to drain once the webview is listening — an event emitted
+    // now, before setup finishes, would be lost.
+    let mut launch: Vec<String> = Vec::new();
+    if let Ok(Some(urls)) = app.deep_link().get_current() {
+        launch.extend(urls.iter().map(|u| u.to_string()));
+    }
+    launch.extend(deeplink::find_urls(&std::env::args().collect::<Vec<_>>()));
+    deeplink::capture_launch(app, &launch);
+
+    // Warm: a link opened while we run drives on_open_url in this (primary)
+    // instance. deliver_live de-dups against the single-instance argv fallback.
+    let handle = app.clone();
+    app.deep_link().on_open_url(move |event| {
+        let urls: Vec<String> = event.urls().iter().map(|u| u.to_string()).collect();
+        deeplink::deliver_live(&handle, &urls);
+    });
+}
+
+/// Hand the front end the deep links the app launched with (cold start), clearing
+/// them so a later webview remount doesn't replay them.
+#[tauri::command]
+fn take_launch_deep_links(
+    state: TauriState<'_, deeplink::DeepLinkState>,
+) -> Vec<deeplink::DeepLinkAction> {
+    state.take_launch()
 }
 
 /// Bring the main window to the front: unhide, un-minimize, and focus it. Shared
@@ -381,5 +481,149 @@ fn tooltip_for(state: ConnectionState) -> &'static str {
         ConnectionState::Connecting => "Tenebra — Connecting…",
         ConnectionState::Connected => "Tenebra — Connected",
         ConnectionState::Error => "Tenebra — Error",
+    }
+}
+
+/// The desktop notification a state transition warrants, as `(title, body)`, or
+/// `None` when it isn't noteworthy: the first snapshot (`prev` is `None`, so the
+/// app just learned the current state rather than seeing it change), no change
+/// (`prev == new` — the debounce), or a transient `Connecting`. Pure so the
+/// mapping is unit-tested without a Tauri app or a real toast.
+///
+/// The wording is plain English (a system notification lives outside the
+/// localized webview, like the tray labels).
+fn transition_notice(
+    prev: Option<ConnectionState>,
+    state: &State,
+) -> Option<(&'static str, String)> {
+    let prev = prev?;
+    let now = state.state;
+    if prev == now {
+        return None;
+    }
+    match now {
+        ConnectionState::Connected => Some(("Connected", "The secure tunnel is up.".to_string())),
+        // A drop while the kill switch is armed is the kill switch doing its job:
+        // traffic is now blocked. Call it out distinctly from a plain failure.
+        ConnectionState::Error if state.kill_switch.unwrap_or(false) => Some((
+            "Kill switch engaged",
+            "The tunnel dropped and traffic is blocked.".to_string(),
+        )),
+        ConnectionState::Error => Some((
+            "Connection failed",
+            state
+                .error
+                .clone()
+                .unwrap_or_else(|| "The tunnel could not be established.".to_string()),
+        )),
+        // Only a drop from a live tunnel is a "disconnect"; a return to idle from
+        // connecting is an aborted/failed dial, not worth a toast.
+        ConnectionState::Idle if prev == ConnectionState::Connected => {
+            Some(("Disconnected", "The tunnel is down.".to_string()))
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a `State` with a given connection state, leaving the rest at their
+    /// idle defaults; individual fields are set by the caller where they matter.
+    fn state_with(state: ConnectionState) -> State {
+        State {
+            state,
+            node: None,
+            profile: None,
+            routing: None,
+            split: None,
+            split_apps: None,
+            kill_switch: None,
+            tun_stack: None,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn first_snapshot_is_silent() {
+        // No previous state: the app is just learning where it stands, not seeing
+        // a change, so nothing fires — even for connected.
+        assert_eq!(
+            transition_notice(None, &state_with(ConnectionState::Connected)),
+            None
+        );
+        assert_eq!(
+            transition_notice(None, &state_with(ConnectionState::Idle)),
+            None
+        );
+    }
+
+    #[test]
+    fn unchanged_state_is_debounced() {
+        // The core re-emits state on a live kill-switch/tun re-apply without the
+        // connection state changing; those must stay quiet.
+        for s in [
+            ConnectionState::Idle,
+            ConnectionState::Connecting,
+            ConnectionState::Connected,
+            ConnectionState::Error,
+        ] {
+            assert_eq!(
+                transition_notice(Some(s), &state_with(s)),
+                None,
+                "prev == new should not notify for {s:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn connecting_to_connected_notifies() {
+        let notice = transition_notice(
+            Some(ConnectionState::Connecting),
+            &state_with(ConnectionState::Connected),
+        );
+        assert_eq!(notice.map(|(t, _)| t), Some("Connected"));
+    }
+
+    #[test]
+    fn connected_to_idle_is_a_disconnect() {
+        let notice = transition_notice(
+            Some(ConnectionState::Connected),
+            &state_with(ConnectionState::Idle),
+        );
+        assert_eq!(notice.map(|(t, _)| t), Some("Disconnected"));
+    }
+
+    #[test]
+    fn connecting_to_idle_is_silent() {
+        // An aborted or failed dial returns to idle without ever being connected;
+        // that isn't a "disconnect".
+        assert_eq!(
+            transition_notice(
+                Some(ConnectionState::Connecting),
+                &state_with(ConnectionState::Idle)
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn error_without_kill_switch_reports_the_reason() {
+        let mut s = state_with(ConnectionState::Error);
+        s.error = Some("handshake timed out".to_string());
+        let notice = transition_notice(Some(ConnectionState::Connecting), &s);
+        assert_eq!(
+            notice,
+            Some(("Connection failed", "handshake timed out".to_string()))
+        );
+    }
+
+    #[test]
+    fn error_with_kill_switch_armed_calls_out_the_kill_switch() {
+        let mut s = state_with(ConnectionState::Error);
+        s.kill_switch = Some(true);
+        let notice = transition_notice(Some(ConnectionState::Connected), &s);
+        assert_eq!(notice.map(|(t, _)| t), Some("Kill switch engaged"));
     }
 }

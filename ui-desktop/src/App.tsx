@@ -11,7 +11,13 @@ import { LogsScreen } from "./screens/LogsScreen";
 import { useTenebra } from "./state/useTenebra";
 import { useI18n } from "./i18n/I18nContext";
 import type { RoutingMode } from "./api";
-import { onTrayConnect, onTrayShow } from "./api";
+import {
+  onDeepLink,
+  onTrayConnect,
+  onTrayShow,
+  takeLaunchDeepLinks,
+} from "./api";
+import { dispatchDeepLink, type DeepLinkHandlers } from "./lib/deepLink";
 import { locate, type Region } from "./lib/region";
 import { useNodePings } from "./lib/useNodePings";
 import { useSessionClock, formatUptime } from "./lib/useSessionClock";
@@ -42,6 +48,13 @@ export function App() {
   const [query, setQuery] = useState("");
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [busy, setBusy] = useState(false);
+
+  // Deep-link (tenebra://) intents. `importPreset` carries a subscription URL to
+  // pre-fill the import flow with; `pendingConnect` names a profile to connect
+  // once the profile list is in (a cold-start link can land before it loads).
+  const [importPreset, setImportPreset] = useState<string | null>(null);
+  const [pendingConnect, setPendingConnect] = useState<string | null>(null);
+  const clearImportPreset = useCallback(() => setImportPreset(null), []);
 
   // The kill switch is core-owned: the daemon persists it, arms strict_route in
   // the tunnel config, and restarts a tunnel whose process dies while armed.
@@ -236,6 +249,53 @@ export function App() {
     }
   }, [tenebra.ready, profiles, phase, tenebra]);
 
+  // A deep-link "connect" names a profile by id. The link can arrive before the
+  // profile list is loaded (cold start), so hold the id and connect once the
+  // profile appears, honouring the fastest-node preference like a manual connect.
+  useEffect(() => {
+    if (!pendingConnect || !tenebra.ready) return;
+    if (!profiles.some((p) => p.id === pendingConnect)) return;
+    const id = pendingConnect;
+    setPendingConnect(null);
+    setSelectedProfileId(id);
+    setSelectedNodeId("");
+    void tenebra.connect(id, undefined, getAutoFastest()).catch(() => {});
+  }, [pendingConnect, tenebra, profiles]);
+
+  // Deep links (tenebra://). Links the app was launched with (cold start) are
+  // drained once on mount; links opened while it runs arrive as events. Both go
+  // through the same dispatch: import opens the pre-filled import flow, connect
+  // hands off to the pending-connect effect above.
+  useEffect(() => {
+    let active = true;
+    const unlisteners: UnlistenFn[] = [];
+    const handlers: DeepLinkHandlers = {
+      onImport: (url) => {
+        setImportPreset(url);
+        setOverlay("profiles");
+      },
+      onConnect: (profile) => setPendingConnect(profile),
+    };
+    void (async () => {
+      try {
+        const launched = await takeLaunchDeepLinks();
+        if (active) launched.forEach((a) => dispatchDeepLink(a, handlers));
+      } catch {
+        // No launch links, or the host command is unavailable; nothing to drain.
+      }
+      const unlisten = await onDeepLink((a) => dispatchDeepLink(a, handlers));
+      if (!active) {
+        unlisten();
+        return;
+      }
+      unlisteners.push(unlisten);
+    })();
+    return () => {
+      active = false;
+      unlisteners.forEach((u) => u());
+    };
+  }, []);
+
   return (
     <div className="app" data-conn={phase}>
       <TopBar activeProfile={metaProfile} />
@@ -314,6 +374,8 @@ export function App() {
                   tenebra={tenebra}
                   selectedProfileId={selectedProfileId}
                   onSelectProfile={setSelectedProfileId}
+                  initialImport={importPreset}
+                  onImportConsumed={clearImportPreset}
                 />
               )}
               {overlay === "settings" && <SettingsScreen tenebra={tenebra} />}

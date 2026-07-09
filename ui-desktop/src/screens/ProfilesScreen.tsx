@@ -19,18 +19,38 @@ interface ProfilesScreenProps {
   tenebra: Tenebra;
   selectedProfileId: string | null;
   onSelectProfile: (id: string) => void;
+  /**
+   * A subscription URL from a `tenebra://import` deep link. When set, the import
+   * dialog opens with the URL pre-filled; `onImportConsumed` fires so the caller
+   * can clear it (so it isn't re-opened on the next render).
+   */
+  initialImport?: string | null;
+  onImportConsumed?: () => void;
 }
 
 export function ProfilesScreen({
   tenebra,
   selectedProfileId,
   onSelectProfile,
+  initialImport = null,
+  onImportConsumed,
 }: ProfilesScreenProps) {
   const { t } = useI18n();
   const { profiles, state } = tenebra;
 
   const [importing, setImporting] = useState(false);
+  const [presetUrl, setPresetUrl] = useState<string | null>(null);
   const [pings, setPings] = useState<Record<string, PingResult[]>>({});
+
+  // A deep-link import: open the dialog pre-filled with the subscription URL, and
+  // tell the caller it has been taken so a re-render doesn't reopen it.
+  useEffect(() => {
+    if (initialImport != null) {
+      setPresetUrl(initialImport);
+      setImporting(true);
+      onImportConsumed?.();
+    }
+  }, [initialImport, onImportConsumed]);
 
   return (
     <section className="prof">
@@ -78,7 +98,14 @@ export function ProfilesScreen({
       )}
 
       {importing && (
-        <ImportDialog tenebra={tenebra} onClose={() => setImporting(false)} />
+        <ImportDialog
+          tenebra={tenebra}
+          initialUrl={presetUrl ?? undefined}
+          onClose={() => {
+            setImporting(false);
+            setPresetUrl(null);
+          }}
+        />
       )}
     </section>
   );
@@ -385,13 +412,17 @@ function qrErrorMessage(err: unknown, t: Strings): string {
 interface ImportDialogProps {
   tenebra: Tenebra;
   onClose: () => void;
+  /** Pre-fill the subscription URL field (from a `tenebra://import` deep link). */
+  initialUrl?: string;
 }
 
-function ImportDialog({ tenebra, onClose }: ImportDialogProps) {
+function ImportDialog({ tenebra, onClose, initialUrl }: ImportDialogProps) {
   const { t } = useI18n();
+  // A pre-filled URL comes from an import deep link, which is always a
+  // subscription, so open on that tab with the field ready.
   const [tab, setTab] = useState<ImportTab>("subscription");
   const [name, setName] = useState("");
-  const [url, setUrl] = useState("");
+  const [url, setUrl] = useState(initialUrl ?? "");
   const [link, setLink] = useState("");
   const [error, setError] = useState<string | null>(null);
   // A success line for batch imports ("imported N, skipped M"). Unlike a single

@@ -2,14 +2,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   api,
+  onDeepLink,
   onLog,
   onProfilesChanged,
   onState,
   onTraffic,
   onTrayConnect,
   onTrayShow,
+  takeLaunchDeepLinks,
 } from "./client";
-import type { LeakCheck, PingResult, Profile, State } from "./index";
+import type {
+  DeepLinkAction,
+  LeakCheck,
+  PingResult,
+  Profile,
+  State,
+} from "./index";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
@@ -182,6 +190,16 @@ describe("api command wrappers", () => {
     await api.quit();
     expect(mockInvoke).toHaveBeenCalledWith("quit_app");
   });
+
+  it("takeLaunchDeepLinks drains the launch queue via the command", async () => {
+    const actions: DeepLinkAction[] = [
+      { action: "import", url: "https://example.invalid/sub" },
+      { action: "connect", profile: "p1" },
+    ];
+    mockInvoke.mockResolvedValueOnce(actions);
+    await expect(takeLaunchDeepLinks()).resolves.toEqual(actions);
+    expect(mockInvoke).toHaveBeenCalledWith("take_launch_deep_links");
+  });
 });
 
 describe("event subscriptions", () => {
@@ -273,6 +291,21 @@ describe("event subscriptions", () => {
     expect(c.channel).toBe("tray://show");
     c.fire(undefined);
     expect(handler).toHaveBeenCalledTimes(1);
+    expect(result).toBe(c.unlisten);
+  });
+
+  it("onDeepLink listens on deep-link://action and delivers the action", async () => {
+    const c = capture();
+    const handler = vi.fn();
+    const result = await onDeepLink(handler);
+
+    expect(c.channel).toBe("deep-link://action");
+    const payload: DeepLinkAction = {
+      action: "connect",
+      profile: "demo-sub",
+    };
+    c.fire(payload);
+    expect(handler).toHaveBeenCalledWith(payload);
     expect(result).toBe(c.unlisten);
   });
 });
