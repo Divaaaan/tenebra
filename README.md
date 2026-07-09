@@ -70,7 +70,8 @@ LAN bypass exist as core routing options; the kill-switch is not yet a UI toggle
 | Desktop UI (Tauri 2 + React) | Implemented: all screens, tray, autostart, i18n, themes |
 | Real tunnel (wintun + sing-box, elevated) | **Needs a live, admin run to validate**; not yet signed off |
 | macOS / Linux / Android / iOS | Planned — the core is shared and platform-agnostic |
-| Release / installer signing | Not set up (CI builds an unsigned NSIS installer) |
+| Release pipeline | Tag-triggered `release` workflow builds the NSIS installer, minisign-signs the in-app updater artifacts, and publishes a GitHub release |
+| Installer code-signing | Not set up — the installer is Authenticode-unsigned, so Windows SmartScreen warns on first run |
 
 If you want to help close the gap, the tunnel bring-up and the non-Windows
 adapters are the highest-leverage places — see [CONTRIBUTING.md](CONTRIBUTING.md).

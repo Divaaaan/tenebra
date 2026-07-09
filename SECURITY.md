@@ -112,6 +112,31 @@ commits to:
 These properties are invariants. If you find a case where the software violates
 one of them, that is itself a security issue worth reporting.
 
+## Update signing key
+
+The in-app updater installs an update only when its signature verifies against a
+[minisign](https://jedisct1.github.io/minisign/) public key compiled into every
+build (see `ui-desktop/src-tauri/tauri.conf.json`). That key is the trust anchor
+for updates, so its custody matters:
+
+- **Custody.** The private half of the key is held only as an encrypted secret in
+  the release CI, available to the maintainer(s) who cut releases. It is never
+  committed, and releases are signed by the CI rather than on a personal machine.
+- **Rotation.** Because the *public* key is baked into shipped binaries, a new key
+  takes effect only for clients that install a build carrying it. Existing clients
+  accept updates signed by the key they already embed, so the key cannot be rotated
+  through the in-app updater alone: rotation means publishing a build with the new
+  public key that users install manually (a fresh download), after which signed
+  in-app updates resume under the new key. Plan a rotation as a manually-installed
+  release, not a normal update.
+- **If the private key leaks.** Treat every update the exposed key could sign as
+  untrusted. The response is to generate a new key pair, ship a manually-installed
+  build carrying the new public key, and announce it through the repository's
+  release notes and a security advisory so users re-install from a trusted source
+  instead of accepting an in-app update. The compromised key is retired by
+  superseding it: once users move to the new build, updates signed by the old key
+  are no longer accepted.
+
 ## A note on maturity
 
 Tenebra has not had a third-party security review, and the live tunnel still needs
