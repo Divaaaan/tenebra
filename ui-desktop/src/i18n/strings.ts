@@ -72,6 +72,15 @@ export interface Strings {
     settings: string;
   };
 
+  /** Update banner shown when the launch check finds a newer release. */
+  update: {
+    /** "{version}" interpolated by the caller. */
+    available: string;
+    install: string;
+    later: string;
+    downloading: string;
+  };
+
   home: {
     connect: string;
     disconnect: string;
@@ -199,6 +208,9 @@ export interface Strings {
     updatesError: string;
     /** "Current version {version}", shown while idle. */
     updatesCurrent: string;
+    /** "Install updates automatically" toggle label and its explanation. */
+    autoInstall: string;
+    autoInstallHint: string;
   };
 
   logs: {
@@ -308,6 +320,12 @@ const en: Strings = {
       "Block traffic that tries to bypass the tunnel; if the tunnel dies, restart it. Applies live; connects get rougher while armed.",
     leakCheck: "leak-check",
     settings: "settings",
+  },
+  update: {
+    available: "Version {version} is available",
+    install: "Update",
+    later: "Later",
+    downloading: "Downloading update…",
   },
   home: {
     connect: "Connect",
@@ -426,6 +444,9 @@ const en: Strings = {
     updatesInstalling: "Installing…",
     updatesError: "Couldn't check for updates. Try again later.",
     updatesCurrent: "Current version {version}",
+    autoInstall: "Install updates automatically",
+    autoInstallHint:
+      "When a launch check finds a new version, install it and restart without asking.",
   },
   logs: {
     title: "Logs",
@@ -524,6 +545,12 @@ const ru: Strings = {
       "Блокировать трафик в обход туннеля; при падении туннеля — перезапустить его. Применяется сразу; коннект с ним грубее.",
     leakCheck: "проверка",
     settings: "настройки",
+  },
+  update: {
+    available: "Доступна версия {version}",
+    install: "Обновить",
+    later: "Позже",
+    downloading: "Загрузка обновления…",
   },
   home: {
     connect: "Подключиться",
@@ -642,6 +669,9 @@ const ru: Strings = {
     updatesInstalling: "Устанавливаю…",
     updatesError: "Не удалось проверить обновление. Попробуйте позже.",
     updatesCurrent: "Текущая версия {version}",
+    autoInstall: "Устанавливать обновления автоматически",
+    autoInstallHint:
+      "Если проверка при запуске нашла новую версию — установить её и перезапустить без вопросов.",
   },
   logs: {
     title: "Журнал",

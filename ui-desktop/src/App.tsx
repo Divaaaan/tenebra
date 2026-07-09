@@ -5,6 +5,7 @@ import { TopBar } from "./components/TopBar";
 import { ConnectionPanel } from "./components/ConnectionPanel";
 import { ServerList, type ServerRow } from "./components/ServerList";
 import { BottomBar } from "./components/BottomBar";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { ProfilesScreen } from "./screens/ProfilesScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { LogsScreen } from "./screens/LogsScreen";
@@ -22,6 +23,7 @@ import { locate, type Region } from "./lib/region";
 import { useNodePings } from "./lib/useNodePings";
 import { useSessionClock, formatUptime } from "./lib/useSessionClock";
 import { useTrafficHistory } from "./lib/useTrafficHistory";
+import { useUpdateCheck } from "./lib/useUpdateCheck";
 import { formatMbps } from "./lib/format";
 import {
   getAutoconnect,
@@ -60,6 +62,10 @@ export function App() {
   // the tunnel config, and restarts a tunnel whose process dies while armed.
   // The UI just reflects the reported state and toggles it over the protocol.
   const killSwitch = state.kill_switch ?? false;
+
+  // Launch update check: offers a found release in the banner strip, or — when
+  // the auto-install preference is on — installs it silently and relaunches.
+  const update = useUpdateCheck();
 
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -304,6 +310,16 @@ export function App() {
         <div className="kill-banner" role="status">
           ⚠ {t.bottom.killBanner}
         </div>
+      )}
+
+      {update.available && (
+        <UpdateBanner
+          version={update.available}
+          installing={update.installing}
+          progress={update.progress}
+          onInstall={update.install}
+          onDismiss={update.dismiss}
+        />
       )}
 
       <div className="app-body">

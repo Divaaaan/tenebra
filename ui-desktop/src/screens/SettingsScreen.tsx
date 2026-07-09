@@ -11,8 +11,10 @@ import type { Language } from "../i18n/strings";
 import {
   getAutoconnect,
   getAutoFastest,
+  getAutoInstallUpdates,
   setAutoconnect,
   setAutoFastest,
+  setAutoInstallUpdates,
 } from "../lib/settings";
 import { checkForUpdate, installUpdate, type UpdateStatus } from "../lib/updates";
 
@@ -30,6 +32,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   const [launchBusy, setLaunchBusy] = useState(false);
   const [autoconnect, setAutoconnectState] = useState(getAutoconnect);
   const [autoFastest, setAutoFastestState] = useState(getAutoFastest);
+  const [autoInstall, setAutoInstallState] = useState(getAutoInstallUpdates);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ kind: "idle" });
   const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null);
   const [appVersion, setAppVersion] = useState("");
@@ -90,6 +93,14 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     setAutoFastestState((prev) => {
       const next = !prev;
       setAutoFastest(next);
+      return next;
+    });
+  }
+
+  function toggleAutoInstall() {
+    setAutoInstallState((prev) => {
+      const next = !prev;
+      setAutoInstallUpdates(next);
       return next;
     });
   }
@@ -576,6 +587,25 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
                 : t.settings.updatesCheck}
             </button>
           )}
+        </div>
+
+        <div className="set-row">
+          <span className="set-row-text">
+            <span className="set-row-label">{t.settings.autoInstall}</span>
+            <span className="set-row-hint">{t.settings.autoInstallHint}</span>
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autoInstall}
+            className={`set-switch${autoInstall ? " is-on" : ""}`}
+            onClick={toggleAutoInstall}
+          >
+            <span className="set-switch-box" aria-hidden="true">
+              {autoInstall ? "▣" : "▢"}
+            </span>
+            {autoInstall ? "ON" : "OFF"}
+          </button>
         </div>
       </section>
     </section>

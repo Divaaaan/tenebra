@@ -88,6 +88,46 @@
   text-align: center;
 }
 
+/* ── update banner — the launch check found a newer release ── */
+/* Quiet by design: a bordered row in the warn tint, not the kill banner's
+   filled alarm. An update is a heads-up, not an incident. */
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding: 6px 22px;
+  border-bottom: var(--bw) solid var(--line);
+  font-size: var(--fs-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.update-banner-text {
+  color: var(--warn-soft);
+  font-weight: 600;
+}
+.update-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+.update-banner-actions button {
+  display: inline-flex;
+  gap: 6px;
+  color: var(--text-dim);
+  transition: color var(--t-fast);
+}
+.update-banner-actions .update-banner-install {
+  color: var(--signal);
+}
+.update-banner-actions button:hover {
+  color: var(--signal);
+}
+.update-banner-actions button:disabled {
+  color: var(--text-dim-2);
+  cursor: default;
+}
+
 /* ── body ── */
 .app-body {
   display: grid;
