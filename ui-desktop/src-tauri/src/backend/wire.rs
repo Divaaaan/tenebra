@@ -421,6 +421,11 @@ impl<T: WireSession> Backend for T {
             .request_into("set_tun", obj([("stack", json!(stack))]))
     }
 
+    fn set_autoconnect(&self, on: bool) -> Result<State, String> {
+        self.session()?
+            .request_into("set_autoconnect", obj([("on", json!(on))]))
+    }
+
     fn leak_check(&self) -> Result<LeakCheck, String> {
         // The core runs the IP/DNS probes itself and returns the assembled
         // verdict; we just deserialize it. It can touch the network, but the core
@@ -643,6 +648,55 @@ mod tests {
 
         let state: State = client.request_into("status", obj([])).expect("a response");
         assert_eq!(state.state, ConnectionState::Idle);
+
+        server.join().expect("server thread");
+        stop.store(true, Ordering::SeqCst); // unstick the reader
+        reader.join().expect("reader thread");
+    }
+
+    /// A [`WireSession`] over a fixed client, so a test can exercise the
+    /// blanket `Backend` impl — the command-to-wire mapping — rather than
+    /// calling the client directly.
+    struct FixedSession(Arc<WireClient>);
+
+    impl WireSession for FixedSession {
+        fn session(&self) -> Result<Arc<WireClient>, String> {
+            Ok(Arc::clone(&self.0))
+        }
+    }
+
+    #[test]
+    fn set_autoconnect_maps_to_the_protocol_command() {
+        // Drive Backend::set_autoconnect through the blanket impl over an
+        // in-memory duplex and assert the exact line it puts on the wire, plus
+        // that the core's reported state (autoconnect echoed back) round-trips.
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ours, theirs) = duplex(&stop);
+
+        let client = WireClient::new(ours.writer);
+        let sink: Arc<dyn EventSink> = Arc::new(Rec::default());
+        let reader_client = Arc::clone(&client);
+        let reader = thread::spawn(move || read_loop(ours.reader, reader_client, sink));
+
+        let mut server_writer = theirs.writer;
+        let server = thread::spawn(move || {
+            let mut lines = BufReader::new(theirs.reader).lines();
+            let line = lines.next().expect("a request line").expect("readable");
+            let req: Value = serde_json::from_str(&line).expect("request is JSON");
+            assert_eq!(req["cmd"].as_str(), Some("set_autoconnect"));
+            assert_eq!(req["on"].as_bool(), Some(true));
+            let id = req["id"].as_u64().expect("request carries an id");
+            let response = json!({
+                "id": id, "ok": true,
+                "data": { "state": "idle", "autoconnect": true },
+            });
+            writeln!(server_writer, "{response}").expect("write response");
+        });
+
+        let backend = FixedSession(Arc::clone(&client));
+        let state = backend.set_autoconnect(true).expect("a response");
+        assert_eq!(state.state, ConnectionState::Idle);
+        assert_eq!(state.autoconnect, Some(true));
 
         server.join().expect("server thread");
         stop.store(true, Ordering::SeqCst); // unstick the reader

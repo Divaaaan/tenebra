@@ -329,6 +329,11 @@ async fn set_tun(state: TauriState<'_, AppState>, stack: TunStack) -> Result<Sta
 }
 
 #[tauri::command]
+async fn set_autoconnect(state: TauriState<'_, AppState>, on: bool) -> Result<State, String> {
+    off_thread(Arc::clone(&state.backend), move |b| b.set_autoconnect(on)).await
+}
+
+#[tauri::command]
 async fn leak_check(state: TauriState<'_, AppState>) -> Result<LeakCheck, String> {
     off_thread(Arc::clone(&state.backend), |b| b.leak_check()).await
 }
@@ -434,6 +439,7 @@ pub fn run() {
             set_split,
             set_kill_switch,
             set_tun,
+            set_autoconnect,
             leak_check,
             quit_app,
             take_launch_deep_links,
@@ -576,6 +582,7 @@ mod tests {
             split_apps: None,
             kill_switch: None,
             tun_stack: None,
+            autoconnect: None,
             error: None,
         }
     }

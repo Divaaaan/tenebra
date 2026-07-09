@@ -204,6 +204,7 @@ fn lost_state() -> State {
         split_apps: None,
         kill_switch: None,
         tun_stack: None,
+        autoconnect: None,
         error: Some("Lost the connection to the Tenebra service; reconnecting.".to_string()),
     }
 }
