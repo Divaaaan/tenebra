@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
@@ -6,8 +7,16 @@ import react from "@vitejs/plugin-react";
 // VITE_*; Tauri injects TAURI_* which we leave untouched.
 const host = process.env.TAURI_DEV_HOST;
 
+// The version the UI shows comes from package.json, which scripts/set-version.mjs
+// keeps in lockstep with tauri.conf.json and Cargo.toml — no per-release edits
+// in component code.
+const { version } = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
+
 export default defineConfig({
   plugins: [react()],
+  define: {
+    __APP_VERSION__: JSON.stringify(version),
+  },
 
   // Tauri serves the dev build over a fixed port so the Rust side can point at
   // it. Failing instead of falling back to a random port keeps the two in sync.

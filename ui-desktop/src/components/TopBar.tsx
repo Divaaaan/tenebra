@@ -2,9 +2,9 @@ import type { Profile } from "../api";
 import { useI18n } from "../i18n/I18nContext";
 import { formatExpiry, formatTrafficUsage } from "../lib/format";
 
-// Bumped per release; mirrors tauri.conf.json / package.json. A short build mark
-// could be injected at build time later — kept literal for now.
-const VERSION = "v0.1.1";
+// Injected at build time from package.json (vite/vitest `define`), which
+// scripts/set-version.mjs keeps in lockstep with the rest of the release.
+const VERSION = `v${__APP_VERSION__}`;
 
 interface TopBarProps {
   /** The connected (or otherwise selected) subscription, for the meta line. */

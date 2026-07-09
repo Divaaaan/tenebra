@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
@@ -5,8 +6,13 @@ import react from "@vitejs/plugin-react";
 // jsdom/test toolchain. The front end has no real backend in tests: every test
 // mocks @tauri-apps/api (invoke/listen) or the api module, so nothing here
 // touches Tauri, a socket, or the network.
+const { version } = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
+
 export default defineConfig({
   plugins: [react()],
+  define: {
+    __APP_VERSION__: JSON.stringify(version),
+  },
   test: {
     environment: "jsdom",
     globals: true,

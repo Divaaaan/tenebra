@@ -11,6 +11,14 @@ describe("TopBar", () => {
     expect(screen.getByText("Tenebra")).toBeInTheDocument();
   });
 
+  it("shows the package version, not a stale literal", () => {
+    // __APP_VERSION__ is injected from package.json by the vite/vitest define,
+    // so a release bump can never leave the UI badge behind again.
+    renderWithProviders(<TopBar activeProfile={null} />);
+    expect(screen.getByText(`v${__APP_VERSION__}`)).toBeInTheDocument();
+    expect(__APP_VERSION__).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
   it("shows the no-subscription string when there is no active profile", () => {
     renderWithProviders(<TopBar activeProfile={null} />);
     expect(screen.getByText("no subscription")).toBeInTheDocument();
