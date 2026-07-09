@@ -50,6 +50,7 @@ export interface Tenebra {
   setSplit: (mode: SplitMode, apps: string[]) => Promise<void>;
   setKillSwitch: (on: boolean) => Promise<void>;
   setTun: (stack: TunStack) => Promise<void>;
+  setAutoconnect: (on: boolean) => Promise<void>;
   refreshProfiles: () => Promise<void>;
   clearLogs: () => void;
 }
@@ -187,6 +188,11 @@ export function useTenebra(): Tenebra {
     setState(next);
   }, []);
 
+  const setAutoconnect = useCallback(async (on: boolean) => {
+    const next = await api.setAutoconnect(on);
+    setState(next);
+  }, []);
+
   const clearLogs = useCallback(() => setLogs([]), []);
 
   return {
@@ -201,6 +207,7 @@ export function useTenebra(): Tenebra {
     setSplit,
     setKillSwitch,
     setTun,
+    setAutoconnect,
     refreshProfiles,
     clearLogs,
   };

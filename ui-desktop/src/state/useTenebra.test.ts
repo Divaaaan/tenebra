@@ -31,6 +31,7 @@ const mockApi = vi.hoisted(() => ({
   setSplit: vi.fn(),
   setKillSwitch: vi.fn(),
   setTun: vi.fn(),
+  setAutoconnect: vi.fn(),
 }));
 
 vi.mock("../api", async (orig) => {
@@ -291,6 +292,19 @@ describe("actions", () => {
 
     expect(mockApi.setTun).toHaveBeenCalledWith("gvisor");
     expect(result.current.state.tun_stack).toBe("gvisor");
+  });
+
+  it("setAutoconnect calls api.setAutoconnect and applies the returned state", async () => {
+    const next: State = { state: "idle", autoconnect: true };
+    mockApi.setAutoconnect.mockResolvedValue(next);
+    const { result } = await mountReady();
+
+    await act(async () => {
+      await result.current.setAutoconnect(true);
+    });
+
+    expect(mockApi.setAutoconnect).toHaveBeenCalledWith(true);
+    expect(result.current.state.autoconnect).toBe(true);
   });
 });
 

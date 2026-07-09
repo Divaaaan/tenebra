@@ -109,6 +109,10 @@ pub struct State {
     /// The tun network stack the current or next tunnel uses.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tun_stack: Option<TunStack>,
+    /// Whether the core reconnects the last profile when the daemon starts;
+    /// absent (treated as off) when it doesn't.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autoconnect: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -293,6 +297,10 @@ pub trait Backend: Send + Sync + 'static {
     /// Switch the tun network stack. Same live re-apply semantics as the kill
     /// switch; when idle the choice simply applies on the next connect.
     fn set_tun(&self, stack: TunStack) -> Result<State, String>;
+    /// Arm or disarm connect-on-start. The core persists the choice and, when
+    /// armed, reconnects the last profile the next time the daemon itself
+    /// starts (service mode: at boot); nothing about a live tunnel changes.
+    fn set_autoconnect(&self, on: bool) -> Result<State, String>;
     fn leak_check(&self) -> Result<LeakCheck, String>;
 }
 
@@ -396,6 +404,7 @@ mod tests {
             split_apps: Some(vec!["chrome.exe".into(), "steam.exe".into()]),
             kill_switch: Some(true),
             tun_stack: Some(TunStack::Gvisor),
+            autoconnect: Some(true),
             error: None,
         };
         let json = to_value(&state).unwrap();
@@ -414,6 +423,7 @@ mod tests {
             split_apps: None,
             kill_switch: None,
             tun_stack: None,
+            autoconnect: None,
             error: None,
         };
         let obj = to_value(&state).unwrap();
@@ -428,6 +438,7 @@ mod tests {
             "split_apps",
             "kill_switch",
             "tun_stack",
+            "autoconnect",
             "error",
         ] {
             assert!(

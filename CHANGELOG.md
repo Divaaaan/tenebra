@@ -13,6 +13,19 @@ All notable changes to Tenebra are documented here. The format follows
 
 ### Added
 
+- **Autoconnect is core-owned and survives reboots.** The "Connect on launch"
+  preference moved from the desktop app into the core: the daemon persists it
+  in its `settings.json` (new `set_autoconnect` command, reported back as
+  `autoconnect` in `State`), records the last successful connect on its own —
+  the profile, plus the node only when one was explicitly chosen — and
+  reconnects to it whenever the daemon starts. With the core installed as the
+  Windows service that means the tunnel comes up at **system boot**, before
+  anyone logs in, and comes back after service restarts such as updates; with
+  the spawned sidecar it still connects when the app opens, as before. A last
+  profile or node that no longer exists leaves the core idle rather than
+  guessing another exit. The app's toggle now drives the core setting, and an
+  enabled legacy renderer-side flag is migrated into the core once, on the
+  first launch that sees it.
 - **The installer now installs the core as a Windows service.** The NSIS
   installer is per-machine (one UAC elevation per install or update; earlier
   releases installed per-user) and registers `tenebra-core` as the auto-start

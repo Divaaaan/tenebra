@@ -36,6 +36,11 @@ export interface State {
   kill_switch?: boolean;
   /** The tun network stack the current or next tunnel uses. */
   tun_stack?: TunStack;
+  /**
+   * Whether the core reconnects the last profile when the daemon starts
+   * (service mode: at boot). Omitted (treated as off) when it doesn't.
+   */
+  autoconnect?: boolean;
   error?: string;
 }
 

@@ -106,6 +106,13 @@ export const api = {
     return invoke<State>("set_tun", { stack });
   },
 
+  // Arm/disarm connect-on-start. The core persists the choice and, when armed,
+  // reconnects the last profile the next time the daemon itself starts (service
+  // mode: at boot); nothing about a live tunnel changes.
+  setAutoconnect(on: boolean): Promise<State> {
+    return invoke<State>("set_autoconnect", { on });
+  },
+
   /**
    * Run the IP / DNS leak check. The core performs the probes and returns the
    * assembled verdict (see {@link LeakCheck}); a live tunnel is needed for a

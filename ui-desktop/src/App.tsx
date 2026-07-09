@@ -25,12 +25,7 @@ import { useSessionClock, formatUptime } from "./lib/useSessionClock";
 import { useTrafficHistory } from "./lib/useTrafficHistory";
 import { useUpdateCheck } from "./lib/useUpdateCheck";
 import { formatMbps } from "./lib/format";
-import {
-  getAutoconnect,
-  getAutoFastest,
-  getLastProfileId,
-  setLastProfileId,
-} from "./lib/settings";
+import { getAutoFastest, migrateLegacyAutoconnect } from "./lib/settings";
 
 type Overlay = "profiles" | "settings" | "logs" | null;
 
@@ -193,13 +188,6 @@ export function App() {
     searchRef.current?.focus();
   }, []);
 
-  // Remember the last profile that connected, for autoconnect-on-launch.
-  useEffect(() => {
-    if (connected && state.profile) {
-      setLastProfileId(state.profile);
-    }
-  }, [connected, state.profile]);
-
   // Close overlays on Escape.
   useEffect(() => {
     if (!overlay) return;
@@ -236,24 +224,21 @@ export function App() {
     };
   }, []);
 
-  // Autoconnect on launch: once the snapshot and profiles are in, if enabled and
-  // nothing is connected, connect the last profile. Fires at most once per run.
-  const autoconnectTried = useRef(false);
+  // Autoconnect is core-owned: the daemon reconnects its last profile when it
+  // starts (spawned sidecar or the boot-time service alike), so the renderer no
+  // longer sends a launch connect. What remains is a one-shot migration of the
+  // legacy localStorage flag — an old "on" arms the core once, then the stale
+  // keys are dropped (kept on failure so the next launch retries).
+  const migrationTried = useRef(false);
   useEffect(() => {
-    if (autoconnectTried.current || !tenebra.ready || profiles.length === 0) {
+    if (migrationTried.current || !tenebra.ready) {
       return;
     }
-    autoconnectTried.current = true;
-    if (!getAutoconnect() || phase !== "idle") {
-      return;
-    }
-    const lastId = getLastProfileId();
-    if (lastId && profiles.some((p) => p.id === lastId)) {
-      // Launch reconnect names no node, so honour the fastest-node preference
-      // here too — same source of truth as the manual connect above.
-      void tenebra.connect(lastId, undefined, getAutoFastest()).catch(() => {});
-    }
-  }, [tenebra.ready, profiles, phase, tenebra]);
+    migrationTried.current = true;
+    void migrateLegacyAutoconnect(state.autoconnect ?? false, () =>
+      tenebra.setAutoconnect(true),
+    ).catch(() => {});
+  }, [tenebra, state.autoconnect]);
 
   // A deep-link "connect" names a profile by id. The link can arrive before the
   // profile list is loaded (cold start), so hold the id and connect once the

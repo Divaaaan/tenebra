@@ -82,6 +82,20 @@ type Daemon struct {
 	// persistSettings, but the store is itself concurrency-safe.
 	settings settingsStore
 
+	// autoconnect remembers whether the daemon reconnects the last profile when
+	// it starts (see AutoconnectOnStart). Persisted with the other preferences.
+	// Guarded by mu.
+	autoconnect bool
+	// lastProfile and lastNode record the last successful user-commanded
+	// connect: the profile, and the node only when the request pinned an
+	// explicit exit. They are what autoconnect re-issues at the next daemon
+	// start. Off-command connects — the kill-switch relaunch, the options
+	// reconcile, autoconnect itself — re-issue this intent rather than rewrite
+	// it: a relaunch pins the node it was on, and recording that would silently
+	// turn a "whole profile" intent into an explicit-node one. Guarded by mu.
+	lastProfile string
+	lastNode    string
+
 	// cancel tears down the current connection's goroutines; nil when idle.
 	cancel context.CancelFunc
 	// watching guards against double-starting the lifecycle goroutines and lets
@@ -198,10 +212,12 @@ func (d *Daemon) SetLastGood(lg fallback.LastGood) {
 }
 
 // SetSettings installs a persistent settings store and immediately loads any
-// saved preferences (the split config, the kill switch, the tun stack) into the
-// live options and the reported state. main wires the disk-backed store here so
-// the choices survive a restart; tests can install a fake or skip it. Call it
-// before serving — it is not synchronised against an in-flight connect.
+// saved preferences (the split config, the kill switch, the tun stack, the
+// autoconnect preference and its last-connect target) into the live options and
+// the reported state. main wires the disk-backed store here so the choices
+// survive a restart; tests can install a fake or skip it. Call it before
+// serving — it is not synchronised against an in-flight connect. Loading never
+// starts a connection; that is AutoconnectOnStart's, and only its, job.
 func (d *Daemon) SetSettings(store settingsStore) {
 	d.settings = store
 	ps := store.Load()
@@ -217,7 +233,10 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	if singbox.ValidStack(ps.TunStack) {
 		d.tun.Stack = ps.TunStack
 	}
-	applySettingsToState(&d.state, d.routing, d.tun)
+	d.autoconnect = ps.Autoconnect
+	d.lastProfile = ps.LastProfile
+	d.lastNode = ps.LastNode
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect)
 	d.mu.Unlock()
 }
 
@@ -234,16 +253,37 @@ func (d *Daemon) SetRuleSetDir(dir string) {
 	d.mu.Unlock()
 }
 
-// persistSettings saves the user preferences (split, kill switch, tun stack)
-// through the settings store, if one is installed. Persistence is best-effort: a
-// write failure is logged via the daemon's log event but never fails the
-// originating command, mirroring how last-good tolerates a failed write.
-func (d *Daemon) persistSettings(ro routing.Options, tun singbox.TunOptions) {
+// persistSettings saves the user preferences (split, kill switch, tun stack,
+// autoconnect, the last-connect target) through the settings store, if one is
+// installed. It snapshots the live values under mu itself, so the settings file
+// always carries a coherent view even when a set command and the connect loop's
+// last-connect recording race. Persistence is best-effort: a write failure is
+// logged via the daemon's log event but never fails the originating command,
+// mirroring how last-good tolerates a failed write.
+func (d *Daemon) persistSettings() {
 	if d.settings == nil {
 		return
 	}
-	if err := d.settings.Save(settingsFrom(ro, tun)); err != nil {
+	d.mu.Lock()
+	ps := d.settingsLocked()
+	d.mu.Unlock()
+	if err := d.settings.Save(ps); err != nil {
 		d.emitLog(LogWarn, fmt.Sprintf("persist settings: %v", err))
+	}
+}
+
+// settingsLocked projects the persisted preferences out of the daemon's live
+// options. Callers must hold d.mu.
+func (d *Daemon) settingsLocked() persistedSettings {
+	return persistedSettings{
+		Version:     settingsVersion,
+		SplitMode:   string(d.routing.SplitMode),
+		SplitApps:   d.routing.SplitApps,
+		KillSwitch:  d.routing.KillSwitch,
+		TunStack:    d.tun.Stack,
+		Autoconnect: d.autoconnect,
+		LastProfile: d.lastProfile,
+		LastNode:    d.lastNode,
 	}
 }
 
@@ -281,6 +321,8 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleSetKillSwitch(req)
 	case CmdSetTun:
 		return d.handleSetTun(req)
+	case CmdSetAutoconnect:
+		return d.handleSetAutoconnect(req)
 	case CmdLeakCheck:
 		return d.handleLeakCheck(ctx, req)
 	default:
@@ -626,13 +668,11 @@ func (d *Daemon) handleSetSplit(req Request) Response {
 	d.routing.SplitMode = mode
 	d.routing.SplitApps = req.Apps
 	d.routing = d.routing.Normalize()
-	applySettingsToState(&d.state, d.routing, d.tun)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect)
 	cur := d.state
-	ro := d.routing
-	tun := d.tun
 	d.mu.Unlock()
 
-	d.persistSettings(ro, tun)
+	d.persistSettings()
 
 	resp, err := newResult(req.ID, cur)
 	if err != nil {
@@ -652,12 +692,10 @@ func (d *Daemon) handleSetKillSwitch(req Request) Response {
 	d.mu.Lock()
 	changed := d.routing.KillSwitch != req.On
 	d.routing.KillSwitch = req.On
-	applySettingsToState(&d.state, d.routing, d.tun)
-	ro := d.routing
-	tun := d.tun
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect)
 	d.mu.Unlock()
 
-	d.persistSettings(ro, tun)
+	d.persistSettings()
 	if changed {
 		d.reapplyLive()
 	}
@@ -681,12 +719,10 @@ func (d *Daemon) handleSetTun(req Request) Response {
 	d.mu.Lock()
 	changed := d.tun.Stack != req.Stack
 	d.tun.Stack = req.Stack
-	applySettingsToState(&d.state, d.routing, d.tun)
-	ro := d.routing
-	tun := d.tun
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect)
 	d.mu.Unlock()
 
-	d.persistSettings(ro, tun)
+	d.persistSettings()
 	if changed {
 		d.reapplyLive()
 	}
@@ -698,12 +734,32 @@ func (d *Daemon) handleSetTun(req Request) Response {
 	return resp
 }
 
+// handleSetAutoconnect arms or disarms connect-on-start. The choice is
+// recorded, persisted with the other preferences, and reported back in the
+// state. Unlike the kill switch it changes nothing about a live tunnel: the
+// preference only matters when the daemon itself next starts (see
+// AutoconnectOnStart), so there is no live re-apply.
+func (d *Daemon) handleSetAutoconnect(req Request) Response {
+	d.mu.Lock()
+	d.autoconnect = req.On
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect)
+	d.mu.Unlock()
+
+	d.persistSettings()
+
+	resp, err := newResult(req.ID, d.snapshotState())
+	if err != nil {
+		return newError(req.ID, err.Error())
+	}
+	return resp
+}
+
 // applySettingsToState mirrors the daemon-wide preferences onto a State: the
-// normalized split config, the kill switch, and the tun stack. Split off
-// collapses to empty fields so the wire form omits them, keeping a no-op split
-// invisible to the UI; the app slice is copied so the State never aliases the
-// daemon's live routing options.
-func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions) {
+// normalized split config, the kill switch, the tun stack, and the autoconnect
+// preference. Split off collapses to empty fields so the wire form omits them,
+// keeping a no-op split invisible to the UI; the app slice is copied so the
+// State never aliases the daemon's live routing options.
+func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, autoconnect bool) {
 	if ro.SplitMode == routing.SplitOff || len(ro.SplitApps) == 0 {
 		s.Split = ""
 		s.SplitApps = nil
@@ -713,6 +769,7 @@ func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions) 
 	}
 	s.KillSwitch = ro.KillSwitch
 	s.TunStack = tun.Stack
+	s.Autoconnect = autoconnect
 }
 
 // handlePing measures dial latency to every server in a profile and returns the

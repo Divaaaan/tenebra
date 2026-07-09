@@ -53,9 +53,10 @@ func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 	// Hold connMu across the transition so an in-flight kill-switch relaunch or
 	// connecting-window reconcile (the only connects that run off this serialized
 	// command loop) cannot interleave: it re-checks the generation under the same
-	// lock and yields to this connect.
+	// lock and yields to this connect. A user command is the one connect whose
+	// success records the last-connect intent for autoconnect (remember=true).
 	d.connMu.Lock()
-	st, err := d.startConnect(ctx, p, req.Node, req.Auto)
+	st, err := d.startConnect(ctx, p, req.Node, req.Auto, true)
 	d.connMu.Unlock()
 	if err != nil {
 		return newError(req.ID, err.Error())
@@ -69,11 +70,15 @@ func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 
 // startConnect launches a connection attempt to profile p and returns the
 // connecting state it reported. It is the shared engine behind the connect
-// command, the live re-apply of tun/kill-switch options, and the kill-switch
-// relaunch of a dead tunnel — all three are "start sing-box against the current
-// options", differing only in how the candidate set is chosen. It returns as
-// soon as the fallback loop is launched.
-func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNode string, auto bool) (State, error) {
+// command, the live re-apply of tun/kill-switch options, the kill-switch
+// relaunch of a dead tunnel, and the daemon-start autoconnect — all of them are
+// "start sing-box against the current options", differing only in how the
+// candidate set is chosen. It returns as soon as the fallback loop is launched.
+// remember marks a user-commanded connect: on success the loop records
+// (profile, explicitNode) as the last-connect intent autoconnect re-issues at
+// the next daemon start. Every other caller passes false — a relaunch or
+// hot-swap pins the node it happens to be on, which is not the user's intent.
+func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNode string, auto, remember bool) (State, error) {
 	// Build the fallback candidates. An explicit node request collapses the walk
 	// to that single node: the user asked for a specific exit, so we honour it and
 	// do not silently wander to another protocol behind their back. Without an
@@ -130,13 +135,15 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 	// owns Start/Probe/Stop per candidate and promotes the state to connected (or
 	// error) itself.
 	loop := fallbackLoop{
-		gen:       gen,
-		profileID: p.ID,
-		nodes:     nodes,
-		tags:      tags,
-		ro:        ro,
-		tun:       tun,
-		machine:   m,
+		gen:           gen,
+		profileID:     p.ID,
+		nodes:         nodes,
+		tags:          tags,
+		ro:            ro,
+		tun:           tun,
+		machine:       m,
+		remember:      remember,
+		requestedNode: explicitNode,
 	}
 	d.wg.Add(1)
 	go func() {
@@ -179,7 +186,7 @@ func (d *Daemon) reapplyLive() {
 		d.emitLog(LogWarn, "re-apply: connected profile no longer stored; the change applies on the next connect")
 		return
 	}
-	if _, err := d.startConnect(context.Background(), p, cur.Node, false); err != nil {
+	if _, err := d.startConnect(context.Background(), p, cur.Node, false, false); err != nil {
 		d.emitLog(LogWarn, fmt.Sprintf("re-apply: %v; the change applies on the next connect", err))
 	}
 }
@@ -286,6 +293,13 @@ type fallbackLoop struct {
 	ro        routing.Options
 	tun       singbox.TunOptions
 	machine   *fallback.Machine
+	// remember marks a user-commanded connect: on success the daemon records
+	// (profileID, requestedNode) as the last-connect intent for autoconnect.
+	// Off-command connects (relaunch, reconcile, autoconnect) leave it false.
+	remember bool
+	// requestedNode is the explicit node the user asked for, "" when the
+	// fallback machine chooses the exit.
+	requestedNode string
 }
 
 // runFallback drives the fallback machine for one connect. Per candidate it
@@ -339,6 +353,9 @@ func (d *Daemon) runFallback(ctx context.Context, loop fallbackLoop) {
 			loop.machine.Success(attempt)
 			if d.lastGood != nil {
 				d.lastGood.Set(loop.profileID, attempt.NodeID)
+			}
+			if loop.remember {
+				d.rememberLastConn(loop.profileID, loop.requestedNode)
 			}
 			// Capture the connected instant before publishing it, so the uptime the
 			// relaunch budget reads later is measured from a fixed point.
@@ -576,10 +593,67 @@ func (d *Daemon) startConnectIfCurrent(gen uint64, p profile.Profile, node strin
 		if !d.isCurrent(gen) {
 			return // a user action superseded us between the death and this claim
 		}
-		if _, err := d.startConnect(context.Background(), p, node, false); err != nil {
+		if _, err := d.startConnect(context.Background(), p, node, false, false); err != nil {
 			onErr(err)
 		}
 	}()
+}
+
+// rememberLastConn records a successful user-commanded connect — the profile
+// and, only when the user pinned one, the explicit node — and persists it so
+// autoconnect can re-issue the same intent at the next daemon start. An
+// unchanged intent skips the disk write, mirroring how last-good avoids
+// rewriting an identical value on every reconnect.
+func (d *Daemon) rememberLastConn(profileID, requestedNode string) {
+	d.mu.Lock()
+	changed := d.lastProfile != profileID || d.lastNode != requestedNode
+	d.lastProfile = profileID
+	d.lastNode = requestedNode
+	d.mu.Unlock()
+	if changed {
+		d.persistSettings()
+	}
+}
+
+// AutoconnectOnStart launches a connection to the last successfully connected
+// profile if the autoconnect preference is armed, reporting whether an attempt
+// was launched. main calls it once per process, after the persisted stores are
+// wired — it belongs to the daemon's own start (sidecar spawn, --pipe console,
+// Windows service), never to a client session, so with the service the tunnel
+// comes up with the machine before anyone logs in, and it can never re-fire on
+// a kill-switch relaunch or an options hot-swap.
+//
+// The connect runs through startConnectIfCurrent: on a background goroutine, so
+// control-plane readiness is never delayed (a client attaching mid-attempt sees
+// connecting, like with any connect), and gated on the start generation, so a
+// user command that lands first wins and the autoconnect yields. A vanished
+// profile or node leaves the daemon honestly idle — logged, with no error state
+// and never a different exit than the user last chose.
+func (d *Daemon) AutoconnectOnStart() bool {
+	d.mu.Lock()
+	on := d.autoconnect
+	profileID := d.lastProfile
+	node := d.lastNode
+	gen := d.generation
+	d.mu.Unlock()
+
+	if !on || profileID == "" {
+		return false
+	}
+	p, ok := d.store.Get(profileID)
+	if !ok {
+		d.emitLog(LogWarn, "autoconnect: last profile no longer stored; staying idle")
+		return false
+	}
+	d.emitLog(LogInfo, "autoconnect: reconnecting the last profile")
+	// A start failure (e.g. the pinned node vanished from the profile) is
+	// logged and leaves the state untouched: startConnect fails before any
+	// teardown, so the daemon stays idle rather than reporting an error for a
+	// connection nobody asked for in this session.
+	d.startConnectIfCurrent(gen, p, node, func(err error) {
+		d.emitLog(LogWarn, fmt.Sprintf("autoconnect: %v; staying idle", err))
+	})
+	return true
 }
 
 // reconcileConnectingOptions re-applies the kill-switch/tun options to a tunnel
@@ -696,12 +770,12 @@ func (d *Daemon) setState(s State) {
 	if s.Routing == "" {
 		s.Routing = d.state.Routing
 	}
-	// The split/kill-switch/tun preferences are daemon-wide settings, not
-	// per-connection ones, so they always track the live options rather than
-	// whatever the transient State value carried. This keeps status reporting
-	// them correctly across connect/disconnect transitions without every call
-	// site restating them.
-	applySettingsToState(&s, d.routing, d.tun)
+	// The split/kill-switch/tun/autoconnect preferences are daemon-wide
+	// settings, not per-connection ones, so they always track the live options
+	// rather than whatever the transient State value carried. This keeps status
+	// reporting them correctly across connect/disconnect transitions without
+	// every call site restating them.
+	applySettingsToState(&s, d.routing, d.tun, d.autoconnect)
 	d.state = s
 	emit := d.emit
 	d.mu.Unlock()

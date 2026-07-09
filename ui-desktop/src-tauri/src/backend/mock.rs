@@ -64,6 +64,7 @@ impl MockBackend {
                 kill_switch: None,
                 // The core always names the stack once normalized; mirror that.
                 tun_stack: Some(TunStack::System),
+                autoconnect: None,
                 error: None,
             },
             profiles: demo_profiles(),
@@ -435,6 +436,17 @@ impl Backend for MockBackend {
     fn set_tun(&self, stack: TunStack) -> Result<State, String> {
         let mut inner = self.shared.inner.lock().unwrap();
         inner.state.tun_stack = Some(stack);
+        let snapshot = inner.state.clone();
+        drop(inner);
+        self.shared.emit_state(&snapshot);
+        Ok(snapshot)
+    }
+
+    fn set_autoconnect(&self, on: bool) -> Result<State, String> {
+        // Mirror the core: record and report. The real daemon acts on this only
+        // at its own next start, so there is nothing more for the mock to do.
+        let mut inner = self.shared.inner.lock().unwrap();
+        inner.state.autoconnect = if on { Some(true) } else { None };
         let snapshot = inner.state.clone();
         drop(inner);
         self.shared.emit_state(&snapshot);
@@ -961,6 +973,18 @@ mod tests {
         // Disarming drops the field entirely (off is reported as absent).
         let s = b.set_kill_switch(false).unwrap();
         assert_eq!(s.kill_switch, None);
+    }
+
+    #[test]
+    fn set_autoconnect_arms_and_disarms() {
+        let (b, sink) = backend();
+        let s = b.set_autoconnect(true).unwrap();
+        assert_eq!(s.autoconnect, Some(true));
+        assert_eq!(sink.last_state().unwrap().autoconnect, Some(true));
+
+        // Disarming drops the field entirely (off is reported as absent).
+        let s = b.set_autoconnect(false).unwrap();
+        assert_eq!(s.autoconnect, None);
     }
 
     #[test]
