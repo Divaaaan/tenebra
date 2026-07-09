@@ -59,7 +59,10 @@ type listenerHarness struct {
 	doneErr  error
 }
 
-func newListenerHarness(t *testing.T) *listenerHarness {
+// newTestDaemon builds a daemon over a fresh store and fake runner with the
+// shrunk fallback timings every transport test uses (the same ones as the
+// Server harness, for the same reason).
+func newTestDaemon(t *testing.T) (*Daemon, *fakeRunner) {
 	t.Helper()
 	store, err := profile.Open(t.TempDir())
 	if err != nil {
@@ -67,11 +70,16 @@ func newListenerHarness(t *testing.T) *listenerHarness {
 	}
 	runner := newFakeRunner()
 	d := NewDaemon(store, runner)
-	// Same shrunk fallback timings as the Server harness, for the same reason.
 	d.probeWarmup = time.Millisecond
 	d.probeRetry = time.Millisecond
 	d.probeTimeout = 200 * time.Millisecond
 	d.probeBudget = 60 * time.Millisecond
+	return d, runner
+}
+
+func newListenerHarness(t *testing.T) *listenerHarness {
+	t.Helper()
+	d, runner := newTestDaemon(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &listenerHarness{
