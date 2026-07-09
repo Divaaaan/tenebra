@@ -208,3 +208,33 @@ export function onTrayConnect(handler: () => void): Promise<UnlistenFn> {
 export function onTrayShow(handler: () => void): Promise<UnlistenFn> {
   return listen("tray://show", () => handler());
 }
+
+// Deep links (tenebra://). The Rust side parses and validates the URL — the one
+// place that grammar lives — and hands the renderer an already-tagged action:
+// `import` opens the import flow pre-filled with a subscription URL, `connect`
+// connects a profile by id.
+
+export type DeepLinkAction =
+  | { action: "import"; url: string }
+  | { action: "connect"; profile: string };
+
+/**
+ * Subscribe to deep links that arrive while the app is running. Mirrors the tray
+ * events, but the payload carries the routed action.
+ */
+export function onDeepLink(
+  handler: (action: DeepLinkAction) => void,
+): Promise<UnlistenFn> {
+  return listen<DeepLinkAction>("deep-link://action", (event) =>
+    handler(event.payload),
+  );
+}
+
+/**
+ * Drain the deep links the app was launched with (cold start). At launch the
+ * webview isn't listening yet, so the Rust side queues those links; the renderer
+ * pulls them once on mount. The queue is cleared on read.
+ */
+export function takeLaunchDeepLinks(): Promise<DeepLinkAction[]> {
+  return invoke<DeepLinkAction[]>("take_launch_deep_links");
+}

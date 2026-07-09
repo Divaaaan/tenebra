@@ -19,11 +19,19 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-autostart = "2"
-tauri-plugin-single-instance = "2"
+# The deep-link feature makes the single-instance callback forward a second
+# launch's CLI arguments to the deep-link plugin, so a `tenebra://` link opened
+# while the app is already running reaches the primary instance.
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-deep-link = "2"
+tauri-plugin-notification = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Robustly parse incoming tenebra:// deep links (scheme, host verb, decoded
+# query params). Already in the tree via tauri; pinned here as a direct use.
+url = "2"
 
 [profile.release]
 codegen-units = 1

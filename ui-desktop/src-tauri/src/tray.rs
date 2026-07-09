@@ -1,6 +1,7 @@
 //! System tray: a single icon with a Show / Connect / Disconnect / Quit menu,
-//! a left-click that toggles the main window, and a tooltip that mirrors the
-//! live connection state.
+//! a left-click that toggles the main window, and an icon, tooltip and menu that
+//! mirror the live connection state (idle / connected / error icon, with Connect
+//! and Disconnect enabled only when they apply).
 //!
 //! Two of the menu actions can't be handled here alone. "Connect" needs a
 //! profile, which the front end owns, so it emits `tray://connect` for the
@@ -10,13 +11,39 @@
 //! backend directly, and "Quit" is the one path that actually exits the app.
 
 use tauri::{
+    image::Image,
     menu::{Menu, MenuEvent, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager,
+    AppHandle, Emitter, Manager, Wry,
 };
 
 use crate::backend::{ConnectionState, State};
 use crate::{disconnect_backend, focus_main_window, tooltip_for};
+
+// State icons, decoded at compile time from the bundled PNGs (path resolved from
+// the crate manifest dir, `src-tauri/`). A ring that reads idle / connected /
+// error at a glance in the tray.
+const ICON_IDLE: Image<'static> = tauri::include_image!("./icons/tray-idle.png");
+const ICON_CONNECTED: Image<'static> = tauri::include_image!("./icons/tray-connected.png");
+const ICON_ERROR: Image<'static> = tauri::include_image!("./icons/tray-error.png");
+
+/// The tray icon for a connection state: connected and error each have their own,
+/// everything else (idle, connecting) uses the neutral idle ring.
+fn icon_for(state: ConnectionState) -> Image<'static> {
+    match state {
+        ConnectionState::Connected => ICON_CONNECTED,
+        ConnectionState::Error => ICON_ERROR,
+        _ => ICON_IDLE,
+    }
+}
+
+/// The Connect/Disconnect menu items, kept so [`sync_state`] can enable and
+/// disable them in place as the connection state changes, rather than rebuilding
+/// the whole menu (which would also mean re-wiring its event routing).
+struct TrayMenu {
+    connect: MenuItem<Wry>,
+    disconnect: MenuItem<Wry>,
+}
 
 /// The id we build the tray with, so the event sink can find it again via
 /// [`AppHandle::tray_by_id`] without threading a handle through managed state.
@@ -42,16 +69,13 @@ pub const EVENT_TRAY_SHOW: &str = "tray://show";
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, MENU_SHOW, "Show Tenebra", true, None::<&str>)?;
     let connect = MenuItem::with_id(app, MENU_CONNECT, "Connect", true, None::<&str>)?;
-    let disconnect = MenuItem::with_id(app, MENU_DISCONNECT, "Disconnect", true, None::<&str>)?;
+    // Idle at startup: nothing to disconnect yet, so Disconnect begins disabled.
+    let disconnect = MenuItem::with_id(app, MENU_DISCONNECT, "Disconnect", false, None::<&str>)?;
     let quit = MenuItem::with_id(app, MENU_QUIT, "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &connect, &disconnect, &quit])?;
 
     TrayIconBuilder::with_id(TRAY_ID)
-        .icon(
-            app.default_window_icon().cloned().ok_or_else(|| {
-                tauri::Error::AssetNotFound("default window icon for tray".into())
-            })?,
-        )
+        .icon(icon_for(ConnectionState::Idle))
         .tooltip(tooltip_for(ConnectionState::Idle))
         // We handle left-click ourselves to toggle the window; the menu opens on
         // a right-click, the platform-conventional behaviour on Windows.
@@ -61,15 +85,31 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .on_tray_icon_event(on_tray_icon_event)
         .build(app)?;
 
+    // Hold the Connect/Disconnect handles so sync_state can toggle them live.
+    app.manage(TrayMenu {
+        connect,
+        disconnect,
+    });
     Ok(())
 }
 
-/// Refresh the tray tooltip to match the latest backend state. Called from the
-/// event sink, the single place backend state flows through. A no-op if the
-/// tray isn't up yet (e.g. an event racing setup).
+/// Refresh the tray to match the latest backend state: tooltip, state icon, and
+/// which of Connect/Disconnect are actionable. Called from the event sink, the
+/// single place backend state flows through. A no-op for whatever isn't up yet
+/// (e.g. an event racing setup).
 pub fn sync_state(app: &AppHandle, state: &State) {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         let _ = tray.set_tooltip(Some(tooltip_for(state.state)));
+        let _ = tray.set_icon(Some(icon_for(state.state)));
+    }
+    if let Some(menu) = app.try_state::<TrayMenu>() {
+        // Connect is pointless once connected; Disconnect is pointless while idle.
+        let _ = menu
+            .connect
+            .set_enabled(state.state != ConnectionState::Connected);
+        let _ = menu
+            .disconnect
+            .set_enabled(state.state != ConnectionState::Idle);
     }
 }
 
