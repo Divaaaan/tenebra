@@ -8,6 +8,8 @@ import { makeTenebra } from "../test/fixtures";
 import type { State } from "../api";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getVersion } from "@tauri-apps/api/app";
+import { check, type Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 
 // The screen reads the OS autostart registration on mount; stub it so no real
 // platform call happens and the toggle starts off.
@@ -370,6 +372,103 @@ describe("SettingsScreen", () => {
       expect(
         screen.getByRole("heading", { name: "Настройки" }),
       ).toBeInTheDocument();
+    });
+  });
+
+  describe("updates", () => {
+    it("moves from checking to available when the updater finds a release", async () => {
+      const update = { version: "9.9.9", downloadAndInstall: vi.fn() };
+      // Hold the check open so the transient "checking" state is observable
+      // before the result lands.
+      let resolveCheck!: (value: Update | null) => void;
+      vi.mocked(check).mockReturnValue(
+        new Promise<Update | null>((resolve) => {
+          resolveCheck = resolve;
+        }),
+      );
+
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(
+        screen.getByRole("button", { name: "Check for updates" }),
+      );
+
+      // While the check is in flight the action button is relabeled and locked.
+      expect(screen.getByRole("button", { name: /Checking/ })).toBeDisabled();
+
+      // Resolving with an update flips the row to the available affordance: the
+      // version-bearing hint plus an install button.
+      resolveCheck(update as unknown as Update);
+      expect(
+        await screen.findByText("Version 9.9.9 is available."),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Install and restart" }),
+      ).toBeInTheDocument();
+    });
+
+    it("reports up to date when no newer release exists", async () => {
+      vi.mocked(check).mockResolvedValue(null);
+
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(
+        screen.getByRole("button", { name: "Check for updates" }),
+      );
+
+      expect(
+        await screen.findByText("You're on the latest version."),
+      ).toBeInTheDocument();
+      // No update to install, so the row keeps the check affordance.
+      expect(
+        screen.queryByRole("button", { name: "Install and restart" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("shows the error hint when the update check fails", async () => {
+      vi.mocked(check).mockRejectedValue(new Error("offline"));
+
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(
+        screen.getByRole("button", { name: "Check for updates" }),
+      );
+
+      expect(
+        await screen.findByText("Couldn't check for updates. Try again later."),
+      ).toBeInTheDocument();
+    });
+
+    it("surfaces an install failure as the error hint and never relaunches", async () => {
+      const update = {
+        version: "9.9.9",
+        downloadAndInstall: vi.fn().mockRejectedValue(new Error("disk full")),
+      };
+      vi.mocked(check).mockResolvedValue(update as unknown as Update);
+
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(
+        screen.getByRole("button", { name: "Check for updates" }),
+      );
+      const install = await screen.findByRole("button", {
+        name: "Install and restart",
+      });
+      await user.click(install);
+
+      expect(
+        await screen.findByText("Couldn't check for updates. Try again later."),
+      ).toBeInTheDocument();
+      // A failed download must not fall through to the restart.
+      expect(relaunch).not.toHaveBeenCalled();
     });
   });
 });
