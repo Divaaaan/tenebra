@@ -115,8 +115,59 @@ TENEBRA_CONFIG_DIR=./scratch ./tenebra-core
 
 | Variable | Effect |
 |----------|--------|
-| `TENEBRA_CONFIG_DIR` | Directory for `profiles.json`, `settings.json`, `lastgood.json`. Defaults to the per-user config dir. |
-| `TENEBRA_SINGBOX` | Path to the `sing-box` binary to run. Defaults to one resolved next to the executable. |
+| `TENEBRA_CONFIG_DIR` | Directory for `profiles.json`, `settings.json`, `lastgood.json`. Defaults to the per-user config dir; as a Windows service, to `%ProgramData%\Tenebra\data`. |
+| `TENEBRA_SINGBOX` | Path to the `sing-box` binary to run. Defaults to one resolved next to the executable; as a Windows service, to the bundled copy in `resources\` next to `tenebra-core.exe`. |
+
+## The Windows service
+
+On Windows the core also runs as a service named **`tenebra`**, serving the
+control protocol on the named pipe so the tunnel outlives any one UI process.
+The installer owns the service's lifecycle through NSIS hooks
+(`ui-desktop/src-tauri/installer-hooks.nsh`):
+
+- **Install** registers `tenebra` (`start=auto`, image path
+  `$INSTDIR\tenebra-core.exe`) and starts it. Because a service needs
+  machine scope, the installer is **per-machine** (`installMode:
+  "perMachine"`) and asks for elevation once per install or update.
+- **Update** stops the service before files are replaced, re-points the
+  registration at the (possibly new) install directory, and starts it again.
+  The registration itself survives updates.
+- **Uninstall** stops and deletes the service.
+
+Running as LocalSystem, the service keeps its state in
+**`%ProgramData%\Tenebra`**: `service.log`, and the profile store under
+`data\`. The store is created with a protected DACL — full control for SYSTEM
+and Administrators, no access for anyone else — because profiles carry
+subscription credentials; unprivileged users reach that data through the pipe
+protocol (see [control-protocol.md](control-protocol.md#transports)), never
+the files. Both locations are deliberately left behind on uninstall; delete
+`%ProgramData%\Tenebra` by hand for a full wipe. To remove the service
+manually: `sc.exe stop tenebra`, then `sc.exe delete tenebra` (elevated).
+
+In service mode the core resolves the bundled `sing-box.exe` (with
+`wintun.dll` and the `.srs` rule-sets beside it) from `resources\` next to
+`tenebra-core.exe` — the installed layout — falling back to a flat
+next-to-the-executable layout. The `TENEBRA_CONFIG_DIR` / `TENEBRA_SINGBOX`
+variables still win if set machine-wide.
+
+**Migration from the per-user installs (≤ 0.2.x).** Earlier releases
+installed per-user into `%LOCALAPPDATA%\Tenebra` with their registration in
+HKCU; the stock Tauri installer does not reconcile the two scopes. On the
+first per-machine install the installer therefore retires the old copy for
+the installing user: it removes the HKCU uninstall entry, the autostart Run
+value, the per-user `tenebra://` handler (which would shadow the machine-wide
+one) and the old shortcuts — registry and shortcut surgery only. It
+deliberately does **not** execute the old uninstaller and does not delete
+inside `%LOCALAPPDATA%\Tenebra`: that directory is user-writable, and an
+elevated installer executing or recursively deleting through it would hand
+its privileges to anything planted there. The leftover files are inert once
+their entry points are gone; remove the directory by hand if the disk space
+matters. Per-user profile stores (`%AppData%\tenebra`) are not migrated into
+the service store — re-import the subscription in the app.
+
+None of this changes development flows: a console `tenebra-core` (stdio or
+`--pipe`) keeps its per-user paths, and `npm run tauri dev` still uses the
+stdio sidecar.
 
 ## The desktop app
 
@@ -186,7 +237,10 @@ npm run tauri build -- --bundles nsis
 ```
 
 The output lands in `ui-desktop/src-tauri/target/release/bundle/`. The installer
-is **unsigned** — code signing is not set up yet.
+is **unsigned** — code signing is not set up yet. It installs per-machine and
+manages the `tenebra` Windows service via the hooks in
+`src-tauri/installer-hooks.nsh` (see [The Windows service](#the-windows-service)),
+so running it takes one UAC elevation. Building it does not.
 
 ### Front-end-only scripts
 

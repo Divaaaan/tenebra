@@ -13,6 +13,22 @@ All notable changes to Tenebra are documented here. The format follows
 
 ### Added
 
+- **The installer now installs the core as a Windows service.** The NSIS
+  installer is per-machine (one UAC elevation per install or update; earlier
+  releases installed per-user) and registers `tenebra-core` as the auto-start
+  `tenebra` service: stopped before an update replaces its files, re-pointed
+  and restarted after, removed on uninstall. As a service the core keeps its
+  profile store in `%ProgramData%\Tenebra\data` — created with a DACL that
+  admits only SYSTEM and Administrators, since profiles carry subscription
+  credentials and unprivileged users reach them through the pipe protocol —
+  and resolves the bundled sing-box, wintun and rule-sets from `resources\`
+  next to `tenebra-core.exe`. Console and sidecar runs keep their per-user
+  paths. Upgrading over a per-user 0.2.x install retires the old copy for the
+  installing user (uninstall entry, autostart, `tenebra://` handler,
+  shortcuts); the old `%LOCALAPPDATA%\Tenebra` files are left on disk, inert,
+  rather than have the elevated installer execute or delete through a
+  user-writable directory, and per-user profile stores are not migrated —
+  re-import the subscription in the app.
 - **Windows service mode for the core.** Started by the service control manager,
   `tenebra-core` serves the control protocol on the `\\.\pipe\tenebra` named pipe
   (DACL: SYSTEM, Administrators, the interactive user — the Tailscale LocalAPI
