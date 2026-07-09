@@ -421,9 +421,14 @@ impl Backend for MockBackend {
         let snapshot = inner.state.clone();
         drop(inner);
         self.shared.emit_state(&snapshot);
-        self.shared
-            .sink
-            .log("info", if on { "kill switch armed" } else { "kill switch disarmed" });
+        self.shared.sink.log(
+            "info",
+            if on {
+                "kill switch armed"
+            } else {
+                "kill switch disarmed"
+            },
+        );
         Ok(snapshot)
     }
 
@@ -966,10 +971,7 @@ mod tests {
 
         let s = b.set_tun(TunStack::Gvisor).unwrap();
         assert_eq!(s.tun_stack, Some(TunStack::Gvisor));
-        assert_eq!(
-            sink.last_state().unwrap().tun_stack,
-            Some(TunStack::Gvisor)
-        );
+        assert_eq!(sink.last_state().unwrap().tun_stack, Some(TunStack::Gvisor));
     }
 
     #[test]
@@ -1024,14 +1026,20 @@ mod tests {
         assert_eq!(res.profile.nodes.len(), 2);
         assert_eq!(res.profile.name, "Batch");
         assert_eq!(sink.profiles_count(), before + 1);
-        assert!(b.list_profiles().unwrap().iter().any(|p| p.id == res.profile.id));
+        assert!(b
+            .list_profiles()
+            .unwrap()
+            .iter()
+            .any(|p| p.id == res.profile.id));
     }
 
     #[test]
     fn import_links_defaults_name_and_rejects_all_invalid() {
         let (b, _) = backend();
         // No name -> a non-empty default.
-        let res = b.import_links(vec!["vless://a@h:443".into()], None).unwrap();
+        let res = b
+            .import_links(vec!["vless://a@h:443".into()], None)
+            .unwrap();
         assert!(!res.profile.name.is_empty());
         // Nothing parseable -> an error, not an empty profile.
         assert!(b

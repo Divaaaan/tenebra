@@ -9,7 +9,21 @@ permissions:
   contents: write
 
 jobs:
+  # Gate the release on the full CI suite so a tag can never point at an
+  # untested commit: the signed build below only runs once these pass.
+  ci:
+    uses: ./.github/workflows/ci.yml
+  version-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Verify the version files match the tag
+        run: node scripts/set-version.mjs "$GITHUB_REF_NAME" --check
   windows:
+    needs: [ci, version-check]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
@@ -41,7 +55,9 @@ jobs:
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
-          args: --bundles nsis
+          # --locked makes a stale Cargo.lock fail the build instead of silently
+          # resolving new versions, so a signed release always matches the lockfile.
+          args: --bundles nsis -- --locked
           releaseBody: |
             Windows desktop build of Tenebra.
 
