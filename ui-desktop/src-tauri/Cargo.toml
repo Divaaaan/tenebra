@@ -33,6 +33,20 @@ serde_json = "1"
 # query params). Already in the tree via tauri; pinned here as a direct use.
 url = "2"
 
+[target.'cfg(windows)'.dependencies]
+# Raw Win32 declarations for the named-pipe transport: PeekNamedPipe lets the
+# client poll a synchronous pipe handle without wedging writes (see
+# backend/pipe.rs), and the tests stand up an in-process pipe server with
+# CreateNamedPipeW/ConnectNamedPipe. Already in the tree via tauri; pinned here
+# as a direct use.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+] }
+
 [profile.release]
 codegen-units = 1
 lto = true

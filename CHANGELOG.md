@@ -20,8 +20,17 @@ All notable changes to Tenebra are documented here. The format follows
   and tears the tunnel down on service stop. One client session is active at a
   time: a new connection displaces the old, and a client disconnecting leaves the
   tunnel up. `tenebra-core --pipe` serves the same transport from a console for
-  development. The desktop app still spawns the stdio sidecar; moving it onto the
-  service (installer, unprivileged GUI) is a separate step.
+  development. Installing the core as the service (installer work) is a separate
+  step.
+- **The desktop app attaches to a running service.** At startup the GUI probes
+  the control pipe: if a core is listening — the installed service, or
+  `tenebra-core --pipe` — it attaches to it instead of spawning its own
+  sidecar, re-syncing state with a `status` request on every new session. A
+  dropped session (service restart, another client taking the pipe over) is
+  reported in the UI and redialed with capped backoff until the service is
+  back. With no service listening the app spawns the stdio sidecar exactly as
+  before; `TENEBRA_PIPE` renames the pipe or (`off`) skips the probe during
+  development.
 - **Update prompt on launch.** The desktop app now checks for a new signed
   release once at startup and offers it in a slim banner under the top bar —
   "Update" installs and restarts, "Later" hides it until the next launch. An
