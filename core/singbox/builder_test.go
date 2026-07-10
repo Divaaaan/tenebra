@@ -179,9 +179,12 @@ func TestTunInboundPresent(t *testing.T) {
 	if in["strict_route"] != false {
 		t.Errorf("tun strict_route should default to false, got %v", in["strict_route"])
 	}
+	// The tun must carry both an IPv4 and an IPv6 prefix so auto_route claims a
+	// default route for each family; an IPv4-only tun lets native IPv6 leak past
+	// the tunnel on a dual-stack host.
 	addr, ok := in["address"].([]string)
-	if !ok || len(addr) != 1 || addr[0] != tunAddr {
-		t.Errorf("tun address = %v, want [%s]", in["address"], tunAddr)
+	if !ok || len(addr) != 2 || addr[0] != tunAddr || addr[1] != tunAddr6 {
+		t.Errorf("tun address = %v, want [%s %s]", in["address"], tunAddr, tunAddr6)
 	}
 	// The default interface name is platform-dependent: a branded "tenebra" where
 	// the OS allows an arbitrary name, and omitted on macOS so sing-box claims a

@@ -14,15 +14,22 @@ import (
 	"github.com/Divaaaan/tenebra/core/routing"
 )
 
-// Default tun and clash-api settings. The address is a small private /30 unused
-// by common LANs; auto_route/strict_route are forced on by Build.
+// Default tun and clash-api settings. The tun carries both an IPv4 and an IPv6
+// address: a small private /30 unused by common LANs, plus a ULA /126 (fc00::/7
+// space, RFC 4193). auto_route claims a default route for every address family
+// the tun holds, so without the IPv6 prefix auto_route would only hijack IPv4
+// and native IPv6 traffic on a dual-stack host would egress around the tunnel —
+// a silent leak. The ULA is inert on a single-stack host (no IPv6 = nothing to
+// claim), so it is safe to include unconditionally. auto_route/strict_route are
+// forced on by Build.
 const (
-	defaultMTU           = 9000
-	defaultStack         = StackSystem
-	defaultClashAPIPort  = 9090
+	defaultMTU          = 9000
+	defaultStack        = StackSystem
+	defaultClashAPIPort = 9090
 
 	tunTag    = "tun-in"
 	tunAddr   = "172.19.0.1/30"
+	tunAddr6  = "fdfe:dcba:9876::1/126"
 	proxyTag  = "proxy"
 	directTag = "direct"
 	blockTag  = "block"
@@ -333,7 +340,7 @@ func tunInbound(t TunOptions, strictRoute bool) map[string]any {
 	in := map[string]any{
 		"type":         "tun",
 		"tag":          tunTag,
-		"address":      []string{tunAddr},
+		"address":      []string{tunAddr, tunAddr6},
 		"auto_route":   true,
 		"strict_route": strictRoute,
 		"mtu":          t.MTU,
