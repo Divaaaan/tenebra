@@ -75,11 +75,21 @@ jobs:
           releaseBody: |
             Desktop builds of Tenebra for Windows and macOS.
 
-            The installers are unsigned: Windows SmartScreen warns on first
-            install (More info -> Run anyway); on macOS allow the app once via
-            System Settings -> Privacy & Security -> Open Anyway. From this
-            version on, updates are delivered in-app (Settings -> Updates) and
-            verified against the project's signing key before they install.
+            **Windows** is user-ready: run the installer (SmartScreen warns on an
+            unsigned build -> More info -> Run anyway); it sets up the background
+            service, and the in-app updater keeps both app and service current.
+
+            **macOS is for advanced users, not click-to-run yet.** The DMG alone
+            will NOT give you a working tunnel: macOS needs a root helper daemon
+            that is currently installed by hand with a sudo script
+            (scripts/macos/install-daemon.sh), and the build is unsigned (first
+            launch: System Settings -> Privacy & Security -> Open Anyway). Read
+            the "macOS note" in the README before downloading. A signed,
+            click-to-run macOS build is planned.
+
+            Updates are delivered in-app and verified against the project's
+            minisign key before they install (on macOS the updater refreshes the
+            app, not the hand-installed daemon).
       - name: Publish the beta channel manifest
         shell: bash
         env:
@@ -161,11 +171,21 @@ jobs:
           releaseBody: |
             Desktop builds of Tenebra for Windows and macOS.
 
-            The installers are unsigned: Windows SmartScreen warns on first
-            install (More info -> Run anyway); on macOS allow the app once via
-            System Settings -> Privacy & Security -> Open Anyway. From this
-            version on, updates are delivered in-app (Settings -> Updates) and
-            verified against the project's signing key before they install.
+            **Windows** is user-ready: run the installer (SmartScreen warns on an
+            unsigned build -> More info -> Run anyway); it sets up the background
+            service, and the in-app updater keeps both app and service current.
+
+            **macOS is for advanced users, not click-to-run yet.** The DMG alone
+            will NOT give you a working tunnel: macOS needs a root helper daemon
+            that is currently installed by hand with a sudo script
+            (scripts/macos/install-daemon.sh), and the build is unsigned (first
+            launch: System Settings -> Privacy & Security -> Open Anyway). Read
+            the "macOS note" in the README before downloading. A signed,
+            click-to-run macOS build is planned.
+
+            Updates are delivered in-app and verified against the project's
+            minisign key before they install (on macOS the updater refreshes the
+            app, not the hand-installed daemon).
       - name: Publish the beta channel manifest
         shell: bash
         env:

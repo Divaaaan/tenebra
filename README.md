@@ -5,10 +5,10 @@
 [![CI](https://github.com/Divaaaan/tenebra/actions/workflows/ci.yml/badge.svg)](https://github.com/Divaaaan/tenebra/actions/workflows/ci.yml)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-ff3d00.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Latest release](https://img.shields.io/github/v/release/Divaaaan/tenebra?color=ff3d00&label=release)](https://github.com/Divaaaan/tenebra/releases/latest)
-[![Platform](https://img.shields.io/badge/platform-Windows-0e0e0e.svg)](#project-status)
+[![Platform](https://img.shields.io/badge/platform-Windows_%7C_macOS-0e0e0e.svg)](#project-status)
 
 **A cross-platform VPN client built on [sing-box](https://github.com/SagerNet/sing-box).**<br>
-Desktop first (Windows), with a shared Go core meant to extend to macOS, Linux, Android and iOS.
+Desktop first — Windows is user-ready; macOS ships but is for advanced users (see below). A shared Go core is meant to extend to Linux, Android and iOS.
 
 </div>
 
@@ -88,13 +88,38 @@ get one:
 | Go core (parsing, profiles, routing, config gen, fallback, leak logic) | Implemented, unit-tested, no third-party deps |
 | Control protocol (core ↔ UI) | Implemented; covered by Go tests **and** a real-binary e2e |
 | Desktop UI (Tauri 2 + React) | Implemented: all screens, reactive tray, notifications, deep links, autostart, i18n, themes |
-| Real tunnel (wintun + sing-box, elevated) | **Needs a live, admin run to validate**; not yet signed off |
-| macOS / Linux / Android / iOS | Planned — the core is shared and platform-agnostic |
-| Release pipeline | Tag-triggered `release` workflow builds the NSIS installer, minisign-signs the in-app updater artifacts, and publishes a GitHub release |
-| Installer code-signing | Not set up — the installer is Authenticode-unsigned, so Windows SmartScreen warns on first run |
+| Windows tunnel (wintun + sing-box) | Implemented — a background **service** runs the tunnel, so the app connects without an elevated GUI; installer sets it up, the in-app updater refreshes both app and service |
+| macOS tunnel (utun + sing-box) | Builds and runs — universal `.app`/DMG — but see the **macOS note** below: it needs a hand-installed root daemon and is not yet a click-to-run product |
+| Linux / Android / iOS | Planned — the core is shared and platform-agnostic |
+| Release pipeline | Tag-triggered `release` workflow builds the Windows and macOS bundles, minisign-signs the in-app updater artifacts, and publishes a GitHub release |
+| Code-signing | Not set up — the Windows installer is Authenticode-unsigned (SmartScreen warns) and the macOS build is unsigned/un-notarized (Gatekeeper needs a manual "Open Anyway") |
 
-If you want to help close the gap, the tunnel bring-up and the non-Windows
-adapters are the highest-leverage places — see [CONTRIBUTING.md](CONTRIBUTING.md).
+### macOS note — read before downloading the DMG
+
+The macOS build is **for advanced users right now, not a finished product.** Two
+things are not yet in place, so a plain "download the DMG and drag to
+Applications" will **not** give you a working tunnel:
+
+- **The tunnel needs a privileged helper.** macOS only lets root open the `utun`
+  device, so the app talks to a small root **LaunchDaemon** that owns the tunnel.
+  That daemon is currently installed **by hand** with a `sudo` script
+  ([`scripts/macos/install-daemon.sh`](scripts/macos/install-daemon.sh)) — there
+  is no in-app installer for it yet. Without it, the app runs but cannot connect.
+- **The build is unsigned and un-notarized.** First launch needs
+  **System Settings → Privacy & Security → Open Anyway**, and updates to the
+  daemon are a manual step (the in-app updater refreshes only the app, not the
+  root daemon).
+
+The click-to-run macOS path — a signed, notarized build with an `SMAppService`
+daemon bundled inside the app (so it installs and updates like the Windows
+service) — needs an Apple Developer ID and is **planned, not done**. Until then,
+use the DMG only if you're comfortable running the install script yourself.
+**Windows users are unaffected** — the Windows installer sets up the service and
+the updater keeps everything current automatically.
+
+If you want to help close the gap, the macOS `SMAppService` path and the
+non-desktop adapters are the highest-leverage places — see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Repository layout
 
