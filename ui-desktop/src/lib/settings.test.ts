@@ -1,9 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { migrateLegacyAutoconnect } from "./settings";
+import {
+  getUpdateChannel,
+  migrateLegacyAutoconnect,
+  setUpdateChannel,
+} from "./settings";
 
 const AUTOCONNECT_KEY = "tenebra.autoconnect";
 const LAST_PROFILE_KEY = "tenebra.lastProfile";
+const UPDATE_CHANNEL_KEY = "tenebra.updateChannel";
 
 describe("migrateLegacyAutoconnect", () => {
   beforeEach(() => {
@@ -65,5 +70,39 @@ describe("migrateLegacyAutoconnect", () => {
 
     expect(localStorage.getItem(AUTOCONNECT_KEY)).toBe("1");
     expect(localStorage.getItem(LAST_PROFILE_KEY)).toBe("p1");
+  });
+});
+
+describe("update channel", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("defaults to stable when nothing is stored", () => {
+    expect(getUpdateChannel()).toBe("stable");
+  });
+
+  it("returns beta once the beta channel is chosen", () => {
+    setUpdateChannel("beta");
+
+    expect(localStorage.getItem(UPDATE_CHANNEL_KEY)).toBe("beta");
+    expect(getUpdateChannel()).toBe("beta");
+  });
+
+  it("round-trips back to stable", () => {
+    setUpdateChannel("beta");
+    setUpdateChannel("stable");
+
+    expect(localStorage.getItem(UPDATE_CHANNEL_KEY)).toBe("stable");
+    expect(getUpdateChannel()).toBe("stable");
+  });
+
+  it("falls back to stable for any value that isn't exactly beta", () => {
+    // A stale or corrupted entry must never silently opt someone into
+    // prereleases: only the exact string "beta" selects the beta channel.
+    for (const value of ["Beta", "BETA", "nightly", "1", ""]) {
+      localStorage.setItem(UPDATE_CHANNEL_KEY, value);
+      expect(getUpdateChannel()).toBe("stable");
+    }
   });
 });

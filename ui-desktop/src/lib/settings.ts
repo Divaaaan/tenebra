@@ -5,6 +5,10 @@
 
 const AUTO_FASTEST_KEY = "tenebra.autoFastest";
 const AUTO_INSTALL_UPDATES_KEY = "tenebra.autoInstallUpdates";
+const UPDATE_CHANNEL_KEY = "tenebra.updateChannel";
+
+/** The release channel the updater follows. */
+export type UpdateChannel = "stable" | "beta";
 
 // The kill switch used to be a renderer-side flag here ("tenebra.killSwitch");
 // it is now core-owned: the daemon persists it in its settings.json, arms it in
@@ -61,4 +65,21 @@ export function getAutoInstallUpdates(): boolean {
 
 export function setAutoInstallUpdates(on: boolean): void {
   localStorage.setItem(AUTO_INSTALL_UPDATES_KEY, on ? "1" : "0");
+}
+
+/**
+ * The release channel the launch check and the manual check follow. "stable"
+ * (the default) offers only tested releases; "beta" also offers prereleases,
+ * and always at least the newest stable, so a beta user is never held back from
+ * a shipped release. Renderer-owned like the toggles above: the updater reads
+ * it to resolve which signed manifest to compare against. Any value other than
+ * "beta" — unset, or a stale/garbage entry — resolves to the safe stable
+ * channel, so a corrupt preference can never silently opt someone into betas.
+ */
+export function getUpdateChannel(): UpdateChannel {
+  return localStorage.getItem(UPDATE_CHANNEL_KEY) === "beta" ? "beta" : "stable";
+}
+
+export function setUpdateChannel(channel: UpdateChannel): void {
+  localStorage.setItem(UPDATE_CHANNEL_KEY, channel);
 }
