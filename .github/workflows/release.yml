@@ -113,18 +113,22 @@ jobs:
           targets: x86_64-apple-darwin
       - name: Fetch sing-box and rule-sets
         run: bash scripts/fetch-resources.sh
-      - name: Build universal core sidecar
-        # Tauri resolves externalBin by the build's target triple, so the
-        # universal target expects tenebra-core-universal-apple-darwin. The core
-        # is pure Go on darwin (no cgo), so both slices cross-compile on the
-        # arm64 runner and lipo stitches them, mirroring what
-        # fetch-resources.sh does for sing-box.
+      - name: Build core sidecars (both arches plus a universal lipo)
+        # A universal Tauri build wants the externalBin under three names at
+        # once: compiling each arch slice runs build.rs against that slice's
+        # triple (tenebra-core-aarch64-apple-darwin, then -x86_64-), and the
+        # final bundling step copies the binary named for the *build* target,
+        # -universal-. Ship all three: two cross-compiled slices (the core is
+        # pure Go on darwin, no cgo) and their lipo. sing-box, bundled as a
+        # resource rather than an externalBin, is not triple-matched and is
+        # already universal from fetch-resources.sh.
         run: |
-          GOOS=darwin GOARCH=arm64 go build -o /tmp/tenebra-core-arm64 ./cmd/tenebra-core
-          GOOS=darwin GOARCH=amd64 go build -o /tmp/tenebra-core-amd64 ./cmd/tenebra-core
-          mkdir -p ui-desktop/src-tauri/binaries
-          lipo -create /tmp/tenebra-core-arm64 /tmp/tenebra-core-amd64 \
-            -output ui-desktop/src-tauri/binaries/tenebra-core-universal-apple-darwin
+          bins=ui-desktop/src-tauri/binaries
+          mkdir -p "$bins"
+          GOOS=darwin GOARCH=arm64 go build -o "$bins/tenebra-core-aarch64-apple-darwin" ./cmd/tenebra-core
+          GOOS=darwin GOARCH=amd64 go build -o "$bins/tenebra-core-x86_64-apple-darwin" ./cmd/tenebra-core
+          lipo -create "$bins/tenebra-core-aarch64-apple-darwin" "$bins/tenebra-core-x86_64-apple-darwin" \
+            -output "$bins/tenebra-core-universal-apple-darwin"
       - name: Install front-end dependencies
         working-directory: ui-desktop
         run: npm ci
