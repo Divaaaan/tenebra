@@ -11,8 +11,11 @@ import type { Language } from "../i18n/strings";
 import {
   getAutoFastest,
   getAutoInstallUpdates,
+  getUpdateChannel,
   setAutoFastest,
   setAutoInstallUpdates,
+  setUpdateChannel,
+  type UpdateChannel,
 } from "../lib/settings";
 import { isValidDnsServer } from "../lib/dns";
 import { checkForUpdate, installUpdate, type UpdateStatus } from "../lib/updates";
@@ -31,6 +34,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   const [launchBusy, setLaunchBusy] = useState(false);
   const [autoFastest, setAutoFastestState] = useState(getAutoFastest);
   const [autoInstall, setAutoInstallState] = useState(getAutoInstallUpdates);
+  const [channel, setChannelState] = useState<UpdateChannel>(getUpdateChannel);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ kind: "idle" });
   const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null);
   const [appVersion, setAppVersion] = useState("");
@@ -103,6 +107,43 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
       setAutoInstallUpdates(next);
       return next;
     });
+  }
+
+  // Update channel is renderer-owned, like the auto-* toggles: the launch check
+  // and the manual check read the persisted value to resolve which signed
+  // manifest to compare against. The radiogroup mirrors the routing/stack
+  // pattern below — a roving tabIndex plus arrow keys that carry focus with the
+  // selection.
+  const channelOptions: { value: UpdateChannel; label: string; hint: string }[] = [
+    {
+      value: "stable",
+      label: t.settings.updateChannelStable,
+      hint: t.settings.updateChannelStableHint,
+    },
+    {
+      value: "beta",
+      label: t.settings.updateChannelBeta,
+      hint: t.settings.updateChannelBetaHint,
+    },
+  ];
+
+  const channelRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  function chooseChannel(next: UpdateChannel) {
+    setChannelState(next);
+    setUpdateChannel(next);
+  }
+
+  function onChannelKey(e: KeyboardEvent, index: number) {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") {
+      return;
+    }
+    e.preventDefault();
+    const delta = e.key === "ArrowDown" ? 1 : -1;
+    const nextIndex =
+      (index + delta + channelOptions.length) % channelOptions.length;
+    chooseChannel(channelOptions[nextIndex].value);
+    channelRefs.current[nextIndex]?.focus();
   }
 
   async function checkUpdates() {
@@ -697,6 +738,43 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
         <div className="set-section-head">
           <h2 className="set-eyebrow">{t.settings.updates}</h2>
         </div>
+
+        <div className="set-channel">
+          <span className="set-eyebrow">{t.settings.updateChannel}</span>
+          <div
+            className="set-options"
+            role="radiogroup"
+            aria-label={t.settings.updateChannel}
+          >
+            {channelOptions.map((opt, index) => {
+              const checked = channel === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  ref={(el) => {
+                    channelRefs.current[index] = el;
+                  }}
+                  type="button"
+                  role="radio"
+                  aria-checked={checked}
+                  tabIndex={checked ? 0 : -1}
+                  className={`set-option${checked ? " is-checked" : ""}`}
+                  onClick={() => chooseChannel(opt.value)}
+                  onKeyDown={(e) => onChannelKey(e, index)}
+                >
+                  <span className="set-mark" aria-hidden="true">
+                    {checked ? "▣" : "▢"}
+                  </span>
+                  <span className="set-option-text">
+                    <span className="set-option-label">{opt.label}</span>
+                    <span className="set-option-hint">{opt.hint}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         <div className="set-row">
           <span className="set-row-text">
             <span className="set-row-label">{t.settings.updatesCheck}</span>

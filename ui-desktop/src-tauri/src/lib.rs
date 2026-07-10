@@ -9,6 +9,7 @@
 mod backend;
 mod deeplink;
 mod tray;
+mod update_channel;
 
 use std::sync::{Arc, Mutex};
 
@@ -461,6 +462,7 @@ pub fn run() {
             leak_check,
             quit_app,
             take_launch_deep_links,
+            update_channel::check_update_for_channel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tenebra");

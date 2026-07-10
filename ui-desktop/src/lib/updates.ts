@@ -1,10 +1,14 @@
 // Auto-update flow, kept out of the Settings screen so the component stays a
-// thin view over these two calls. The updater checks a signed `latest.json`
-// published to GitHub Releases (see tauri.conf.json → plugins.updater); the
-// process plugin performs the relaunch after an install.
+// thin view over these two calls. The updater checks a signed manifest published
+// to GitHub Releases (see tauri.conf.json → plugins.updater); the process plugin
+// performs the relaunch after an install. Which manifest is checked depends on
+// the user's release channel — see checkForUpdate.
 
-import { check, type Update } from "@tauri-apps/plugin-updater";
+import { check, Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { invoke } from "@tauri-apps/api/core";
+
+import { getUpdateChannel, type UpdateChannel } from "./settings";
 
 /** What the Settings updater row is currently showing. */
 export type UpdateStatus =
@@ -16,11 +20,50 @@ export type UpdateStatus =
   | { kind: "installing" }
   | { kind: "error"; message: string };
 
-/** Ask GitHub whether a newer signed release exists. Returns the `Update`
- *  handle when one is available (the caller then downloads + installs it), or
- *  `null` when we're already on the latest version. */
+/** The subset of the updater plugin's `Update` metadata our backend command
+ *  returns. Its shape matches what the plugin's own `check()` hands the `Update`
+ *  constructor, so a channel result reconstitutes into a real `Update` handle —
+ *  same `rid`, same `downloadAndInstall`, same minisign verification. */
+interface UpdateMetadata {
+  rid: number;
+  currentVersion: string;
+  version: string;
+  date?: string;
+  body?: string;
+  rawJson: Record<string, unknown>;
+}
+
+/** Ask the release host whether a newer signed release exists on the user's
+ *  chosen channel. Returns the `Update` handle when one is available (the caller
+ *  then downloads + installs it), or `null` when we're already current.
+ *
+ *  Stable stays on the plugin's own `check()`, which reads the endpoint baked
+ *  into tauri.conf.json (latest.json) — the exact path shipped since 0.3.0, so
+ *  installed stable clients are untouched. Beta can't be served that way: the
+ *  updater endpoint is fixed at build time and the plugin's JS `check()` exposes
+ *  no runtime override, so a small backend command (`check_update_for_channel`)
+ *  points the updater at the beta manifest for this one check and hands back
+ *  metadata we rebuild into a normal `Update`. The beta manifest carries the
+ *  newest of the beta and stable releases, so a beta user always sees a shipped
+ *  stable that is ahead of their build. Download, install and signature
+ *  verification are then identical on both channels. */
 export async function checkForUpdate(): Promise<Update | null> {
+  if (getUpdateChannel() === "beta") {
+    return checkChannelUpdate("beta");
+  }
   return check();
+}
+
+/** Run a channel-scoped check through the backend and rebuild the plugin's
+ *  `Update` handle from the returned metadata (or `null` when up to date). */
+async function checkChannelUpdate(
+  channel: UpdateChannel,
+): Promise<Update | null> {
+  const metadata = await invoke<UpdateMetadata | null>(
+    "check_update_for_channel",
+    { channel },
+  );
+  return metadata ? new Update(metadata) : null;
 }
 
 /** Download the pending update — reporting integer percent when the server

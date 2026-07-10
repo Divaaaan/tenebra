@@ -224,6 +224,12 @@ export interface Strings {
     dnsPlaceholder: string;
     /** Localized hint shown when a typed resolver is malformed. */
     dnsInvalid: string;
+    /** Update-channel radiogroup: label plus the stable/beta options. */
+    updateChannel: string;
+    updateChannelStable: string;
+    updateChannelStableHint: string;
+    updateChannelBeta: string;
+    updateChannelBetaHint: string;
   };
 
   logs: {
@@ -476,6 +482,12 @@ const en: Strings = {
     dnsPlaceholder: "tls://1.1.1.1",
     dnsInvalid:
       "Enter a resolver like tls://1.1.1.1 or https://dns.example/dns-query.",
+    updateChannel: "Update channel",
+    updateChannelStable: "Stable",
+    updateChannelStableHint: "Tested releases only.",
+    updateChannelBeta: "Beta",
+    updateChannelBetaHint:
+      "Get prereleases early, plus every stable release. May be rougher around the edges.",
   },
   logs: {
     title: "Logs",
@@ -717,6 +729,12 @@ const ru: Strings = {
     dnsPlaceholder: "tls://1.1.1.1",
     dnsInvalid:
       "Введите резолвер вида tls://1.1.1.1 или https://dns.example/dns-query.",
+    updateChannel: "Канал обновлений",
+    updateChannelStable: "Стабильный",
+    updateChannelStableHint: "Только проверенные релизы.",
+    updateChannelBeta: "Бета",
+    updateChannelBetaHint:
+      "Ранний доступ к предрелизам и все стабильные версии. Может быть сырее.",
   },
   logs: {
     title: "Журнал",
