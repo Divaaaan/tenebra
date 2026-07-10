@@ -199,8 +199,12 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 
 		relaunchResetAfter: defaultRelaunchReset,
 	}
-	var dialer net.Dialer
-	d.dial = dialer.DialContext
+	// The ping dial is pinned to the physical default interface (see
+	// newPingDialer): while the tunnel is up with auto_route it would otherwise be
+	// captured by the tun and every node would report the ~1-2ms latency to the
+	// local tun rather than the real server. Binding the socket to the physical NIC
+	// steers each probe past the tun so the RTT readout stays meaningful mid-session.
+	d.dial = newPingDialer().DialContext
 	return d
 }
 
