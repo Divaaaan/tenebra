@@ -47,6 +47,46 @@ func assertRedactedProfileWire(t *testing.T, raw []byte, p profile.Profile) {
 	}
 }
 
+// TestRedactProfileKeepsInsecureFlag guards a cross-feature regression: the
+// redacted view must still carry the per-node insecure (skip-cert-verify) flag,
+// because the desktop "TLS verification off" badge reads it from list_profiles.
+// Redaction strips secrets, but insecure is a warning, not a secret — dropping
+// it would silently hide the badge.
+func TestRedactProfileKeepsInsecureFlag(t *testing.T) {
+	p := profile.Profile{
+		ID:   "p1",
+		Name: "p",
+		Servers: []profile.Server{
+			{ID: "n-secure", Node: model.Node{Protocol: model.VLESS, Server: "a.example", Port: 443}},
+			{ID: "n-insecure", Node: model.Node{Protocol: model.Trojan, Server: "b.example", Port: 443,
+				TLS: &model.TLS{Enabled: true, Insecure: true}}},
+		},
+	}
+	raw, err := json.Marshal(redactProfile(p))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out struct {
+		Nodes []struct {
+			ID       string `json:"id"`
+			Insecure bool   `json:"insecure"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	byID := map[string]bool{}
+	for _, n := range out.Nodes {
+		byID[n.ID] = n.Insecure
+	}
+	if byID["n-insecure"] != true {
+		t.Errorf("redacted insecure node lost its insecure flag: %s", raw)
+	}
+	if byID["n-secure"] != false {
+		t.Errorf("secure node should not report insecure: %s", raw)
+	}
+}
+
 // TestProfileResultRedactsSecrets locks the wire shape shared by
 // import_subscription, import_link, and refresh_subscription: profileResult must
 // serialise the redacted view, so none of the node credentials nor the

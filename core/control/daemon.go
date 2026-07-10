@@ -392,6 +392,11 @@ type redactedNode struct {
 	Name     string         `json:"name"`
 	Server   string         `json:"server"`
 	Port     int            `json:"port"`
+	// Insecure is not a secret — it is the opposite, a warning: the node disables
+	// TLS certificate verification (skip-cert-verify), which the UI surfaces as a
+	// badge. Dropping it here would silently hide that warning, so it is carried
+	// through the redacted view exactly as profile.Server.MarshalJSON derives it.
+	Insecure bool `json:"insecure,omitempty"`
 }
 
 // redactedProfile mirrors profile.Profile minus the two secret-bearing parts:
@@ -426,6 +431,7 @@ func redactProfile(p profile.Profile) redactedProfile {
 			Name:     s.Name,
 			Server:   s.Server,
 			Port:     s.Port,
+			Insecure: s.TLS != nil && s.TLS.Insecure,
 		}
 	}
 	return redactedProfile{
