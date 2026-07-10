@@ -9,6 +9,29 @@ All notable changes to Tenebra are documented here. The format follows
 > [project status](README.md#project-status). Expect breaking changes between
 > 0.x releases.
 
+## [Unreleased]
+
+### Added
+
+- **DNS ad and tracker blocking (opt-in).** A new Settings toggle, off by
+  default, refuses DNS lookups for a bundled list of ad and tracker domains
+  (answered `REFUSED`, ahead of any routing rule, in every mode). The blocklist
+  is the `category-ads-all` set from the same public SagerNet source as the RU
+  geodata, compiled to a local `.srs` and bundled with the app — it is loaded
+  strictly from disk and never fetched at runtime, so it cannot reintroduce the
+  startup stall a remote rule-set caused. The core exposes it through the new
+  `set_dns` command, persists it in `settings.json`, and reports it back as
+  `ad_block` in `State`.
+- **Custom DNS resolvers.** Settings now has two resolver fields — the encrypted
+  resolver used over the tunnel and the direct resolver for destinations kept off
+  it — prefilled with the values in effect. They accept the usual schemes
+  (`tls://`, `https://`, `quic://`, `h3://`, `tcp://`, `udp://`, or a bare host);
+  a malformed entry is flagged inline and refused by the core, and an empty field
+  falls back to the default. Like the kill switch, a change re-applies to a live
+  tunnel in place (a brief reconnect on the same node) rather than waiting for the
+  next connect. Both resolvers ride the same `set_dns` command and are persisted
+  and reported back in `State`.
+
 ## [0.3.0] - 2026-07-09
 
 ### Added

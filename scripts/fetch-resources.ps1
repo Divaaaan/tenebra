@@ -35,4 +35,11 @@ curl.exe -L --retry 12 --retry-all-errors --retry-delay 2 -o (Join-Path $dest "g
 $geositeUrl = "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ru.srs"
 curl.exe -L --retry 12 --retry-all-errors --retry-delay 2 -o (Join-Path $dest "geosite-ru.srs") $geositeUrl
 
-Write-Host "Fetched sing-box $singboxVersion, wintun $wintunVersion, and RU rule-sets into $dest"
+# Ad/tracker blocklist for the opt-in DNS ad-blocker. Same SagerNet source and
+# license as the RU geosite set (compiled from the v2fly community domain list).
+# It is bundled and loaded strictly as a LOCAL rule-set — never fetched at
+# runtime — so it can never reintroduce the startup freeze a remote rule-set caused.
+$geositeAdsUrl = "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs"
+curl.exe -L --retry 12 --retry-all-errors --retry-delay 2 -o (Join-Path $dest "geosite-ads.srs") $geositeAdsUrl
+
+Write-Host "Fetched sing-box $singboxVersion, wintun $wintunVersion, and RU + ads rule-sets into $dest"

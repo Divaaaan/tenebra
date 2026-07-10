@@ -151,17 +151,18 @@ Prebuilt Binaries License
   > This product includes GeoLite2 Data created by MaxMind, available from
   > <https://www.maxmind.com>.
 
-### GeoSite rule-set
+### GeoSite rule-sets
 
-- Component: `geosite-ru.srs`
+- Components: `geosite-ru.srs`, `geosite-ads.srs`
 - Source: <https://github.com/SagerNet/sing-geosite> (`rule-set` branch,
-  `geosite-category-ru.srs`)
+  `geosite-category-ru.srs` and `geosite-category-ads-all.srs`)
 - License: GPL-3.0-or-later — Copyright (C) 2022 by nekohasekai
   <contact-sagernet@sekai.icu>
-- Data attribution: The rule-set is compiled from the v2fly community domain
+- Data attribution: The rule-sets are compiled from the v2fly community domain
   list, <https://github.com/v2fly/domain-list-community>, which is distributed
   under the MIT License — Copyright (c) 2018-2019 V2Ray. The MIT License text
-  appears in section 6.
+  appears in section 6. `geosite-ads.srs` (the ad/tracker blocklist behind the
+  optional DNS ad-blocker) is the `category-ads-all` aggregate from that list.
 
 ## 2. Go core dependencies
 

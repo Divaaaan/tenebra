@@ -73,4 +73,10 @@ fi
 fetch "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ru.srs" "$dest/geoip-ru.srs"
 fetch "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ru.srs" "$dest/geosite-ru.srs"
 
-echo "Fetched sing-box $singbox_version and RU rule-sets into $dest"
+# Ad/tracker blocklist for the opt-in DNS ad-blocker. Same SagerNet source and
+# license as the RU geosite set (compiled from the v2fly community domain list).
+# It is bundled and loaded strictly as a LOCAL rule-set — never fetched at
+# runtime — so it can never reintroduce the startup freeze a remote rule-set caused.
+fetch "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs" "$dest/geosite-ads.srs"
+
+echo "Fetched sing-box $singbox_version and RU + ads rule-sets into $dest"

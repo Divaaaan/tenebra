@@ -36,6 +36,7 @@
       "resources/wintun.dll",
       "resources/geoip-ru.srs",
       "resources/geosite-ru.srs",
+      "resources/geosite-ads.srs",
       "../../THIRD-PARTY-NOTICES.md"
     ],
     "icon": [

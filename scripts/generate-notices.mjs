@@ -271,17 +271,18 @@ p("  > This product includes GeoLite2 Data created by MaxMind, available from");
 p("  > <https://www.maxmind.com>.");
 p();
 
-p("### GeoSite rule-set");
+p("### GeoSite rule-sets");
 p();
-p("- Component: `geosite-ru.srs`");
+p("- Components: `geosite-ru.srs`, `geosite-ads.srs`");
 p("- Source: <https://github.com/SagerNet/sing-geosite> (`rule-set` branch,");
-p("  `geosite-category-ru.srs`)");
+p("  `geosite-category-ru.srs` and `geosite-category-ads-all.srs`)");
 p("- License: GPL-3.0-or-later — Copyright (C) 2022 by nekohasekai");
 p("  <contact-sagernet@sekai.icu>");
-p("- Data attribution: The rule-set is compiled from the v2fly community domain");
+p("- Data attribution: The rule-sets are compiled from the v2fly community domain");
 p("  list, <https://github.com/v2fly/domain-list-community>, which is distributed");
 p("  under the MIT License — Copyright (c) 2018-2019 V2Ray. The MIT License text");
-p("  appears in section 6.");
+p("  appears in section 6. `geosite-ads.srs` (the ad/tracker blocklist behind the");
+p("  optional DNS ad-blocker) is the `category-ads-all` aggregate from that list.");
 p();
 
 // --- 2. Go core dependencies ---
