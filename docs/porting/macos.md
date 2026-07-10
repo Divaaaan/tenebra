@@ -76,9 +76,30 @@ the plan here.
 
 ## Privilege and the tunnel
 
-The helper needs root once, to open `utun`. Two mechanisms, matched to how far
-along the port is:
+The helper needs root once, to open `utun`. The daemon that holds it is the same
+across builds: `tenebra-core` run as root, serving the control protocol on a unix
+socket (`/var/run/tenebra.sock` by default, `TENEBRA_SOCKET` to override) instead
+of stdin/stdout. The GUI attaches to that socket when something answers there, and
+otherwise spawns its own unprivileged sidecar — the privileged daemon and the
+plain sidecar are two transports onto the identical core. What differs between
+builds is only how that daemon is installed and whether it is signed:
 
+- **Development / personal — a hand-installed LaunchDaemon.** The working path
+  today, and the one these scripts implement.
+  [`scripts/macos/install-daemon.sh`](../../scripts/macos/install-daemon.sh) copies
+  `tenebra-core` and `sing-box` into `/Library/PrivilegedHelperTools/Tenebra`,
+  installs [`deploy/macos/com.tenebra.core.plist`](../../deploy/macos/com.tenebra.core.plist)
+  to `/Library/LaunchDaemons`, and loads it with `launchctl bootstrap`;
+  [`scripts/macos/uninstall-daemon.sh`](../../scripts/macos/uninstall-daemon.sh)
+  reverses it. One `sudo` at install time is the whole ceremony — no certificates —
+  after which the daemon owns `utun`, is brought back after a crash or reboot by
+  launchd's `KeepAlive`, and the unprivileged GUI attaches over the socket. Run as
+  root, the core keeps its store under `/Library/Application Support/Tenebra`
+  instead of a user home. This supersedes the earlier `osascript` /
+  `AuthorizationExecuteWithPrivileges` idea: a real LaunchDaemon gives the same
+  unsigned bring-up but also persists across reboots and mirrors the shape of the
+  production daemon below. It is a contributor/personal install, not something an
+  end user should have to do by hand.
 - **Production — `SMAppService` (macOS 13+).** `SMAppService` (Ventura and later)
   replaces the deprecated `SMJobBless` for installing privileged helpers. The
   daemon `plist` and the helper binary live *inside* the `.app` bundle
@@ -89,19 +110,15 @@ along the port is:
   **System Settings → General → Login Items & Extensions** to enable the
   background item and authenticate. It requires that **both the app and the daemon
   are signed and match by Team ID** — an unsigned build will not register, which
-  is why this is the production path and not the dev one.
-- **Development — `osascript` authorization.** For local and trusted-tester
-  builds, prompting for admin rights with an `AuthorizationExecuteWithPrivileges`
-  /`osascript ... with administrator privileges` flow gets `utun` open without any
-  signing ceremony. It is not how you'd ship to end users, but it unblocks
-  bring-up on an unsigned build long before certificates are in place.
+  is why this is the production path and not the dev one. It registers essentially
+  the same daemon the dev path hand-installs, but from inside a signed bundle.
 
-| Aspect              | Alpha / dev build            | Production build                  |
-|---------------------|------------------------------|-----------------------------------|
-| Privilege mechanism | `osascript` admin prompt     | `SMAppService` root daemon        |
+| Aspect              | Dev / personal build          | Production build                  |
+|---------------------|-------------------------------|-----------------------------------|
+| Privilege mechanism | hand-installed LaunchDaemon   | `SMAppService` root daemon        |
 | Signing required    | none (ad-hoc / unsigned OK)   | Developer ID, app + daemon, Team-matched |
-| User approval       | admin password per install    | one-time Login-Items approval     |
-| Persistence         | re-prompt as needed           | LaunchDaemon, survives reboot     |
+| User approval       | one `sudo` at install         | one-time Login-Items approval     |
+| Persistence         | LaunchDaemon, survives reboot | LaunchDaemon, survives reboot     |
 | Who runs it         | contributor's own machine     | any user's Mac                    |
 
 ## Distribution
@@ -182,10 +199,15 @@ and let Tauri notarize during the build. Tauri's updater works on macOS
    resource-fetch step to pull and `lipo` the pinned darwin binary. At this stage
    the sidecar builds and speaks the protocol; no tunnel yet. Much of this is
    arch-agnostic Go that already compiles on macOS.
-2. **Tunnel bring-up.** Get `utun` open. Start with the `osascript` dev path so a
-   contributor can validate a real tunnel on an unsigned build, then implement the
-   `SMAppService` root helper. This is the step that needs an elevated, real-server
-   run to sign off — the same manual validation the Windows tunnel still needs.
+2. **Tunnel bring-up.** Get `utun` open. The dev path for this is now the
+   hand-installed LaunchDaemon: `scripts/macos/install-daemon.sh` runs
+   `tenebra-core` as root serving the control socket, and the GUI attaches to it
+   (see [Privilege and the tunnel](#privilege-and-the-tunnel)), so a contributor
+   can validate a real tunnel on an unsigned build with one `sudo`. The
+   `SMAppService` root helper is that same daemon registered from a signed bundle,
+   and lands with the production channel below. Either way this is the step that
+   needs an elevated, real-server run to sign off — the same manual validation the
+   Windows tunnel still needs.
 3. **CI artifact.** Produce an **unsigned** universal DMG on a macOS runner, so the
    build is reproducible and reviewable before any certificates exist. Confirm the
    `lipo`'d sidecar loads and the app reaches the mock backend end to end.
