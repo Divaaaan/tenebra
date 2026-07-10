@@ -1,14 +1,17 @@
 package subscription
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -69,6 +72,15 @@ func newSubServer(t *testing.T, status int, body string) (*httptest.Server, func
 	srv.StartTLS()
 	t.Cleanup(srv.Close)
 	return srv, func() string { return sni.Load().(string) }
+}
+
+// subPool returns a cert pool trusting srv's TLS certificate, for tests that
+// drive a sub server directly without a DoH server to borrow a pool from.
+func subPool(t *testing.T, srv *httptest.Server) *x509.CertPool {
+	t.Helper()
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	return pool
 }
 
 func serverPort(t *testing.T, srv *httptest.Server) string {
@@ -184,6 +196,174 @@ func TestFetchServerRespondedSkipsDoH(t *testing.T) {
 	}
 	if hits.Load() != 0 {
 		t.Fatalf("DoH resolver was queried %d times after a server response, want 0", hits.Load())
+	}
+}
+
+// fakeConn is a net.Conn whose only meaningful method is RemoteAddr; it lets a
+// dial stub hand the SSRF guard a chosen peer address without real networking.
+type fakeConn struct {
+	net.Conn
+	remote net.Addr
+}
+
+func (c fakeConn) RemoteAddr() net.Addr { return c.remote }
+func (c fakeConn) Close() error         { return nil }
+
+func TestFetchRejectsNonHTTPScheme(t *testing.T) {
+	doh, pool, hits := newDoHServerCounting(t, net.IPv4(127, 0, 0, 1))
+	cfg := fetchConfig{
+		dohEndpoints: []DoHEndpoint{doh},
+		rootCAs:      pool,
+		blockAddr:    blockedByDefaultIP,
+		// A dial that must never run: a rejected scheme must not reach the wire.
+		primaryDial: func(context.Context, string, string) (net.Conn, error) {
+			t.Fatal("dialed despite an unsupported scheme")
+			return nil, nil
+		},
+	}
+	for _, raw := range []string{"ftp://example.com/sub", "file:///etc/passwd", "gopher://x/1"} {
+		_, _, err := fetchWithConfig(context.Background(), raw, cfg)
+		if err == nil || !strings.Contains(err.Error(), "scheme") {
+			t.Fatalf("scheme %q: error = %v, want an unsupported-scheme error", raw, err)
+		}
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("DoH resolver ran %d times for a rejected scheme, want 0", hits.Load())
+	}
+}
+
+func TestFetchGuardBlocksLoopbackLiteral(t *testing.T) {
+	sub, _ := newSubServer(t, 200, "should-not-be-served")
+	doh, pool, hits := newDoHServerCounting(t, net.IPv4(127, 0, 0, 1))
+
+	// A loopback IP literal is refused before any socket opens: with the guard
+	// on, the sub server is never reached even though it is up.
+	url := "https://127.0.0.1:" + serverPort(t, sub) + "/sub?token=secret"
+	cfg := fetchConfig{dohEndpoints: []DoHEndpoint{doh}, rootCAs: pool, blockAddr: blockedByDefaultIP}
+
+	_, _, err := fetchWithConfig(context.Background(), url, cfg)
+	if err == nil {
+		t.Fatal("fetchWithConfig() error = nil, want the loopback dial refused")
+	}
+	if !strings.Contains(err.Error(), "blocked") {
+		t.Fatalf("error = %q, want a blocked-address error", err)
+	}
+	if strings.Contains(err.Error(), "token=secret") {
+		t.Fatalf("error leaked the subscription token: %q", err)
+	}
+	// A policy block is not a resolver fault, so DoH must not be attempted.
+	if hits.Load() != 0 {
+		t.Fatalf("DoH resolver ran %d times after an SSRF block, want 0", hits.Load())
+	}
+}
+
+func TestFetchGuardBlocksPrivateAndMetadataLiterals(t *testing.T) {
+	cfg := fetchConfig{blockAddr: blockedByDefaultIP}
+	for _, host := range []string{"169.254.169.254", "10.0.0.1", "172.16.5.5", "192.168.1.1", "[::1]", "[fe80::1]"} {
+		url := "https://" + host + "/sub?token=secret"
+		_, _, err := fetchWithConfig(context.Background(), url, cfg)
+		if err == nil || !strings.Contains(err.Error(), "blocked") {
+			t.Fatalf("host %q: error = %v, want a blocked-address error", host, err)
+		}
+	}
+}
+
+func TestFetchGuardBlocksResolvedPrivateIP(t *testing.T) {
+	// A hostname (not an IP literal) that resolves into private space must be
+	// caught post-connect via the peer address, not only by literal matching.
+	// The dial stub returns a connection whose peer is the metadata endpoint.
+	cfg := fetchConfig{
+		blockAddr: blockedByDefaultIP,
+		primaryDial: func(context.Context, string, string) (net.Conn, error) {
+			return fakeConn{remote: &net.TCPAddr{IP: net.ParseIP("169.254.169.254"), Port: 80}}, nil
+		},
+	}
+	_, _, err := fetchWithConfig(context.Background(), "https://panel.example.com/sub?token=secret", cfg)
+	if err == nil || !strings.Contains(err.Error(), "blocked") {
+		t.Fatalf("error = %v, want a blocked-address error on a resolved private IP", err)
+	}
+}
+
+func TestFetchGuardBlocksRedirectIntoMetadata(t *testing.T) {
+	// The canonical SSRF: a reachable https origin 302s into a bare-IP metadata
+	// URL. The guard must catch the redirect hop, so the guard predicate here
+	// blocks only the metadata IP (leaving the loopback origin reachable).
+	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://169.254.169.254/latest/meta-data/", http.StatusFound)
+	}))
+	t.Cleanup(origin.Close)
+	pool := x509.NewCertPool()
+	pool.AddCert(origin.Certificate())
+
+	cfg := fetchConfig{
+		rootCAs:   pool,
+		blockAddr: func(ip net.IP) bool { return ip.Equal(net.ParseIP("169.254.169.254")) },
+	}
+	_, _, err := fetchWithConfig(context.Background(), origin.URL+"/sub?token=secret", cfg)
+	if err == nil {
+		t.Fatal("fetchWithConfig() error = nil, want the redirect into metadata refused")
+	}
+	if !strings.Contains(err.Error(), "blocked") || !strings.Contains(err.Error(), "169.254.169.254") {
+		t.Fatalf("error = %q, want a blocked-address error naming the metadata IP", err)
+	}
+}
+
+func TestFetchPublicHTTPSStillWorksWithGuardOn(t *testing.T) {
+	// A "public" origin (here loopback, but the guard predicate treats only the
+	// metadata IP as forbidden) must fetch normally with the guard installed.
+	sub, _ := newSubServer(t, 200, "public-body")
+	cfg := fetchConfig{
+		rootCAs:   subPool(t, sub),
+		blockAddr: func(ip net.IP) bool { return ip.Equal(net.ParseIP("169.254.169.254")) },
+	}
+	body, _, err := fetchWithConfig(context.Background(), "https://127.0.0.1:"+serverPort(t, sub)+"/sub?token=secret", cfg)
+	if err != nil {
+		t.Fatalf("fetchWithConfig() error = %v, want a clean fetch", err)
+	}
+	if string(body) != "public-body" {
+		t.Fatalf("body = %q, want public-body", body)
+	}
+}
+
+func TestFetchHTTPSchemeWarnsWithoutLeakingToken(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	sub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "cleartext-body")
+	}))
+	t.Cleanup(sub.Close)
+
+	// blockAddr nil keeps the guard off so the loopback origin is reachable; the
+	// point of this test is the cleartext-http warning, not the guard.
+	body, _, err := fetchWithConfig(context.Background(), sub.URL+"/sub?token=secret", fetchConfig{})
+	if err != nil {
+		t.Fatalf("fetchWithConfig() over http error = %v, want plain http to still work", err)
+	}
+	if string(body) != "cleartext-body" {
+		t.Fatalf("body = %q, want cleartext-body", body)
+	}
+	logged := buf.String()
+	if !strings.Contains(logged, "cleartext http") {
+		t.Fatalf("log = %q, want a cleartext-http warning", logged)
+	}
+	if strings.Contains(logged, "token=secret") {
+		t.Fatalf("warning leaked the subscription token: %q", logged)
+	}
+}
+
+func TestFetchGuardOptOutEnvDisablesGuard(t *testing.T) {
+	t.Setenv(ssrfGuardOptOutEnv, "1")
+	if ssrfGuardDisabled() != true {
+		t.Fatal("ssrfGuardDisabled() = false with opt-out set, want true")
+	}
+	if defaultFetchConfig().blockAddr != nil {
+		t.Fatal("defaultFetchConfig().blockAddr non-nil with opt-out set, want guard disabled")
+	}
+	t.Setenv(ssrfGuardOptOutEnv, "")
+	if defaultFetchConfig().blockAddr == nil {
+		t.Fatal("defaultFetchConfig().blockAddr nil by default, want the guard on")
 	}
 }
 
