@@ -241,6 +241,100 @@ func TestSplitBypassLANStillApplies(t *testing.T) {
 	}
 }
 
+// dnsProcessRule finds the first dns rule carrying a process_name match.
+func dnsProcessRule(rules []map[string]any) (map[string]any, bool) {
+	for _, r := range rules {
+		if _, ok := r["process_name"]; ok {
+			return r, true
+		}
+	}
+	return nil, false
+}
+
+// TestSplitIncludeDNSFollowsTunnelInDirectMode locks the fix for a DNS
+// split-tunnel leak: in direct base mode the DNS final is dns-direct (resolves
+// outside the tunnel), but an app pinned to the proxy by include split
+// tunnelling routes its traffic through the proxy. Without a matching dns rule
+// its lookups would go out direct while its traffic went through the tunnel,
+// leaking every domain it visits to the local resolver/ISP. The dns rules must
+// carry a process_name rule that sends the listed apps to dns-remote, so their
+// DNS follows the tunnel like their traffic does.
+func TestSplitIncludeDNSFollowsTunnelInDirectMode(t *testing.T) {
+	opts := (Options{Mode: ModeDirect, SplitMode: SplitInclude, SplitApps: []string{"Chrome.exe"}}).Normalize()
+
+	// The unmatched final stays dns-direct — that is correct for direct mode and
+	// is not what covers the tunnelled apps.
+	if got := opts.dnsFinal(); got != dnsDirectTag {
+		t.Errorf("direct+include dnsFinal = %q, want %q", got, dnsDirectTag)
+	}
+
+	rules := opts.dnsRules()
+	pr, ok := dnsProcessRule(rules)
+	if !ok {
+		t.Fatalf("direct+include missing process_name dns rule (DNS would leak); rules=%v", rules)
+	}
+	if pr["action"] != "route" || pr["server"] != dnsRemoteTag {
+		t.Errorf("include dns process rule = %v, want action route server %s", pr, dnsRemoteTag)
+	}
+	names, ok := pr["process_name"].([]string)
+	if !ok || !reflect.DeepEqual(names, []string{"chrome.exe"}) {
+		t.Errorf("include dns process_name = %v, want [chrome.exe]", pr["process_name"])
+	}
+
+	// The traffic for the same app is pinned to the proxy, so DNS and traffic
+	// agree — the whole point of the fix.
+	route, ok := processRule(opts.RouteRules())
+	if !ok || route["outbound"] != tagProxy {
+		t.Errorf("include route rule = %v, want the app pinned to proxy", route)
+	}
+}
+
+// TestSplitIncludeDNSRuleInEveryBaseMode: the tunnelled-apps dns rule is emitted
+// under include split for every base mode. In smart/global it restates the
+// dns-remote final harmlessly; in direct it is the leak fix. It must always send
+// the listed apps to dns-remote and precede the smart RU->direct rule so a
+// tunnelled app's DNS is never pulled direct.
+func TestSplitIncludeDNSRuleInEveryBaseMode(t *testing.T) {
+	for _, m := range []Mode{ModeSmart, ModeGlobal, ModeDirect} {
+		opts := (Options{Mode: m, SplitMode: SplitInclude, SplitApps: []string{"chrome.exe"}}).Normalize()
+		rules := opts.dnsRules()
+		pr, ok := dnsProcessRule(rules)
+		if !ok {
+			t.Errorf("include base %q: missing process_name dns rule; rules=%v", m, rules)
+			continue
+		}
+		if pr["server"] != dnsRemoteTag {
+			t.Errorf("include base %q: dns process rule server = %v, want %s", m, pr["server"], dnsRemoteTag)
+		}
+		// The process rule must come before any RU->direct rule.
+		procIdx, ruIdx := -1, -1
+		for i, r := range rules {
+			if _, has := r["process_name"]; has {
+				procIdx = i
+			}
+			if _, has := r["rule_set"]; has && r["server"] == dnsDirectTag {
+				ruIdx = i
+			}
+		}
+		if ruIdx != -1 && procIdx >= ruIdx {
+			t.Errorf("include base %q: process dns rule (idx %d) must precede RU rule (idx %d)", m, procIdx, ruIdx)
+		}
+	}
+}
+
+// TestSplitExcludeAddsNoDNSProcessRule: exclude split does not add a dns
+// process_name rule. Excluded apps go direct, so resolving them via the base
+// final (dns-remote in smart/global, dns-direct in direct) never leaks a
+// tunnelled app's DNS — there is nothing to pin.
+func TestSplitExcludeAddsNoDNSProcessRule(t *testing.T) {
+	for _, m := range []Mode{ModeSmart, ModeGlobal, ModeDirect} {
+		opts := (Options{Mode: m, SplitMode: SplitExclude, SplitApps: []string{"chrome.exe"}}).Normalize()
+		if _, ok := dnsProcessRule(opts.dnsRules()); ok {
+			t.Errorf("exclude base %q unexpectedly added a dns process_name rule", m)
+		}
+	}
+}
+
 // TestSplitRulesMarshal guards against emitting anything encoding/json chokes on.
 func TestSplitRulesMarshal(t *testing.T) {
 	for _, sm := range []SplitMode{SplitOff, SplitExclude, SplitInclude} {
