@@ -333,6 +333,23 @@ async fn set_autoconnect(state: TauriState<'_, AppState>, on: bool) -> Result<St
     off_thread(Arc::clone(&state.backend), move |b| b.set_autoconnect(on)).await
 }
 
+// rename_all keeps the JS-side argument keys snake_case (ad_block, dns_remote,
+// dns_direct), matching this file's command convention. Tauri v2 otherwise
+// expects camelCase keys by default; the existing single-word commands don't
+// expose the difference, but this multi-word one would, so pin it explicitly.
+#[tauri::command(rename_all = "snake_case")]
+async fn set_dns(
+    state: TauriState<'_, AppState>,
+    ad_block: bool,
+    dns_remote: String,
+    dns_direct: String,
+) -> Result<State, String> {
+    off_thread(Arc::clone(&state.backend), move |b| {
+        b.set_dns(ad_block, dns_remote, dns_direct)
+    })
+    .await
+}
+
 #[tauri::command]
 async fn leak_check(state: TauriState<'_, AppState>) -> Result<LeakCheck, String> {
     off_thread(Arc::clone(&state.backend), |b| b.leak_check()).await
@@ -440,6 +457,7 @@ pub fn run() {
             set_kill_switch,
             set_tun,
             set_autoconnect,
+            set_dns,
             leak_check,
             quit_app,
             take_launch_deep_links,
@@ -583,6 +601,9 @@ mod tests {
             kill_switch: None,
             tun_stack: None,
             autoconnect: None,
+            ad_block: None,
+            dns_remote: None,
+            dns_direct: None,
             error: None,
         }
     }

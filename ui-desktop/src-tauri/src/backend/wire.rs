@@ -426,6 +426,22 @@ impl<T: WireSession> Backend for T {
             .request_into("set_autoconnect", obj([("on", json!(on))]))
     }
 
+    fn set_dns(
+        &self,
+        ad_block: bool,
+        dns_remote: String,
+        dns_direct: String,
+    ) -> Result<State, String> {
+        self.session()?.request_into(
+            "set_dns",
+            obj([
+                ("ad_block", json!(ad_block)),
+                ("dns_remote", json!(dns_remote)),
+                ("dns_direct", json!(dns_direct)),
+            ]),
+        )
+    }
+
     fn leak_check(&self) -> Result<LeakCheck, String> {
         // The core runs the IP/DNS probes itself and returns the assembled
         // verdict; we just deserialize it. It can touch the network, but the core
@@ -697,6 +713,54 @@ mod tests {
         let state = backend.set_autoconnect(true).expect("a response");
         assert_eq!(state.state, ConnectionState::Idle);
         assert_eq!(state.autoconnect, Some(true));
+
+        server.join().expect("server thread");
+        stop.store(true, Ordering::SeqCst); // unstick the reader
+        reader.join().expect("reader thread");
+    }
+
+    #[test]
+    fn set_dns_maps_to_the_protocol_command() {
+        // Drive Backend::set_dns through the blanket impl and assert the exact line
+        // it puts on the wire (the toggle plus both resolvers), plus that the core's
+        // reported DNS state round-trips back.
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ours, theirs) = duplex(&stop);
+
+        let client = WireClient::new(ours.writer);
+        let sink: Arc<dyn EventSink> = Arc::new(Rec::default());
+        let reader_client = Arc::clone(&client);
+        let reader = thread::spawn(move || read_loop(ours.reader, reader_client, sink));
+
+        let mut server_writer = theirs.writer;
+        let server = thread::spawn(move || {
+            let mut lines = BufReader::new(theirs.reader).lines();
+            let line = lines.next().expect("a request line").expect("readable");
+            let req: Value = serde_json::from_str(&line).expect("request is JSON");
+            assert_eq!(req["cmd"].as_str(), Some("set_dns"));
+            assert_eq!(req["ad_block"].as_bool(), Some(true));
+            assert_eq!(req["dns_remote"].as_str(), Some("tls://9.9.9.9"));
+            assert_eq!(req["dns_direct"].as_str(), Some("udp://8.8.8.8"));
+            let id = req["id"].as_u64().expect("request carries an id");
+            let response = json!({
+                "id": id, "ok": true,
+                "data": {
+                    "state": "idle",
+                    "ad_block": true,
+                    "dns_remote": "tls://9.9.9.9",
+                    "dns_direct": "udp://8.8.8.8",
+                },
+            });
+            writeln!(server_writer, "{response}").expect("write response");
+        });
+
+        let backend = FixedSession(Arc::clone(&client));
+        let state = backend
+            .set_dns(true, "tls://9.9.9.9".into(), "udp://8.8.8.8".into())
+            .expect("a response");
+        assert_eq!(state.ad_block, Some(true));
+        assert_eq!(state.dns_remote.as_deref(), Some("tls://9.9.9.9"));
+        assert_eq!(state.dns_direct.as_deref(), Some("udp://8.8.8.8"));
 
         server.join().expect("server thread");
         stop.store(true, Ordering::SeqCst); // unstick the reader

@@ -113,6 +113,18 @@ pub struct State {
     /// absent (treated as off) when it doesn't.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub autoconnect: Option<bool>,
+    /// Whether DNS ad/tracker blocking is armed; absent (treated as off) when it
+    /// isn't.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ad_block: Option<bool>,
+    /// The resolvers the current or next tunnel uses: the encrypted resolver
+    /// reached over the proxy and the direct one. Present once the core has
+    /// normalized them, so the UI can prefill the custom-DNS inputs with the
+    /// effective values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dns_remote: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dns_direct: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -301,6 +313,18 @@ pub trait Backend: Send + Sync + 'static {
     /// armed, reconnects the last profile the next time the daemon itself
     /// starts (service mode: at boot); nothing about a live tunnel changes.
     fn set_autoconnect(&self, on: bool) -> Result<State, String>;
+    /// Record the DNS preferences: the ad/tracker-block toggle plus the two custom
+    /// resolvers (the encrypted proxied resolver and the direct one). The core
+    /// persists them and, when a tunnel is live, re-applies them in place by
+    /// hot-swapping sing-box on the same node (a brief connecting→connected dip,
+    /// not a full reconnect). An empty resolver resets that one to the core's
+    /// default; a malformed one is refused.
+    fn set_dns(
+        &self,
+        ad_block: bool,
+        dns_remote: String,
+        dns_direct: String,
+    ) -> Result<State, String>;
     fn leak_check(&self) -> Result<LeakCheck, String>;
 }
 
@@ -405,6 +429,9 @@ mod tests {
             kill_switch: Some(true),
             tun_stack: Some(TunStack::Gvisor),
             autoconnect: Some(true),
+            ad_block: Some(true),
+            dns_remote: Some("tls://1.1.1.1".into()),
+            dns_direct: Some("https://77.88.8.8/dns-query".into()),
             error: None,
         };
         let json = to_value(&state).unwrap();
@@ -424,6 +451,9 @@ mod tests {
             kill_switch: None,
             tun_stack: None,
             autoconnect: None,
+            ad_block: None,
+            dns_remote: None,
+            dns_direct: None,
             error: None,
         };
         let obj = to_value(&state).unwrap();
@@ -439,6 +469,9 @@ mod tests {
             "kill_switch",
             "tun_stack",
             "autoconnect",
+            "ad_block",
+            "dns_remote",
+            "dns_direct",
             "error",
         ] {
             assert!(

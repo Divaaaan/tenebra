@@ -65,6 +65,11 @@ impl MockBackend {
                 // The core always names the stack once normalized; mirror that.
                 tun_stack: Some(TunStack::System),
                 autoconnect: None,
+                ad_block: None,
+                // The core reports the effective resolvers once normalized; mirror
+                // the defaults so the UI's custom-DNS inputs come up prefilled.
+                dns_remote: Some("tls://1.1.1.1".into()),
+                dns_direct: Some("https://77.88.8.8/dns-query".into()),
                 error: None,
             },
             profiles: demo_profiles(),
@@ -447,6 +452,32 @@ impl Backend for MockBackend {
         // at its own next start, so there is nothing more for the mock to do.
         let mut inner = self.shared.inner.lock().unwrap();
         inner.state.autoconnect = if on { Some(true) } else { None };
+        let snapshot = inner.state.clone();
+        drop(inner);
+        self.shared.emit_state(&snapshot);
+        Ok(snapshot)
+    }
+
+    fn set_dns(
+        &self,
+        ad_block: bool,
+        dns_remote: String,
+        dns_direct: String,
+    ) -> Result<State, String> {
+        // Mirror the core: an empty resolver falls back to the default; a live
+        // tunnel would hot-swap, which the mock abbreviates to the state change.
+        let mut inner = self.shared.inner.lock().unwrap();
+        inner.state.ad_block = if ad_block { Some(true) } else { None };
+        inner.state.dns_remote = Some(if dns_remote.is_empty() {
+            "tls://1.1.1.1".into()
+        } else {
+            dns_remote
+        });
+        inner.state.dns_direct = Some(if dns_direct.is_empty() {
+            "https://77.88.8.8/dns-query".into()
+        } else {
+            dns_direct
+        });
         let snapshot = inner.state.clone();
         drop(inner);
         self.shared.emit_state(&snapshot);
@@ -996,6 +1027,29 @@ mod tests {
         let s = b.set_tun(TunStack::Gvisor).unwrap();
         assert_eq!(s.tun_stack, Some(TunStack::Gvisor));
         assert_eq!(sink.last_state().unwrap().tun_stack, Some(TunStack::Gvisor));
+    }
+
+    #[test]
+    fn set_dns_records_toggle_and_resolvers_and_emits() {
+        let (b, sink) = backend();
+        // The mock starts on the default resolvers, like the core reports them.
+        let start = b.status().unwrap();
+        assert_eq!(start.dns_remote.as_deref(), Some("tls://1.1.1.1"));
+
+        let s = b
+            .set_dns(true, "tls://9.9.9.9".into(), "udp://8.8.8.8".into())
+            .unwrap();
+        assert_eq!(s.ad_block, Some(true));
+        assert_eq!(s.dns_remote.as_deref(), Some("tls://9.9.9.9"));
+        assert_eq!(s.dns_direct.as_deref(), Some("udp://8.8.8.8"));
+        assert_eq!(sink.last_state().unwrap().ad_block, Some(true));
+
+        // Disarming drops ad_block, and an empty resolver falls back to the default.
+        let s = b
+            .set_dns(false, String::new(), "udp://8.8.8.8".into())
+            .unwrap();
+        assert_eq!(s.ad_block, None);
+        assert_eq!(s.dns_remote.as_deref(), Some("tls://1.1.1.1"));
     }
 
     #[test]
