@@ -71,6 +71,30 @@
   color: var(--text);
 }
 
+/* Per-profile heads-up when any node skips TLS verification. A bordered amber
+   strip, loud enough to notice but below the connect-button's --signal alarm. */
+.srv-insecure-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--track-body);
+  color: var(--warn-soft);
+  border: var(--bw) solid var(--warn-soft);
+  padding: 6px 10px;
+}
+.srv-insecure-mark {
+  flex: none;
+  font-weight: 700;
+  border: var(--bw) solid var(--warn-soft);
+  width: 15px;
+  height: 15px;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+}
+
 /* chips — shared by region filters and subscription tabs */
 .srv-filters {
   display: flex;
@@ -187,9 +211,15 @@
   display: flex;
   align-items: center;
   gap: 7px;
+  min-width: 0;
+}
+/* The node code ellipsizes; the active dot and warning badge stay pinned beside
+   it (flex: none) so a long name never clips them. */
+.srv-node-code {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 .srv-active-dot {
   width: 6px;
@@ -197,6 +227,21 @@
   background: var(--signal);
   display: inline-block;
   flex: none;
+}
+
+/* TLS-verification-off warning on a node row. Amber (--warn-soft, "heads-up,
+   not critical") in a bordered mono tag, matching the proto tag's geometry so
+   it reads as a sibling label rather than an accent. */
+.srv-insecure {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--warn-soft);
+  border: var(--bw) solid var(--warn-soft);
+  padding: 1px 5px;
 }
 .srv-city {
   font-size: var(--fs-label);

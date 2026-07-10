@@ -19,6 +19,7 @@ function makeRows(): ServerRow[] {
       protocol: "vless",
       rttMs: 27,
       dead: false,
+      insecure: false,
     },
     {
       id: "n-ams",
@@ -28,6 +29,7 @@ function makeRows(): ServerRow[] {
       protocol: "hysteria2",
       rttMs: 140,
       dead: false,
+      insecure: false,
     },
     {
       id: "n-nyc",
@@ -37,6 +39,7 @@ function makeRows(): ServerRow[] {
       protocol: "shadowsocks",
       rttMs: null,
       dead: true,
+      insecure: false,
     },
   ];
 }
@@ -196,6 +199,51 @@ describe("ServerList", () => {
     it("renders no tabs with a single profile", () => {
       renderWithProviders(<ServerList {...baseProps()} />);
       expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("insecure (skip-cert-verify) warning", () => {
+    it("badges a node with TLS verification off and leaves secure nodes unmarked", () => {
+      const rows = makeRows();
+      rows[0].insecure = true; // DE-FRA-01 skips cert verification
+      renderWithProviders(<ServerList {...baseProps({ rows })} />);
+
+      // The insecure node carries the labelled badge...
+      const badge = screen.getByLabelText(
+        "TLS verification off — on-path interception possible",
+      );
+      expect(badge).toBeInTheDocument();
+      const insecureRow = screen
+        .getByText("DE-FRA-01")
+        .closest('[role="button"]')!;
+      expect(insecureRow).toContainElement(badge);
+
+      // ...and it's the only one: a secure row has no badge.
+      const secureRow = screen.getByText("NL-AMS-02").closest('[role="button"]')!;
+      expect(
+        secureRow.querySelector(".srv-insecure"),
+      ).not.toBeInTheDocument();
+      expect(screen.getAllByText("no-cert")).toHaveLength(1);
+    });
+
+    it("summarises how many nodes skip TLS verification, profile-wide", () => {
+      const rows = makeRows();
+      rows[0].insecure = true;
+      rows[2].insecure = true; // 2 of 3, counted across all rows not just visible
+      renderWithProviders(
+        <ServerList {...baseProps({ rows, region: "EU" })} />,
+      );
+
+      const alert = screen.getByRole("alert");
+      expect(alert).toHaveTextContent(
+        "2 of 3 nodes skip TLS verification — on-path interception possible",
+      );
+    });
+
+    it("shows no summary when every node verifies TLS", () => {
+      renderWithProviders(<ServerList {...baseProps()} />);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByText("no-cert")).not.toBeInTheDocument();
     });
   });
 

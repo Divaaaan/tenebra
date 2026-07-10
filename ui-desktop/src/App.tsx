@@ -104,6 +104,7 @@ export function App() {
           protocol: n.protocol,
           rttMs: probe ? probe.rttMs : null,
           dead: probe ? !probe.ok : false,
+          insecure: n.insecure ?? false,
         };
       }),
     [nodes, pings.results],
