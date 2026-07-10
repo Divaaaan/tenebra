@@ -564,4 +564,83 @@ describe("SettingsScreen", () => {
       expect(relaunch).not.toHaveBeenCalled();
     });
   });
+
+  describe("update channel", () => {
+    it("defaults to stable and marks it checked", () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(screen.getByRole("radio", { name: /Stable/ })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+      expect(screen.getByRole("radio", { name: /Beta/ })).toHaveAttribute(
+        "aria-checked",
+        "false",
+      );
+    });
+
+    it("exposes the options as a labelled radiogroup", () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(
+        screen.getByRole("radiogroup", { name: "Update channel" }),
+      ).toBeInTheDocument();
+    });
+
+    it("selects beta on click and persists the choice", async () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(screen.getByRole("radio", { name: /Beta/ }));
+
+      expect(screen.getByRole("radio", { name: /Beta/ })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+      expect(screen.getByRole("radio", { name: /Stable/ })).toHaveAttribute(
+        "aria-checked",
+        "false",
+      );
+      // Written through so the launch check and the manual check read it.
+      expect(localStorage.getItem("tenebra.updateChannel")).toBe("beta");
+    });
+
+    it("starts on beta when previously selected", () => {
+      localStorage.setItem("tenebra.updateChannel", "beta");
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(screen.getByRole("radio", { name: /Beta/ })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+    });
+
+    it("carries focus with selection on ArrowDown and wraps back", async () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      const stable = screen.getByRole("radio", { name: /Stable/ });
+      const beta = screen.getByRole("radio", { name: /Beta/ });
+
+      // stable is index 0, where the roving tabIndex parks the caret.
+      stable.focus();
+      expect(stable).toHaveFocus();
+
+      await user.keyboard("{ArrowDown}");
+      expect(beta).toHaveFocus();
+      expect(beta).toHaveAttribute("aria-checked", "true");
+      expect(localStorage.getItem("tenebra.updateChannel")).toBe("beta");
+
+      // A second press wraps around to the first option.
+      await user.keyboard("{ArrowDown}");
+      expect(stable).toHaveFocus();
+      expect(stable).toHaveAttribute("aria-checked", "true");
+      expect(localStorage.getItem("tenebra.updateChannel")).toBe("stable");
+    });
+  });
 });

@@ -211,6 +211,12 @@ export interface Strings {
     /** "Install updates automatically" toggle label and its explanation. */
     autoInstall: string;
     autoInstallHint: string;
+    /** Update-channel radiogroup: label plus the stable/beta options. */
+    updateChannel: string;
+    updateChannelStable: string;
+    updateChannelStableHint: string;
+    updateChannelBeta: string;
+    updateChannelBetaHint: string;
   };
 
   logs: {
@@ -448,6 +454,12 @@ const en: Strings = {
     autoInstall: "Install updates automatically",
     autoInstallHint:
       "When a launch check finds a new version, install it and restart without asking.",
+    updateChannel: "Update channel",
+    updateChannelStable: "Stable",
+    updateChannelStableHint: "Tested releases only.",
+    updateChannelBeta: "Beta",
+    updateChannelBetaHint:
+      "Get prereleases early, plus every stable release. May be rougher around the edges.",
   },
   logs: {
     title: "Logs",
@@ -674,6 +686,12 @@ const ru: Strings = {
     autoInstall: "Устанавливать обновления автоматически",
     autoInstallHint:
       "Если проверка при запуске нашла новую версию — установить её и перезапустить без вопросов.",
+    updateChannel: "Канал обновлений",
+    updateChannelStable: "Стабильный",
+    updateChannelStableHint: "Только проверенные релизы.",
+    updateChannelBeta: "Бета",
+    updateChannelBetaHint:
+      "Ранний доступ к предрелизам и все стабильные версии. Может быть сырее.",
   },
   logs: {
     title: "Журнал",

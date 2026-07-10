@@ -113,6 +113,13 @@
   color: var(--text-dim);
 }
 
+/* ── update-channel group: a captioned radiogroup in the Updates section ── */
+.set-channel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
 /* ── split-tunnelling app list ── */
 .set-apps {
   display: flex;
