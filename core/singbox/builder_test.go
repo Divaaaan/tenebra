@@ -2,6 +2,7 @@ package singbox
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -235,7 +236,11 @@ func TestCacheFilePinnedToCacheDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	cache := cfg["experimental"].(map[string]any)["cache_file"].(map[string]any)
-	want := "/Library/Application Support/Tenebra/data/cache.db"
+	// Build the expected path with filepath.Join too, so the separator matches
+	// the host: the builder joins with the OS separator (backslash on Windows),
+	// and a hard-coded forward-slash literal would only match on Unix.
+	dir := "/Library/Application Support/Tenebra/data"
+	want := filepath.Join(dir, "cache.db")
 	if cache["path"] != want {
 		t.Errorf("cache_file path = %v, want %v", cache["path"], want)
 	}
