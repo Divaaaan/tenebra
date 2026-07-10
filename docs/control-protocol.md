@@ -128,6 +128,7 @@ surface.
 | `set_kill_switch`      | `on` (boolean)                     | `State`                     |
 | `set_tun`              | `stack` (`system`/`gvisor`/`mixed`) | `State`                    |
 | `set_autoconnect`      | `on` (boolean)                     | `State`                     |
+| `set_dns`              | `ad_block` (boolean), `dns_remote`, `dns_direct` | `State`       |
 | `leak_check`           | —                                  | `LeakCheck`                 |
 
 ```
@@ -291,6 +292,36 @@ request:  {"id":11,"cmd":"set_autoconnect","on":true}
 response: {"id":11,"ok":true,"data":{"state":"idle","tun_stack":"system","autoconnect":true}}
 ```
 
+### DNS (`set_dns`)
+
+Sets the DNS preferences in one command: `ad_block` toggles ad/tracker blocking,
+and `dns_remote` / `dns_direct` set the two resolvers — the encrypted one reached
+over the proxy for general lookups, and the direct one for destinations kept off
+the tunnel. All three are persisted in `settings.json` and reported back in
+`State` (`ad_block`, `dns_remote`, `dns_direct`).
+
+Like the kill switch, `set_dns` re-applies to a **live** tunnel in place: the core
+rebuilds the config for the node it is already on and hot-swaps sing-box (a brief
+`connecting → connected` dip on the same node), so a change lands without waiting
+for the next connect. A resend that changes nothing does not restart the tunnel.
+
+Each resolver accepts the schemes the DNS builder parses — `tls://`, `https://`,
+`quic://`, `h3://`, `tcp://`, `udp://`, or a bare host, with an optional port and,
+for DoH, a path. A **malformed** resolver is rejected (`ok: false`) before
+anything is recorded. An **empty** resolver is accepted and falls back to the
+core's default, so the reported `dns_remote` / `dns_direct` are always the
+effective values (the UI can prefill its inputs from them).
+
+When `ad_block` is on, the core injects a DNS rule that sinkholes lookups for a
+bundled ad/tracker domain list (answered `REFUSED`), ahead of any routing rule, in
+every mode. The blocklist ships strictly as a local rule-set, so it is inert on a
+build that lacks the bundled file rather than fetching anything at runtime.
+
+```
+request:  {"id":12,"cmd":"set_dns","ad_block":true,"dns_remote":"tls://9.9.9.9","dns_direct":""}
+response: {"id":12,"ok":true,"data":{"state":"idle","tun_stack":"system","ad_block":true,"dns_remote":"tls://9.9.9.9","dns_direct":"https://77.88.8.8/dns-query"}}
+```
+
 ### Per-app split tunnelling (`set_split`)
 
 `apps` is a list of executable file names matched case-insensitively against the
@@ -387,6 +418,9 @@ type State = {
   kill_switch?: boolean;          // omitted when off
   tun_stack?: "system" | "gvisor" | "mixed";
   autoconnect?: boolean;          // reconnect at daemon start; omitted when off
+  ad_block?: boolean;             // DNS ad/tracker blocking; omitted when off
+  dns_remote?: string;            // effective encrypted resolver (over the proxy)
+  dns_direct?: string;            // effective direct resolver
   error?: string;
 };
 

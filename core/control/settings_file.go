@@ -42,6 +42,17 @@ type persistedSettings struct {
 	// it starts (see AutoconnectOnStart). Absent reads back as false — off,
 	// matching the pre-autoconnect behaviour.
 	Autoconnect bool `json:"autoconnect,omitempty"`
+
+	// AdBlock remembers whether the user armed DNS ad/tracker blocking. Absent in
+	// files written before the field existed, which reads back as false — off,
+	// matching the pre-ad-block behaviour.
+	AdBlock bool `json:"ad_block,omitempty"`
+	// DNSRemote and DNSDirect remember custom resolvers. Absent or empty reads back
+	// as "" and the loading path lets Normalize substitute the default resolver, so
+	// an old file (or a user who never changed them) transparently keeps the
+	// defaults.
+	DNSRemote string `json:"dns_remote,omitempty"`
+	DNSDirect string `json:"dns_direct,omitempty"`
 	// LastProfile and LastNode record the last successful user-commanded
 	// connect: the profile, and the node only when the request pinned an
 	// explicit exit (empty when the fallback walk chose). Autoconnect re-issues

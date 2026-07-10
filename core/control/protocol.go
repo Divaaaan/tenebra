@@ -38,6 +38,7 @@ const (
 	CmdSetKillSwitch      = "set_kill_switch"
 	CmdSetTun             = "set_tun"
 	CmdSetAutoconnect     = "set_autoconnect"
+	CmdSetDNS             = "set_dns"
 	CmdLeakCheck          = "leak_check"
 )
 
@@ -108,6 +109,17 @@ type Request struct {
 	On bool `json:"on,omitempty"`
 	// Stack is the tun network stack for set_tun (system/gvisor/mixed).
 	Stack string `json:"stack,omitempty"`
+	// AdBlock arms (true) or disarms (false) DNS ad/tracker blocking for set_dns.
+	// Like On, an omitted field decodes to false — the safe "off" reading for an
+	// opt-in feature.
+	AdBlock bool `json:"ad_block,omitempty"`
+	// DNSRemote and DNSDirect are the custom resolvers for set_dns: the encrypted
+	// resolver reached over the proxy for general lookups, and the direct resolver
+	// for destinations kept off the tunnel. Each accepts the schemes the DNS
+	// builder parses (tls/https/quic/h3/tcp/udp, or a bare host); an empty field
+	// resets that resolver to its default.
+	DNSRemote string `json:"dns_remote,omitempty"`
+	DNSDirect string `json:"dns_direct,omitempty"`
 }
 
 // Response is a core -> UI reply to a Request, correlated by ID. Exactly one of
@@ -150,8 +162,17 @@ type State struct {
 	TunStack string `json:"tun_stack,omitempty"`
 	// Autoconnect reports whether the daemon reconnects the last profile when it
 	// starts (see AutoconnectOnStart). Omitted when off, like the kill switch.
-	Autoconnect bool   `json:"autoconnect,omitempty"`
-	Error       string `json:"error,omitempty"`
+	Autoconnect bool `json:"autoconnect,omitempty"`
+	// AdBlock reports whether DNS ad/tracker blocking is armed. Omitted when off,
+	// like the kill switch.
+	AdBlock bool `json:"ad_block,omitempty"`
+	// DNSRemote and DNSDirect report the resolvers the current or next tunnel uses
+	// (the encrypted proxied resolver and the direct one). Always present once the
+	// daemon has normalized them, so the UI can prefill the custom-DNS inputs with
+	// the effective values — the configured ones, or the defaults when unset.
+	DNSRemote string `json:"dns_remote,omitempty"`
+	DNSDirect string `json:"dns_direct,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 // PingResult is one node's dial-latency probe outcome.

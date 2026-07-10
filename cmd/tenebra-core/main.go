@@ -130,10 +130,16 @@ func buildDaemon() (*control.Daemon, error) {
 	return daemon, nil
 }
 
-// ruleSetFiles are the bundled RU rule-set binaries expected next to the
-// sing-box executable. They must match the on-disk names the routing package
-// resolves against Options.RuleSetDir and the names fetch-resources.ps1 writes.
-var ruleSetFiles = []string{"geoip-ru.srs", "geosite-ru.srs"}
+// ruleSetFiles are the bundled rule-set binaries expected next to the sing-box
+// executable: the two RU geodata sets plus the ad/tracker blocklist. They must
+// match the on-disk names the routing package resolves against Options.RuleSetDir
+// and the names fetch-resources.ps1 writes. Requiring all three keeps the local
+// path an all-or-nothing guarantee — the ad blocklist is referenced only as a
+// local set, so a config that turns ad-blocking on must never point sing-box at a
+// missing path. A build shipping the bundle always carries all three (they are
+// declared resources; the bundle step fails without them), so this never forces
+// the RU sets back to the remote fallback in a real install.
+var ruleSetFiles = []string{"geoip-ru.srs", "geosite-ru.srs", "geosite-ads.srs"}
 
 // ruleSetDir returns the directory to load the RU rule-sets from, or "" to keep
 // the remote-download fallback. The resources directory is the one holding the

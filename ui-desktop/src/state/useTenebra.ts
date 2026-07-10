@@ -51,6 +51,11 @@ export interface Tenebra {
   setKillSwitch: (on: boolean) => Promise<void>;
   setTun: (stack: TunStack) => Promise<void>;
   setAutoconnect: (on: boolean) => Promise<void>;
+  setDns: (
+    adBlock: boolean,
+    dnsRemote: string,
+    dnsDirect: string,
+  ) => Promise<void>;
   refreshProfiles: () => Promise<void>;
   clearLogs: () => void;
 }
@@ -193,6 +198,14 @@ export function useTenebra(): Tenebra {
     setState(next);
   }, []);
 
+  const setDns = useCallback(
+    async (adBlock: boolean, dnsRemote: string, dnsDirect: string) => {
+      const next = await api.setDns(adBlock, dnsRemote, dnsDirect);
+      setState(next);
+    },
+    [],
+  );
+
   const clearLogs = useCallback(() => setLogs([]), []);
 
   return {
@@ -208,6 +221,7 @@ export function useTenebra(): Tenebra {
     setKillSwitch,
     setTun,
     setAutoconnect,
+    setDns,
     refreshProfiles,
     clearLogs,
   };

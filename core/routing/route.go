@@ -12,37 +12,53 @@ import "path/filepath"
 // survives a blocked proxy — the original behaviour, kept as a fallback for dev
 // builds or installs missing the bundled files.
 func (o Options) RouteRuleSets() []map[string]any {
-	if o.Mode != ModeSmart {
-		return nil
-	}
-	if o.RuleSetDir != "" {
-		local := func(tag, file string) map[string]any {
-			return map[string]any{
-				"type":   "local",
-				"tag":    tag,
-				"format": "binary",
-				"path":   filepath.Join(o.RuleSetDir, file),
-			}
-		}
-		return []map[string]any{
-			local(ruleSetGeoIPRU, fileGeoIPRU),
-			local(ruleSetGeositeRU, fileGeositeRU),
-		}
-	}
-	remote := func(tag, url string) map[string]any {
+	local := func(tag, file string) map[string]any {
 		return map[string]any{
-			"type":            "remote",
-			"tag":             tag,
-			"format":          "binary",
-			"url":             url,
-			"download_detour": tagDirect,
-			"update_interval": ruleSetUpdateInterval,
+			"type":   "local",
+			"tag":    tag,
+			"format": "binary",
+			"path":   filepath.Join(o.RuleSetDir, file),
 		}
 	}
-	return []map[string]any{
-		remote(ruleSetGeoIPRU, urlGeoIPRU),
-		remote(ruleSetGeositeRU, urlGeositeRU),
+
+	var sets []map[string]any
+
+	// Smart mode needs the RU geodata (local when the .srs are bundled, else
+	// remote through the direct outbound). Global and direct match no geodata, so
+	// they reference none of it.
+	if o.Mode == ModeSmart {
+		if o.RuleSetDir != "" {
+			sets = append(sets,
+				local(ruleSetGeoIPRU, fileGeoIPRU),
+				local(ruleSetGeositeRU, fileGeositeRU),
+			)
+		} else {
+			remote := func(tag, url string) map[string]any {
+				return map[string]any{
+					"type":            "remote",
+					"tag":             tag,
+					"format":          "binary",
+					"url":             url,
+					"download_detour": tagDirect,
+					"update_interval": ruleSetUpdateInterval,
+				}
+			}
+			sets = append(sets,
+				remote(ruleSetGeoIPRU, urlGeoIPRU),
+				remote(ruleSetGeositeRU, urlGeositeRU),
+			)
+		}
 	}
+
+	// The ad/tracker blocklist applies in every mode when opted in. The dns reject
+	// rule references it by tag, so it must be defined here. adBlockActive already
+	// requires RuleSetDir, so it is emitted strictly as a local set and can never
+	// reintroduce a startup-blocking remote fetch.
+	if o.adBlockActive() {
+		sets = append(sets, local(ruleSetGeositeAds, fileGeositeAds))
+	}
+
+	return sets
 }
 
 // RouteRules returns the ordered "route".rules. Order matters: DNS hijack and

@@ -50,21 +50,25 @@ func TestRuleSetDirRequiresAllFiles(t *testing.T) {
 		t.Errorf("ruleSetDir with no .srs = %q, want empty", got)
 	}
 
-	// Only one of the two present: still declines, since a half-bundle would make
-	// sing-box FATAL on the missing path.
-	if err := os.WriteFile(filepath.Join(dir, "geoip-ru.srs"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if got := ruleSetDir(); got != "" {
-		t.Errorf("ruleSetDir with one .srs = %q, want empty", got)
+	// A partial bundle still declines, since a missing path would make sing-box
+	// FATAL: write the files one at a time and confirm the dir is withheld until
+	// every required rule-set (the two RU sets plus the ad blocklist) is present.
+	partial := []string{"geoip-ru.srs", "geosite-ru.srs"}
+	for _, f := range partial {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := ruleSetDir(); got != "" {
+			t.Errorf("ruleSetDir with %s present but not all files = %q, want empty", f, got)
+		}
 	}
 
-	// Both present: returns the directory holding the binary.
-	if err := os.WriteFile(filepath.Join(dir, "geosite-ru.srs"), []byte("x"), 0o644); err != nil {
+	// The final required file present: returns the directory holding the binary.
+	if err := os.WriteFile(filepath.Join(dir, "geosite-ads.srs"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if got := ruleSetDir(); got != dir {
-		t.Errorf("ruleSetDir with both .srs = %q, want %q", got, dir)
+		t.Errorf("ruleSetDir with every .srs = %q, want %q", got, dir)
 	}
 }
 

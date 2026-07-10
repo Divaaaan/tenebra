@@ -288,6 +288,127 @@ describe("SettingsScreen", () => {
     });
   });
 
+  describe("dns", () => {
+    const dnsState = {
+      state: "idle",
+      ad_block: true,
+      dns_remote: "tls://1.1.1.1",
+      dns_direct: "https://77.88.8.8/dns-query",
+    } as State;
+
+    // The ad-block switch's accessible name is its own ON/OFF text, so find the
+    // row by its label and take the switch inside it (same shape as the startup
+    // toggles).
+    function adBlockToggle(): HTMLElement {
+      const row = screen.getByText("Block ads and trackers").closest(".set-row");
+      if (!row) {
+        throw new Error("ad-block row not found");
+      }
+      const toggle = row.querySelector('[role="switch"]');
+      if (!toggle) {
+        throw new Error("ad-block switch not found");
+      }
+      return toggle as HTMLElement;
+    }
+
+    it("reflects the ad-block toggle from core state", () => {
+      const tenebra = makeTenebra({ state: dnsState });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+      expect(adBlockToggle()).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("ad-block starts off when the core omits the field", () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+      expect(adBlockToggle()).toHaveAttribute("aria-checked", "false");
+    });
+
+    it("toggling ad-block sends the whole DNS triple, resolvers unchanged", async () => {
+      const tenebra = makeTenebra({ state: dnsState });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(adBlockToggle());
+      // Flips ad-block off, carrying the current effective resolvers along.
+      expect(tenebra.setDns).toHaveBeenCalledWith(
+        false,
+        "tls://1.1.1.1",
+        "https://77.88.8.8/dns-query",
+      );
+    });
+
+    it("prefills the resolver inputs from the reported state", () => {
+      const tenebra = makeTenebra({ state: dnsState });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+      expect(screen.getByLabelText("Encrypted resolver")).toHaveValue(
+        "tls://1.1.1.1",
+      );
+      expect(screen.getByLabelText("Direct resolver")).toHaveValue(
+        "https://77.88.8.8/dns-query",
+      );
+    });
+
+    it("commits a valid resolver edit on blur", async () => {
+      const tenebra = makeTenebra({ state: dnsState });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      const remote = screen.getByLabelText("Encrypted resolver");
+      await user.clear(remote);
+      await user.type(remote, "quic://dns.adguard.com");
+      await user.tab(); // blur commits
+      expect(tenebra.setDns).toHaveBeenCalledWith(
+        true,
+        "quic://dns.adguard.com",
+        "https://77.88.8.8/dns-query",
+      );
+    });
+
+    it("commits a valid resolver edit on Enter", async () => {
+      const tenebra = makeTenebra({ state: dnsState });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      const direct = screen.getByLabelText("Direct resolver");
+      await user.clear(direct);
+      await user.type(direct, "tls://8.8.8.8:853{Enter}");
+      expect(tenebra.setDns).toHaveBeenCalledWith(
+        true,
+        "tls://1.1.1.1",
+        "tls://8.8.8.8:853",
+      );
+    });
+
+    it("flags a malformed resolver and refuses to commit it", async () => {
+      const tenebra = makeTenebra({ state: dnsState });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      const remote = screen.getByLabelText("Encrypted resolver");
+      await user.clear(remote);
+      await user.type(remote, "ftp://nope");
+      expect(remote).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Enter a resolver like",
+      );
+
+      await user.tab(); // blur must not push garbage to the core
+      expect(tenebra.setDns).not.toHaveBeenCalled();
+    });
+
+    it("clearing a resolver commits empty so the core restores its default", async () => {
+      const tenebra = makeTenebra({ state: dnsState });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      const direct = screen.getByLabelText("Direct resolver");
+      await user.clear(direct);
+      await user.tab();
+      // Empty is valid; the core substitutes the default and echoes it back.
+      expect(tenebra.setDns).toHaveBeenCalledWith(true, "tls://1.1.1.1", "");
+    });
+  });
+
   describe("startup", () => {
     // The switch's accessible name is its own text ("ON"/"OFF"), not the sibling
     // label, so locate the row by its label text and grab the switch within it.

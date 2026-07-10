@@ -41,6 +41,16 @@ export interface State {
    * (service mode: at boot). Omitted (treated as off) when it doesn't.
    */
   autoconnect?: boolean;
+  /** Whether DNS ad/tracker blocking is armed; omitted (treated as off) when it isn't. */
+  ad_block?: boolean;
+  /**
+   * The resolvers the current or next tunnel uses: the encrypted resolver
+   * reached over the proxy, and the direct one. Present once the core has
+   * normalized them, so the UI can prefill the custom-DNS inputs with the
+   * effective values (the configured resolvers, or the defaults when unset).
+   */
+  dns_remote?: string;
+  dns_direct?: string;
   error?: string;
 }
 

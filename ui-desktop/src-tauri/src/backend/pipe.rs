@@ -226,6 +226,9 @@ fn reconnecting_state() -> State {
         kill_switch: None,
         tun_stack: None,
         autoconnect: None,
+        ad_block: None,
+        dns_remote: None,
+        dns_direct: None,
         error: Some("Reconnecting to the Tenebra service…".to_string()),
     }
 }
@@ -246,6 +249,9 @@ fn lost_state() -> State {
         kill_switch: None,
         tun_stack: None,
         autoconnect: None,
+        ad_block: None,
+        dns_remote: None,
+        dns_direct: None,
         error: Some("Lost the connection to the Tenebra service; reconnecting.".to_string()),
     }
 }

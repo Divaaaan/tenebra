@@ -75,6 +75,15 @@ const (
 	fileGeoIPRU   = "geoip-ru.srs"
 	fileGeositeRU = "geosite-ru.srs"
 
+	// ruleSetGeositeAds is the opt-in ad/tracker blocklist. It is loaded ONLY as a
+	// local bundled .srs and, unlike the RU sets, has no remote URL fallback on
+	// purpose: a remote rule-set blocks sing-box at startup (the freeze the local
+	// sets already fix), and the blocklist is the exact case that must never
+	// reintroduce it. fileGeositeAds ships via scripts/fetch-resources.* and is
+	// referenced only when RuleSetDir is set (see Options.adBlockActive).
+	ruleSetGeositeAds = "geosite-ads"
+	fileGeositeAds    = "geosite-ads.srs"
+
 	// ruleSetUpdateInterval keeps the cached rule-sets reasonably fresh without
 	// hammering GitHub. sing-box only re-downloads after this elapses. It applies
 	// only to the remote form (no RuleSetDir).
@@ -98,6 +107,13 @@ type Options struct {
 	KillSwitch bool   // drop proxied traffic instead of leaking when tun is down
 	DNSRemote  string // resolver for proxied destinations, e.g. tls://1.1.1.1
 	DNSDirect  string // resolver for direct destinations, e.g. https://77.88.8.8/dns-query
+
+	// AdBlock opts into DNS-level ad/tracker blocking: matching lookups are
+	// sinkholed (answered REFUSED) before any routing rule, in every mode. It is
+	// off by default. It only takes effect when the bundled blocklist is present
+	// (RuleSetDir set) — see adBlockActive — because the blocklist ships strictly
+	// as a local rule-set and is never fetched remotely.
+	AdBlock bool
 
 	// SplitMode and SplitApps configure per-application split tunnelling. Apps
 	// are matched on their executable file name (process_name). SplitMode off
