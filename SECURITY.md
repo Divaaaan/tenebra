@@ -8,6 +8,17 @@ project commits to.
 > audited. The real tunnel path is still being validated. Don't rely on it to
 > protect you in a high-risk situation yet.
 
+## Supported versions
+
+Only the most recent release is supported. Security fixes ship in a new release
+rather than being back-ported, so please reproduce on the latest version before
+reporting.
+
+| Version         | Supported |
+|-----------------|:---------:|
+| Latest release  | ✅        |
+| Anything older  | ❌        |
+
 ## Reporting a vulnerability
 
 **Please do not open a public issue, pull request, or discussion for a security
@@ -56,7 +67,8 @@ privacy of a user running Tenebra:
 
 - the Go core (`core/`) — subscription/link parsing, profile storage, routing and
   config generation, the fallback logic, and the control protocol;
-- the platform adapter(s) (`adapters/`) and the `tenebra-core` sidecar;
+- the platform adapter(s) (`adapters/`), the `tenebra-core` sidecar, and the
+  Windows service and its named-pipe control channel;
 - the desktop shell and front end (`ui-desktop/`) and the core ↔ UI boundary;
 - the build/resource scripts (`scripts/`) insofar as they affect what gets
   shipped.

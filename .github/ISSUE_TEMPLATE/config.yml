@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & help
+    url: https://github.com/Divaaaan/tenebra/discussions
+    about: Ask a question or get help in Discussions. Please keep bug reports in the issue tracker.

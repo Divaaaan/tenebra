@@ -138,6 +138,22 @@ npm run tauri build
 - [SECURITY.md](SECURITY.md) — reporting a vulnerability and our trust stance.
 - [CHANGELOG.md](CHANGELOG.md) — what's changed.
 
+## Support
+
+Tenebra is maintained by one person in their spare time, so please keep support
+low-friction:
+
+- **Questions or help** — start a thread in
+  [Discussions](https://github.com/Divaaaan/tenebra/discussions).
+- **Bugs** — file a report through the
+  [issue form](https://github.com/Divaaaan/tenebra/issues/new/choose); it asks
+  for your version, Windows build and logs.
+- **Security problems** — follow [SECURITY.md](SECURITY.md); please don't open a
+  public issue.
+
+Response times vary — this is a side project, not a supported product. Thanks for
+your patience.
+
 ## License
 
 GPLv3 — see [LICENSE](LICENSE). sing-box is GPLv3, so Tenebra is too.
