@@ -6,6 +6,7 @@ import { ConnectionPanel } from "./components/ConnectionPanel";
 import { ServerList, type ServerRow } from "./components/ServerList";
 import { BottomBar } from "./components/BottomBar";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { DeepLinkConfirm } from "./components/DeepLinkConfirm";
 import { ProfilesScreen } from "./screens/ProfilesScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { LogsScreen } from "./screens/LogsScreen";
@@ -52,6 +53,21 @@ export function App() {
   const [importPreset, setImportPreset] = useState<string | null>(null);
   const [pendingConnect, setPendingConnect] = useState<string | null>(null);
   const clearImportPreset = useCallback(() => setImportPreset(null), []);
+
+  // A connect deep link never fires on arrival: it can be handed to the app by
+  // any visited web page. `connectRequest` holds the profile a link asked to
+  // connect until the user approves it in the confirmation prompt; only then is
+  // it promoted to `pendingConnect`, which the effect below acts on. Import
+  // already needs a click (it just opens the pre-filled dialog) — this makes
+  // connect parallel.
+  const [connectRequest, setConnectRequest] = useState<string | null>(null);
+  const confirmConnectRequest = useCallback(() => {
+    setConnectRequest((profile) => {
+      if (profile) setPendingConnect(profile);
+      return null;
+    });
+  }, []);
+  const cancelConnectRequest = useCallback(() => setConnectRequest(null), []);
 
   // The kill switch is core-owned: the daemon persists it, arms strict_route in
   // the tunnel config, and restarts a tunnel whose process dies while armed.
@@ -241,7 +257,8 @@ export function App() {
     ).catch(() => {});
   }, [tenebra, state.autoconnect]);
 
-  // A deep-link "connect" names a profile by id. The link can arrive before the
+  // A deep-link "connect" names a profile by id, and only reaches here once the
+  // user has approved the confirmation prompt. The link can arrive before the
   // profile list is loaded (cold start), so hold the id and connect once the
   // profile appears, honouring the fastest-node preference like a manual connect.
   useEffect(() => {
@@ -266,7 +283,8 @@ export function App() {
         setImportPreset(url);
         setOverlay("profiles");
       },
-      onConnect: (profile) => setPendingConnect(profile),
+      // Don't connect on arrival — surface a confirmation the user must approve.
+      onConnect: (profile) => setConnectRequest(profile),
     };
     void (async () => {
       try {
@@ -385,6 +403,16 @@ export function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {connectRequest && (
+        <DeepLinkConfirm
+          profile={
+            profiles.find((p) => p.id === connectRequest)?.name ?? connectRequest
+          }
+          onConfirm={confirmConnectRequest}
+          onCancel={cancelConnectRequest}
+        />
       )}
     </div>
   );

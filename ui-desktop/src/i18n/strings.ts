@@ -102,6 +102,21 @@ export interface Strings {
     sessionTraffic: string;
   };
 
+  /**
+   * Confirmation shown before a `tenebra://` deep link performs a
+   * state-changing action (today: connect). A link can come from any web page,
+   * so the action is never taken silently — the user approves it first.
+   */
+  deeplink: {
+    connectTitle: string;
+    /** Body of the connect prompt; "{profile}" is the profile id/name. */
+    connectBody: string;
+    /** Reassurance line noting the request came from an external link. */
+    connectSource: string;
+    confirm: string;
+    cancel: string;
+  };
+
   profiles: {
     title: string;
     empty: string;
@@ -370,6 +385,13 @@ const en: Strings = {
     autoNode: "Auto (lowest ping)",
     sessionTraffic: "This session",
   },
+  deeplink: {
+    connectTitle: "Connect request",
+    connectBody: "Connect the “{profile}” subscription now?",
+    connectSource: "This request came from an external link.",
+    confirm: "Connect",
+    cancel: "Not now",
+  },
   profiles: {
     title: "Profiles",
     empty: "No profiles",
@@ -620,6 +642,13 @@ const ru: Strings = {
     activeNode: "Сервер",
     autoNode: "Авто (мин. пинг)",
     sessionTraffic: "За сессию",
+  },
+  deeplink: {
+    connectTitle: "Запрос на подключение",
+    connectBody: "Подключить подписку «{profile}» сейчас?",
+    connectSource: "Этот запрос пришёл из внешней ссылки.",
+    confirm: "Подключить",
+    cancel: "Не сейчас",
   },
   profiles: {
     title: "Профили",

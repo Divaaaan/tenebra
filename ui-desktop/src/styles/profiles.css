@@ -508,6 +508,26 @@
   padding-top: var(--sp-4);
 }
 
+/* ==========================================================================
+   DEEP-LINK CONFIRM — the connect gate. Reuses the import modal's card/scrim;
+   only the body copy needs its own spacing.
+   ========================================================================== */
+.deeplink-confirm-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.deeplink-confirm-line {
+  margin: 0;
+  color: var(--text);
+}
+.deeplink-confirm-source {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-dim);
+}
+
 /* visually hidden file inputs (kept focusable for a11y) */
 .prof-visually-hidden {
   position: absolute;
