@@ -145,22 +145,73 @@ func findBundledSingbox(exeDir string) string {
 // subscription secrets into a directory another user can read. (chown to root
 // needs privilege the daemon has in production; configureSocketPathsFor only
 // calls this at euid 0, so an unprivileged run never reaches it.)
+//
+// The clamp is symlink-safe. The world-traversable parent means a non-root user
+// could pre-plant a symlink at the data-dir path; a chown/chmod/stat by name
+// would then follow it and clamp — and verify — the link's target, not the
+// directory we go on to write into, so the anti-squat defence would bless an
+// attacker-controlled location. So the path is opened once with O_NOFOLLOW (a
+// final symlink makes the open fail outright) and every subsequent step acts on
+// that file descriptor: fchown/fchmod/fstat cannot be redirected by a symlink
+// swapped in after the open, closing the squat-and-TOCTOU window together.
 func secureDataDir(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	if err := os.Chown(dir, 0, 0); err != nil {
-		return fmt.Errorf("chown %s to root: %w", dir, err)
+	// Re-open the directory itself, refusing to traverse a final symlink. If the
+	// path was pre-planted as a link the open fails here, before any privileged
+	// clamp touches the target; MkdirAll above is a no-op on an existing entry,
+	// so it neither creates through nor sanitises such a link — this open is what
+	// rejects it.
+	f, err := openDirNoFollow(dir)
+	if err != nil {
+		return err
 	}
-	if err := os.Chmod(dir, 0o700); err != nil {
-		return fmt.Errorf("chmod %s: %w", dir, err)
+	defer f.Close()
+	return clampRootOnlyDir(dir, f)
+}
+
+// openDirNoFollow opens dir for the ownership clamp without following a final
+// symlink. O_DIRECTORY additionally fails the open if the (real) target is not a
+// directory, so the descriptor handed to clampRootOnlyDir is always a genuine
+// directory we can fchown/fchmod/fstat.
+func openDirNoFollow(dir string) (*os.File, error) {
+	f, err := os.OpenFile(dir, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY, 0)
+	if err != nil {
+		return nil, fmt.Errorf("open %s without following symlinks: %w", dir, err)
 	}
-	info, err := os.Stat(dir)
+	return f, nil
+}
+
+// dirHandle is the slice of *os.File clampRootOnlyDir needs: the descriptor-bound
+// chown/chmod/stat that make the clamp immune to a symlink swapped in after the
+// open. It is an interface so the fail-closed logic can be exercised without a
+// real root-owned directory — fchown(0,0) needs privilege the unit tests lack —
+// by substituting a fake that reports the ownership and mode the check must
+// accept or reject.
+type dirHandle interface {
+	Chown(uid, gid int) error
+	Chmod(mode os.FileMode) error
+	Stat() (os.FileInfo, error)
+}
+
+// clampRootOnlyDir forces the opened directory to root-owned 0700 through its
+// descriptor and then reads it back to verify, the fail-closed core shared by
+// the live path and the tests. name is only for error context. Every operation
+// binds to the handle, never to the path, so no symlink race can redirect them.
+func clampRootOnlyDir(name string, h dirHandle) error {
+	if err := h.Chown(0, 0); err != nil {
+		return fmt.Errorf("chown %s to root: %w", name, err)
+	}
+	if err := h.Chmod(0o700); err != nil {
+		return fmt.Errorf("chmod %s: %w", name, err)
+	}
+	info, err := h.Stat()
 	if err != nil {
 		return err
 	}
 	if err := verifyRootOnlyDir(info); err != nil {
-		return fmt.Errorf("%s is not root-only after clamp: %w", dir, err)
+		return fmt.Errorf("%s is not root-only after clamp: %w", name, err)
 	}
 	return nil
 }

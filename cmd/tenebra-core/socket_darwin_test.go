@@ -6,7 +6,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/Divaaaan/tenebra/core/control"
 )
@@ -107,6 +109,96 @@ func TestFindBundledSingbox(t *testing.T) {
 		}
 	})
 }
+
+// TestSecureDataDirRejectsSymlink proves the anti-squat clamp is symlink-safe: a
+// symlink pre-planted at the data-dir path is refused instead of being followed
+// so the clamp lands on the link's target. This runs unprivileged — the
+// O_NOFOLLOW open fails before any chown to root is attempted, so the rejection
+// does not depend on being able to complete the clamp.
+func TestSecureDataDirRejectsSymlink(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "data")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := secureDataDir(link); err == nil {
+		t.Fatal("secureDataDir followed a pre-planted symlink, want refusal")
+	}
+	// The target must be left as it was — the clamp must not have chmod'd it
+	// through the link (it started 0700; a dangling clamp attempt would not
+	// change owner without privilege, but mode is observable here).
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o700 {
+		t.Errorf("symlink target mode changed to %#o; clamp followed the link", perm)
+	}
+}
+
+// TestClampRootOnlyDir exercises the descriptor-bound fail-closed core against a
+// fake handle, so both the accepting and the refusing paths are covered without
+// a real root-owned directory (fchown to root needs privilege the test lacks).
+func TestClampRootOnlyDir(t *testing.T) {
+	t.Run("root-owned 0700 passes", func(t *testing.T) {
+		h := &fakeDirHandle{info: fakeDirInfo{mode: os.ModeDir | 0o700, uid: 0}}
+		if err := clampRootOnlyDir("data", h); err != nil {
+			t.Fatalf("clampRootOnlyDir on a root-owned 0700 dir = %v, want nil", err)
+		}
+	})
+
+	t.Run("wrong owner refused", func(t *testing.T) {
+		h := &fakeDirHandle{info: fakeDirInfo{mode: os.ModeDir | 0o700, uid: 501}}
+		if err := clampRootOnlyDir("data", h); err == nil {
+			t.Error("clampRootOnlyDir accepted a non-root-owned dir, want refusal")
+		}
+	})
+
+	t.Run("wrong mode refused", func(t *testing.T) {
+		h := &fakeDirHandle{info: fakeDirInfo{mode: os.ModeDir | 0o777, uid: 0}}
+		if err := clampRootOnlyDir("data", h); err == nil {
+			t.Error("clampRootOnlyDir accepted a group/other-accessible dir, want refusal")
+		}
+	})
+
+	t.Run("chown failure is fatal", func(t *testing.T) {
+		h := &fakeDirHandle{chownErr: os.ErrPermission, info: fakeDirInfo{mode: os.ModeDir | 0o700, uid: 0}}
+		if err := clampRootOnlyDir("data", h); err == nil {
+			t.Error("clampRootOnlyDir swallowed a failed chown, want refusal")
+		}
+	})
+}
+
+// fakeDirHandle is a dirHandle whose clamp operations are no-ops (optionally
+// erroring) and whose Stat reports a caller-chosen FileInfo, standing in for the
+// privileged *os.File so clampRootOnlyDir's verdict can be tested unprivileged.
+type fakeDirHandle struct {
+	info     os.FileInfo
+	chownErr error
+	chmodErr error
+}
+
+func (h *fakeDirHandle) Chown(uid, gid int) error     { return h.chownErr }
+func (h *fakeDirHandle) Chmod(mode os.FileMode) error { return h.chmodErr }
+func (h *fakeDirHandle) Stat() (os.FileInfo, error)   { return h.info, nil }
+
+// fakeDirInfo is the minimal os.FileInfo verifyRootOnlyDir reads: IsDir/Mode from
+// mode, and a syscall.Stat_t carrying uid behind Sys() for the ownership check.
+type fakeDirInfo struct {
+	mode os.FileMode
+	uid  uint32
+}
+
+func (f fakeDirInfo) Name() string       { return "data" }
+func (f fakeDirInfo) Size() int64        { return 0 }
+func (f fakeDirInfo) Mode() os.FileMode  { return f.mode }
+func (f fakeDirInfo) ModTime() time.Time { return time.Time{} }
+func (f fakeDirInfo) IsDir() bool        { return f.mode.IsDir() }
+func (f fakeDirInfo) Sys() any           { return &syscall.Stat_t{Uid: f.uid} }
 
 // TestVerifyRootOnlyDir exercises the fail-closed predicate secureDataDir ends
 // on. The success case (a real root-owned 0700 dir) needs privilege and is

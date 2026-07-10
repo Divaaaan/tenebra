@@ -36,6 +36,10 @@ readonly DEV_RESOURCE_DIR="${REPO_ROOT}/ui-desktop/src-tauri/resources"
 # Resolved payload, filled by resolve_sources.
 MODE=""
 APP_PATH=""
+# Set by --allow-unsigned: skip the codesign/spctl gate on a --from-app bundle.
+# Off by default so an unsigned or tampered bundle is refused, not installed as a
+# root LaunchDaemon; the flag is the deliberate dev-convenience escape hatch.
+ALLOW_UNSIGNED=0
 CORE_SRC=""
 SINGBOX_SRC=""
 RULESET_SRC_DIR=""
@@ -55,6 +59,9 @@ Usage: install-daemon.sh (--from-app <path-to-Tenebra.app> | --dev)
   --dev              Build tenebra-core from this checkout and take sing-box plus
                      the rule-sets from ui-desktop/src-tauri/resources. Run
                      scripts/fetch-resources.sh first to populate them.
+  --allow-unsigned   With --from-app: install even if the bundle fails codesign
+                     verification / Gatekeeper assessment. For local dev bundles
+                     only; the default refuses an unsigned or tampered bundle.
 
 Installs the com.tenebra.core LaunchDaemon and starts it. Safe to re-run: it
 upgrades the binaries in place. Requires root; re-execs under sudo when needed.
@@ -73,6 +80,10 @@ parse_args() {
         ;;
       --dev)
         MODE="dev"
+        shift
+        ;;
+      --allow-unsigned)
+        ALLOW_UNSIGNED=1
         shift
         ;;
       -h|--help)
@@ -114,6 +125,7 @@ resolve_sources() {
 resolve_from_app() {
   local app="$1"
   [[ -d "${app}" ]] || die "no such app bundle: ${app}"
+  verify_app_signature "${app}"
   local macos_dir="${app}/Contents/MacOS"
   local res_dir="${app}/Contents/Resources/resources"
 
@@ -125,12 +137,107 @@ resolve_from_app() {
   [[ -f "${SINGBOX_SRC}" ]] || die "sing-box not found at ${SINGBOX_SRC} (expected a Tauri resource in Contents/Resources/resources)"
 }
 
+# verify_app_signature refuses to install binaries out of an unsigned or tampered
+# .app before they become a root LaunchDaemon. --from-app takes tenebra-core and
+# sing-box from an operator-supplied bundle and copies them verbatim into
+# /Library/PrivilegedHelperTools; with no check, a swapped-in binary in a doctored
+# bundle would run as root. codesign --verify --deep --strict re-hashes the whole
+# bundle and every nested Mach-O (the sidecar core and the sing-box resource)
+# against the signature, so any post-signing edit — or the absence of a signature
+# — fails here. spctl then asks Gatekeeper whether the bundle is actually trusted
+# for execution (a valid Developer ID, notarised), rejecting ad-hoc/self-signed
+# seals a bare codesign check would accept. The signed production build passes
+# both untouched. --allow-unsigned is the explicit, logged escape hatch for a
+# local dev bundle; without it, verification failure is fatal.
+verify_app_signature() {
+  local app="$1"
+  if [[ "${ALLOW_UNSIGNED}" -eq 1 ]]; then
+    log "warning: --allow-unsigned set; skipping signature verification of ${app}"
+    log "warning: only do this for a bundle you built yourself — an untrusted bundle installs code that runs as root"
+    return 0
+  fi
+  command -v codesign >/dev/null 2>&1 \
+    || die "codesign not found; cannot verify ${app}. Pass --allow-unsigned to install a local dev bundle anyway."
+  log "verifying code signature of ${app}"
+  codesign --verify --deep --strict "${app}" 2>/dev/null \
+    || die "signature verification failed for ${app}: unsigned or tampered. Re-sign the bundle, or pass --allow-unsigned to install anyway (dev only)."
+  # spctl assessment is a second, stricter gate (Gatekeeper trust, not just a
+  # valid seal). Treat its absence as non-fatal — codesign already caught tamper
+  # — but a live rejection is fatal, since it means the bundle is not trusted.
+  if command -v spctl >/dev/null 2>&1; then
+    spctl --assess --type execute "${app}" 2>/dev/null \
+      || die "Gatekeeper (spctl) rejected ${app}: not trusted for execution. Notarize/sign it, or pass --allow-unsigned for a local build."
+  fi
+}
+
+# validate_handoff_core hardens the --dev sudo hand-off. resolve_dev's fast path
+# trusts _TENEBRA_CORE_BIN to name the core built moments earlier by the invoking
+# user (build-as-user keeps go on that user's toolchain and module cache). But
+# the environment is an attacker-influenceable channel: a sudoers rule that
+# permits this script, or an env_keep entry, would let someone seed the variable
+# with a planted binary that we would then install as a root LaunchDaemon —
+# straight privilege escalation. So the elevated pass refuses to install anything
+# it cannot tie back to a build its own non-root half could have produced: a
+# regular file (never a symlink) named tenebra-core, inside a tenebra-core-build.*
+# temp dir under the expected TMPDIR, owned by the very user who invoked sudo, in
+# a directory that user owns and no other user can write. A path pointing anywhere
+# else — a world-writable drop, another user's file, a symlink to a system binary
+# — fails closed here rather than reaching install_payload.
+validate_handoff_core() {
+  local given="$1"
+  # SUDO_UID is set only when we genuinely re-exec'd from a normal user via sudo.
+  # Its absence means the variable was set some other way (e.g. straight `sudo
+  # env _TENEBRA_CORE_BIN=... install-daemon.sh`), which is exactly the injection
+  # we refuse: there is no trusted invoking user to bind the artifact to.
+  local invoker="${SUDO_UID:-}"
+  [[ -n "${invoker}" && "${invoker}" != "0" ]] \
+    || die "refusing _TENEBRA_CORE_BIN hand-off: no unprivileged SUDO_UID. Run 'install-daemon.sh --dev' and let it re-exec; do not set _TENEBRA_CORE_BIN yourself."
+
+  # A final symlink could smuggle in a system binary the checks below would then
+  # read through; reject it outright, then resolve the real target.
+  [[ ! -L "${given}" ]] || die "refusing _TENEBRA_CORE_BIN hand-off: ${given} is a symlink"
+  local real
+  real="$(realpath "${given}" 2>/dev/null)" || die "refusing _TENEBRA_CORE_BIN hand-off: cannot resolve ${given}"
+  [[ -f "${real}" ]] || die "refusing _TENEBRA_CORE_BIN hand-off: ${real} is not a regular file"
+  [[ "$(basename "${real}")" == "tenebra-core" ]] \
+    || die "refusing _TENEBRA_CORE_BIN hand-off: unexpected basename $(basename "${real}"), want tenebra-core"
+
+  # Must sit directly inside a tenebra-core-build.* dir under the same temp root
+  # resolve_dev's mktemp uses. Both sides are canonicalised so the /tmp ->
+  # /private/tmp and $TMPDIR symlinks macOS interposes do not defeat the match.
+  local tmp_root build_dir
+  tmp_root="$(realpath "${TMPDIR:-/tmp}" 2>/dev/null)" || die "cannot resolve TMPDIR"
+  build_dir="$(dirname "${real}")"
+  case "${build_dir}" in
+    "${tmp_root}"/tenebra-core-build.*) : ;;
+    *) die "refusing _TENEBRA_CORE_BIN hand-off: ${real} is not under a tenebra-core-build.* dir in ${tmp_root}" ;;
+  esac
+
+  # The build dir and the artifact must be owned by the invoking user, and the
+  # dir must not be group/other-writable, so no second party could have swapped
+  # the binary in between the build and this install.
+  local owner perm
+  owner="$(stat -f '%u' "${build_dir}")" || die "cannot stat ${build_dir}"
+  [[ "${owner}" == "${invoker}" ]] \
+    || die "refusing _TENEBRA_CORE_BIN hand-off: ${build_dir} owned by uid ${owner}, not the invoking user (uid ${invoker})"
+  owner="$(stat -f '%u' "${real}")" || die "cannot stat ${real}"
+  [[ "${owner}" == "${invoker}" ]] \
+    || die "refusing _TENEBRA_CORE_BIN hand-off: ${real} owned by uid ${owner}, not the invoking user (uid ${invoker})"
+  perm="$(stat -f '%OLp' "${build_dir}")" || die "cannot stat ${build_dir}"
+  if (( 0${perm} & 0022 )); then
+    die "refusing _TENEBRA_CORE_BIN hand-off: build dir ${build_dir} is group/other-writable (mode ${perm})"
+  fi
+}
+
 # resolve_dev builds the core from the checkout and takes sing-box plus the
 # rule-sets from the fetched resource directory.
 resolve_dev() {
   # A prior sudo re-exec hands the already-built core back through this env var
-  # so it is built exactly once, as the invoking user, not again as root.
+  # so it is built exactly once, as the invoking user, not again as root. The
+  # env channel is attacker-influenceable, so the handed path is validated
+  # against what our own non-root half could have produced before it is trusted.
   if [[ -n "${_TENEBRA_CORE_BIN:-}" ]]; then
+    validate_handoff_core "${_TENEBRA_CORE_BIN}"
     CORE_SRC="${_TENEBRA_CORE_BIN}"
     DEV_BUILD_TMP="$(dirname "${CORE_SRC}")"
   else
