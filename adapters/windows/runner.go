@@ -43,8 +43,12 @@ const statsTimeout = 2 * time.Second
 
 // probeURL is the target the clash API delay test fetches through the outbound.
 // A 204 means real traffic reached the internet through that proxy; it is the
-// canonical reachability check sing-box's own clash API exposes.
-const probeURL = "http://www.gstatic.com/generate_204"
+// canonical reachability check sing-box's own clash API exposes. HTTPS is used
+// over plaintext http so the reachability check isn't a cleartext beacon on the
+// wire: the clash delay test runs a full request through the outbound and times
+// the response either way, so the TLS handshake changes nothing but the measured
+// path, and gstatic serves the same 204 over https.
+const probeURL = "https://www.gstatic.com/generate_204"
 
 // probeTimeoutMs is the server-side timeout (in milliseconds) handed to the
 // clash API delay test, matching the connect loop's per-attempt budget. The

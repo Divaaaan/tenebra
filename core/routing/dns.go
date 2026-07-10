@@ -74,15 +74,35 @@ func dnsServer(tag, addr, detour string) map[string]any {
 }
 
 // dnsRules builds the ordered "dns".rules. Ad/tracker blocking comes first so a
-// blocked lookup is sinkholed in every mode, before the smart-mode RU rule can
-// route it. Smart mode then resolves RU-domain lookups through the direct
-// resolver so RU traffic kept direct also resolves direct. In global and direct
-// modes (with ad-blocking off) everything falls through to "final", so the list
-// is empty.
+// blocked lookup is sinkholed in every mode, before any routing rule can send it
+// on. Next, apps pinned to the proxy by include split tunnelling are forced to
+// resolve over the proxy (see below). Smart mode then resolves RU-domain lookups
+// through the direct resolver so RU traffic kept direct also resolves direct. In
+// global and direct modes with none of those active, everything falls through to
+// "final", so the list is empty.
 func (o Options) dnsRules() []map[string]any {
 	rules := []map[string]any{}
 	if o.adBlockActive() {
 		rules = append(rules, dnsRejectRule(ruleSetGeositeAds))
+	}
+	// Apps pinned to the proxy by include split tunnelling must resolve over the
+	// proxy too, or their DNS leaks. The route final governs where unmatched DNS
+	// goes: in smart/global it is dns-remote (over the proxy), so an included
+	// app's lookups already stay in the tunnel — but in direct mode dnsFinal is
+	// dns-direct, which resolves on the local network path outside the tunnel.
+	// Without this rule a tunnelled app in direct mode would send its traffic
+	// through the proxy while its DNS queries went out direct, revealing every
+	// domain it visits to the local resolver/ISP. Match the same process names
+	// the route layer pins to the proxy and send their DNS to dns-remote. It sits
+	// before the smart RU rule so a tunnelled app's DNS always follows the tunnel
+	// (matching where its traffic goes) rather than being pulled direct by the RU
+	// rule; in smart/global it is a harmless restatement of the existing final.
+	if o.SplitMode == SplitInclude && len(o.SplitApps) > 0 {
+		rules = append(rules, map[string]any{
+			"process_name": o.SplitApps,
+			"action":       "route",
+			"server":       dnsRemoteTag,
+		})
 	}
 	if o.Mode == ModeSmart {
 		rules = append(rules, map[string]any{
@@ -202,6 +222,10 @@ func validDNSHost(h string) bool {
 // detours to the proxy selector) would break resolution exactly when the user
 // picks direct mode because the proxy is down. Smart and global keep dns-remote
 // so general lookups stay encrypted over the proxy and don't leak to the LAN.
+//
+// This is the *unmatched* final only: apps pinned to the proxy by include split
+// tunnelling are handled earlier by a process_name rule in dnsRules, so the
+// direct final here never pulls a tunnelled app's DNS out of the tunnel.
 func (o Options) dnsFinal() string {
 	if o.Mode == ModeDirect {
 		return dnsDirectTag
