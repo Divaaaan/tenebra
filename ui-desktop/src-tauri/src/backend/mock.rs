@@ -207,6 +207,7 @@ impl Backend for MockBackend {
                 protocol,
                 server: "203.0.113.10".into(),
                 port: 443,
+                insecure: false,
             }],
             updated_at: now_rfc3339(),
             expires_at: None,
@@ -645,6 +646,7 @@ fn node_lit(id: &str, name: &str, protocol: Protocol, server: &str, port: u16) -
         protocol,
         server: server.to_string(),
         port,
+        insecure: false,
     }
 }
 
@@ -659,13 +661,17 @@ fn synth_nodes(count: usize) -> Vec<Node> {
     (0..count)
         .map(|i| {
             let (city, proto, ip) = cities[i % cities.len()];
-            node_lit(
+            let mut node = node_lit(
                 &new_id("n"),
                 &format!("{city} · {}", protocol_label(proto)),
                 proto,
                 ip,
                 443,
-            )
+            );
+            // Give the demo a couple of skip-cert-verify nodes so the insecure
+            // warning affordance is visible in mock mode.
+            node.insecure = matches!(proto, Protocol::Hysteria2);
+            node
         })
         .collect()
 }
