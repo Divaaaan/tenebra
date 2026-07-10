@@ -13,6 +13,15 @@ All notable changes to Tenebra are documented here. The format follows
 
 ### Added
 
+- **Clash/Mihomo YAML subscriptions.** A subscription whose body is a
+  Clash/Mihomo config — servers under a top-level `proxies:` key — is now
+  detected and imported alongside the existing base64 and plaintext link lists.
+  Each proxy is mapped onto the same node model as the share-link parsers:
+  Shadowsocks, VMess, VLESS (incl. REALITY), Trojan, Hysteria2 and WireGuard are
+  supported, with their transport, TLS and obfuscation options; a proxy of an
+  unsupported type is skipped rather than failing the whole import. The YAML is
+  read by a small purpose-built decoder, so the core keeps its no-third-party-
+  dependency footprint.
 - **DNS ad and tracker blocking (opt-in).** A new Settings toggle, off by
   default, refuses DNS lookups for a bundled list of ad and tracker domains
   (answered `REFUSED`, ahead of any routing rule, in every mode). The blocklist
