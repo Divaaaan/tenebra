@@ -199,8 +199,12 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 
 		relaunchResetAfter: defaultRelaunchReset,
 	}
-	var dialer net.Dialer
-	d.dial = dialer.DialContext
+	// The ping dial is pinned to the physical default interface (see
+	// newPingDialer): while the tunnel is up with auto_route it would otherwise be
+	// captured by the tun and every node would report the ~1-2ms latency to the
+	// local tun rather than the real server. Binding the socket to the physical NIC
+	// steers each probe past the tun so the RTT readout stays meaningful mid-session.
+	d.dial = newPingDialer().DialContext
 	return d
 }
 
@@ -373,16 +377,87 @@ func (d *Daemon) handleStatus(req Request) Response {
 	return resp
 }
 
-// handleListProfiles returns every stored profile, normalising a nil slice to []
-// so the UI always receives an array.
+// redactedNode is the subset of a stored server the UI renders: its stable ID
+// and the non-secret display fields. It deliberately drops every credential a
+// model.Node carries — the VLESS/VMess UUID, the Trojan/Shadowsocks/Hysteria2
+// password, the Shadowsocks method and obfs secret, the (Amnezia)WG private and
+// pre-shared keys, and the REALITY keys — because the control socket is readable
+// by any local user (the deliberate machine-wide-tunnel trust; see
+// docs/control-protocol.md), so serialising the full node here would hand every
+// secret in the store to any unprivileged process. The fields kept are exactly
+// those the desktop Node type consumes (id, protocol, name, server, port).
+type redactedNode struct {
+	ID       string         `json:"id"`
+	Protocol model.Protocol `json:"protocol"`
+	Name     string         `json:"name"`
+	Server   string         `json:"server"`
+	Port     int            `json:"port"`
+}
+
+// redactedProfile mirrors profile.Profile minus the two secret-bearing parts:
+// the subscription URL — whose path or query embeds the account token — and each
+// node's credentials (see redactedNode). The URL is dropped whole rather than
+// masked in place: the UI never renders it (it drives the refresh affordance off
+// Source, not URL presence), and a token can sit in a path segment, a query
+// parameter, or a fragment, so any partial mask risks leaking one it did not
+// anticipate. Everything the UI does render — the ID, name, source, refresh
+// timestamp, and the subscription quota/expiry — is preserved verbatim.
+type redactedProfile struct {
+	ID           string         `json:"id"`
+	Name         string         `json:"name"`
+	Source       string         `json:"source"`
+	Nodes        []redactedNode `json:"nodes"`
+	UpdatedAt    time.Time      `json:"updatedAt"`
+	ExpiresAt    *time.Time     `json:"expiresAt,omitempty"`
+	TrafficUsed  int64          `json:"trafficUsed,omitempty"`
+	TrafficTotal int64          `json:"trafficTotal,omitempty"`
+}
+
+// redactProfile projects one stored profile onto its wire-safe view, copying
+// only the non-secret fields. The connect path never goes through here — it
+// reads the full stored profile straight from the store — so redacting the
+// outbound view costs the UI nothing.
+func redactProfile(p profile.Profile) redactedProfile {
+	nodes := make([]redactedNode, len(p.Servers))
+	for i, s := range p.Servers {
+		nodes[i] = redactedNode{
+			ID:       s.ID,
+			Protocol: s.Protocol,
+			Name:     s.Name,
+			Server:   s.Server,
+			Port:     s.Port,
+		}
+	}
+	return redactedProfile{
+		ID:           p.ID,
+		Name:         p.Name,
+		Source:       p.Source,
+		Nodes:        nodes,
+		UpdatedAt:    p.UpdatedAt,
+		ExpiresAt:    p.ExpiresAt,
+		TrafficUsed:  p.TrafficUsed,
+		TrafficTotal: p.TrafficTotal,
+	}
+}
+
+// redactProfiles maps a stored profile list to the wire-safe view, always
+// returning a non-nil slice so the UI receives [] rather than null.
+func redactProfiles(ps []profile.Profile) []redactedProfile {
+	out := make([]redactedProfile, len(ps))
+	for i, p := range ps {
+		out[i] = redactProfile(p)
+	}
+	return out
+}
+
+// handleListProfiles returns every stored profile in the redacted wire view —
+// display fields only, no subscription token, no node credentials (see
+// redactedProfile) — normalising a nil slice to [] so the UI always receives an
+// array.
 func (d *Daemon) handleListProfiles(req Request) Response {
 	out := struct {
-		Profiles []profile.Profile `json:"profiles"`
-	}{Profiles: d.store.List()}
-	// List never returns nil for the slice the UI iterates; normalise to [].
-	if out.Profiles == nil {
-		out.Profiles = []profile.Profile{}
-	}
+		Profiles []redactedProfile `json:"profiles"`
+	}{Profiles: redactProfiles(d.store.List())}
 	resp, err := newResult(req.ID, out)
 	if err != nil {
 		return newError(req.ID, err.Error())
