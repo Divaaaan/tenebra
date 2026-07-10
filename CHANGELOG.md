@@ -45,11 +45,6 @@ All notable changes to Tenebra are documented here. The format follows
   signed release, so a tampered upstream artifact fails the build.
 - **The node-latency probe fan-out is bounded** (a worker pool caps concurrent
   dials), and the connectivity probe now uses HTTPS.
-
-## [0.3.5] - 2026-07-11
-
-### Security
-
 - **IPv6 no longer bypasses the tunnel.** The tun interface carried only an IPv4
   address, so on a dual-stack host `auto_route` never claimed the IPv6 default
   route and native IPv6 traffic egressed around the VPN. The tun now also carries
@@ -377,8 +372,7 @@ Initial tagged release.
   key; only the initial download is unsigned.
 
 [Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.3.6...HEAD
-[0.3.6]: https://github.com/Divaaaan/tenebra/compare/v0.3.5...v0.3.6
-[0.3.5]: https://github.com/Divaaaan/tenebra/compare/v0.3.4...v0.3.5
+[0.3.6]: https://github.com/Divaaaan/tenebra/compare/v0.3.4...v0.3.6
 [0.3.4]: https://github.com/Divaaaan/tenebra/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/Divaaaan/tenebra/compare/v0.3.0...v0.3.3
 [0.3.0]: https://github.com/Divaaaan/tenebra/compare/v0.2.0...v0.3.0
