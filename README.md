@@ -154,6 +154,7 @@ npm run tauri build
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to contribute.
 - [SECURITY.md](SECURITY.md) — reporting a vulnerability and our trust stance.
 - [CHANGELOG.md](CHANGELOG.md) — what's changed.
+- [ROADMAP.md](ROADMAP.md) — where the project is headed.
 
 ## Support
 
