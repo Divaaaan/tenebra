@@ -240,3 +240,148 @@ func TestClashProxyMapsNoProxiesKey(t *testing.T) {
 		t.Error("present = true, want false when there is no proxies key")
 	}
 }
+
+// TestDecodeYAMLDeepFlowBounded feeds pathological flow inputs — long runs of
+// unmatched '[' and '{', the exact shape an attacker uses to force a stack
+// overflow — well past maxParseDepth and asserts the decoder returns a bounded
+// partial value instead of crashing. The recursion count is what matters, so
+// the depth (cap plus slack) is exercised, not the multi-MiB size of a real
+// attack body; the frame count per byte is identical.
+func TestDecodeYAMLDeepFlowBounded(t *testing.T) {
+	n := maxParseDepth * 4
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"unmatched brackets", "proxies: " + strings.Repeat("[", n)},
+		{"unmatched braces", "deep: " + strings.Repeat("{", n)},
+		{"matched brackets", "deep: " + strings.Repeat("[", n) + strings.Repeat("]", n)},
+		{"matched braces", "deep: " + strings.Repeat("{", n) + strings.Repeat("}", n)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// A hard stack overflow cannot be recovered, so the only real
+			// assertion is that this returns at all; the depth cap must keep the
+			// recursion bounded rather than let it run to the millions.
+			got := decodeYAML([]byte(tc.body))
+			if got == nil {
+				t.Fatal("decodeYAML() returned nil map")
+			}
+			if d := valueDepth(got); d > maxParseDepth+4 {
+				t.Errorf("decoded value nests %d deep, want bounded near maxParseDepth=%d", d, maxParseDepth)
+			}
+		})
+	}
+}
+
+// TestDecodeYAMLDeepBlockBounded is the block-path counterpart: an ever-deeper
+// chain of block mappings and block sequences past the cap must also return a
+// bounded value without exhausting the stack.
+func TestDecodeYAMLDeepBlockBounded(t *testing.T) {
+	n := maxParseDepth * 4
+
+	// Nested block mappings: "a:\n  a:\n    a:\n ..." each level indented two
+	// spaces deeper than the last.
+	var mapB strings.Builder
+	for i := 0; i < n; i++ {
+		mapB.WriteString(strings.Repeat("  ", i))
+		mapB.WriteString("a:\n")
+	}
+	mapB.WriteString(strings.Repeat("  ", n))
+	mapB.WriteString("leaf: v\n")
+
+	// Nested block sequences: each level is a "- " one column deeper.
+	var seqB strings.Builder
+	for i := 0; i < n; i++ {
+		seqB.WriteString(strings.Repeat(" ", i))
+		seqB.WriteString("-\n")
+	}
+	seqB.WriteString(strings.Repeat(" ", n))
+	seqB.WriteString("- leaf\n")
+
+	for _, tc := range []struct{ name, body string }{
+		{"block mappings", mapB.String()},
+		{"block sequences", seqB.String()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := decodeYAML([]byte(tc.body))
+			if got == nil {
+				t.Fatal("decodeYAML() returned nil map")
+			}
+			if d := valueDepth(got); d > maxParseDepth+4 {
+				t.Errorf("decoded value nests %d deep, want bounded near maxParseDepth=%d", d, maxParseDepth)
+			}
+		})
+	}
+}
+
+// TestDecodeYAMLModerateDepthRegression proves the cap does not clip legitimate
+// configs: a mapping nested a handful of levels deep (well under the cap) decodes
+// fully, all the way down to the leaf scalar.
+func TestDecodeYAMLModerateDepthRegression(t *testing.T) {
+	in := `proxies:
+  - name: n
+    type: vmess
+    ws-opts:
+      headers:
+        Host: h.com
+`
+	got := decodeYAML([]byte(in))
+	seq, ok := got["proxies"].([]any)
+	if !ok || len(seq) != 1 {
+		t.Fatalf("proxies = %#v, want a 1-element sequence", got["proxies"])
+	}
+	proxy, ok := seq[0].(map[string]any)
+	if !ok {
+		t.Fatalf("proxy = %#v, want a mapping", seq[0])
+	}
+	wsOpts, _ := proxy["ws-opts"].(map[string]any)
+	headers, _ := wsOpts["headers"].(map[string]any)
+	if headers["Host"] != "h.com" {
+		t.Errorf("ws-opts.headers.Host = %#v, want h.com (deep value must survive)", headers["Host"])
+	}
+}
+
+// TestParseSubscriptionRecoversPanic drives the belt-and-suspenders recover:
+// with the test seam forcing a panic inside the guarded body, ParseSubscription
+// must return an error rather than propagate the panic up into the daemon.
+func TestParseSubscriptionRecoversPanic(t *testing.T) {
+	parseSubscriptionHook = func() { panic("induced parser panic") }
+	defer func() { parseSubscriptionHook = nil }()
+
+	nodes, skipped, err := ParseSubscription([]byte("proxies: []"))
+	if err == nil {
+		t.Fatal("ParseSubscription() err = nil, want an error from the recovered panic")
+	}
+	if !strings.Contains(err.Error(), "induced parser panic") {
+		t.Errorf("err = %v, want it to carry the panic value", err)
+	}
+	if nodes != nil || skipped != 0 {
+		t.Errorf("got nodes=%#v skipped=%d, want nil/0 on a recovered panic", nodes, skipped)
+	}
+}
+
+// valueDepth measures the maximum nesting of a decoded YAML value (maps and
+// slices), used to assert the depth cap actually bounds the result.
+func valueDepth(v any) int {
+	switch t := v.(type) {
+	case map[string]any:
+		max := 0
+		for _, child := range t {
+			if d := valueDepth(child); d > max {
+				max = d
+			}
+		}
+		return max + 1
+	case []any:
+		max := 0
+		for _, child := range t {
+			if d := valueDepth(child); d > max {
+				max = d
+			}
+		}
+		return max + 1
+	default:
+		return 0
+	}
+}
