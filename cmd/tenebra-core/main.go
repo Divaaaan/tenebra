@@ -1,10 +1,11 @@
 // Command tenebra-core is the process that owns sing-box and the tunnel. The
 // desktop UI drives it with the line-delimited JSON control protocol over one
-// of two transports: by default the core is a sidecar speaking on stdin/stdout
+// of three transports: by default the core is a sidecar speaking on stdin/stdout
 // (stdout carries protocol traffic only and every diagnostic goes to stderr);
 // on Windows it can instead serve the protocol on a named pipe — as a Windows
-// service, or in a console with --pipe — so the tunnel can outlive any one UI
-// process. See docs/control-protocol.md for the transports.
+// service, or in a console with --pipe — and on macOS on a unix domain socket
+// (a root LaunchDaemon, or a console with --socket), so the tunnel can outlive
+// any one UI process. See docs/control-protocol.md for the transports.
 package main
 
 import (
@@ -27,6 +28,11 @@ import (
 // transport without installing a service.
 var pipeMode = flag.Bool("pipe", false, "serve the control protocol on the named pipe instead of stdin/stdout (Windows only)")
 
+// socketMode switches the console process from stdin/stdout to the unix-socket
+// transport (macOS only): the development way to exercise the LaunchDaemon's
+// transport without installing a daemon, and what that daemon itself runs with.
+var socketMode = flag.Bool("socket", false, "serve the control protocol on a unix domain socket instead of stdin/stdout (macOS only)")
+
 func main() {
 	flag.Parse()
 	// The service control manager starts us with no console and no usable
@@ -39,19 +45,35 @@ func main() {
 		}
 		return
 	}
-	if err := run(*pipeMode); err != nil {
+	if err := run(*pipeMode, *socketMode); err != nil {
 		log.Printf("fatal: %v", err)
 		os.Exit(1)
 	}
 }
 
 // run is the console entry point: it wires up the core and serves the JSON
-// protocol — on stdin/stdout by default, on the named pipe with --pipe — until
-// EOF or a shutdown signal.
-func run(usePipe bool) error {
+// protocol — on stdin/stdout by default, on the named pipe with --pipe, on the
+// unix socket with --socket — until EOF or a shutdown signal.
+func run(usePipe, useSocket bool) error {
 	// stdout is the protocol channel in sidecar mode; keep all logging off it.
 	log.SetOutput(os.Stderr)
 	log.SetFlags(log.LstdFlags)
+
+	// The two detached transports are mutually exclusive and platform-specific;
+	// reject the combination up front rather than silently pick one.
+	if usePipe && useSocket {
+		return errors.New("choose one transport: --pipe or --socket, not both")
+	}
+
+	// A root LaunchDaemon serving --socket needs the machine-scoped store and
+	// bundled sing-box pinned before buildDaemon reads them — the same ordering
+	// the Windows service uses for configureServicePaths. This is a no-op for a
+	// non-root --socket dev run and off macOS (where serveSocket rejects --socket).
+	if useSocket {
+		if err := configureSocketPaths(); err != nil {
+			return err
+		}
+	}
 
 	daemon, err := buildDaemon()
 	if err != nil {
@@ -63,9 +85,12 @@ func run(usePipe bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if usePipe {
+	switch {
+	case usePipe:
 		err = servePipe(ctx, daemon)
-	} else {
+	case useSocket:
+		err = serveSocket(ctx, daemon)
+	default:
 		server := control.NewServer(daemon, os.Stdin, os.Stdout)
 		err = server.Serve(ctx)
 	}

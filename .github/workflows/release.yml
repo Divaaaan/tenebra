@@ -73,12 +73,13 @@ jobs:
           # resolving new versions, so a signed release always matches the lockfile.
           args: --bundles nsis -- --locked
           releaseBody: |
-            Windows desktop build of Tenebra.
+            Desktop builds of Tenebra for Windows and macOS.
 
-            The installer is unsigned — Windows SmartScreen will warn on first
-            install (More info -> Run anyway). From this version on, updates are
-            delivered in-app (Settings -> Updates) and verified against the
-            project's signing key before they install.
+            The installers are unsigned: Windows SmartScreen warns on first
+            install (More info -> Run anyway); on macOS allow the app once via
+            System Settings -> Privacy & Security -> Open Anyway. From this
+            version on, updates are delivered in-app (Settings -> Updates) and
+            verified against the project's signing key before they install.
       - name: Publish the beta channel manifest
         shell: bash
         env:
@@ -87,4 +88,85 @@ jobs:
         # beta.json on whichever release backs /releases/latest/download/ so beta
         # clients pick up this build (a prerelease, or a newer stable) while
         # stable clients keep reading latest.json untouched.
+        run: node scripts/publish-beta-manifest.mjs "$GITHUB_REF_NAME" "${{ steps.channel.outputs.prerelease }}"
+  macos:
+    # Runs after the Windows job on purpose: both jobs upload assets to the same
+    # tag release and tauri-action merges its platform entries into the release's
+    # latest.json — sequencing the jobs makes that read-modify-write
+    # deterministic instead of a race. If this job fails, the Windows release
+    # stands untouched and macOS assets follow in a fix-forward tag.
+    needs: [ci, version-check, windows]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # The Intel slice of the universal build is a Rust cross-compile on
+          # the arm64 runner.
+          targets: x86_64-apple-darwin
+      - name: Fetch sing-box and rule-sets
+        run: bash scripts/fetch-resources.sh
+      - name: Build universal core sidecar
+        # Tauri resolves externalBin by the build's target triple, so the
+        # universal target expects tenebra-core-universal-apple-darwin. The core
+        # is pure Go on darwin (no cgo), so both slices cross-compile on the
+        # arm64 runner and lipo stitches them, mirroring what
+        # fetch-resources.sh does for sing-box.
+        run: |
+          GOOS=darwin GOARCH=arm64 go build -o /tmp/tenebra-core-arm64 ./cmd/tenebra-core
+          GOOS=darwin GOARCH=amd64 go build -o /tmp/tenebra-core-amd64 ./cmd/tenebra-core
+          mkdir -p ui-desktop/src-tauri/binaries
+          lipo -create /tmp/tenebra-core-arm64 /tmp/tenebra-core-amd64 \
+            -output ui-desktop/src-tauri/binaries/tenebra-core-universal-apple-darwin
+      - name: Install front-end dependencies
+        working-directory: ui-desktop
+        run: npm ci
+      - name: Resolve the release channel from the tag
+        id: channel
+        shell: bash
+        run: |
+          # Same rule as the Windows job: a SemVer prerelease suffix marks the
+          # GitHub release prerelease, keeping /releases/latest/ (and so the
+          # stable updater endpoint) pointed at the last full release.
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build, sign, and publish the release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: ui-desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: Tenebra ${{ github.ref_name }}
+          releaseDraft: false
+          prerelease: ${{ steps.channel.outputs.prerelease }}
+          includeUpdaterJson: true
+          args: --target universal-apple-darwin --bundles app,dmg -- --locked
+          releaseBody: |
+            Desktop builds of Tenebra for Windows and macOS.
+
+            The installers are unsigned: Windows SmartScreen warns on first
+            install (More info -> Run anyway); on macOS allow the app once via
+            System Settings -> Privacy & Security -> Open Anyway. From this
+            version on, updates are delivered in-app (Settings -> Updates) and
+            verified against the project's signing key before they install.
+      - name: Publish the beta channel manifest
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Re-run after the macOS assets land so beta.json mirrors the final
+        # latest.json carrying both platforms; the Windows job already published
+        # a Windows-only interim copy, which this overwrite supersedes.
         run: node scripts/publish-beta-manifest.mjs "$GITHUB_REF_NAME" "${{ steps.channel.outputs.prerelease }}"

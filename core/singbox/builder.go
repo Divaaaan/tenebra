@@ -8,6 +8,7 @@ package singbox
 import (
 	"crypto/rand"
 	"fmt"
+	"path/filepath"
 
 	"github.com/Divaaaan/tenebra/core/model"
 	"github.com/Divaaaan/tenebra/core/routing"
@@ -16,7 +17,6 @@ import (
 // Default tun and clash-api settings. The address is a small private /30 unused
 // by common LANs; auto_route/strict_route are forced on by Build.
 const (
-	defaultInterfaceName = "tenebra"
 	defaultMTU           = 9000
 	defaultStack         = StackSystem
 	defaultClashAPIPort  = 9090
@@ -56,11 +56,21 @@ type TunOptions struct {
 	MTU           int
 	Stack         string // system, gvisor, or mixed
 	ClashAPIPort  int
+	// CacheDir is the directory sing-box's cache_file is written to. When empty,
+	// the cache file is enabled without an explicit path and sing-box resolves it
+	// against the process working directory — correct for the GUI sidecar. The
+	// root launchd daemon on macOS runs with cwd "/", which is read-only, so it
+	// passes its writable profile-store directory here to give cache.db an
+	// absolute home; otherwise sing-box aborts at startup on every connect.
+	CacheDir string
 }
 
 func (t TunOptions) normalize() TunOptions {
 	if t.InterfaceName == "" {
-		t.InterfaceName = defaultInterfaceName
+		// Empty stays empty on macOS (platformTUNName == ""), which tells sing-box
+		// to claim the next free utun — the only names its kernel allows. Off
+		// macOS this is the branded "tenebra".
+		t.InterfaceName = platformTUNName
 	}
 	if t.MTU == 0 {
 		t.MTU = defaultMTU
@@ -144,9 +154,7 @@ func Build(nodes []model.Node, selectedTag string, ro routing.Options, tun TunOp
 				"external_controller": fmt.Sprintf("127.0.0.1:%d", tun.ClashAPIPort),
 				"secret":              clashSecret,
 			},
-			"cache_file": map[string]any{
-				"enabled": true,
-			},
+			"cache_file": cacheFileBlock(tun.CacheDir),
 		},
 	}
 
@@ -157,6 +165,20 @@ func Build(nodes []model.Node, selectedTag string, ro routing.Options, tun TunOp
 	}
 
 	return cfg, nil
+}
+
+// cacheFileBlock builds the experimental.cache_file object. The cache persists
+// selector choices and DNS results across runs. With dir empty the file is
+// enabled without a path, so sing-box resolves cache.db against its working
+// directory (fine for the GUI sidecar); with dir set the cache is pinned to an
+// absolute path there, which is what lets the root daemon — cwd "/" and
+// read-only — keep a working cache instead of aborting at startup.
+func cacheFileBlock(dir string) map[string]any {
+	block := map[string]any{"enabled": true}
+	if dir != "" {
+		block["path"] = filepath.Join(dir, "cache.db")
+	}
+	return block
 }
 
 // buildNodes converts nodes into outbounds and endpoints, assigning each a
@@ -308,16 +330,22 @@ func ValidateNode(n model.Node) bool {
 // for a rough connect — is the user's to make, so it is off unless the
 // kill-switch option is set.
 func tunInbound(t TunOptions, strictRoute bool) map[string]any {
-	return map[string]any{
-		"type":           "tun",
-		"tag":            tunTag,
-		"interface_name": t.InterfaceName,
-		"address":        []string{tunAddr},
-		"auto_route":     true,
-		"strict_route":   strictRoute,
-		"mtu":            t.MTU,
-		"stack":          t.Stack,
+	in := map[string]any{
+		"type":         "tun",
+		"tag":          tunTag,
+		"address":      []string{tunAddr},
+		"auto_route":   true,
+		"strict_route": strictRoute,
+		"mtu":          t.MTU,
+		"stack":        t.Stack,
 	}
+	// Only name the interface when there is a name to give. An empty name (the
+	// macOS default) must be omitted, not sent as "", so sing-box auto-assigns a
+	// utun device instead of rejecting the empty string.
+	if t.InterfaceName != "" {
+		in["interface_name"] = t.InterfaceName
+	}
+	return in
 }
 
 // routeBlock renders the route section from routing options plus the standard

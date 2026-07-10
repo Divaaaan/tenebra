@@ -182,8 +182,15 @@ func TestTunInboundPresent(t *testing.T) {
 	if !ok || len(addr) != 1 || addr[0] != tunAddr {
 		t.Errorf("tun address = %v, want [%s]", in["address"], tunAddr)
 	}
-	if in["interface_name"] != defaultInterfaceName {
-		t.Errorf("interface_name = %v, want %v", in["interface_name"], defaultInterfaceName)
+	// The default interface name is platform-dependent: a branded "tenebra" where
+	// the OS allows an arbitrary name, and omitted on macOS so sing-box claims a
+	// utun device itself. An empty default must not appear as interface_name: "".
+	if platformTUNName == "" {
+		if _, ok := in["interface_name"]; ok {
+			t.Errorf("interface_name should be omitted on this platform, got %v", in["interface_name"])
+		}
+	} else if in["interface_name"] != platformTUNName {
+		t.Errorf("interface_name = %v, want %v", in["interface_name"], platformTUNName)
 	}
 	if in["mtu"] != defaultMTU || in["stack"] != defaultStack {
 		t.Errorf("mtu/stack = %v/%v", in["mtu"], in["stack"])
@@ -204,6 +211,33 @@ func TestTunOptionsOverride(t *testing.T) {
 	clash := exp["clash_api"].(map[string]any)
 	if clash["external_controller"] != "127.0.0.1:9999" {
 		t.Errorf("clash api port not applied: %v", clash)
+	}
+}
+
+func TestCacheFileDefaultsToNoPath(t *testing.T) {
+	// With no CacheDir the cache is enabled but carries no path, so sing-box
+	// resolves it against its working directory — the GUI-sidecar default.
+	cache := buildFake(t)["experimental"].(map[string]any)["cache_file"].(map[string]any)
+	if cache["enabled"] != true {
+		t.Errorf("cache_file should be enabled, got %v", cache)
+	}
+	if _, hasPath := cache["path"]; hasPath {
+		t.Errorf("cache_file must omit path when CacheDir is empty, got %v", cache)
+	}
+}
+
+func TestCacheFilePinnedToCacheDir(t *testing.T) {
+	// A CacheDir (the daemon's writable store dir) pins cache.db to an absolute
+	// path so the root launchd daemon, whose cwd "/" is read-only, can start.
+	cfg, err := Build(fakeNodes(), "", routing.Options{Mode: routing.ModeSmart},
+		TunOptions{CacheDir: "/Library/Application Support/Tenebra/data"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := cfg["experimental"].(map[string]any)["cache_file"].(map[string]any)
+	want := "/Library/Application Support/Tenebra/data/cache.db"
+	if cache["path"] != want {
+		t.Errorf("cache_file path = %v, want %v", cache["path"], want)
 	}
 }
 

@@ -170,7 +170,10 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 		store:   store,
 		runner:  runner,
 		routing: routing.Options{Mode: routing.ModeSmart}.Normalize(),
-		tun:     singbox.TunOptions{Stack: singbox.StackSystem},
+		// CacheDir pins sing-box's cache file to the writable store directory so
+		// the root launchd daemon (cwd "/", read-only) doesn't abort at startup;
+		// see singbox.TunOptions.CacheDir.
+		tun: singbox.TunOptions{Stack: singbox.StackSystem, CacheDir: store.Dir()},
 		state: State{
 			State:    StateIdle,
 			Routing:  string(routing.ModeSmart),

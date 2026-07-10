@@ -4,8 +4,8 @@ All notable changes to Tenebra are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
-> **Early days.** Tenebra is at 0.2.x: the desktop client (Windows) is the current
-> focus and the real tunnel path is still being validated — see the
+> **Early days.** Tenebra is at 0.x: the desktop clients (Windows and macOS) are
+> the current focus — see the
 > [project status](README.md#project-status). Expect breaking changes between
 > 0.x releases.
 
@@ -13,6 +13,18 @@ All notable changes to Tenebra are documented here. The format follows
 
 ### Added
 
+- **macOS desktop app.** The desktop client now builds and ships for macOS
+  (universal: Apple Silicon and Intel). The tunnel follows the platform's
+  privilege model instead of an elevated app: `tenebra-core --socket` serves the
+  control protocol on a unix domain socket, a root LaunchDaemon owns the tunnel
+  (install/uninstall scripts under `scripts/macos/`, hand-installed once with
+  sudo — see `docs/porting/macos.md`), and the unprivileged app attaches to it,
+  reconnecting through restarts with the same grace the Windows service client
+  uses. Without the daemon the app still runs its own unprivileged sidecar:
+  everything except opening the tun device works. Releases now carry the macOS
+  app and in-app updates alongside the Windows installer; the build is
+  unsigned, so the first launch needs System Settings -> Privacy & Security ->
+  Open Anyway.
 - **Clash/Mihomo YAML subscriptions.** A subscription whose body is a
   Clash/Mihomo config — servers under a top-level `proxies:` key — is now
   detected and imported alongside the existing base64 and plaintext link lists.
