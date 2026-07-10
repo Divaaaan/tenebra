@@ -8,14 +8,24 @@ import (
 	"github.com/Divaaaan/tenebra/core/model"
 )
 
-// ParseSubscription parses a subscription body into nodes. The body is most
-// often base64 of a newline-separated link list; if a whole-body base64 decode
-// succeeds it is used, otherwise the body is treated as plaintext. Lines that
-// fail to parse are counted in skipped rather than failing the whole call.
+// ParseSubscription parses a subscription body into nodes. A body may be a
+// Clash/Mihomo YAML config (servers under a top-level "proxies:" key), base64 of
+// a newline-separated link list, or a plaintext link list. Entries that fail to
+// parse are counted in skipped rather than failing the whole call.
 func ParseSubscription(body []byte) (nodes []model.Node, skipped int, err error) {
 	text := strings.TrimSpace(string(body))
 	if text == "" {
 		return nil, 0, nil
+	}
+
+	// A Clash/Mihomo config carries its servers as YAML under a top-level
+	// "proxies:" key rather than as share links. Detect that shape first: a
+	// base64 link list is a single unbroken token and a plaintext list starts
+	// each line with a scheme, so neither trips this and the paths below are
+	// unchanged for them. A leading UTF-8 BOM (which TrimSpace does not remove)
+	// is stripped for this path only, since some servers prepend one.
+	if clash := stripBOM(text); looksLikeClashConfig(clash) {
+		return parseClashSubscription(clash)
 	}
 
 	if dec, derr := decodeBase64(text); derr == nil && looksLikeLinks(dec) {
@@ -29,6 +39,54 @@ func ParseSubscription(body []byte) (nodes []model.Node, skipped int, err error)
 		}
 		node, perr := ParseLink(line)
 		if perr != nil {
+			skipped++
+			continue
+		}
+		nodes = append(nodes, node)
+	}
+	return nodes, skipped, nil
+}
+
+// stripBOM removes a leading UTF-8 byte-order mark (EF BB BF). TrimSpace leaves
+// it in place, so it is trimmed explicitly where a leading marker would matter.
+func stripBOM(s string) string {
+	if len(s) >= 3 && s[0] == 0xEF && s[1] == 0xBB && s[2] == 0xBF {
+		return s[3:]
+	}
+	return s
+}
+
+// looksLikeClashConfig reports whether the body is a Clash/Mihomo YAML config —
+// that is, it has a top-level (unindented) "proxies:" key. An indented "proxies"
+// (e.g. nested under a proxy-provider) or a "#"-commented line does not count.
+func looksLikeClashConfig(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimRight(line, " \t\r")
+		if line == "" || line[0] == ' ' || line[0] == '\t' {
+			continue // blank or indented: not a top-level key
+		}
+		if !strings.HasPrefix(line, "proxies:") {
+			continue
+		}
+		// "proxies:" must be the whole key: the next character (if any) is a
+		// space or the start of a flow list, never more identifier characters.
+		rest := line[len("proxies:"):]
+		if rest == "" || rest[0] == ' ' || rest[0] == '\t' || rest[0] == '[' {
+			return true
+		}
+	}
+	return false
+}
+
+// parseClashSubscription decodes the "proxies" list of a Clash/Mihomo config and
+// maps each entry to a Node. A proxy of an unsupported type, or one missing the
+// fields its protocol needs, is counted in skipped just like an unparseable link;
+// the call never fails as a whole.
+func parseClashSubscription(text string) (nodes []model.Node, skipped int, err error) {
+	proxies, _ := clashProxyMaps([]byte(text))
+	for _, p := range proxies {
+		node, ok := clashProxyToNode(p)
+		if !ok {
 			skipped++
 			continue
 		}

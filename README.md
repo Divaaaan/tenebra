@@ -42,8 +42,9 @@ Everything below is implemented in this repo today (the UI features are desktop)
   a from-scratch sing-box config generator.
 - **Import the way you have it.** Subscription URL, a raw share link, a `.txt`
   file of links, clipboard paste, or a QR code (image file or pasted image).
-  Subscription bodies handle base64 or plaintext link lists and read the
-  `Subscription-Userinfo` header for traffic used / total and expiry.
+  Subscription bodies handle a Clash/Mihomo YAML config, base64, or plaintext
+  link lists and read the `Subscription-Userinfo` header for traffic used / total
+  and expiry.
 - **Smart RU routing.** *Smart* keeps Russian domains and IPs (and your LAN)
   direct and tunnels the rest; *Global* tunnels everything; *Direct* is the
   proxy off. Geodata is pulled from the official public sing-geoip / sing-geosite
