@@ -11,6 +11,41 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-07-11
+
+### Security
+
+- **Credential redaction is now complete.** Wave 1 redacted `list_profiles` and
+  `status`; the `import`, `import_links` and `refresh` responses still returned
+  the full profile (subscription token + node secrets) over the local control
+  channel. All of them now return the same redacted view; the profiles event was
+  already bodyless.
+- **DNS no longer leaks under split tunnelling.** With the base mode `direct` and
+  a node included into the tunnel, the app's traffic went through the proxy while
+  its DNS query fell through to the direct resolver and resolved outside the
+  tunnel — leaking every visited domain to the local ISP from the real IP.
+  Included apps' DNS now follows the tunnel in every mode.
+- **The Windows service directory and log are hardened against squatting.** The
+  `%ProgramData%\Tenebra` parent is clamped with a protected SYSTEM/Administrators
+  DACL before the log is opened, a pre-planted symlink/junction at the log path is
+  rejected, and the data-dir owner and DACL are verified after clamping (fail
+  closed), mirroring the macOS check.
+- **The macOS privileged data-dir clamp is symlink-safe.** It now opens the
+  directory with `O_NOFOLLOW` and operates on the descriptor, so a symlink planted
+  at the path can neither redirect the clamp nor survive its verification. The
+  hand-install script also verifies the binaries it installs.
+- **The desktop shell is tightened.** The sidecar spawn capability is pinned to
+  zero arguments and the rest of the shell surface is explicitly denied, so an
+  injected script cannot repoint the core or sing-box; a `tenebra://connect` deep
+  link now requires an explicit confirmation instead of auto-connecting; and an
+  unresolved core/sing-box path fails closed instead of resolving a bare name from
+  the working directory.
+- **Bundled binaries are pinned by hash.** The fetch scripts now verify a SHA-256
+  digest for the sing-box binary and the rule-sets before they are bundled into a
+  signed release, so a tampered upstream artifact fails the build.
+- **The node-latency probe fan-out is bounded** (a worker pool caps concurrent
+  dials), and the connectivity probe now uses HTTPS.
+
 ## [0.3.5] - 2026-07-11
 
 ### Security
@@ -341,7 +376,8 @@ Initial tagged release.
   first run. Updates delivered in-app are minisign-verified against the bundled
   key; only the initial download is unsigned.
 
-[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/Divaaaan/tenebra/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/Divaaaan/tenebra/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/Divaaaan/tenebra/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/Divaaaan/tenebra/compare/v0.3.0...v0.3.3
