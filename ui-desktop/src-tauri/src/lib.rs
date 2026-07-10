@@ -112,6 +112,10 @@ impl EventSink for TauriSink {
 //     The tunnel then outlives this process and the GUI needs no elevation.
 //     TENEBRA_PIPE renames the pipe or (`off`) skips it — see
 //     backend::pipe::configured_name.
+//  2'. On macOS, the same probe over the daemon's unix socket
+//     (`/var/run/tenebra.sock`): if the root LaunchDaemon is listening, attach.
+//     TENEBRA_SOCKET renames the path or (`off`) skips it — see
+//     backend::unix::configured_path.
 //  3. Otherwise spawn the `tenebra-core` sidecar and own it — today's default
 //     and the development path.
 //
@@ -140,6 +144,22 @@ fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
             Err(e) => sink.log(
                 "info",
                 &format!("no Tenebra service on {name} ({e}); spawning the core as a sidecar"),
+            ),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    if let Some(path) = backend::unix::configured_path() {
+        match backend::unix::UnixBackend::connect(&path, Arc::clone(&sink)) {
+            Ok(backend) => {
+                sink.log("info", &format!("attached to the Tenebra daemon on {path}"));
+                return Arc::new(backend);
+            }
+            // No daemon (or an unreachable socket) is the normal development
+            // case, not an error: fall through to the sidecar.
+            Err(e) => sink.log(
+                "info",
+                &format!("no Tenebra daemon on {path} ({e}); spawning the core as a sidecar"),
             ),
         }
     }
