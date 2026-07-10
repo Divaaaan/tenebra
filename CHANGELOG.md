@@ -11,7 +11,20 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.3.6] - 2026-07-11
+## [0.3.7] - 2026-07-11
+
+### Security
+
+- **The control channel now authenticates the connecting peer.** The pipe
+  (Windows) and socket (macOS) that drive the privileged tunnel were reachable by
+  any local user; earlier releases stopped credential *disclosure* but not
+  *control*. The daemon now checks the peer's uid (macOS `LOCAL_PEERCRED`) or
+  token SID (Windows `GetNamedPipeClientProcessId`) at accept time and admits only
+  its own account and the interactive console (logged-in) user — narrowing the
+  documented Tailscale-style "any local user" trust to "the logged-in user". An
+  unauthorized peer is refused without disturbing the live session; if the console
+  user cannot be determined the check fails open with a warning, so an
+  unprivileged GUI can never be locked out of attaching.
 
 ### Security
 
@@ -371,7 +384,8 @@ Initial tagged release.
   first run. Updates delivered in-app are minisign-verified against the bundled
   key; only the initial download is unsigned.
 
-[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.3.6...HEAD
+[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.3.7...HEAD
+[0.3.7]: https://github.com/Divaaaan/tenebra/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/Divaaaan/tenebra/compare/v0.3.4...v0.3.6
 [0.3.4]: https://github.com/Divaaaan/tenebra/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/Divaaaan/tenebra/compare/v0.3.0...v0.3.3
