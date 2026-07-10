@@ -561,13 +561,16 @@ func (d *Daemon) handleImportLinks(req Request) Response {
 
 // importLinksResult wraps a batch import into the {profile, imported, skipped}
 // response shape. imported is the number of servers added (equal to the profile's
-// server count) and skipped the number of links that failed to parse.
+// server count) and skipped the number of links that failed to parse. The profile
+// is redacted (see redactProfile) before it goes on the wire: this reply travels
+// the same local socket as list_profiles, so it must not carry the node
+// credentials or a token-bearing URL either.
 func (d *Daemon) importLinksResult(id int64, p profile.Profile, imported, skipped int) Response {
 	out := struct {
-		Profile  profile.Profile `json:"profile"`
+		Profile  redactedProfile `json:"profile"`
 		Imported int             `json:"imported"`
 		Skipped  int             `json:"skipped"`
-	}{Profile: p, Imported: imported, Skipped: skipped}
+	}{Profile: redactProfile(p), Imported: imported, Skipped: skipped}
 	resp, err := newResult(id, out)
 	if err != nil {
 		return newError(id, err.Error())
@@ -941,16 +944,33 @@ func (d *Daemon) handlePing(ctx context.Context, req Request) Response {
 	return resp
 }
 
-// pingServers TCP-dials each server's host:port concurrently and reports the
-// dial latency. It is best-effort: an unreachable server yields ok=false with a
-// zero RTT rather than failing the whole call. Results preserve input order.
+// pingFanout caps how many per-node latency probes pingServers runs at once. The
+// server list comes straight from a profile, and a profile can be an
+// attacker-supplied subscription carrying thousands of nodes; without a bound the
+// privileged daemon would fan out one concurrent dial per node, exhausting file
+// descriptors/sockets from the root process on a single crafted ping. Sixteen
+// keeps the probe effectively as fast as unbounded for any realistic profile
+// (dials dominated by the network, not the pool) while capping a hostile one.
+const pingFanout = 16
+
+// pingServers TCP-dials each server's host:port and reports the dial latency,
+// running at most pingFanout probes concurrently (see pingFanout). It is
+// best-effort: an unreachable server yields ok=false with a zero RTT rather than
+// failing the whole call. Results preserve input order — each goroutine writes
+// its own index, so the worker pool never reorders them.
 func (d *Daemon) pingServers(ctx context.Context, servers []profile.Server) []PingResult {
 	results := make([]PingResult, len(servers))
+	// A buffered channel of pingFanout tokens is the semaphore: acquiring before
+	// the spawn (and blocking the loop when the pool is full) is what bounds the
+	// number of in-flight dials, rather than spawning every goroutine up front.
+	sem := make(chan struct{}, pingFanout)
 	var wg sync.WaitGroup
 	for i, srv := range servers {
 		wg.Add(1)
+		sem <- struct{}{}
 		go func(i int, srv profile.Server) {
 			defer wg.Done()
+			defer func() { <-sem }()
 			results[i] = d.pingOne(ctx, srv)
 		}(i, srv)
 	}
@@ -981,11 +1001,15 @@ func (d *Daemon) pingOne(ctx context.Context, srv profile.Server) PingResult {
 }
 
 // profileResult wraps a profile into the {profile: Profile} response shape used
-// by the import/refresh commands.
+// by the import_subscription / import_link / refresh_subscription commands. The
+// profile is redacted (see redactProfile) before it goes on the wire: these
+// replies travel the same local socket as list_profiles, so serialising the full
+// stored profile would hand its node credentials and token-bearing subscription
+// URL to any unprivileged reader — exactly what redacting list_profiles closed.
 func (d *Daemon) profileResult(id int64, p profile.Profile) Response {
 	out := struct {
-		Profile profile.Profile `json:"profile"`
-	}{Profile: p}
+		Profile redactedProfile `json:"profile"`
+	}{Profile: redactProfile(p)}
 	resp, err := newResult(id, out)
 	if err != nil {
 		return newError(id, err.Error())
