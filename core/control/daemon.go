@@ -561,13 +561,16 @@ func (d *Daemon) handleImportLinks(req Request) Response {
 
 // importLinksResult wraps a batch import into the {profile, imported, skipped}
 // response shape. imported is the number of servers added (equal to the profile's
-// server count) and skipped the number of links that failed to parse.
+// server count) and skipped the number of links that failed to parse. The profile
+// is redacted (see redactProfile) before it goes on the wire: this reply travels
+// the same local socket as list_profiles, so it must not carry the node
+// credentials or a token-bearing URL either.
 func (d *Daemon) importLinksResult(id int64, p profile.Profile, imported, skipped int) Response {
 	out := struct {
-		Profile  profile.Profile `json:"profile"`
+		Profile  redactedProfile `json:"profile"`
 		Imported int             `json:"imported"`
 		Skipped  int             `json:"skipped"`
-	}{Profile: p, Imported: imported, Skipped: skipped}
+	}{Profile: redactProfile(p), Imported: imported, Skipped: skipped}
 	resp, err := newResult(id, out)
 	if err != nil {
 		return newError(id, err.Error())
@@ -981,11 +984,15 @@ func (d *Daemon) pingOne(ctx context.Context, srv profile.Server) PingResult {
 }
 
 // profileResult wraps a profile into the {profile: Profile} response shape used
-// by the import/refresh commands.
+// by the import_subscription / import_link / refresh_subscription commands. The
+// profile is redacted (see redactProfile) before it goes on the wire: these
+// replies travel the same local socket as list_profiles, so serialising the full
+// stored profile would hand its node credentials and token-bearing subscription
+// URL to any unprivileged reader — exactly what redacting list_profiles closed.
 func (d *Daemon) profileResult(id int64, p profile.Profile) Response {
 	out := struct {
-		Profile profile.Profile `json:"profile"`
-	}{Profile: p}
+		Profile redactedProfile `json:"profile"`
+	}{Profile: redactProfile(p)}
 	resp, err := newResult(id, out)
 	if err != nil {
 		return newError(id, err.Error())
