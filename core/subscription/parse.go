@@ -1,6 +1,7 @@
 package subscription
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -8,11 +9,32 @@ import (
 	"github.com/Divaaaan/tenebra/core/model"
 )
 
+// parseSubscriptionHook is a test-only seam: when non-nil it runs inside
+// ParseSubscription's recover-guarded body so a test can induce a panic and
+// prove the recover turns it into an error return. It is always nil in
+// production and adds one predictable-branch of overhead.
+var parseSubscriptionHook func()
+
 // ParseSubscription parses a subscription body into nodes. A body may be a
 // Clash/Mihomo YAML config (servers under a top-level "proxies:" key), base64 of
 // a newline-separated link list, or a plaintext link list. Entries that fail to
 // parse are counted in skipped rather than failing the whole call.
 func ParseSubscription(body []byte) (nodes []model.Node, skipped int, err error) {
+	// Belt-and-suspenders around the hand-written decoders below: the depth cap
+	// in the YAML reader already bounds recursion, but a future parser bug must
+	// never be able to panic the process — ParseSubscription runs inside the
+	// privileged KeepAlive daemon's auto-refresh worker, so a crash there would
+	// take the whole daemon down and crash-loop on every refresh of a poisoned
+	// subscription. Convert any panic into an ordinary error return instead.
+	defer func() {
+		if r := recover(); r != nil {
+			nodes, skipped, err = nil, 0, fmt.Errorf("parse subscription: %v", r)
+		}
+	}()
+	if parseSubscriptionHook != nil {
+		parseSubscriptionHook() // test seam; nil in production
+	}
+
 	text := strings.TrimSpace(string(body))
 	if text == "" {
 		return nil, 0, nil
