@@ -1,0 +1,73 @@
+name: Bug report
+description: Report a problem with Tenebra
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in the fields
+        below so the problem can be reproduced. Redact any subscription URLs,
+        server addresses or keys before posting.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checklist
+      options:
+        - label: I searched the existing issues and did not find a duplicate.
+          required: true
+        - label: I'm on the latest release of Tenebra.
+          required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Problem description
+      description: What went wrong, and what did you expect to happen instead? Screenshots help.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Tenebra version
+      description: Shown in the app's top bar and in Settings / About.
+      placeholder: 0.3.0
+    validations:
+      required: true
+  - type: input
+    id: windows-version
+    attributes:
+      label: Windows version
+      description: Run `winver` if unsure — include the edition and build number.
+      placeholder: Windows 11 23H2 (build 22631)
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The exact steps that trigger the problem.
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. See the error
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Paste the relevant log output (paste the text, don't attach a file).
+        Tenebra writes one of two logs depending on how the core is running:
+
+        - Standard install — the core runs as the Windows service `tenebra` and
+          logs to `%ProgramData%\Tenebra\service.log`.
+        - Sidecar fallback — if the app runs the core itself instead of the
+          service (for example a `tauri dev` build, or when the service is
+          unavailable), it logs to `%LOCALAPPDATA%\Tenebra\core.log`.
+
+        On a normal install grab `service.log`; include `core.log` too if it
+        exists. Remove any subscription URLs, server addresses or keys first.
+      render: shell
+    validations:
+      required: true
