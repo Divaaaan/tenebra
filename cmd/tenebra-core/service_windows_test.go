@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,24 +52,84 @@ func TestFindBundledSingbox(t *testing.T) {
 
 // TestSecureDataDir verifies the directory comes out with the clamped
 // descriptor — a protected DACL granting exactly SYSTEM and Administrators —
-// and that a second run over the existing directory is a no-op rather than an
-// error (the service re-stamps on every start).
+// and that a second run over the existing directory keeps the clamp (the
+// service re-stamps on every start). The DACL clamp lands whether or not the
+// caller can take SYSTEM ownership, so it is asserted independently of the
+// final owner verification: that verification only passes when the process is
+// privileged enough to reassign the owner (the LocalSystem service is; an
+// unelevated developer run is not), and errUntrustedDataDirOwner is the one
+// error tolerated in that unprivileged case.
 func TestSecureDataDir(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "data")
 	// The clamped DACL locks the test user out of its own temp subdirectory,
 	// which would trip t.TempDir's cleanup; reopen it before the test ends.
 	t.Cleanup(func() { unclampDir(t, dir) })
 
-	if err := secureDataDir(dir); err != nil {
+	if err := secureDataDir(dir); err != nil && !errors.Is(err, errUntrustedDataDirOwner) {
 		t.Fatalf("secureDataDir: %v", err)
 	}
 	assertClamped(t, dir)
 
-	// Re-stamping an existing directory must succeed and keep the clamp.
-	if err := secureDataDir(dir); err != nil {
+	// Re-stamping an existing directory must keep the clamp.
+	if err := secureDataDir(dir); err != nil && !errors.Is(err, errUntrustedDataDirOwner) {
 		t.Fatalf("secureDataDir on existing dir: %v", err)
 	}
 	assertClamped(t, dir)
+}
+
+// TestVerifyClampedDir exercises the fail-closed predicate secureDataDir ends
+// on over descriptors built straight from SDDL, so every rejection path is
+// covered without a privileged directory (the mirror of darwin's
+// TestVerifyRootOnlyDir).
+func TestVerifyClampedDir(t *testing.T) {
+	parse := func(t *testing.T, sddl string) *windows.SECURITY_DESCRIPTOR {
+		t.Helper()
+		sd, err := windows.SecurityDescriptorFromString(sddl)
+		if err != nil {
+			t.Fatalf("parse %q: %v", sddl, err)
+		}
+		return sd
+	}
+
+	t.Run("system-owned accepted", func(t *testing.T) {
+		sd := parse(t, "O:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")
+		if err := verifyClampedDir(sd); err != nil {
+			t.Errorf("verifyClampedDir rejected a clamped SYSTEM-owned descriptor: %v", err)
+		}
+	})
+
+	t.Run("administrators-owned accepted", func(t *testing.T) {
+		sd := parse(t, "O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")
+		if err := verifyClampedDir(sd); err != nil {
+			t.Errorf("verifyClampedDir rejected a clamped Administrators-owned descriptor: %v", err)
+		}
+	})
+
+	t.Run("untrusted owner rejected", func(t *testing.T) {
+		// BU is BUILTIN\Users — a squatter's directory the DACL stamp could not
+		// dispossess of ownership.
+		sd := parse(t, "O:BUD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")
+		if err := verifyClampedDir(sd); !errors.Is(err, errUntrustedDataDirOwner) {
+			t.Errorf("verifyClampedDir on a Users-owned dir = %v, want errUntrustedDataDirOwner", err)
+		}
+	})
+
+	t.Run("unprotected DACL rejected", func(t *testing.T) {
+		// No P: inherited grants from up the tree could widen access.
+		sd := parse(t, "O:SYD:(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")
+		if err := verifyClampedDir(sd); err == nil {
+			t.Error("verifyClampedDir accepted an unprotected DACL, want rejection")
+		}
+	})
+
+	t.Run("extra ACE rejected", func(t *testing.T) {
+		// A third grant (WD = Everyone) means the clamp did not replace what was
+		// there.
+		sd := parse(t, "O:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;WD)")
+		if err := verifyClampedDir(sd); err == nil {
+			t.Error("verifyClampedDir accepted a three-ACE DACL, want rejection")
+		}
+	})
 }
 
 // assertClamped fails the test unless dir carries the protected two-ACE DACL
