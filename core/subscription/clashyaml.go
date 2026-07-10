@@ -2,6 +2,20 @@ package subscription
 
 import "strings"
 
+// maxParseDepth caps how deeply the decoder will recurse into nested mappings
+// and sequences (both block and flow). The hand-written parser descends one
+// stack frame per nesting level, so an adversarial subscription body — e.g.
+// several MiB of unmatched '[' or '{' — would otherwise force millions of
+// frames and trigger an unrecoverable Go stack overflow, which the auto-refresh
+// worker would then hit on every cycle. Real Clash/Mihomo configs nest only a
+// handful of levels deep (proxy -> opts -> headers -> value), so 256 is far
+// beyond any legitimate document while keeping worst-case stack use tiny. When
+// the cap is reached the parser stops descending and returns the partial value
+// (an empty collection or the raw scalar), exactly as it already does for any
+// shape it does not recognize — a single pathological value must not sink the
+// whole import.
+const maxParseDepth = 256
+
 // This file implements a deliberately small YAML reader: just enough to pull the
 // "proxies" section out of a Clash/Mihomo config. The core ships with no
 // third-party dependencies, so rather than take on a general YAML library we
@@ -108,15 +122,21 @@ func decodeYAML(body []byte) map[string]any {
 	if p.done() {
 		return map[string]any{}
 	}
-	return p.parseMapping(p.cur().col)
+	return p.parseMapping(p.cur().col, 0)
 }
 
 // parseMapping reads consecutive "key: value" lines at column indent into a map.
 // A value that continues on following lines (a nested mapping, or a block
 // sequence at the same or a deeper column) is parsed recursively. Lines that are
 // not key-shaped are skipped so a stray marker never stalls the parse.
-func (p *yamlParser) parseMapping(indent int) map[string]any {
+func (p *yamlParser) parseMapping(indent, depth int) map[string]any {
 	m := map[string]any{}
+	if depth > maxParseDepth {
+		// Refuse to descend further. The value is left partial (empty here) and
+		// the deeper lines fall through the outer loops' indent checks; this can
+		// never spin because the cursor only advances, never rewinds.
+		return m
+	}
 	for !p.done() {
 		ln := p.cur()
 		if ln.col != indent || ln.dash {
@@ -129,7 +149,7 @@ func (p *yamlParser) parseMapping(indent int) map[string]any {
 		}
 		p.pos++
 		if val != "" {
-			m[key] = parseYAMLInline(val)
+			m[key] = parseYAMLInline(val, depth+1)
 			continue
 		}
 		if !p.done() {
@@ -137,11 +157,11 @@ func (p *yamlParser) parseMapping(indent int) map[string]any {
 			// A block sequence may align with its key (col == indent) or be
 			// indented deeper; a block mapping must be indented deeper.
 			if nxt.dash && nxt.col >= indent {
-				m[key] = p.parseSequence(nxt.col)
+				m[key] = p.parseSequence(nxt.col, depth+1)
 				continue
 			}
 			if !nxt.dash && nxt.col > indent {
-				m[key] = p.parseMapping(nxt.col)
+				m[key] = p.parseMapping(nxt.col, depth+1)
 				continue
 			}
 		}
@@ -153,8 +173,11 @@ func (p *yamlParser) parseMapping(indent int) map[string]any {
 // parseSequence reads consecutive "- " entries at column indent into a slice.
 // An entry is a flow value, a scalar, an inline mapping (first key on the dash
 // line), or a block value on the following, more-indented lines.
-func (p *yamlParser) parseSequence(indent int) []any {
+func (p *yamlParser) parseSequence(indent, depth int) []any {
 	var out []any
+	if depth > maxParseDepth {
+		return out // partial (nil) value; see parseMapping's cap note
+	}
 	for !p.done() {
 		ln := p.cur()
 		if !ln.dash || ln.col != indent {
@@ -165,20 +188,20 @@ func (p *yamlParser) parseSequence(indent int) []any {
 		case rest == "":
 			p.pos++
 			if !p.done() && p.cur().col > indent {
-				out = append(out, p.parseBlock(p.cur().col))
+				out = append(out, p.parseBlock(p.cur().col, depth+1))
 			} else {
 				out = append(out, "")
 			}
 		case rest[0] == '{' || rest[0] == '[':
 			p.pos++
-			out = append(out, parseYAMLInline(rest))
+			out = append(out, parseYAMLInline(rest, depth+1))
 		default:
 			if _, _, ok := splitYAMLKey(rest); ok {
 				// Inline mapping: rewrite this line as a plain mapping entry at the
 				// content column and let parseMapping fold in the sibling keys that
 				// follow at that column.
 				p.lines[p.pos] = yamlLine{col: ln.contentCol, dash: false, contentCol: ln.contentCol, text: rest}
-				out = append(out, p.parseMapping(ln.contentCol))
+				out = append(out, p.parseMapping(ln.contentCol, depth+1))
 			} else {
 				p.pos++
 				out = append(out, parseYAMLScalar(rest))
@@ -190,22 +213,30 @@ func (p *yamlParser) parseSequence(indent int) []any {
 
 // parseBlock dispatches a block value that begins at column indent to either a
 // sequence (if it opens with a dash) or a mapping.
-func (p *yamlParser) parseBlock(indent int) any {
-	if !p.done() && p.cur().dash && p.cur().col == indent {
-		return p.parseSequence(indent)
+func (p *yamlParser) parseBlock(indent, depth int) any {
+	if depth > maxParseDepth {
+		return nil // partial value; see parseMapping's cap note
 	}
-	return p.parseMapping(indent)
+	if !p.done() && p.cur().dash && p.cur().col == indent {
+		return p.parseSequence(indent, depth+1)
+	}
+	return p.parseMapping(indent, depth+1)
 }
 
 // parseYAMLInline parses a value that sits on the same line as its key or dash:
 // a flow mapping, a flow sequence, or a scalar.
-func parseYAMLInline(s string) any {
+func parseYAMLInline(s string, depth int) any {
 	s = strings.TrimSpace(s)
+	if depth > maxParseDepth {
+		// Too deep to keep unwrapping flow collections: hand back the still-nested
+		// text as a raw scalar rather than recursing into another stack frame.
+		return parseYAMLScalar(s)
+	}
 	switch {
 	case strings.HasPrefix(s, "{"):
-		return parseFlowMapping(s)
+		return parseFlowMapping(s, depth+1)
 	case strings.HasPrefix(s, "["):
-		return parseFlowSequence(s)
+		return parseFlowSequence(s, depth+1)
 	default:
 		return parseYAMLScalar(s)
 	}
@@ -213,11 +244,14 @@ func parseYAMLInline(s string) any {
 
 // parseFlowMapping parses "{ k: v, k2: v2, nested: { … } }" into a map. Values
 // may themselves be flow collections, so parsing recurses.
-func parseFlowMapping(s string) map[string]any {
+func parseFlowMapping(s string, depth int) map[string]any {
+	m := map[string]any{}
+	if depth > maxParseDepth {
+		return m // partial value; see parseYAMLInline's cap note
+	}
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "{")
 	s = strings.TrimSuffix(s, "}")
-	m := map[string]any{}
 	for _, part := range splitTopLevel(s, ',') {
 		part = strings.TrimSpace(part)
 		if part == "" {
@@ -227,24 +261,27 @@ func parseFlowMapping(s string) map[string]any {
 		if !ok {
 			continue
 		}
-		m[key] = parseYAMLInline(val)
+		m[key] = parseYAMLInline(val, depth+1)
 	}
 	return m
 }
 
 // parseFlowSequence parses "[a, b, { … }]" into a slice, recursing into nested
 // flow values.
-func parseFlowSequence(s string) []any {
+func parseFlowSequence(s string, depth int) []any {
+	var out []any
+	if depth > maxParseDepth {
+		return out // partial (nil) value; see parseYAMLInline's cap note
+	}
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "[")
 	s = strings.TrimSuffix(s, "]")
-	var out []any
 	for _, part := range splitTopLevel(s, ',') {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
-		out = append(out, parseYAMLInline(part))
+		out = append(out, parseYAMLInline(part, depth+1))
 	}
 	return out
 }
