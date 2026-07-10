@@ -42,6 +42,20 @@ jobs:
       - name: Install front-end dependencies
         working-directory: ui-desktop
         run: npm ci
+      - name: Resolve the release channel from the tag
+        id: channel
+        shell: bash
+        run: |
+          # A prerelease tag carries a SemVer prerelease suffix (v1.2.3-beta.1);
+          # a stable tag does not (v1.2.3). Marking the GitHub release prerelease
+          # keeps it out of /releases/latest/, so the stable updater endpoint
+          # (latest.json, served from the newest full release) is untouched until
+          # the next stable tag — this is what protects installed stable clients.
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Build, sign, and publish the release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -53,7 +67,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: Tenebra ${{ github.ref_name }}
           releaseDraft: false
-          prerelease: false
+          prerelease: ${{ steps.channel.outputs.prerelease }}
           includeUpdaterJson: true
           # --locked makes a stale Cargo.lock fail the build instead of silently
           # resolving new versions, so a signed release always matches the lockfile.
@@ -65,3 +79,12 @@ jobs:
             install (More info -> Run anyway). From this version on, updates are
             delivered in-app (Settings -> Updates) and verified against the
             project's signing key before they install.
+      - name: Publish the beta channel manifest
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # tauri-action published latest.json on this release; mirror it to
+        # beta.json on whichever release backs /releases/latest/download/ so beta
+        # clients pick up this build (a prerelease, or a newer stable) while
+        # stable clients keep reading latest.json untouched.
+        run: node scripts/publish-beta-manifest.mjs "$GITHUB_REF_NAME" "${{ steps.channel.outputs.prerelease }}"
