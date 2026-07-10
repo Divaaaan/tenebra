@@ -11,6 +11,43 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-07-11
+
+### Security
+
+- **IPv6 no longer bypasses the tunnel.** The tun interface carried only an IPv4
+  address, so on a dual-stack host `auto_route` never claimed the IPv6 default
+  route and native IPv6 traffic egressed around the VPN. The tun now also carries
+  a private IPv6 (ULA) address, so IPv6 is routed into the tunnel and follows the
+  same rules as IPv4; on a single-stack host the extra address is inert.
+- **Stored credentials are no longer served over the local control channel.**
+  `list_profiles` returned the full profile — the subscription URL with its
+  embedded token plus every node's UUID/password/keys — to any local client of
+  the pipe/socket, defeating the root-only permissions on the data directory. The
+  response is now a redacted view carrying only what the UI renders (id, name,
+  host, port, protocol); the connect path still uses the full stored profile
+  internally.
+- **Subscription fetch is hardened against SSRF and cleartext leaks.** Non-HTTP(S)
+  schemes are rejected, plain `http://` is warned about (host only, never the
+  token), and the fetch — across every redirect hop and DoH-resolved address —
+  refuses loopback, link-local/metadata (169.254.169.254), and private ranges.
+  An opt-out env var covers operators who genuinely self-host on a private range.
+- **A malicious Clash subscription can no longer crash the daemon.** The
+  hand-written YAML decoder recursed without a depth limit, so a crafted body
+  could overflow the stack. Recursion is now capped and the top-level parse is
+  wrapped so a decoder fault degrades to a skipped import instead of taking down
+  the process.
+- **Insecure nodes are surfaced in the UI.** A node whose subscription sets
+  `skip-cert-verify` (disabling TLS certificate verification) now shows a warning
+  badge and a per-profile summary, so the trade-off is visible rather than silent.
+
+### Fixed
+
+- **Node latency (ping) is measured outside the tunnel.** While connected, the
+  per-node ping dialed through the tunnel and reported ~1-2 ms for every node; it
+  now binds to the physical default interface so the readout reflects real
+  round-trip time to each server.
+
 ## [0.3.4] - 2026-07-11
 
 ### Fixed
@@ -304,7 +341,8 @@ Initial tagged release.
   first run. Updates delivered in-app are minisign-verified against the bundled
   key; only the initial download is unsigned.
 
-[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.3.5...HEAD
+[0.3.5]: https://github.com/Divaaaan/tenebra/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/Divaaaan/tenebra/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/Divaaaan/tenebra/compare/v0.3.0...v0.3.3
 [0.3.0]: https://github.com/Divaaaan/tenebra/compare/v0.2.0...v0.3.0
