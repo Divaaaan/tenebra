@@ -11,6 +11,17 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-07-11
+
+### Fixed
+
+- **macOS release build.** The 0.3.3 release could not bundle the macOS app —
+  the universal build expects the core sidecar as two per-arch binaries plus a
+  lipo'd universal, and the release job shipped only the universal one. Both
+  platforms now build and publish together, so the macOS app and everything it
+  brought in 0.3.3 reaches users with this release. (The 0.3.3 Windows build was
+  unaffected and shipped normally.)
+
 ## [0.3.3] - 2026-07-11
 
 ### Added
@@ -293,7 +304,8 @@ Initial tagged release.
   first run. Updates delivered in-app are minisign-verified against the bundled
   key; only the initial download is unsigned.
 
-[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/Divaaaan/tenebra/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/Divaaaan/tenebra/compare/v0.3.0...v0.3.3
 [0.3.0]: https://github.com/Divaaaan/tenebra/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Divaaaan/tenebra/compare/v0.1.1...v0.2.0
