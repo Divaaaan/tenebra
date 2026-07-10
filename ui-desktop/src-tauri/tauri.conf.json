@@ -35,7 +35,8 @@
       "resources/sing-box.exe",
       "resources/wintun.dll",
       "resources/geoip-ru.srs",
-      "resources/geosite-ru.srs"
+      "resources/geosite-ru.srs",
+      "../../THIRD-PARTY-NOTICES.md"
     ],
     "icon": [
       "icons/32x32.png",
