@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchDaemon for tenebra-core, the privileged background service that owns the
+  utun tunnel on macOS. It is installed to /Library/LaunchDaemons and loaded with
+  launchctl bootstrap by scripts/macos/install-daemon.sh. This is the
+  hand-installed dev/personal path; the signed production build registers an
+  equivalent daemon through SMAppService instead. See docs/porting/macos.md.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.tenebra.core</string>
+
+  <!--
+    tenebra-core lives under /Library/PrivilegedHelperTools, Apple's canonical
+    home for privileged helper tools (the location SMJobBless and SMAppService
+    install into), so a privileged Tenebra binary sits where the platform expects
+    one rather than somewhere ad hoc. The socket flag makes the core serve the
+    control protocol on its unix socket, which an unprivileged GUI attaches to.
+  -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Library/PrivilegedHelperTools/Tenebra/tenebra-core</string>
+    <string>--socket</string>
+  </array>
+
+  <!--
+    Point the core at the sing-box installed beside it. This also drives local
+    rule-set loading: the core looks for the .srs rule-sets in the directory of
+    TENEBRA_SINGBOX, and with it unset they fall back to a slow remote download at
+    connect time (see ruleSetDir in cmd/tenebra-core).
+  -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TENEBRA_SINGBOX</key>
+    <string>/Library/PrivilegedHelperTools/Tenebra/sing-box</string>
+  </dict>
+
+  <!--
+    Bring the service up with the machine, before any user logs in, so the tunnel
+    (and any armed autoconnect) can be established ahead of a GUI attaching.
+  -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!--
+    Relaunch the core whenever it exits. This is the process-supervision backstop
+    beneath the kill switch: the core already relaunches the sing-box tunnel
+    process on its own (budgeted) when that dies, but nothing inside the core can
+    put the core back if the core process itself crashes. launchd outlives both
+    and does exactly that, re-establishing the tunnel and its strict_route filter
+    on the next start. launchd throttles respawns (a 10 second floor between
+    launches) so a hard-failing binary cannot spin.
+  -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <!--
+    Both streams go to one service log. install-daemon.sh creates
+    /Library/Logs/Tenebra first because launchd does not create the parent
+    directory of a log path.
+  -->
+  <key>StandardOutPath</key>
+  <string>/Library/Logs/Tenebra/service.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Library/Logs/Tenebra/service.log</string>
+</dict>
+</plist>
