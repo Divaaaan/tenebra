@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { checkForUpdate, installUpdate } from "./updates";
 import {
@@ -7,15 +7,26 @@ import {
   type Update,
 } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { invoke } from "@tauri-apps/api/core";
 
 // installUpdate ends by restarting the app through the process plugin, and
-// checkForUpdate asks the updater plugin whether a signed release exists. Stub
-// both so the unit under test never touches a real Tauri host.
+// checkForUpdate asks the updater plugin (stable) or the backend command (beta)
+// whether a signed release exists. Stub all three so the unit under test never
+// touches a real Tauri host. Update is stubbed as a light class so the beta path
+// can reconstitute a handle from backend metadata without the real plugin.
 vi.mock("@tauri-apps/plugin-updater", () => ({
   check: vi.fn(),
+  Update: class {
+    constructor(metadata: Record<string, unknown>) {
+      Object.assign(this, metadata);
+    }
+  },
 }));
 vi.mock("@tauri-apps/plugin-process", () => ({
   relaunch: vi.fn(),
+}));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
 }));
 
 // A stand-in for the plugin's Update handle. downloadAndInstall replays a
@@ -134,5 +145,51 @@ describe("checkForUpdate", () => {
     vi.mocked(check).mockResolvedValue(null);
 
     await expect(checkForUpdate()).resolves.toBeNull();
+  });
+});
+
+describe("checkForUpdate channel resolution", () => {
+  beforeEach(() => {
+    // The channel lives in localStorage; start each case on the default.
+    localStorage.clear();
+  });
+
+  it("uses the plugin's own check for the stable channel by default", async () => {
+    const update = { version: "1.0.0" } as unknown as Update;
+    vi.mocked(check).mockResolvedValue(update);
+
+    await expect(checkForUpdate()).resolves.toBe(update);
+    // Stable reads the endpoint baked into tauri.conf.json, so it never calls
+    // the channel command — the path installed clients have shipped since 0.3.0.
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("routes the beta channel through the backend command", async () => {
+    localStorage.setItem("tenebra.updateChannel", "beta");
+    vi.mocked(invoke).mockResolvedValue({
+      rid: 7,
+      currentVersion: "1.0.0",
+      version: "1.1.0-beta.1",
+      rawJson: {},
+    });
+
+    const result = await checkForUpdate();
+
+    // Beta asks the backend to point the updater at beta.json for this check.
+    expect(invoke).toHaveBeenCalledWith("check_update_for_channel", {
+      channel: "beta",
+    });
+    // The plugin's fixed-endpoint check() is skipped on beta.
+    expect(check).not.toHaveBeenCalled();
+    // The metadata is rebuilt into an Update handle carrying the found version.
+    expect(result).toMatchObject({ version: "1.1.0-beta.1", rid: 7 });
+  });
+
+  it("reports up to date on beta when the backend finds nothing newer", async () => {
+    localStorage.setItem("tenebra.updateChannel", "beta");
+    vi.mocked(invoke).mockResolvedValue(null);
+
+    await expect(checkForUpdate()).resolves.toBeNull();
+    expect(check).not.toHaveBeenCalled();
   });
 });
