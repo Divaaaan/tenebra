@@ -73,20 +73,127 @@ func dnsServer(tag, addr, detour string) map[string]any {
 	return s
 }
 
-// dnsRules routes RU-domain lookups to the direct resolver in smart mode. In
-// global and direct modes everything falls through to "final", so no per-domain
-// rules are needed.
+// dnsRules builds the ordered "dns".rules. Ad/tracker blocking comes first so a
+// blocked lookup is sinkholed in every mode, before the smart-mode RU rule can
+// route it. Smart mode then resolves RU-domain lookups through the direct
+// resolver so RU traffic kept direct also resolves direct. In global and direct
+// modes (with ad-blocking off) everything falls through to "final", so the list
+// is empty.
 func (o Options) dnsRules() []map[string]any {
-	if o.Mode != ModeSmart {
-		return []map[string]any{}
+	rules := []map[string]any{}
+	if o.adBlockActive() {
+		rules = append(rules, dnsRejectRule(ruleSetGeositeAds))
 	}
-	return []map[string]any{
-		{
+	if o.Mode == ModeSmart {
+		rules = append(rules, map[string]any{
 			"rule_set": []string{ruleSetGeositeRU},
 			"action":   "route",
 			"server":   dnsDirectTag,
-		},
+		})
 	}
+	return rules
+}
+
+// adBlockActive reports whether ad/tracker DNS blocking should be emitted. It
+// requires both the opt-in toggle and a local rule-set directory: the blocklist
+// ships ONLY as a bundled local .srs (never a remote rule-set, which would block
+// sing-box at startup), so without RuleSetDir there is nothing to match and the
+// feature stays inert rather than referencing an undefined rule-set — which would
+// FATAL the config. The desktop app always sets RuleSetDir in a real install, so
+// this gate only makes ad-blocking a no-op in dev builds missing the bundled file.
+func (o Options) adBlockActive() bool {
+	return o.AdBlock && o.RuleSetDir != ""
+}
+
+// dnsRejectRule sinkholes every lookup matching the named domain rule-set. The
+// reject action replies REFUSED (method "default"), so a blocked name fails fast
+// instead of resolving; no_drop keeps it REFUSED under load rather than letting
+// sing-box's built-in rate-limit silently switch to a slow, timing-out drop after
+// 50 rejects in 30s — an ad-heavy page trips that easily.
+func dnsRejectRule(ruleSet string) map[string]any {
+	return map[string]any{
+		"rule_set": []string{ruleSet},
+		"action":   "reject",
+		"method":   "default",
+		"no_drop":  true,
+	}
+}
+
+// ValidDNSServer reports whether addr is a resolver address DNS() can turn into a
+// working typed server. Accepted forms mirror dnsServer's parser: an optional
+// scheme (tls, https, quic, h3, tcp, udp) then a host, an optional port, and —
+// for DoH only — a path. The empty string is valid: Normalize substitutes the
+// default resolver for it. Anything else (an unknown scheme, an empty or
+// malformed host, a non-numeric or out-of-range port, a path on a non-DoH scheme)
+// is rejected so the daemon can refuse garbage before it ever reaches sing-box.
+func ValidDNSServer(addr string) bool {
+	if addr == "" {
+		return true // Normalize fills the default
+	}
+	scheme, rest := "udp", addr
+	if i := strings.Index(addr, "://"); i >= 0 {
+		scheme, rest = addr[:i], addr[i+3:]
+	}
+	switch scheme {
+	case "https", "h3", "tls", "quic", "tcp", "udp":
+	default:
+		return false
+	}
+	host := rest
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		if scheme != "https" && scheme != "h3" {
+			return false // a path is only meaningful for DoH (https/h3)
+		}
+		host = rest[:i]
+	}
+	// Split an optional port; when present it must be numeric and in range. A bare
+	// IPv6 literal without a port trips SplitHostPort ("too many colons"), which is
+	// fine — host is then validated whole below.
+	if h, p, err := net.SplitHostPort(host); err == nil {
+		n, convErr := strconv.Atoi(p)
+		if convErr != nil || n < 1 || n > 65535 {
+			return false
+		}
+		host = h
+	}
+	return validDNSHost(host)
+}
+
+// validDNSHost reports whether h is a plausible resolver host: an IP literal (v4,
+// v6, or bracketed v6) or a DNS hostname. It rejects obvious garbage — empty,
+// whitespace, illegal characters, over-long labels — without being a full RFC
+// validator; sing-box makes the final call, this just keeps nonsense out of the
+// config.
+func validDNSHost(h string) bool {
+	if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") {
+		h = h[1 : len(h)-1]
+	}
+	if h == "" {
+		return false
+	}
+	if net.ParseIP(h) != nil {
+		return true
+	}
+	if len(h) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(h, ".") {
+		if label == "" || len(label) > 63 {
+			return false
+		}
+		if label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			c := label[i]
+			ok := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' ||
+				c >= '0' && c <= '9' || c == '-' || c == '_'
+			if !ok {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // dnsFinal is the fallback DNS server for lookups no rule matched. It must track

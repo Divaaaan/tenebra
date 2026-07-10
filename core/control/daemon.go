@@ -175,6 +175,11 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 			State:    StateIdle,
 			Routing:  string(routing.ModeSmart),
 			TunStack: singbox.StackSystem,
+			// Report the effective resolvers from the moment the daemon exists, so a
+			// status before SetSettings still lets the UI prefill the custom-DNS
+			// inputs. These match the normalized routing defaults above.
+			DNSRemote: routing.DefaultDNSRemote,
+			DNSDirect: routing.DefaultDNSDirect,
 		},
 		lastGood: fallback.NewMemLastGood(),
 		now:      time.Now,
@@ -227,6 +232,11 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	d.routing.SplitMode = mode
 	d.routing.SplitApps = apps
 	d.routing.KillSwitch = ps.KillSwitch
+	d.routing.AdBlock = ps.AdBlock
+	// Empty resolvers (absent in an old file, or never customized) are left for
+	// Normalize to fill with the defaults.
+	d.routing.DNSRemote = ps.DNSRemote
+	d.routing.DNSDirect = ps.DNSDirect
 	d.routing = d.routing.Normalize()
 	// A stack value from a corrupt or hand-edited file must not reach sing-box;
 	// anything unknown keeps the default.
@@ -282,6 +292,9 @@ func (d *Daemon) settingsLocked() persistedSettings {
 		KillSwitch:  d.routing.KillSwitch,
 		TunStack:    d.tun.Stack,
 		Autoconnect: d.autoconnect,
+		AdBlock:     d.routing.AdBlock,
+		DNSRemote:   d.routing.DNSRemote,
+		DNSDirect:   d.routing.DNSDirect,
 		LastProfile: d.lastProfile,
 		LastNode:    d.lastNode,
 	}
@@ -323,6 +336,8 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleSetTun(req)
 	case CmdSetAutoconnect:
 		return d.handleSetAutoconnect(req)
+	case CmdSetDNS:
+		return d.handleSetDNS(req)
 	case CmdLeakCheck:
 		return d.handleLeakCheck(ctx, req)
 	default:
@@ -754,11 +769,63 @@ func (d *Daemon) handleSetAutoconnect(req Request) Response {
 	return resp
 }
 
+// handleSetDNS records the DNS preferences: the ad/tracker-block toggle and the
+// two custom resolvers. Like the kill switch it applies to a live tunnel in place
+// via reapplyLive — all three feed the generated dns block, so "apply now" means a
+// hot-swap on the same node rather than waiting for the next connect. A resolver
+// that fails validation rejects the whole command (nothing is recorded) so a typo
+// can't half-apply or reach sing-box; an empty resolver is accepted and Normalize
+// substitutes the default. The normalized choice is persisted so it survives a
+// restart, and reflected back so the UI stays in sync.
+func (d *Daemon) handleSetDNS(req Request) Response {
+	if !routing.ValidDNSServer(req.DNSRemote) {
+		return newError(req.ID, fmt.Sprintf("set_dns: invalid remote resolver %q", req.DNSRemote))
+	}
+	if !routing.ValidDNSServer(req.DNSDirect) {
+		return newError(req.ID, fmt.Sprintf("set_dns: invalid direct resolver %q", req.DNSDirect))
+	}
+
+	d.mu.Lock()
+	// d.routing is always kept normalized, so "before" already holds the effective
+	// (default-substituted) resolvers to compare the new choice against.
+	before := d.routing
+	d.routing.AdBlock = req.AdBlock
+	d.routing.DNSRemote = req.DNSRemote
+	d.routing.DNSDirect = req.DNSDirect
+	// Normalize turns an empty resolver back into the default, so the recorded and
+	// reported values are always the effective ones — and so clearing an
+	// already-default field to "" compares equal below and is correctly a no-op.
+	d.routing = d.routing.Normalize()
+	changed := dnsPrefsDiffer(before, d.routing)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect)
+	d.mu.Unlock()
+
+	d.persistSettings()
+	if changed {
+		d.reapplyLive()
+	}
+
+	resp, err := newResult(req.ID, d.snapshotState())
+	if err != nil {
+		return newError(req.ID, err.Error())
+	}
+	return resp
+}
+
+// dnsPrefsDiffer reports whether the DNS-affecting preferences (ad-block and the
+// two resolvers) differ between two option snapshots. It gates the live hot-swap
+// so only a real change restarts sing-box.
+func dnsPrefsDiffer(a, b routing.Options) bool {
+	return a.AdBlock != b.AdBlock || a.DNSRemote != b.DNSRemote || a.DNSDirect != b.DNSDirect
+}
+
 // applySettingsToState mirrors the daemon-wide preferences onto a State: the
-// normalized split config, the kill switch, the tun stack, and the autoconnect
-// preference. Split off collapses to empty fields so the wire form omits them,
-// keeping a no-op split invisible to the UI; the app slice is copied so the
-// State never aliases the daemon's live routing options.
+// normalized split config, the kill switch, the tun stack, the autoconnect
+// preference, and the DNS choices (ad-block plus the two resolvers). Split off
+// collapses to empty fields so the wire form omits them, keeping a no-op split
+// invisible to the UI; the app slice is copied so the State never aliases the
+// daemon's live routing options. The resolvers are always the normalized
+// (effective) values, so the UI can prefill its custom-DNS inputs.
 func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, autoconnect bool) {
 	if ro.SplitMode == routing.SplitOff || len(ro.SplitApps) == 0 {
 		s.Split = ""
@@ -770,6 +837,9 @@ func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, 
 	s.KillSwitch = ro.KillSwitch
 	s.TunStack = tun.Stack
 	s.Autoconnect = autoconnect
+	s.AdBlock = ro.AdBlock
+	s.DNSRemote = ro.DNSRemote
+	s.DNSDirect = ro.DNSDirect
 }
 
 // handlePing measures dial latency to every server in a profile and returns the
