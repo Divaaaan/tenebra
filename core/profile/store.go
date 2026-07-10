@@ -73,6 +73,14 @@ func (s *Store) load() error {
 // path is the absolute path to the backing file.
 func (s *Store) path() string { return filepath.Join(s.dir, storeFile) }
 
+// Dir returns the directory the store persists to. It is a writable, per-run
+// location the daemon reuses for run-state that must live beside the profiles —
+// notably sing-box's cache file, which otherwise defaults to the process
+// working directory. That default is fine for the GUI sidecar but fatal for the
+// root launchd daemon, whose working directory is "/" (read-only): sing-box
+// aborts at startup with "open cache.db: read-only file system".
+func (s *Store) Dir() string { return s.dir }
+
 // List returns a copy of all stored profiles. Mutating the result does not
 // affect the store.
 func (s *Store) List() []Profile {
