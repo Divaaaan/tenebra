@@ -39,22 +39,38 @@ func ServeListener(ctx context.Context, d *Daemon, l net.Listener) error {
 	var cur *session
 	for {
 		conn, err := l.Accept()
-		// Whatever Accept returned, the old session's turn is over: a new client
-		// displaces it, and a shutdown takes it along. Stopping it closes its
-		// stream and waits the serving goroutine out, but leaves the daemon
-		// untouched.
-		if cur != nil {
-			cur.stop()
-			cur = nil
-		}
 		if err != nil {
-			// Shutting down, or the listener itself failed. Either way the
-			// process is about to exit, so the tunnel must not outlive it.
+			// Shutting down, or the listener itself failed. The current session's
+			// turn is over and the process is about to exit, so tear it down and
+			// take the tunnel with it.
+			if cur != nil {
+				cur.stop()
+				cur = nil
+			}
 			_ = d.Close()
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			return err
+		}
+		// Authenticate the peer before it can displace the live session or reach
+		// the daemon. The channel is world-reachable by design, so a local user
+		// who isn't the one the GUI runs as (see peerAllowed) must be turned away
+		// here — and, crucially, turned away WITHOUT stopping the current
+		// authorized session, so an unauthorized connect can't even be used to
+		// kick the real GUI off. An authorized client still displaces the old one
+		// with the usual takeover semantics.
+		if !d.authorizePeer(conn) {
+			d.emitLog(LogWarn, "control: rejecting unauthorized local peer")
+			_ = conn.Close()
+			continue
+		}
+		// A new authorized client displaces the current one: stopping it closes
+		// its stream and waits the serving goroutine out, but leaves the daemon
+		// (and any live tunnel) untouched.
+		if cur != nil {
+			cur.stop()
+			cur = nil
 		}
 		cur = startSession(ctx, d, conn)
 	}
