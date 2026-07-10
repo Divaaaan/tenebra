@@ -1,11 +1,16 @@
-# Tenebra
+<div align="center">
+
+<img src="docs/assets/hero.png" alt="Tenebra — sing-box VPN client" width="100%">
 
 [![CI](https://github.com/Divaaaan/tenebra/actions/workflows/ci.yml/badge.svg)](https://github.com/Divaaaan/tenebra/actions/workflows/ci.yml)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-ff3d00.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Latest release](https://img.shields.io/github/v/release/Divaaaan/tenebra?color=ff3d00&label=release)](https://github.com/Divaaaan/tenebra/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Windows-0e0e0e.svg)](#project-status)
 
-A cross-platform VPN client built on [sing-box](https://github.com/SagerNet/sing-box).
-Desktop first (Windows), with a shared Go core meant to extend to macOS, Linux,
-Android and iOS.
+**A cross-platform VPN client built on [sing-box](https://github.com/SagerNet/sing-box).**<br>
+Desktop first (Windows), with a shared Go core meant to extend to macOS, Linux, Android and iOS.
+
+</div>
 
 > **Project status — early development.** The desktop client is the current
 > focus. The core, the control protocol and the UI are in good shape and well
@@ -63,6 +68,17 @@ Everything below is implemented in this repo today (the UI features are desktop)
 The kill-switch (drop proxied traffic instead of leaking when the tunnel drops) is a
 UI toggle — best-effort by design, with the exact guarantee described in the
 [changelog](CHANGELOG.md); LAN bypass is a core routing option.
+
+## Getting a server
+
+Tenebra is a **client** — it ships no servers and hard-codes nothing. You bring
+your own endpoint and import it as a subscription or a share link. Two ways to
+get one:
+
+- **Run your own.** Any [sing-box](https://github.com/SagerNet/sing-box) or Xray
+  server works; point Tenebra at its subscription URL.
+- **Use a provider.** Any service that hands you a subscription or a share link
+  will do. I run one at **[vpsxd.pro](https://vpsxd.pro)**.
 
 ## Project status
 
@@ -156,4 +172,6 @@ your patience.
 
 ## License
 
-GPLv3 — see [LICENSE](LICENSE). sing-box is GPLv3, so Tenebra is too.
+GPLv3 — see [LICENSE](LICENSE). sing-box is GPLv3, so Tenebra is too. Bundled
+third-party components and their licenses are listed in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
