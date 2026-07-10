@@ -5,9 +5,11 @@
 //! `lib.rs` never has to know which one is wired in. [`wire`] holds the
 //! transport-agnostic protocol client; [`sidecar`] runs it over a spawned
 //! core's stdin/stdout; [`pipe`] (Windows) runs it over the named pipe of a
-//! core that outlives the GUI — the service or `tenebra-core --pipe`; [`mock`]
-//! is an in-process fake for UI work without the core. `make_backend` in
-//! `lib.rs` picks one at startup.
+//! core that outlives the GUI — the service or `tenebra-core --pipe`; [`unix`]
+//! (macOS) runs it over the unix domain socket of a root LaunchDaemon that
+//! likewise outlives the GUI — `tenebra-core --socket`; [`mock`] is an
+//! in-process fake for UI work without the core. `make_backend` in `lib.rs`
+//! picks one at startup.
 //!
 //! The structs below mirror the protocol's `State`, `Node`, `Profile` and
 //! `PingResult` shapes. They serialize to exactly the JSON the front-end types
@@ -19,6 +21,8 @@ pub mod pipe;
 pub mod sidecar;
 #[cfg(test)]
 pub mod testutil;
+#[cfg(target_os = "macos")]
+pub mod unix;
 pub mod wire;
 
 use serde::{Deserialize, Serialize};
