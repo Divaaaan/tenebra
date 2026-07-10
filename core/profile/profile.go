@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -26,6 +27,25 @@ const (
 type Server struct {
 	ID string `json:"id"`
 	model.Node
+}
+
+// MarshalJSON flattens the embedded node and surfaces the TLS "insecure"
+// (skip-cert-verify) bit as a top-level boolean. The core faithfully passes a
+// subscription's skip-cert-verify through to sing-box's insecure:true, which
+// silently disables certificate verification on that node; a flat flag lets the
+// UI warn about it without walking the nested tls object (which the transport's
+// Rust/TS mirrors deliberately don't carry). Derived on the fly rather than
+// stored, so it stays correct across persistence round-trips. Omitted when
+// verification is on, so a secure profile's JSON is byte-for-byte unchanged.
+func (s Server) MarshalJSON() ([]byte, error) {
+	type alias Server // sheds this method, keeps the embedded-node flattening
+	return json.Marshal(struct {
+		alias
+		Insecure bool `json:"insecure,omitempty"`
+	}{
+		alias:    alias(s),
+		Insecure: s.TLS != nil && s.TLS.Insecure,
+	})
 }
 
 // Profile groups servers from one source. The JSON layout matches the Profile

@@ -59,6 +59,12 @@ export interface Strings {
     down: string;
     addSub: string;
     noNodes: string;
+    /** Compact badge on a node whose TLS certificate is not verified. */
+    insecureBadge: string;
+    /** Full tooltip / screen-reader label for the insecure badge. */
+    insecureTitle: string;
+    /** Per-profile summary; "{n}"/"{m}" interpolated (insecure / total nodes). */
+    insecureSummary: string;
   };
 
   /** Bottom bar: routing segmented control, kill-switch, quick actions. */
@@ -330,6 +336,10 @@ const en: Strings = {
     down: "down",
     addSub: "+ add",
     noNodes: "this subscription has no nodes",
+    insecureBadge: "no-cert",
+    insecureTitle: "TLS verification off — on-path interception possible",
+    insecureSummary:
+      "{n} of {m} nodes skip TLS verification — on-path interception possible",
   },
   bottom: {
     routing: "Routing",
@@ -577,6 +587,10 @@ const ru: Strings = {
     down: "недост.",
     addSub: "+ добавить",
     noNodes: "в этой подписке нет узлов",
+    insecureBadge: "без серт.",
+    insecureTitle: "Проверка TLS отключена — возможен перехват трафика",
+    insecureSummary:
+      "{n} из {m} узлов без проверки TLS — возможен перехват трафика",
   },
   bottom: {
     routing: "Маршрут",

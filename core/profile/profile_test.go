@@ -113,6 +113,49 @@ func TestProfileOmitemptyURL(t *testing.T) {
 	}
 }
 
+func TestServerInsecureFlagSurfaced(t *testing.T) {
+	// A node whose subscription carried skip-cert-verify=true ends up with
+	// TLS.Insecure set; the flattened control-protocol JSON must expose it as a
+	// top-level "insecure": true so the UI can flag it.
+	insecure := model.Node{
+		Protocol: model.Hysteria2, Name: "Sketchy", Server: "203.0.113.9", Port: 8443,
+		Password: "pw", TLS: &model.TLS{Enabled: true, Insecure: true},
+	}
+	data, err := json.Marshal(Server{ID: "sid", Node: insecure})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got["insecure"] != true {
+		t.Errorf("insecure node should marshal insecure:true, got %s", data)
+	}
+
+	// A node with verification on omits the flag entirely (omitempty), so a
+	// secure profile's JSON is unchanged.
+	secure := model.Node{
+		Protocol: model.VLESS, Name: "Clean", Server: "203.0.113.10", Port: 443, UUID: "u",
+		TLS: &model.TLS{Enabled: true},
+	}
+	data, err = json.Marshal(Server{ID: "sid2", Node: secure})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got = map[string]any{}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := got["insecure"]; ok {
+		t.Errorf("secure node should omit insecure key, got %s", data)
+	}
+	// The embedded node must still flatten (no nested "Node" object).
+	if _, nested := got["Node"]; nested {
+		t.Errorf("embedded Node was not flattened: %s", data)
+	}
+}
+
 func TestAssignServerIDsNilAndEmpty(t *testing.T) {
 	if got := assignServerIDs(nil); got != nil {
 		t.Errorf("assignServerIDs(nil) = %v, want nil", got)

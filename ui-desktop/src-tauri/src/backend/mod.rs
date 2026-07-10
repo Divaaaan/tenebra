@@ -140,6 +140,13 @@ pub struct Node {
     pub protocol: Protocol,
     pub server: String,
     pub port: u16,
+    /// TLS certificate verification is off on this node (the subscription's
+    /// skip-cert-verify, carried through to sing-box's `insecure:true`). The
+    /// core omits the field when verification is on, so `#[serde(default)]`
+    /// treats a missing field as `false`. Passed through to the webview so the
+    /// UI can flag the on-path-interception trade-off.
+    #[serde(default)]
+    pub insecure: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -495,6 +502,7 @@ mod tests {
             protocol: Protocol::Vless,
             server: "198.51.100.10".into(),
             port: 443,
+            insecure: false,
         }
     }
 
@@ -690,5 +698,24 @@ mod tests {
         let node: Node = from_value(value).unwrap();
         assert_eq!(node.id, "n1");
         assert_eq!(node.protocol, Protocol::Vless);
+        // A node without the insecure key defaults to verification-on.
+        assert!(!node.insecure);
+    }
+
+    #[test]
+    fn insecure_node_flag_round_trips() {
+        // The core marks skip-cert-verify nodes with insecure:true; it must
+        // survive deserialize -> re-serialize so the webview sees it.
+        let node: Node = from_value(json!({
+            "id": "n2",
+            "name": "Sketchy",
+            "protocol": "hysteria2",
+            "server": "198.51.100.11",
+            "port": 8443,
+            "insecure": true,
+        }))
+        .unwrap();
+        assert!(node.insecure);
+        assert_eq!(to_value(&node).unwrap()["insecure"], json!(true));
     }
 }

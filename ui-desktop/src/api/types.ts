@@ -60,6 +60,12 @@ export interface Node {
   protocol: NodeProtocol;
   server: string;
   port: number;
+  /**
+   * TLS certificate verification is off on this node (the subscription's
+   * skip-cert-verify, passed through to sing-box's insecure:true). Omitted by
+   * the core when verification is on, so a missing flag means secure.
+   */
+  insecure?: boolean;
 }
 
 export interface Profile {

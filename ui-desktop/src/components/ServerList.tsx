@@ -18,6 +18,8 @@ export interface ServerRow {
   rttMs: number | null;
   /** Probe came back failed. */
   dead: boolean;
+  /** TLS certificate verification is off (skip-cert-verify) on this node. */
+  insecure: boolean;
 }
 
 interface ServerListProps {
@@ -85,6 +87,10 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
       );
     }
     const online = rows.filter((r) => !r.dead).length;
+    const insecureCount = rows.filter((r) => r.insecure).length;
+    const insecureSummary = t.servers.insecureSummary
+      .replace("{n}", String(insecureCount))
+      .replace("{m}", String(rows.length));
 
     return (
       <div className="pane srv">
@@ -124,6 +130,15 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
               {t.servers.showing} <b>{visible.length}</b>
             </div>
           </div>
+
+          {insecureCount > 0 && (
+            <div className="srv-insecure-summary" role="alert">
+              <span className="srv-insecure-mark" aria-hidden="true">
+                !
+              </span>
+              {insecureSummary}
+            </div>
+          )}
 
           <div className="srv-filters" role="group">
             {REGION_CHIPS.map(({ key, labelKey }) => (
@@ -184,8 +199,17 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
                 >
                   <div className="srv-name">
                     <span className="srv-node">
-                      {s.name}
+                      <span className="srv-node-code">{s.name}</span>
                       {active && <span className="srv-active-dot" aria-hidden="true" />}
+                      {s.insecure && (
+                        <span
+                          className="srv-insecure"
+                          title={t.servers.insecureTitle}
+                          aria-label={t.servers.insecureTitle}
+                        >
+                          {t.servers.insecureBadge}
+                        </span>
+                      )}
                     </span>
                     {s.city && <span className="srv-city">{s.city}</span>}
                   </div>

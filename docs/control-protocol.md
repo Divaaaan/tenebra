@@ -430,6 +430,7 @@ type Node = {
   protocol: "vless" | "hysteria2" | "amneziawg" | "shadowsocks" | "trojan" | "vmess";
   server: string;
   port: number;
+  insecure?: boolean;    // TLS cert verification is off (skip-cert-verify); omitted when on
 };
 
 type Profile = {
