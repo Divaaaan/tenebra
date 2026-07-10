@@ -944,16 +944,33 @@ func (d *Daemon) handlePing(ctx context.Context, req Request) Response {
 	return resp
 }
 
-// pingServers TCP-dials each server's host:port concurrently and reports the
-// dial latency. It is best-effort: an unreachable server yields ok=false with a
-// zero RTT rather than failing the whole call. Results preserve input order.
+// pingFanout caps how many per-node latency probes pingServers runs at once. The
+// server list comes straight from a profile, and a profile can be an
+// attacker-supplied subscription carrying thousands of nodes; without a bound the
+// privileged daemon would fan out one concurrent dial per node, exhausting file
+// descriptors/sockets from the root process on a single crafted ping. Sixteen
+// keeps the probe effectively as fast as unbounded for any realistic profile
+// (dials dominated by the network, not the pool) while capping a hostile one.
+const pingFanout = 16
+
+// pingServers TCP-dials each server's host:port and reports the dial latency,
+// running at most pingFanout probes concurrently (see pingFanout). It is
+// best-effort: an unreachable server yields ok=false with a zero RTT rather than
+// failing the whole call. Results preserve input order — each goroutine writes
+// its own index, so the worker pool never reorders them.
 func (d *Daemon) pingServers(ctx context.Context, servers []profile.Server) []PingResult {
 	results := make([]PingResult, len(servers))
+	// A buffered channel of pingFanout tokens is the semaphore: acquiring before
+	// the spawn (and blocking the loop when the pool is full) is what bounds the
+	// number of in-flight dials, rather than spawning every goroutine up front.
+	sem := make(chan struct{}, pingFanout)
 	var wg sync.WaitGroup
 	for i, srv := range servers {
 		wg.Add(1)
+		sem <- struct{}{}
 		go func(i int, srv profile.Server) {
 			defer wg.Done()
+			defer func() { <-sem }()
 			results[i] = d.pingOne(ctx, srv)
 		}(i, srv)
 	}
