@@ -4,6 +4,7 @@
   "description": "Permissions the Tenebra window needs: its own commands plus the file picker for importing links.",
   "windows": ["main"],
   "comment": "shell:allow-open is intentionally NOT granted. It lets the webview ask the OS to open arbitrary URLs/paths, and node/profile names here come from untrusted subscriptions, so it would be an injection vector for a VPN client. The app has no genuine external-link need (the picker uses dialog:allow-open; the leak check runs through the core, not the OS opener). If an external link is ever required, grant shell:allow-open scoped to an explicit URL allowlist rather than unconditionally. shell:allow-spawn stays, tightly scoped to the tenebra-core sidecar.",
+  "shell-pin-comment": "The shell surface is pinned to spawning the one sidecar, and nothing else. `args` is forced to `false` so the webview cannot pass ANY argument to the sidecar — the process is launched only with its fixed native arg vector. This matters because the sidecar's runtime environment (TENEBRA_SINGBOX, TENEBRA_CONFIG_DIR, cwd) is set solely by native Rust in backend::sidecar::SidecarBackend::spawn, never sourced from the webview; keeping args empty removes the only spawn-time channel the webview could use to smuggle overrides in should a future Tauri broker ever honour webview-supplied env/cwd/argv. The other shell verbs are explicitly denied (deny wins over any grant) so an accidental future `allow-*` cannot re-open them: deny-execute and deny-open (no arbitrary command/opener), deny-kill and deny-stdin-write (the webview must not signal or feed the sidecar; the core is driven over its own protocol, not the shell plugin). set-env / set-cwd are not permissions this plugin exposes, so there is nothing to grant — they can only ever be reached through spawn args, which are pinned empty above.",
   "permissions": [
     "core:default",
     "dialog:allow-open",
@@ -16,7 +17,11 @@
     "process:allow-restart",
     {
       "identifier": "shell:allow-spawn",
-      "allow": [{ "name": "binaries/tenebra-core", "sidecar": true }]
-    }
+      "allow": [{ "name": "binaries/tenebra-core", "sidecar": true, "args": false }]
+    },
+    "shell:deny-execute",
+    "shell:deny-open",
+    "shell:deny-kill",
+    "shell:deny-stdin-write"
   ]
 }

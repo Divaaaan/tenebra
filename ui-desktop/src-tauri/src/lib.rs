@@ -164,8 +164,31 @@ fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
         }
     }
 
-    let program = backend::sidecar::SidecarBackend::default_program();
-    let singbox = singbox_path(app);
+    // Both the core and sing-box must resolve to an absolute, bundled path. If
+    // either can't be located we fail closed to the demo backend rather than let
+    // a bare name resolve from the current directory or PATH — a spawn against a
+    // planted `tenebra-core`/`sing-box` in an attacker-chosen CWD would otherwise
+    // run untrusted code with the app's privileges.
+    let program = match backend::sidecar::SidecarBackend::default_program() {
+        Ok(p) => p,
+        Err(e) => {
+            sink.log(
+                "error",
+                &format!("could not locate tenebra-core, using demo backend: {e}"),
+            );
+            return Arc::new(backend::mock::MockBackend::new(sink));
+        }
+    };
+    let singbox = match singbox_path(app) {
+        Ok(p) => p,
+        Err(e) => {
+            sink.log(
+                "error",
+                &format!("could not locate sing-box, using demo backend: {e}"),
+            );
+            return Arc::new(backend::mock::MockBackend::new(sink));
+        }
+    };
     match backend::sidecar::SidecarBackend::spawn(program, singbox, Arc::clone(&sink)) {
         Ok(backend) => Arc::new(backend),
         Err(e) => {
@@ -182,23 +205,43 @@ fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
 /// explicit env var wins (handy in development); otherwise we use the copy
 /// shipped beside the app as a bundle resource. The bundled binary is named per
 /// platform: `sing-box.exe` on Windows (with wintun.dll in the same directory
-/// for the tun device to load), plain `sing-box` on macOS.
-fn singbox_path(app: &AppHandle) -> std::path::PathBuf {
+/// for the tun device to load), plain `sing-box` elsewhere.
+///
+/// Fails closed: if the bundled resource can't be resolved to an absolute path
+/// that exists, we return an error instead of falling back to a bare name.
+/// A bare `sing-box` would be resolved by the core relative to its CWD (and
+/// then PATH), so a `sing-box` planted in an attacker-chosen working directory
+/// could be launched with the tunnel's privileges. `resolve` against the
+/// Resource base directory is always absolute and rooted at the app bundle, so
+/// it can't be redirected by the CWD; requiring it removes the planting vector.
+/// The `TENEBRA_SINGBOX` override is operator-supplied, not webview-reachable,
+/// so it stays trusted.
+fn singbox_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     if let Some(p) = std::env::var_os("TENEBRA_SINGBOX") {
-        return std::path::PathBuf::from(p);
+        return Ok(std::path::PathBuf::from(p));
     }
     #[cfg(windows)]
-    let (resource, fallback) = ("resources/sing-box.exe", "sing-box.exe");
-    #[cfg(target_os = "macos")]
-    let (resource, fallback) = ("resources/sing-box", "sing-box");
-    // Other targets aren't a bundled platform yet; fall back to a bare name so
-    // the shell still compiles everywhere the workspace is checked.
-    #[cfg(not(any(windows, target_os = "macos")))]
-    let (resource, fallback) = ("resources/sing-box", "sing-box");
+    let resource = "resources/sing-box.exe";
+    #[cfg(not(windows))]
+    let resource = "resources/sing-box";
 
-    app.path()
+    let resolved = app
+        .path()
         .resolve(resource, tauri::path::BaseDirectory::Resource)
-        .unwrap_or_else(|_| std::path::PathBuf::from(fallback))
+        .map_err(|e| {
+            format!(
+                "cannot resolve the bundled sing-box resource ({resource}): {e}; \
+                 refusing to fall back to a bare name resolved from CWD/PATH"
+            )
+        })?;
+    if !resolved.exists() {
+        return Err(format!(
+            "bundled sing-box resource resolved to {} but no file is there; \
+             refusing to fall back to a bare name resolved from CWD/PATH",
+            resolved.display()
+        ));
+    }
+    Ok(resolved)
 }
 
 // --- command handlers ---------------------------------------------------------
