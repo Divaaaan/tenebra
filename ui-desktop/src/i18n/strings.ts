@@ -211,6 +211,19 @@ export interface Strings {
     /** "Install updates automatically" toggle label and its explanation. */
     autoInstall: string;
     autoInstallHint: string;
+    /** DNS section: the ad/tracker-block toggle and the two custom resolvers. */
+    dns: string;
+    dnsHint: string;
+    adBlock: string;
+    adBlockHint: string;
+    dnsRemote: string;
+    dnsRemoteHint: string;
+    dnsDirect: string;
+    dnsDirectHint: string;
+    /** Example shown in an emptied resolver field. */
+    dnsPlaceholder: string;
+    /** Localized hint shown when a typed resolver is malformed. */
+    dnsInvalid: string;
   };
 
   logs: {
@@ -448,6 +461,21 @@ const en: Strings = {
     autoInstall: "Install updates automatically",
     autoInstallHint:
       "When a launch check finds a new version, install it and restart without asking.",
+    dns: "DNS",
+    dnsHint:
+      "Choose the resolvers Tenebra uses, and optionally refuse ad and tracker domains.",
+    adBlock: "Block ads and trackers",
+    adBlockHint:
+      "Refuse DNS lookups for a bundled list of ad and tracker domains. Off by default.",
+    dnsRemote: "Encrypted resolver",
+    dnsRemoteHint:
+      "Resolves general destinations over the tunnel. Leave empty for the default.",
+    dnsDirect: "Direct resolver",
+    dnsDirectHint:
+      "Resolves destinations kept off the tunnel. Leave empty for the default.",
+    dnsPlaceholder: "tls://1.1.1.1",
+    dnsInvalid:
+      "Enter a resolver like tls://1.1.1.1 or https://dns.example/dns-query.",
   },
   logs: {
     title: "Logs",
@@ -674,6 +702,21 @@ const ru: Strings = {
     autoInstall: "Устанавливать обновления автоматически",
     autoInstallHint:
       "Если проверка при запуске нашла новую версию — установить её и перезапустить без вопросов.",
+    dns: "DNS",
+    dnsHint:
+      "Выберите резолверы, которые использует Tenebra, и при желании отклоняйте рекламные и трекерные домены.",
+    adBlock: "Блокировать рекламу и трекеры",
+    adBlockHint:
+      "Отклонять DNS-запросы к встроенному списку рекламных и трекерных доменов. По умолчанию выключено.",
+    dnsRemote: "Шифрованный резолвер",
+    dnsRemoteHint:
+      "Резолвит обычные адреса через туннель. Оставьте пустым для значения по умолчанию.",
+    dnsDirect: "Прямой резолвер",
+    dnsDirectHint:
+      "Резолвит адреса, идущие мимо туннеля. Оставьте пустым для значения по умолчанию.",
+    dnsPlaceholder: "tls://1.1.1.1",
+    dnsInvalid:
+      "Введите резолвер вида tls://1.1.1.1 или https://dns.example/dns-query.",
   },
   logs: {
     title: "Журнал",

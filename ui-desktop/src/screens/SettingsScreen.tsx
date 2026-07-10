@@ -14,6 +14,7 @@ import {
   setAutoFastest,
   setAutoInstallUpdates,
 } from "../lib/settings";
+import { isValidDnsServer } from "../lib/dns";
 import { checkForUpdate, installUpdate, type UpdateStatus } from "../lib/updates";
 
 interface SettingsScreenProps {
@@ -286,6 +287,56 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     stackRefs.current[nextIndex]?.focus();
   }
 
+  // DNS: ad/tracker blocking plus the two custom resolvers. Core-owned like the
+  // rest — the daemon validates, persists, and (when a tunnel is live) re-applies
+  // them in place. Each set_dns carries the whole triple, so we derive it from the
+  // current toggle and the two resolver drafts, ignoring a malformed draft.
+  const adBlock = tenebra.state.ad_block ?? false;
+  const dnsRemote = tenebra.state.dns_remote ?? "";
+  const dnsDirect = tenebra.state.dns_direct ?? "";
+  const [remoteDraft, setRemoteDraft] = useState(dnsRemote);
+  const [directDraft, setDirectDraft] = useState(dnsDirect);
+
+  // Keep the drafts in step with the effective values the core reports (our own
+  // commit's result, or another window's change). Editing only pushes on blur or
+  // Enter, and dns_remote/dns_direct change only when we commit, so this never
+  // clobbers an in-progress edit.
+  useEffect(() => setRemoteDraft(dnsRemote), [dnsRemote]);
+  useEffect(() => setDirectDraft(dnsDirect), [dnsDirect]);
+
+  const remoteValid = isValidDnsServer(remoteDraft.trim());
+  const directValid = isValidDnsServer(directDraft.trim());
+
+  // The resolver values a set_dns should carry: the valid draft, or the effective
+  // value when the draft is malformed — a malformed resolver is never sent.
+  const remoteValue = remoteValid ? remoteDraft.trim() : dnsRemote;
+  const directValue = directValid ? directDraft.trim() : dnsDirect;
+
+  function pushDns(nextAdBlock: boolean) {
+    // Failures surface on the state/log channels the UI already renders.
+    void tenebra.setDns(nextAdBlock, remoteValue, directValue).catch(() => {});
+  }
+
+  function toggleAdBlock() {
+    pushDns(!adBlock);
+  }
+
+  // Commit a resolver edit: only when a valid draft actually changes an effective
+  // resolver, so blurring an unchanged (or malformed) field is a no-op.
+  function commitResolvers() {
+    if (remoteValue === dnsRemote && directValue === dnsDirect) {
+      return;
+    }
+    pushDns(adBlock);
+  }
+
+  function onResolverKey(e: KeyboardEvent) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commitResolvers();
+    }
+  }
+
   const themeOptions: { value: "dark" | "light"; label: string }[] = [
     { value: "dark", label: t.settings.themeDark },
     { value: "light", label: t.settings.themeLight },
@@ -446,6 +497,92 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
               </button>
             );
           })}
+        </div>
+      </section>
+
+      <section className="set-section">
+        <div className="set-section-head">
+          <h2 className="set-eyebrow">{t.settings.dns}</h2>
+          <p className="set-sub">{t.settings.dnsHint}</p>
+        </div>
+
+        <div className="set-row">
+          <span className="set-row-text">
+            <span className="set-row-label">{t.settings.adBlock}</span>
+            <span className="set-row-hint">{t.settings.adBlockHint}</span>
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={adBlock}
+            className={`set-switch${adBlock ? " is-on" : ""}`}
+            onClick={toggleAdBlock}
+          >
+            <span className="set-switch-box" aria-hidden="true">
+              {adBlock ? "▣" : "▢"}
+            </span>
+            {adBlock ? "ON" : "OFF"}
+          </button>
+        </div>
+
+        <div className="set-apps">
+          <label className="set-eyebrow" htmlFor="dns-remote">
+            {t.settings.dnsRemote}
+          </label>
+          <span className="set-row-hint">{t.settings.dnsRemoteHint}</span>
+          <span className={`set-field${remoteValid ? "" : " is-invalid"}`}>
+            <span className="set-prompt" aria-hidden="true">$</span>
+            <input
+              id="dns-remote"
+              type="text"
+              value={remoteDraft}
+              onChange={(e) => setRemoteDraft(e.target.value)}
+              onKeyDown={onResolverKey}
+              onBlur={commitResolvers}
+              placeholder={t.settings.dnsPlaceholder}
+              aria-label={t.settings.dnsRemote}
+              aria-invalid={!remoteValid}
+              aria-describedby={remoteValid ? undefined : "dns-remote-error"}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+            />
+          </span>
+          {!remoteValid && (
+            <p id="dns-remote-error" className="set-error" role="alert">
+              {t.settings.dnsInvalid}
+            </p>
+          )}
+        </div>
+
+        <div className="set-apps">
+          <label className="set-eyebrow" htmlFor="dns-direct">
+            {t.settings.dnsDirect}
+          </label>
+          <span className="set-row-hint">{t.settings.dnsDirectHint}</span>
+          <span className={`set-field${directValid ? "" : " is-invalid"}`}>
+            <span className="set-prompt" aria-hidden="true">$</span>
+            <input
+              id="dns-direct"
+              type="text"
+              value={directDraft}
+              onChange={(e) => setDirectDraft(e.target.value)}
+              onKeyDown={onResolverKey}
+              onBlur={commitResolvers}
+              placeholder={t.settings.dnsPlaceholder}
+              aria-label={t.settings.dnsDirect}
+              aria-invalid={!directValid}
+              aria-describedby={directValid ? undefined : "dns-direct-error"}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+            />
+          </span>
+          {!directValid && (
+            <p id="dns-direct-error" className="set-error" role="alert">
+              {t.settings.dnsInvalid}
+            </p>
+          )}
         </div>
       </section>
 

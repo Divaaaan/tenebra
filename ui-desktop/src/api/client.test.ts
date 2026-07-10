@@ -180,6 +180,25 @@ describe("api command wrappers", () => {
     expect(mockInvoke).toHaveBeenCalledWith("set_autoconnect", { on: true });
   });
 
+  it("setDns forwards the toggle and both resolvers with snake_case keys", async () => {
+    const armed: State = {
+      state: "connected",
+      ad_block: true,
+      dns_remote: "tls://9.9.9.9",
+      dns_direct: "udp://8.8.8.8",
+    };
+    mockInvoke.mockResolvedValueOnce(armed);
+    await expect(
+      api.setDns(true, "tls://9.9.9.9", "udp://8.8.8.8"),
+    ).resolves.toEqual(armed);
+    // The Rust command is rename_all="snake_case", so the wire keys are snake_case.
+    expect(mockInvoke).toHaveBeenCalledWith("set_dns", {
+      ad_block: true,
+      dns_remote: "tls://9.9.9.9",
+      dns_direct: "udp://8.8.8.8",
+    });
+  });
+
   it("leakCheck passes the LeakCheck verdict through", async () => {
     const leak: LeakCheck = {
       connected: false,

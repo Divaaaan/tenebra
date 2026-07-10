@@ -138,6 +138,19 @@
 .set-field:focus-within {
   border-color: var(--signal);
 }
+/* A malformed resolver draft: warm the border to the accent (the app's single
+   destructive/attention colour) to match the inline .set-error line below. */
+.set-field.is-invalid {
+  border-color: var(--signal);
+}
+
+/* Inline validation line under a resolver field. */
+.set-error {
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  letter-spacing: var(--track-body);
+  color: var(--signal);
+}
 .set-field .set-prompt {
   color: var(--signal);
   font-family: var(--mono);
