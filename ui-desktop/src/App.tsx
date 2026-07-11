@@ -227,6 +227,18 @@ export function App() {
     setSelectedNodeId("");
   }, []);
 
+  // The AUTO row: drop any hand-pinned node so the core picks the exit. When
+  // already connected, re-handshake straight away onto the fastest node, the
+  // node-click counterpart for auto.
+  const handleSelectAuto = useCallback(() => {
+    setSelectedNodeId("");
+    if (connected && selectedProfileId) {
+      void tenebra
+        .connect(selectedProfileId, undefined, getAutoFastest())
+        .catch(() => {});
+    }
+  }, [connected, selectedProfileId, tenebra]);
+
   const handleSetRouting = useCallback(
     (mode: RoutingMode) => {
       void tenebra.setRouting(mode).catch(() => {});
@@ -257,9 +269,35 @@ export function App() {
   // abort, and "/" jumps to node search. Both stand down while a field owns the
   // keyboard or a modal / overlay is up (Esc owns those layers) — the same reach
   // as the Esc handler above.
+  //
+  // The action and gate flags ride a ref that is refreshed every render, so the
+  // listener is subscribed once and always reads current values. Re-subscribing
+  // on each change (a naive dep array) leaves a window where a key landing
+  // between a state update and the effect re-run runs against a stale closure —
+  // e.g. Space pressed just as the profile list arrives would see no selected
+  // profile and silently do nothing.
+  const shortcutRef = useRef({
+    handlePrimary,
+    overlay,
+    connectRequest,
+    viewingReport,
+  });
+  shortcutRef.current = {
+    handlePrimary,
+    overlay,
+    connectRequest,
+    viewingReport,
+  };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== " " && e.key !== "/") return;
+
+      const {
+        handlePrimary: primary,
+        overlay: ov,
+        connectRequest: cr,
+        viewingReport: vr,
+      } = shortcutRef.current;
 
       const el = e.target as HTMLElement | null;
       const tag = el?.tagName;
@@ -268,7 +306,7 @@ export function App() {
         tag === "TEXTAREA" ||
         tag === "SELECT" ||
         el?.isContentEditable === true;
-      if (typing || overlay || connectRequest || viewingReport) return;
+      if (typing || ov || cr || vr) return;
 
       if (e.key === "/") {
         e.preventDefault();
@@ -292,11 +330,11 @@ export function App() {
         return;
       }
       e.preventDefault();
-      handlePrimary();
+      primary();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [overlay, connectRequest, viewingReport, handlePrimary]);
+  }, []);
 
   // Tray → front end. "Connect" runs the selected-profile flow; "Show" closes
   // any overlay so the main panel is in view.
@@ -427,6 +465,13 @@ export function App() {
       <div className="app-body">
         <ConnectionPanel
           phase={phase}
+          routing={state.routing ?? "smart"}
+          auto={!selectedNodeId}
+          attempts={tenebra.attempts}
+          resolveNodeName={(id) =>
+            (connectedProfile ?? selectedProfile)?.nodes.find((n) => n.id === id)
+              ?.name ?? id
+          }
           nodeCode={displayedNode?.name ?? ""}
           nodeCity={displayedNode ? locate(displayedNode.name).label : ""}
           exitServer={connected ? (displayedNode?.server ?? null) : null}
@@ -449,6 +494,8 @@ export function App() {
           onSelectProfile={handleSelectProfile}
           rows={rows}
           activeNodeId={connected ? (state.node ?? null) : selectedNodeId || null}
+          auto={!selectedNodeId}
+          onSelectAuto={handleSelectAuto}
           region={region}
           onRegion={setRegion}
           query={query}
@@ -494,6 +541,7 @@ export function App() {
                   onSelectProfile={setSelectedProfileId}
                   initialImport={importPreset}
                   onImportConsumed={clearImportPreset}
+                  onConnected={() => setOverlay(null)}
                 />
               )}
               {overlay === "settings" && <SettingsScreen tenebra={tenebra} />}
