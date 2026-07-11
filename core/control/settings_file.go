@@ -43,6 +43,13 @@ type persistedSettings struct {
 	// matching the pre-autoconnect behaviour.
 	Autoconnect bool `json:"autoconnect,omitempty"`
 
+	// AutoFailover remembers whether the health watchdog is armed. It is a *bool
+	// so the default can be on without a version bump: absent (nil) — an old file,
+	// or one written before the field existed — reads back as the on default,
+	// while an explicit true/false is the user's stored choice. This mirrors how
+	// CrashReports uses a pointer to keep "unset" distinct from "off".
+	AutoFailover *bool `json:"auto_failover,omitempty"`
+
 	// AdBlock remembers whether the user armed DNS ad/tracker blocking. Absent in
 	// files written before the field existed, which reads back as false — off,
 	// matching the pre-ad-block behaviour.

@@ -56,7 +56,7 @@ func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 	// lock and yields to this connect. A user command is the one connect whose
 	// success records the last-connect intent for autoconnect (remember=true).
 	d.connMu.Lock()
-	st, err := d.startConnect(ctx, p, req.Node, req.Auto, true)
+	st, err := d.startConnect(ctx, p, req.Node, req.Auto, true, "")
 	d.connMu.Unlock()
 	if err != nil {
 		return newError(req.ID, err.Error())
@@ -78,7 +78,12 @@ func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 // (profile, explicitNode) as the last-connect intent autoconnect re-issues at
 // the next daemon start. Every other caller passes false — a relaunch or
 // hot-swap pins the node it happens to be on, which is not the user's intent.
-func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNode string, auto, remember bool) (State, error) {
+//
+// avoid drops one node from the walk before it starts: the health failover passes
+// the degraded node it is leaving so the walk moves to a different exit instead of
+// reconnecting the one it just abandoned. It is ignored for an explicit-node
+// connect (the user pinned that exact exit) and when empty.
+func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNode string, auto, remember bool, avoid string) (State, error) {
 	// Build the fallback candidates. An explicit node request collapses the walk
 	// to that single node: the user asked for a specific exit, so we honour it and
 	// do not silently wander to another protocol behind their back. Without an
@@ -87,6 +92,16 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 	candidates, err := buildCandidates(p, explicitNode)
 	if err != nil {
 		return State{}, err
+	}
+	// A health failover asks to avoid the node it is leaving; drop it so the walk
+	// picks a different exit. If that empties the set (a single-node profile has
+	// nowhere else to go) fail here, before any teardown, so the current tunnel is
+	// left running rather than torn down for a walk that would immediately exhaust.
+	if explicitNode == "" && avoid != "" {
+		candidates = dropCandidate(candidates, avoid)
+		if len(candidates) == 0 {
+			return State{}, fmt.Errorf("connect: no alternative node to fail over to")
+		}
 	}
 
 	// Choose the candidate ordering. The default is protocol preference (the
@@ -188,7 +203,7 @@ func (d *Daemon) reapplyLive() {
 		d.emitLog(LogWarn, "re-apply: connected profile no longer stored; the change applies on the next connect")
 		return
 	}
-	if _, err := d.startConnect(context.Background(), p, cur.Node, false, false); err != nil {
+	if _, err := d.startConnect(context.Background(), p, cur.Node, false, false, ""); err != nil {
 		d.emitLog(LogWarn, fmt.Sprintf("re-apply: %v; the change applies on the next connect", err))
 	}
 }
@@ -699,12 +714,14 @@ func (d *Daemon) probeStallThreshold() time.Duration {
 // selected as the selector default) is what the probe actually measures.
 const proxySelectorTag = "proxy"
 
-// startLifecycle launches the two background goroutines for an established
+// startLifecycle launches the background goroutines for an established
 // connection: a process watcher that turns an unexpected sing-box exit into an
-// error state, and a traffic poller that emits traffic events. Both stop when ctx
-// is cancelled or the generation moves on. It is called once, after a probe has
-// already promoted the state to connected; connectedAt is that moment, threaded
-// to the watcher so a later relaunch can tell a recovered tunnel from a crash-loop.
+// error state, a traffic poller that emits traffic events, and a health watchdog
+// that probes the active node and fails over on sustained failure. All stop when
+// ctx is cancelled or the generation moves on. It is called once, after a probe
+// has already promoted the state to connected; connectedAt is that moment,
+// threaded to the watcher so a later relaunch can tell a recovered tunnel from a
+// crash-loop.
 func (d *Daemon) startLifecycle(ctx context.Context, gen uint64, profileID, nodeID string, connectedAt time.Time) {
 	done := d.runner.Done()
 
@@ -718,6 +735,12 @@ func (d *Daemon) startLifecycle(ctx context.Context, gen uint64, profileID, node
 	go func() {
 		defer d.wg.Done()
 		d.pollTraffic(ctx, gen)
+	}()
+
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.healthWatch(ctx, gen, profileID, nodeID)
 	}()
 }
 
@@ -819,7 +842,7 @@ func (d *Daemon) killSwitchRelaunch(gen uint64, profileID, nodeID string, uptime
 	}
 
 	d.emitLog(LogWarn, "kill switch: tunnel process died, restarting it on the same node")
-	d.startConnectIfCurrent(gen, p, nodeID, func(err error) {
+	d.startConnectIfCurrent(gen, p, nodeID, "", nil, func(err error) {
 		d.emitLog(LogError, fmt.Sprintf("kill switch: restart failed: %v", err))
 		d.setState(State{State: StateError, Profile: profileID, Node: nodeID,
 			Error:   "tunnel died and could not be restarted: " + err.Error(),
@@ -840,7 +863,14 @@ func (d *Daemon) killSwitchRelaunch(gen uint64, profileID, nodeID string, uptime
 // relaunchWG (not d.wg, which teardown waits on — that would deadlock) so Close
 // can drain it and never let a connect outlive the daemon. onErr handles a start
 // failure, which each caller logs differently.
-func (d *Daemon) startConnectIfCurrent(gen uint64, p profile.Profile, node string, onErr func(error)) {
+//
+// avoid is threaded to startConnect (the health failover drops the node it is
+// leaving; other callers pass ""). beforeStart, when non-nil, runs under connMu
+// once the generation is confirmed still current, right before the reconnect — the
+// failover uses it to emit its health_reconnecting state atomically with the
+// decision to proceed, so a racing user command that already moved the generation
+// skips it cleanly. It never runs when this yields.
+func (d *Daemon) startConnectIfCurrent(gen uint64, p profile.Profile, node, avoid string, beforeStart func(), onErr func(error)) {
 	d.relaunchWG.Add(1)
 	go func() {
 		defer d.relaunchWG.Done()
@@ -854,7 +884,10 @@ func (d *Daemon) startConnectIfCurrent(gen uint64, p profile.Profile, node strin
 		if !d.isCurrent(gen) {
 			return // a user action superseded us between the death and this claim
 		}
-		if _, err := d.startConnect(context.Background(), p, node, false, false); err != nil {
+		if beforeStart != nil {
+			beforeStart()
+		}
+		if _, err := d.startConnect(context.Background(), p, node, false, false, avoid); err != nil {
 			onErr(err)
 		}
 	}()
@@ -911,7 +944,7 @@ func (d *Daemon) AutoconnectOnStart() bool {
 	// logged and leaves the state untouched: startConnect fails before any
 	// teardown, so the daemon stays idle rather than reporting an error for a
 	// connection nobody asked for in this session.
-	d.startConnectIfCurrent(gen, p, node, func(err error) {
+	d.startConnectIfCurrent(gen, p, node, "", nil, func(err error) {
 		d.emitLog(LogWarn, fmt.Sprintf("autoconnect: %v; staying idle", err))
 	})
 	return true
@@ -948,7 +981,7 @@ func (d *Daemon) reconcileConnectingOptions(loop fallbackLoop, nodeID string) {
 		return
 	}
 	d.emitLog(LogInfo, "re-apply: options changed while connecting; hot-swapping to apply them")
-	d.startConnectIfCurrent(loop.gen, p, nodeID, func(err error) {
+	d.startConnectIfCurrent(loop.gen, p, nodeID, "", nil, func(err error) {
 		d.emitLog(LogWarn, fmt.Sprintf("re-apply: %v; the change applies on the next connect", err))
 	})
 }
@@ -1036,7 +1069,7 @@ func (d *Daemon) setState(s State) {
 	// rather than whatever the transient State value carried. This keeps status
 	// reporting them correctly across connect/disconnect transitions without
 	// every call site restating them.
-	applySettingsToState(&s, d.routing, d.tun, d.autoconnect, d.crashReports)
+	applySettingsToState(&s, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports)
 	d.state = s
 	emit := d.emit
 	d.mu.Unlock()

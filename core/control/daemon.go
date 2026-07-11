@@ -94,6 +94,11 @@ type Daemon struct {
 	// it starts (see AutoconnectOnStart). Persisted with the other preferences.
 	// Guarded by mu.
 	autoconnect bool
+	// autoFailover remembers whether the health watchdog is armed (see health.go).
+	// It defaults on and is re-read on every watchdog tick, so a mid-session toggle
+	// takes effect without a reconnect. Persisted with the other preferences.
+	// Guarded by mu.
+	autoFailover bool
 	// crashReports remembers the crash-report consent (see State.CrashReports):
 	// nil when the user has not been asked, else a pointer to their explicit
 	// choice. It governs only whether the GUI offers to surface a crash report on
@@ -169,6 +174,18 @@ type Daemon struct {
 	probeTimeout time.Duration
 	probeBudget  time.Duration
 
+	// health-watchdog timings and seam, injectable so tests drive the watchdog
+	// fast and offline. healthInterval is the gap between probes of the active node
+	// while connected (<=0 disables the watchdog); healthProbeTimeout bounds one
+	// probe; healthFailThreshold is how many consecutive failures trip a failover.
+	// healthProbe runs one probe, a nil error meaning the tunnel still carries
+	// traffic; production wires defaultHealthProbe (a clash-API delay test through
+	// the active outbound), tests inject a scripted verdict like d.classify.
+	healthInterval      time.Duration
+	healthProbeTimeout  time.Duration
+	healthFailThreshold int
+	healthProbe         func(ctx context.Context) error
+
 	// fetch retrieves a subscription body. It is injectable so the auto-refresh
 	// logic can be unit-tested offline; production uses subscription.Fetch.
 	fetch func(ctx context.Context, url string) ([]byte, http.Header, error)
@@ -217,10 +234,14 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 			// inputs. These match the normalized routing defaults above.
 			DNSRemote: routing.DefaultDNSRemote,
 			DNSDirect: routing.DefaultDNSDirect,
+			// The health watchdog is on by default; report it from the start so a
+			// status before SetSettings already shows the effective value.
+			AutoFailover: true,
 		},
-		lastGood: fallback.NewMemLastGood(),
-		now:      time.Now,
-		fetch:    subscription.Fetch,
+		lastGood:     fallback.NewMemLastGood(),
+		autoFailover: true,
+		now:          time.Now,
+		fetch:        subscription.Fetch,
 
 		httpGet:    defaultHTTPGet,
 		ipEchoes:   defaultIPEchoes,
@@ -232,6 +253,10 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 		probeRetry:   defaultProbeRetry,
 		probeTimeout: defaultProbeTimeout,
 		probeBudget:  defaultProbeBudget,
+
+		healthInterval:      defaultHealthInterval,
+		healthProbeTimeout:  defaultHealthProbeTimeout,
+		healthFailThreshold: defaultHealthFailThreshold,
 
 		relaunchResetAfter: defaultRelaunchReset,
 	}
@@ -245,6 +270,9 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 	// production classifier pairs a direct TCP probe of the entry with the probe's
 	// stall signal (see classifyAttemptFailure).
 	d.classify = d.classifyAttemptFailure
+	// The health watchdog probes the active node through the tunnel; production
+	// runs a clash-API delay test through the selector (see defaultHealthProbe).
+	d.healthProbe = d.defaultHealthProbe
 	// Background entitlement lookups run under this context so Close can cancel a
 	// slow one instead of blocking shutdown on it.
 	d.entCtx, d.entCancel = context.WithCancel(context.Background())
@@ -299,13 +327,17 @@ func (d *Daemon) SetSettings(store settingsStore) {
 		d.tun.Stack = ps.TunStack
 	}
 	d.autoconnect = ps.Autoconnect
+	// AutoFailover defaults on: an absent field (an old file, or one written before
+	// the toggle existed) keeps the watchdog armed; only an explicit stored false
+	// disarms it.
+	d.autoFailover = ps.AutoFailover == nil || *ps.AutoFailover
 	// The loaded struct is a fresh local, so holding its pointer is safe; later
 	// writes always replace the pointer (never mutate through it), so no snapshot
 	// ever races a change.
 	d.crashReports = ps.CrashReports
 	d.lastProfile = ps.LastProfile
 	d.lastNode = ps.LastNode
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.crashReports)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports)
 	d.mu.Unlock()
 }
 
@@ -344,6 +376,10 @@ func (d *Daemon) persistSettings() {
 // settingsLocked projects the persisted preferences out of the daemon's live
 // options. Callers must hold d.mu.
 func (d *Daemon) settingsLocked() persistedSettings {
+	// Copy the flag into a fresh local before taking its address: the returned
+	// struct outlives the lock (Save reads it), so it must not alias the live
+	// field a later write would change.
+	autoFailover := d.autoFailover
 	return persistedSettings{
 		Version:         settingsVersion,
 		SplitMode:       string(d.routing.SplitMode),
@@ -351,6 +387,7 @@ func (d *Daemon) settingsLocked() persistedSettings {
 		KillSwitch:      d.routing.KillSwitch,
 		TunStack:        d.tun.Stack,
 		Autoconnect:     d.autoconnect,
+		AutoFailover:    &autoFailover,
 		CrashReports:    d.crashReports,
 		AdBlock:         d.routing.AdBlock,
 		IPv4Only:        d.routing.IPv4Only,
@@ -401,6 +438,8 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleSetTun(req)
 	case CmdSetAutoconnect:
 		return d.handleSetAutoconnect(req)
+	case CmdSetAutoFailover:
+		return d.handleSetAutoFailover(req)
 	case CmdSetDNS:
 		return d.handleSetDNS(req)
 	case CmdSetRules:
@@ -937,7 +976,7 @@ func (d *Daemon) handleSetSplit(req Request) Response {
 	d.routing.SplitMode = mode
 	d.routing.SplitApps = req.Apps
 	d.routing = d.routing.Normalize()
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.crashReports)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports)
 	cur := d.state
 	d.mu.Unlock()
 
@@ -961,7 +1000,7 @@ func (d *Daemon) handleSetKillSwitch(req Request) Response {
 	d.mu.Lock()
 	changed := d.routing.KillSwitch != req.On
 	d.routing.KillSwitch = req.On
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.crashReports)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports)
 	d.mu.Unlock()
 
 	d.persistSettings()
@@ -988,7 +1027,7 @@ func (d *Daemon) handleSetTun(req Request) Response {
 	d.mu.Lock()
 	changed := d.tun.Stack != req.Stack
 	d.tun.Stack = req.Stack
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.crashReports)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports)
 	d.mu.Unlock()
 
 	d.persistSettings()
@@ -1011,7 +1050,27 @@ func (d *Daemon) handleSetTun(req Request) Response {
 func (d *Daemon) handleSetAutoconnect(req Request) Response {
 	d.mu.Lock()
 	d.autoconnect = req.On
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.crashReports)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports)
+	d.mu.Unlock()
+
+	d.persistSettings()
+
+	resp, err := newResult(req.ID, d.snapshotState())
+	if err != nil {
+		return newError(req.ID, err.Error())
+	}
+	return resp
+}
+
+// handleSetAutoFailover arms or disarms the health watchdog. Like autoconnect it
+// changes nothing about a live tunnel in place: the watchdog re-reads the flag on
+// its next tick, so a mid-session toggle takes effect on its own without a
+// reconnect. The choice is recorded, persisted with the other preferences, and
+// reported back in the state.
+func (d *Daemon) handleSetAutoFailover(req Request) Response {
+	d.mu.Lock()
+	d.autoFailover = req.On
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports)
 	d.mu.Unlock()
 
 	d.persistSettings()
@@ -1033,7 +1092,7 @@ func (d *Daemon) handleSetCrashReports(req Request) Response {
 	d.mu.Lock()
 	v := req.On
 	d.crashReports = &v
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.crashReports)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports)
 	d.mu.Unlock()
 
 	d.persistSettings()
@@ -1075,7 +1134,7 @@ func (d *Daemon) handleSetDNS(req Request) Response {
 	// already-default field to "" compares equal below and is correctly a no-op.
 	d.routing = d.routing.Normalize()
 	changed := dnsPrefsDiffer(before, d.routing)
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.crashReports)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports)
 	d.mu.Unlock()
 
 	d.persistSettings()
@@ -1127,7 +1186,7 @@ func (d *Daemon) handleSetRules(req Request) Response {
 	d.routing.PresetRuGov = req.PresetRuGov
 	d.routing = d.routing.Normalize()
 	changed := rulesPrefsDiffer(before, d.routing)
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.crashReports)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports)
 	d.mu.Unlock()
 
 	d.persistSettings()
@@ -1154,14 +1213,15 @@ func rulesPrefsDiffer(a, b routing.Options) bool {
 }
 
 // applySettingsToState mirrors the daemon-wide preferences onto a State: the
-// normalized split config, the kill switch, the tun stack, the autoconnect
-// preference, and the DNS choices (ad-block, IPv4-only, plus the two resolvers).
+// normalized split config, the kill switch, the tun stack, the autoconnect and
+// auto-failover preferences, and the DNS choices (ad-block, IPv4-only, plus the
+// two resolvers).
 // Split off
 // collapses to empty fields so the wire form omits them, keeping a no-op split
 // invisible to the UI; the app slice is copied so the State never aliases the
 // daemon's live routing options. The resolvers are always the normalized
 // (effective) values, so the UI can prefill its custom-DNS inputs.
-func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, autoconnect bool, crashReports *bool) {
+func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, autoconnect, autoFailover bool, crashReports *bool) {
 	if ro.SplitMode == routing.SplitOff || len(ro.SplitApps) == 0 {
 		s.Split = ""
 		s.SplitApps = nil
@@ -1172,6 +1232,7 @@ func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, 
 	s.KillSwitch = ro.KillSwitch
 	s.TunStack = tun.Stack
 	s.Autoconnect = autoconnect
+	s.AutoFailover = autoFailover
 	// Copy the crash-report consent by value so the State never aliases the
 	// daemon's live pointer: nil stays "not asked" (both fields cleared), a set
 	// value is mirrored with the has-been-asked bit raised.

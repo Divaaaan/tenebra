@@ -128,6 +128,7 @@ surface.
 | `set_kill_switch`      | `on` (boolean)                     | `State`                     |
 | `set_tun`              | `stack` (`system`/`gvisor`/`mixed`) | `State`                    |
 | `set_autoconnect`      | `on` (boolean)                     | `State`                     |
+| `set_auto_failover`    | `on` (boolean)                     | `State`                     |
 | `set_dns`              | `ad_block` (boolean), `dns_remote`, `dns_direct`, `ipv4_only` (boolean) | `State` |
 | `set_rules`            | `rules_direct` (string[]), `rules_proxy` (string[]), `preset_ru_banking` (boolean), `preset_ru_gov` (boolean) | `State` |
 | `set_crash_reports`    | `on` (boolean)                     | `State`                     |
@@ -294,6 +295,36 @@ request:  {"id":11,"cmd":"set_autoconnect","on":true}
 response: {"id":11,"ok":true,"data":{"state":"idle","tun_stack":"system","autoconnect":true}}
 ```
 
+### Health failover (`set_auto_failover`)
+
+While `connected`, the core runs a watchdog that probes the active node through
+the tunnel on an interval (a clash-API delay test through the selector — the same
+in-tunnel reachability check a connect uses to confirm a node came up). When the
+node misses several probes in a row, the core reconnects **on its own** to a
+different node, reusing the ordinary fallback walk with the degraded node excluded
+so it lands on another exit rather than the one it just left. No user action is
+involved; the walk records the new node as last-good like any connect.
+
+The switch is announced with a one-shot `health_reconnecting` state (naming the
+node being left) right before the reconnect, so a UI can tell an automatic
+failover apart from a user connect; the ordinary `connecting` → `connected`
+sequence to the new node follows. A profile with no other usable node has nowhere
+to fail over to, so the core logs it and keeps the (possibly recoverable) tunnel
+up rather than churning the same node.
+
+`on: true` (the default) arms the watchdog; `false` disarms it. The preference is
+persisted in `settings.json` and reported as `auto_failover` in `State`. Unlike
+the kill switch it changes nothing about a live tunnel when it lands — the
+watchdog re-reads the flag on its next tick, so a mid-session toggle takes effect
+without a reconnect. It composes with the kill switch, which handles a different
+failure (the sing-box **process** dying) by relaunching the same node; the
+watchdog handles a node that stays up but stops carrying traffic.
+
+```
+request:  {"id":14,"cmd":"set_auto_failover","on":true}
+response: {"id":14,"ok":true,"data":{"state":"idle","tun_stack":"system","auto_failover":true}}
+```
+
 ### Crash reports (`set_crash_reports`)
 
 `on: true` opts in to crash reporting, `false` opts out; the choice is persisted
@@ -450,7 +481,7 @@ response: {"id":9,"ok":true,"data":{
 
 | event      | fields                                                              |
 |------------|--------------------------------------------------------------------|
-| `state`    | `state` (`idle`/`connecting`/`connected`/`error`), `node?`, `error?`|
+| `state`    | `state` (`idle`/`connecting`/`connected`/`error`/`health_reconnecting`), `node?`, `error?`|
 | `traffic`  | `up`, `down` (bytes), `up_rate`, `down_rate` (bytes/s)             |
 | `log`      | `level` (`info`/`warn`/`error`), `msg`                            |
 | `profiles` | none — signal that the stored profile set changed; re-run `list_profiles` |
@@ -511,7 +542,7 @@ over the connection that replaced it.
 
 ```ts
 type State = {
-  state: "idle" | "connecting" | "connected" | "error";
+  state: "idle" | "connecting" | "connected" | "error" | "health_reconnecting";
   node?: string;
   profile?: string;
   routing?: "smart" | "global" | "direct";
@@ -520,6 +551,7 @@ type State = {
   kill_switch?: boolean;          // omitted when off
   tun_stack?: "system" | "gvisor" | "mixed";
   autoconnect?: boolean;          // reconnect at daemon start; omitted when off
+  auto_failover?: boolean;        // health watchdog: reconnect to another node when the active one degrades; on by default, omitted when off
   ad_block?: boolean;             // DNS ad/tracker blocking; omitted when off
   ipv4_only?: boolean;            // DNS strategy pinned to IPv4-only; omitted when off
   dns_remote?: string;            // effective encrypted resolver (over the proxy)

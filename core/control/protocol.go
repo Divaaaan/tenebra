@@ -38,6 +38,7 @@ const (
 	CmdSetKillSwitch      = "set_kill_switch"
 	CmdSetTun             = "set_tun"
 	CmdSetAutoconnect     = "set_autoconnect"
+	CmdSetAutoFailover    = "set_auto_failover"
 	CmdSetDNS             = "set_dns"
 	CmdSetRules           = "set_rules"
 	CmdSetCrashReports    = "set_crash_reports"
@@ -53,6 +54,13 @@ const (
 	StateConnecting ConnState = "connecting"
 	StateConnected  ConnState = "connected"
 	StateError      ConnState = "error"
+	// StateHealthReconnecting marks the brief window in which the daemon is
+	// switching exits on its own because the active node failed its in-tunnel
+	// health probe (see the watchdog in health.go). It is emitted once, right
+	// before the failover reconnect tears the degraded tunnel down and walks to
+	// another node, so a UI can tell an automatic health failover apart from a
+	// user-driven connect; the ordinary connecting -> connected sequence follows.
+	StateHealthReconnecting ConnState = "health_reconnecting"
 )
 
 // Event names.
@@ -125,10 +133,11 @@ type Request struct {
 	Mode string `json:"mode,omitempty"`
 	// Apps is the executable-name list for set_split, e.g. ["chrome.exe"].
 	Apps []string `json:"apps,omitempty"`
-	// On arms (true) or disarms (false) the kill switch for set_kill_switch, and
-	// likewise the connect-on-start preference for set_autoconnect. An omitted
-	// field decodes to false, so "disarm" and "field left out" coincide — which
-	// is the safe reading for a command that grants, not removes, behaviour.
+	// On arms (true) or disarms (false) the kill switch for set_kill_switch, the
+	// connect-on-start preference for set_autoconnect, and the health-failover
+	// watchdog for set_auto_failover. An omitted field decodes to false, so
+	// "disarm" and "field left out" coincide — which is the safe reading for a
+	// command that grants, not removes, behaviour.
 	On bool `json:"on,omitempty"`
 	// Stack is the tun network stack for set_tun (system/gvisor/mixed).
 	Stack string `json:"stack,omitempty"`
@@ -202,6 +211,12 @@ type State struct {
 	// Autoconnect reports whether the daemon reconnects the last profile when it
 	// starts (see AutoconnectOnStart). Omitted when off, like the kill switch.
 	Autoconnect bool `json:"autoconnect,omitempty"`
+	// AutoFailover reports whether the health watchdog is armed: while connected,
+	// the daemon probes the active node and, on repeated failures, reconnects to
+	// another node on its own (see health.go). It defaults on, so the common wire
+	// form carries auto_failover:true; an explicit off is omitted like the other
+	// flags, which a client reads back as off.
+	AutoFailover bool `json:"auto_failover,omitempty"`
 	// AdBlock reports whether DNS ad/tracker blocking is armed. Omitted when off,
 	// like the kill switch.
 	AdBlock bool `json:"ad_block,omitempty"`
