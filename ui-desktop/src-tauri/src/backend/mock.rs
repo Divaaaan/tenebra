@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use super::{
     Backend, ConnectionState, DnsResult, DnsStatus, EventSink, ExitMatch, ImportLinksResult,
-    LeakCheck, Node, PingResult, Profile, Protocol, RoutingMode, Source, SplitMode, State,
-    TunStack, Verdict,
+    LeakCheck, NatType, Node, PingResult, Profile, Protocol, RoutingMode, Source, SpeedTest,
+    SplitMode, State, StunCheck, TunStack, Verdict,
 };
 
 /// How long the fake "dial" takes before flipping to connected.
@@ -62,9 +62,14 @@ impl MockBackend {
                 split: None,
                 split_apps: None,
                 kill_switch: None,
+                // Fragmentation is an opt-in override, off until armed.
+                tls_fragment: None,
                 // The core always names the stack once normalized; mirror that.
                 tun_stack: Some(TunStack::System),
                 autoconnect: None,
+                // The health-failover watchdog is on by default in the core, so
+                // mirror that: a fresh state reports it armed.
+                auto_failover: Some(true),
                 ad_block: None,
                 // The core reports the effective resolvers once normalized; mirror
                 // the defaults so the UI's custom-DNS inputs come up prefilled.
@@ -454,6 +459,26 @@ impl Backend for MockBackend {
         Ok(snapshot)
     }
 
+    fn set_tls_fragment(&self, on: bool) -> Result<State, String> {
+        // Mirror the core: record and report; off drops the field (absent = off),
+        // like the kill switch. A live "tunnel" would hot-swap, which the mock
+        // abbreviates to the state change.
+        let mut inner = self.shared.inner.lock().unwrap();
+        inner.state.tls_fragment = if on { Some(true) } else { None };
+        let snapshot = inner.state.clone();
+        drop(inner);
+        self.shared.emit_state(&snapshot);
+        self.shared.sink.log(
+            "info",
+            if on {
+                "TLS fragmentation forced on"
+            } else {
+                "TLS fragmentation off"
+            },
+        );
+        Ok(snapshot)
+    }
+
     fn set_tun(&self, stack: TunStack) -> Result<State, String> {
         let mut inner = self.shared.inner.lock().unwrap();
         inner.state.tun_stack = Some(stack);
@@ -468,6 +493,18 @@ impl Backend for MockBackend {
         // at its own next start, so there is nothing more for the mock to do.
         let mut inner = self.shared.inner.lock().unwrap();
         inner.state.autoconnect = if on { Some(true) } else { None };
+        let snapshot = inner.state.clone();
+        drop(inner);
+        self.shared.emit_state(&snapshot);
+        Ok(snapshot)
+    }
+
+    fn set_auto_failover(&self, on: bool) -> Result<State, String> {
+        // Mirror the core: record and report; off drops the field (absent = off).
+        // The watchdog is on by default, so this only ever moves between armed
+        // (Some(true)) and disarmed (None). Nothing about a live "tunnel" changes.
+        let mut inner = self.shared.inner.lock().unwrap();
+        inner.state.auto_failover = if on { Some(true) } else { None };
         let snapshot = inner.state.clone();
         drop(inner);
         self.shared.emit_state(&snapshot);
@@ -597,6 +634,31 @@ impl Backend for MockBackend {
                 ip_message: "Not connected. Current public IP is 192.0.2.7.".into(),
                 dns,
             },
+        })
+    }
+
+    fn run_stun_check(&self) -> Result<StunCheck, String> {
+        // The mock has no real socket, so it invents a plausible, P2P-friendly
+        // verdict. Not gated on a connection, like the core. The reflexive address
+        // is documentation-range (RFC 5737), matching the rest of the demo data.
+        Ok(StunCheck {
+            udp_ok: true,
+            nat_type: NatType::EndpointIndependent,
+            external_ip: Some("198.51.100.7".into()),
+        })
+    }
+
+    fn run_speed_test(&self) -> Result<SpeedTest, String> {
+        // Gated on a live connection, exactly like the core: a throughput reading
+        // off the tunnel is meaningless, so an idle mock errors with the same
+        // message the core uses. When connected it returns a believable sample.
+        if self.shared.inner.lock().unwrap().state.state != ConnectionState::Connected {
+            return Err("speed test requires an active connection".into());
+        }
+        Ok(SpeedTest {
+            mbps: 94.3,
+            sample_bytes: 10 * 1024 * 1024,
+            duration_ms: 890,
         })
     }
 }
@@ -1082,6 +1144,21 @@ mod tests {
     }
 
     #[test]
+    fn set_tls_fragment_arms_and_disarms() {
+        let (b, sink) = backend();
+        // Off by default (the field is absent on a fresh state).
+        assert_eq!(b.status().unwrap().tls_fragment, None);
+
+        let s = b.set_tls_fragment(true).unwrap();
+        assert_eq!(s.tls_fragment, Some(true));
+        assert_eq!(sink.last_state().unwrap().tls_fragment, Some(true));
+
+        // Disarming drops the field entirely (off is reported as absent).
+        let s = b.set_tls_fragment(false).unwrap();
+        assert_eq!(s.tls_fragment, None);
+    }
+
+    #[test]
     fn set_autoconnect_arms_and_disarms() {
         let (b, sink) = backend();
         let s = b.set_autoconnect(true).unwrap();
@@ -1091,6 +1168,23 @@ mod tests {
         // Disarming drops the field entirely (off is reported as absent).
         let s = b.set_autoconnect(false).unwrap();
         assert_eq!(s.autoconnect, None);
+    }
+
+    #[test]
+    fn set_auto_failover_defaults_on_then_toggles() {
+        let (b, sink) = backend();
+        // The watchdog is on by default, like the core: a fresh state reports it
+        // armed rather than absent.
+        assert_eq!(b.status().unwrap().auto_failover, Some(true));
+
+        // Disarming drops the field entirely (off is reported as absent).
+        let s = b.set_auto_failover(false).unwrap();
+        assert_eq!(s.auto_failover, None);
+        assert_eq!(sink.last_state().unwrap().auto_failover, None);
+
+        // Re-arming brings it back.
+        let s = b.set_auto_failover(true).unwrap();
+        assert_eq!(s.auto_failover, Some(true));
     }
 
     #[test]
@@ -1403,6 +1497,51 @@ mod tests {
         // The honesty invariant: an idle store must not report a DNS pass.
         assert_eq!(leak.dns.status, DnsStatus::Inconclusive);
         assert_ne!(leak.dns.status, DnsStatus::Ok);
+    }
+
+    #[test]
+    fn run_stun_check_reports_reachability() {
+        // Not gated on a connection: an idle mock still returns a well-formed STUN
+        // verdict (the demo path is reachable and P2P-friendly).
+        let (b, _) = backend();
+        let stun = b.run_stun_check().unwrap();
+        assert!(stun.udp_ok);
+        assert_eq!(stun.nat_type, NatType::EndpointIndependent);
+        assert!(stun.external_ip.is_some());
+    }
+
+    #[test]
+    fn run_speed_test_requires_a_connection() {
+        // Idle: the throughput probe is gated off, with the core's exact message.
+        let (b, _) = backend();
+        let err = b.run_speed_test().unwrap_err();
+        assert!(err.contains("active connection"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn run_speed_test_reports_throughput_when_connected() {
+        // Once the mock's dial completes, the probe returns a believable sample.
+        let (b, _) = backend();
+        b.connect("demo-sub".into(), None, false).unwrap();
+
+        // The mock flips to connected on a timer; wait for it rather than sleeping
+        // a fixed span, so the test is neither flaky nor slower than it must be.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while b.status().unwrap().state != ConnectionState::Connected {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the mock never reached connected"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        let speed = b.run_speed_test().unwrap();
+        assert!(speed.mbps > 0.0);
+        assert!(speed.sample_bytes > 0);
+        assert!(speed.duration_ms > 0);
+
+        // Stop the background dial/ticker so it can't race a later test's timing.
+        let _ = b.disconnect();
     }
 
     #[test]

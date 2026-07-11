@@ -2,7 +2,18 @@
 // desktop UI and the core sidecar; keep them byte-for-byte aligned with the Go
 // side. Anything the protocol calls optional is optional here.
 
-export type ConnectionState = "idle" | "connecting" | "connected" | "error";
+/**
+ * `health_reconnecting` is the one-shot state the core announces right before an
+ * automatic health failover reconnects to a different node, so the UI can tell it
+ * apart from a user connect; the ordinary `connecting` → `connected` sequence to
+ * the new node follows.
+ */
+export type ConnectionState =
+  | "idle"
+  | "connecting"
+  | "connected"
+  | "error"
+  | "health_reconnecting";
 
 export type RoutingMode = "smart" | "global" | "direct";
 
@@ -34,6 +45,11 @@ export interface State {
   split_apps?: string[];
   /** Whether the kill switch is armed; omitted (treated as off) when it isn't. */
   kill_switch?: boolean;
+  /**
+   * Whether forced TLS ClientHello fragmentation is armed (the DPI-obfuscation
+   * override); omitted (treated as off) when it isn't.
+   */
+  tls_fragment?: boolean;
   /** The tun network stack the current or next tunnel uses. */
   tun_stack?: TunStack;
   /**
@@ -41,6 +57,12 @@ export interface State {
    * (service mode: at boot). Omitted (treated as off) when it doesn't.
    */
   autoconnect?: boolean;
+  /**
+   * Whether the health-failover watchdog is armed — it reconnects to another node
+   * when the active one degrades. On by default in the core, so it is normally
+   * present as `true`; omitted (treated as off) once the user disarms it.
+   */
+  auto_failover?: boolean;
   /** Whether DNS ad/tracker blocking is armed; omitted (treated as off) when it isn't. */
   ad_block?: boolean;
   /**
@@ -153,6 +175,52 @@ export interface BatchImportResult {
   profile: Profile;
   imported: number;
   skipped: number;
+}
+
+/**
+ * Best-effort NAT-mapping classification from a STUN probe, aimed at peer-to-peer
+ * reachability rather than the full RFC 3489 cone taxonomy. `open` (the reflexive
+ * address is one of our own interfaces — no NAT), `endpoint-independent` (both
+ * servers saw the same mapping — cone-like, P2P-friendly), `endpoint-dependent`
+ * (different mappings — symmetric, P2P-hostile), `unknown` (only one server
+ * answered — too little to classify), `blocked` (no answer). Mirror of the core's
+ * nat types.
+ */
+export type NatType =
+  | "open"
+  | "endpoint-independent"
+  | "endpoint-dependent"
+  | "unknown"
+  | "blocked";
+
+/**
+ * Result of `run_stun_check`. Mirror of the core's STUN probe result: whether any
+ * STUN server answered over UDP, the reflexive public IP one observed, and a
+ * best-effort NAT classification. `external_ip` is omitted when no server answered
+ * (then `udp_ok` is false and `nat_type` is `"blocked"`).
+ */
+export interface StunResult {
+  /** Whether any STUN server answered over UDP. */
+  udp_ok: boolean;
+  /** Best-effort NAT-mapping classification for peer-to-peer reachability. */
+  nat_type: NatType;
+  /** The reflexive public IP a STUN server observed for us, when one answered. */
+  external_ip?: string;
+}
+
+/**
+ * Result of `run_speed_test`. Mirror of the core's throughput measurement through
+ * the active tunnel: the download rate in megabits per second, the bytes the
+ * sample actually read, and how long that took. Gated on a live connection — the
+ * core rejects it while idle.
+ */
+export interface SpeedTestResult {
+  /** Download throughput in megabits per second. */
+  mbps: number;
+  /** The bytes the sample actually read. */
+  sample_bytes: number;
+  /** How long the sample took, in milliseconds. */
+  duration_ms: number;
 }
 
 // Events the core pushes without being asked.

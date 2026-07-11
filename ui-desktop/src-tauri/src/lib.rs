@@ -21,8 +21,8 @@ use tauri_plugin_notification::NotificationExt;
 
 use backend::{
     AttemptsSnapshot, Backend, ConnectionState, EventSink, ImportLinksResult, LeakCheck,
-    PingResult, Profile, RoutingMode, SplitMode, State, TunStack, EVENT_ATTEMPTS, EVENT_LOG,
-    EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
+    PingResult, Profile, RoutingMode, SpeedTest, SplitMode, State, StunCheck, TunStack,
+    EVENT_ATTEMPTS, EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
 /// Held in Tauri's managed state and shared by every command handler. The
@@ -261,8 +261,9 @@ fn singbox_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
 // They are `async`: a sync Tauri command runs on the main/event-loop thread, so
 // it freezes the whole window for its duration. Every backend call here blocks
 // on the sidecar's response channel (up to the 60s request timeout), and the
-// network-bound ones (connect, import, refresh, ping, leak_check) can take
-// seconds. So each clones the `Arc` backend and runs the blocking call on a
+// network-bound ones (connect, import, refresh, ping, leak_check, run_stun_check,
+// run_speed_test) can take seconds. So each clones the `Arc` backend and runs the
+// blocking call on a
 // worker thread via `spawn_blocking`, leaving the UI responsive. `spawn_blocking`
 // only fails if the runtime is shutting down; we surface that as an error string
 // like any other.
@@ -396,6 +397,11 @@ async fn set_kill_switch(state: TauriState<'_, AppState>, on: bool) -> Result<St
 }
 
 #[tauri::command]
+async fn set_tls_fragment(state: TauriState<'_, AppState>, on: bool) -> Result<State, String> {
+    off_thread(Arc::clone(&state.backend), move |b| b.set_tls_fragment(on)).await
+}
+
+#[tauri::command]
 async fn set_tun(state: TauriState<'_, AppState>, stack: TunStack) -> Result<State, String> {
     off_thread(Arc::clone(&state.backend), move |b| b.set_tun(stack)).await
 }
@@ -403,6 +409,11 @@ async fn set_tun(state: TauriState<'_, AppState>, stack: TunStack) -> Result<Sta
 #[tauri::command]
 async fn set_autoconnect(state: TauriState<'_, AppState>, on: bool) -> Result<State, String> {
     off_thread(Arc::clone(&state.backend), move |b| b.set_autoconnect(on)).await
+}
+
+#[tauri::command]
+async fn set_auto_failover(state: TauriState<'_, AppState>, on: bool) -> Result<State, String> {
+    off_thread(Arc::clone(&state.backend), move |b| b.set_auto_failover(on)).await
 }
 
 #[tauri::command]
@@ -449,6 +460,16 @@ async fn set_rules(
 #[tauri::command]
 async fn leak_check(state: TauriState<'_, AppState>) -> Result<LeakCheck, String> {
     off_thread(Arc::clone(&state.backend), |b| b.leak_check()).await
+}
+
+#[tauri::command]
+async fn run_stun_check(state: TauriState<'_, AppState>) -> Result<StunCheck, String> {
+    off_thread(Arc::clone(&state.backend), |b| b.run_stun_check()).await
+}
+
+#[tauri::command]
+async fn run_speed_test(state: TauriState<'_, AppState>) -> Result<SpeedTest, String> {
+    off_thread(Arc::clone(&state.backend), |b| b.run_speed_test()).await
 }
 
 /// Quit the whole app. Closing the window only hides it (see the close handler
@@ -555,12 +576,16 @@ pub fn run() {
             set_routing,
             set_split,
             set_kill_switch,
+            set_tls_fragment,
             set_tun,
             set_autoconnect,
+            set_auto_failover,
             set_dns,
             set_rules,
             set_crash_reports,
             leak_check,
+            run_stun_check,
+            run_speed_test,
             quit_app,
             take_launch_deep_links,
             update_channel::check_update_for_channel,
@@ -644,6 +669,8 @@ fn tooltip_for(state: ConnectionState) -> &'static str {
     match state {
         ConnectionState::Idle => "Tenebra вЂ” Disconnected",
         ConnectionState::Connecting => "Tenebra вЂ” ConnectingвЂ¦",
+        // A one-shot auto-failover switch reads as reconnecting, like connecting.
+        ConnectionState::HealthReconnecting => "Tenebra вЂ” ReconnectingвЂ¦",
         ConnectionState::Connected => "Tenebra вЂ” Connected",
         ConnectionState::Error => "Tenebra вЂ” Error",
     }
@@ -705,8 +732,10 @@ mod tests {
             split: None,
             split_apps: None,
             kill_switch: None,
+            tls_fragment: None,
             tun_stack: None,
             autoconnect: None,
+            auto_failover: None,
             ad_block: None,
             dns_remote: None,
             dns_direct: None,

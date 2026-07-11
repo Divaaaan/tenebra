@@ -9,9 +9,11 @@ import type {
   PingResult,
   Profile,
   RoutingMode,
+  SpeedTestResult,
   SplitMode,
   State,
   StateEvent,
+  StunResult,
   TrafficEvent,
   TunStack,
 } from "./types";
@@ -102,6 +104,14 @@ export const api = {
     return invoke<State>("set_kill_switch", { on });
   },
 
+  // Arm/disarm forced TLS ClientHello fragmentation — the unconditional
+  // DPI-obfuscation override. Same live re-apply semantics as the kill switch (a
+  // brief connecting→connected dip while sing-box hot-swaps on the same node);
+  // when idle it applies on the next connect.
+  setTlsFragment(on: boolean): Promise<State> {
+    return invoke<State>("set_tls_fragment", { on });
+  },
+
   // Switch the tun network stack. Same live re-apply semantics as the kill
   // switch; when idle the choice applies on the next connect.
   setTun(stack: TunStack): Promise<State> {
@@ -113,6 +123,14 @@ export const api = {
   // mode: at boot); nothing about a live tunnel changes.
   setAutoconnect(on: boolean): Promise<State> {
     return invoke<State>("set_autoconnect", { on });
+  },
+
+  // Arm/disarm the health-failover watchdog (reconnects to another node when the
+  // active one degrades). The core persists the choice; unlike the kill switch it
+  // changes nothing about a live tunnel — the watchdog re-reads the flag on its
+  // next tick, so a mid-session toggle takes effect without a reconnect.
+  setAutoFailover(on: boolean): Promise<State> {
+    return invoke<State>("set_auto_failover", { on });
   },
 
   // Record the crash-report consent (opt in or out). The core persists it and
@@ -173,6 +191,24 @@ export const api = {
    */
   leakCheck(): Promise<LeakCheck> {
     return invoke<LeakCheck>("leak_check");
+  },
+
+  /**
+   * Probe the current network path with a STUN Binding Request: whether outbound
+   * UDP works, the reflexive public IP, and a best-effort NAT classification (see
+   * {@link StunResult}). Not gated on a connection.
+   */
+  runStunCheck(): Promise<StunResult> {
+    return invoke<StunResult>("run_stun_check");
+  },
+
+  /**
+   * Measure download throughput through the active tunnel (see
+   * {@link SpeedTestResult}). Gated on a live connection — the core rejects it
+   * while idle, which surfaces here as a rejected promise.
+   */
+  runSpeedTest(): Promise<SpeedTestResult> {
+    return invoke<SpeedTestResult>("run_speed_test");
   },
 
   /** Actually exit the app. Closing the window only hides it to the tray. */
