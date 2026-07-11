@@ -32,6 +32,11 @@ serde_json = "1"
 # Robustly parse incoming tenebra:// deep links (scheme, host verb, decoded
 # query params). Already in the tree via tauri; pinned here as a direct use.
 url = "2"
+# Open the crash-report GitHub URL in the user's default browser from a Rust
+# command, so the webview needs no shell:open capability (it stays denied — see
+# capabilities/default.json) and cannot influence the destination host. Already
+# in the tree via tauri-plugin-shell; pinned here as a direct use.
+open = "5"
 
 [target.'cfg(windows)'.dependencies]
 # Raw Win32 declarations for the named-pipe transport: PeekNamedPipe lets the

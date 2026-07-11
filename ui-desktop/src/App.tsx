@@ -6,6 +6,9 @@ import { ConnectionPanel } from "./components/ConnectionPanel";
 import { ServerList, type ServerRow } from "./components/ServerList";
 import { BottomBar } from "./components/BottomBar";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { CrashConsentBanner } from "./components/CrashConsentBanner";
+import { CrashReportBanner } from "./components/CrashReportBanner";
+import { CrashReportModal } from "./components/CrashReportModal";
 import { DeepLinkConfirm } from "./components/DeepLinkConfirm";
 import { ProfilesScreen } from "./screens/ProfilesScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
@@ -14,6 +17,7 @@ import { useTenebra } from "./state/useTenebra";
 import { useI18n } from "./i18n/I18nContext";
 import type { RoutingMode } from "./api";
 import {
+  api,
   onDeepLink,
   onTrayConnect,
   onTrayShow,
@@ -25,6 +29,7 @@ import { useNodePings } from "./lib/useNodePings";
 import { useSessionClock, formatUptime } from "./lib/useSessionClock";
 import { useTrafficHistory } from "./lib/useTrafficHistory";
 import { useUpdateCheck } from "./lib/useUpdateCheck";
+import { useCrashReport } from "./lib/useCrashReport";
 import { formatMbps } from "./lib/format";
 import { getAutoFastest, migrateLegacyAutoconnect } from "./lib/settings";
 
@@ -77,6 +82,26 @@ export function App() {
   // Launch update check: offers a found release in the banner strip, or — when
   // the auto-install preference is on — installs it silently and relaunches.
   const update = useUpdateCheck();
+
+  // Crash reporting is core-owned and opt-in. `crashAsked` gates the one-time
+  // consent banner; `crashConsent` (true only when explicitly enabled) gates
+  // whether a crash saved from a previous run is surfaced at all.
+  const crashConsent = state.crash_reports === true;
+  const crashAsked = state.crash_reports_asked ?? false;
+  const crash = useCrashReport(crashConsent, tenebra.ready);
+  const [viewingReport, setViewingReport] = useState(false);
+
+  const enableCrashReports = useCallback(() => {
+    void tenebra.setCrashReports(true).catch(() => {});
+  }, [tenebra]);
+  const declineCrashReports = useCallback(() => {
+    void tenebra.setCrashReports(false).catch(() => {});
+  }, [tenebra]);
+  const createCrashIssue = useCallback(() => {
+    // The core builds the whole URL and opens it from Rust; failures surface on
+    // the log channel the UI already renders.
+    void api.openReportUrl().catch(() => {});
+  }, []);
 
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -326,6 +351,21 @@ export function App() {
         />
       )}
 
+      {tenebra.ready && !crashAsked && (
+        <CrashConsentBanner
+          onEnable={enableCrashReports}
+          onDecline={declineCrashReports}
+        />
+      )}
+
+      {crash.report && (
+        <CrashReportBanner
+          onView={() => setViewingReport(true)}
+          onCreateIssue={createCrashIssue}
+          onDismiss={crash.dismiss}
+        />
+      )}
+
       <div className="app-body">
         <ConnectionPanel
           phase={phase}
@@ -412,6 +452,13 @@ export function App() {
           }
           onConfirm={confirmConnectRequest}
           onCancel={cancelConnectRequest}
+        />
+      )}
+
+      {viewingReport && crash.report && (
+        <CrashReportModal
+          report={crash.report.text}
+          onClose={() => setViewingReport(false)}
         />
       )}
     </div>

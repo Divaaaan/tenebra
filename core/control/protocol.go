@@ -40,6 +40,7 @@ const (
 	CmdSetAutoconnect     = "set_autoconnect"
 	CmdSetDNS             = "set_dns"
 	CmdSetRules           = "set_rules"
+	CmdSetCrashReports    = "set_crash_reports"
 	CmdLeakCheck          = "leak_check"
 )
 
@@ -199,9 +200,18 @@ type State struct {
 	RulesProxy  []string `json:"rules_proxy,omitempty"`
 	// PresetRuBanking and PresetRuGov report whether the bundled Russian banking /
 	// government direct-rule presets are on. Omitted when off, like the kill switch.
-	PresetRuBanking bool   `json:"preset_ru_banking,omitempty"`
-	PresetRuGov     bool   `json:"preset_ru_gov,omitempty"`
-	Error           string `json:"error,omitempty"`
+	PresetRuBanking bool `json:"preset_ru_banking,omitempty"`
+	PresetRuGov     bool `json:"preset_ru_gov,omitempty"`
+	// CrashReports reports the crash-report consent as a tri-state pointer: nil
+	// when the user has not been asked yet, else a pointer to their explicit
+	// choice. Unlike the other bool flags it is a *bool so a declined choice
+	// (false) still rides the wire — a non-nil pointer is not "empty", so
+	// omitempty drops only the nil (not-asked) case, letting the GUI tell "off"
+	// apart from "not asked". CrashReportsAsked carries the same has-been-asked
+	// bit explicitly so a consumer never has to lean on that pointer subtlety.
+	CrashReports      *bool  `json:"crash_reports,omitempty"`
+	CrashReportsAsked bool   `json:"crash_reports_asked,omitempty"`
+	Error             string `json:"error,omitempty"`
 }
 
 // PingResult is one node's dial-latency probe outcome.

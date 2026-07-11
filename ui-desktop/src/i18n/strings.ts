@@ -87,6 +87,31 @@ export interface Strings {
     downloading: string;
   };
 
+  /**
+   * Crash reporting (opt-in, local-only). The first-run consent banner, the
+   * "crashed last time" banner and its report overlay, and the ErrorBoundary
+   * fallback shown if the UI itself throws. Nothing is ever sent automatically.
+   */
+  crash: {
+    /** First-run consent banner: prompt plus the two choices. */
+    consentText: string;
+    consentEnable: string;
+    consentNoThanks: string;
+    /** "Crashed last time" banner: title plus its three actions. */
+    detectedTitle: string;
+    detectedView: string;
+    detectedIssue: string;
+    detectedDismiss: string;
+    /** Report overlay: heading, copy button (idle + copied confirmation), close. */
+    reportTitle: string;
+    reportCopy: string;
+    reportCopied: string;
+    reportClose: string;
+    /** ErrorBoundary fallback shown when the UI itself throws. */
+    fallbackTitle: string;
+    fallbackReload: string;
+  };
+
   home: {
     connect: string;
     disconnect: string;
@@ -232,6 +257,9 @@ export interface Strings {
     /** "Install updates automatically" toggle label and its explanation. */
     autoInstall: string;
     autoInstallHint: string;
+    /** Crash-reports toggle: label and explanation. */
+    crashReports: string;
+    crashReportsHint: string;
     /** DNS section: the ad/tracker-block toggle and the two custom resolvers. */
     dns: string;
     dnsHint: string;
@@ -394,6 +422,22 @@ const en: Strings = {
     later: "Later",
     downloading: "Downloading update…",
   },
+  crash: {
+    consentText:
+      "Help improve Tenebra: after a crash, offer to review and send a report. Nothing is ever sent automatically.",
+    consentEnable: "Enable",
+    consentNoThanks: "No thanks",
+    detectedTitle: "Tenebra crashed last time",
+    detectedView: "View report",
+    detectedIssue: "Create GitHub issue",
+    detectedDismiss: "Dismiss",
+    reportTitle: "Crash report",
+    reportCopy: "Copy",
+    reportCopied: "Copied",
+    reportClose: "Close",
+    fallbackTitle: "Something went wrong",
+    fallbackReload: "Reload",
+  },
   home: {
     connect: "Connect",
     disconnect: "Disconnect",
@@ -522,6 +566,9 @@ const en: Strings = {
     autoInstall: "Install updates automatically",
     autoInstallHint:
       "When a launch check finds a new version, install it and restart without asking.",
+    crashReports: "Crash reports",
+    crashReportsHint:
+      "After a crash, offer to review and send a report on the next launch. Reports are only ever sent manually.",
     dns: "DNS",
     dnsHint:
       "Choose the resolvers Tenebra uses, and optionally refuse ad and tracker domains.",
@@ -675,6 +722,22 @@ const ru: Strings = {
     later: "Позже",
     downloading: "Загрузка обновления…",
   },
+  crash: {
+    consentText:
+      "Помогать улучшать Tenebra: после сбоя предлагать просмотреть и отправить отчёт. Ничего не отправляется автоматически.",
+    consentEnable: "Включить",
+    consentNoThanks: "Не надо",
+    detectedTitle: "В прошлый раз Tenebra аварийно завершилась",
+    detectedView: "Посмотреть отчёт",
+    detectedIssue: "Создать issue на GitHub",
+    detectedDismiss: "Скрыть",
+    reportTitle: "Отчёт о сбое",
+    reportCopy: "Копировать",
+    reportCopied: "Скопировано",
+    reportClose: "Закрыть",
+    fallbackTitle: "Что-то пошло не так",
+    fallbackReload: "Перезагрузить",
+  },
   home: {
     connect: "Подключиться",
     disconnect: "Отключиться",
@@ -803,6 +866,9 @@ const ru: Strings = {
     autoInstall: "Устанавливать обновления автоматически",
     autoInstallHint:
       "Если проверка при запуске нашла новую версию — установить её и перезапустить без вопросов.",
+    crashReports: "Отчёты о сбоях",
+    crashReportsHint:
+      "После сбоя предложить просмотреть и отправить отчёт при следующем запуске. Отправка — только вручную.",
     dns: "DNS",
     dnsHint:
       "Выберите резолверы, которые использует Tenebra, и при желании отклоняйте рекламные и трекерные домены.",

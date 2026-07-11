@@ -191,6 +191,7 @@ either of the listed licenses.
 - **serde** `1` — MIT OR Apache-2.0 — The Serde developers
 - **serde_json** `1` — MIT OR Apache-2.0 — The Serde developers
 - **url** `2` — MIT OR Apache-2.0 — Copyright (c) 2013-2025 The rust-url developers
+- **open** `5` — MIT — Copyright (c) 2015 Sebastian Thiel
 - **windows-sys** `0.61` — MIT OR Apache-2.0 — Copyright (c) Microsoft Corporation
 
 ## 4. Frontend (npm) dependencies
@@ -230,7 +231,7 @@ GPL-3.0 text that covers Tenebra and the bundled sing-box components is in
 
 ### MIT License
 
-Applies to: github.com/Microsoft/go-winio, tauri-build, tauri, tauri-plugin-dialog, tauri-plugin-shell, tauri-plugin-autostart, tauri-plugin-single-instance, tauri-plugin-deep-link, tauri-plugin-notification, tauri-plugin-updater, tauri-plugin-process, serde, serde_json, url, windows-sys, @tauri-apps/api, @tauri-apps/plugin-autostart, @tauri-apps/plugin-dialog, @tauri-apps/plugin-process, @tauri-apps/plugin-shell, @tauri-apps/plugin-updater, react, react-dom.
+Applies to: github.com/Microsoft/go-winio, tauri-build, tauri, tauri-plugin-dialog, tauri-plugin-shell, tauri-plugin-autostart, tauri-plugin-single-instance, tauri-plugin-deep-link, tauri-plugin-notification, tauri-plugin-updater, tauri-plugin-process, serde, serde_json, url, open, windows-sys, @tauri-apps/api, @tauri-apps/plugin-autostart, @tauri-apps/plugin-dialog, @tauri-apps/plugin-process, @tauri-apps/plugin-shell, @tauri-apps/plugin-updater, react, react-dom.
 
 ```text
 MIT License

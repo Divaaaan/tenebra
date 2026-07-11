@@ -50,6 +50,7 @@ const META = {
   serde: { license: "MIT OR Apache-2.0", copyright: "The Serde developers" },
   serde_json: { license: "MIT OR Apache-2.0", copyright: "The Serde developers" },
   url: { license: "MIT OR Apache-2.0", copyright: "Copyright (c) 2013-2025 The rust-url developers" },
+  open: { license: "MIT", copyright: "Copyright (c) 2015 Sebastian Thiel" },
   "windows-sys": { license: "MIT OR Apache-2.0", copyright: "Copyright (c) Microsoft Corporation" },
 
   // npm production dependencies (ui-desktop/package.json)

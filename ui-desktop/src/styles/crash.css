@@ -1,0 +1,93 @@
+/* ── crash-reporting banners — opt-in consent + "crashed last time" ── */
+/* Modeled on the update banner (a quiet bordered row), but left in normal case
+   and allowed to wrap since the consent copy is a sentence, not a short label. */
+.crash-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding: var(--sp-2) 22px;
+  border-bottom: var(--bw) solid var(--line);
+  font-size: var(--fs-label);
+}
+.crash-banner-text {
+  color: var(--warn-soft);
+}
+.crash-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-shrink: 0;
+}
+.crash-banner-actions button {
+  display: inline-flex;
+  gap: 6px;
+  white-space: nowrap;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  transition: color var(--t-fast);
+}
+.crash-banner-actions .crash-banner-primary {
+  color: var(--signal);
+}
+.crash-banner-actions button:hover {
+  color: var(--signal);
+}
+
+/* ── crash fallback — the ErrorBoundary caught a render error ── */
+.crash-fallback {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-5);
+  padding: var(--sp-6);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  text-align: center;
+}
+.crash-fallback-title {
+  margin: 0;
+  font-size: var(--fs-sku);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.crash-fallback-reload {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: var(--sp-2) var(--sp-5);
+  border: var(--bw) solid var(--signal);
+  color: var(--signal);
+  transition:
+    color var(--t-fast),
+    background var(--t-fast);
+}
+.crash-fallback-reload:hover {
+  background: var(--signal);
+  color: var(--on-signal);
+}
+
+/* ── crash report overlay — the pre-formatted report body ── */
+.crash-report-modal {
+  width: min(680px, 100%);
+}
+.crash-report-pre {
+  max-height: 48vh;
+  margin: 0;
+  overflow: auto;
+  padding: var(--sp-3);
+  border: var(--bw) solid var(--line);
+  background: var(--bg-inset);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

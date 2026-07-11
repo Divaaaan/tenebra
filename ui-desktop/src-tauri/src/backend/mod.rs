@@ -1,13 +1,13 @@
-//! The boundary the UI talks to.
+﻿//! The boundary the UI talks to.
 //!
 //! Every implementation of the [`Backend`] trait drives the same control
 //! protocol (see `docs/control-protocol.md`); the Tauri command layer in
 //! `lib.rs` never has to know which one is wired in. [`wire`] holds the
 //! transport-agnostic protocol client; [`sidecar`] runs it over a spawned
 //! core's stdin/stdout; [`pipe`] (Windows) runs it over the named pipe of a
-//! core that outlives the GUI — the service or `tenebra-core --pipe`; [`unix`]
+//! core that outlives the GUI вЂ” the service or `tenebra-core --pipe`; [`unix`]
 //! (macOS) runs it over the unix domain socket of a root LaunchDaemon that
-//! likewise outlives the GUI — `tenebra-core --socket`; [`mock`] is an
+//! likewise outlives the GUI вЂ” `tenebra-core --socket`; [`mock`] is an
 //! in-process fake for UI work without the core. `make_backend` in `lib.rs`
 //! picks one at startup.
 //!
@@ -92,6 +92,12 @@ pub enum Source {
     Manual,
 }
 
+/// serde `skip_serializing_if` predicate: drop a bool field when it is false, so
+/// the wire form matches the Go core's `omitempty` on the same field.
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct State {
     pub state: ConnectionState,
@@ -146,6 +152,16 @@ pub struct State {
     pub preset_ru_banking: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset_ru_gov: Option<bool>,
+    /// Crash-report consent as a tri-state: `None` when the user has not been
+    /// asked yet, `Some(true)` opted in, `Some(false)` declined. Mirrors the
+    /// core's `*bool` so the UI can tell "declined" apart from "not asked".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crash_reports: Option<bool>,
+    /// Whether the crash-report consent has been answered at all. Carried
+    /// explicitly (rather than inferred from `crash_reports`) so the first-run
+    /// prompt has an unambiguous gate; omitted when false, matching the core.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub crash_reports_asked: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -229,7 +245,7 @@ pub enum Verdict {
 }
 
 /// DNS leak assessment outcome, mirroring the core's `DNSStatus`. `Inconclusive`
-/// and `Unavailable` are deliberately distinct from a pass — the UI must never
+/// and `Unavailable` are deliberately distinct from a pass вЂ” the UI must never
 /// present them as "safe".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -332,7 +348,7 @@ pub trait Backend: Send + Sync + 'static {
     fn set_split(&self, mode: SplitMode, apps: Vec<String>) -> Result<State, String>;
     /// Arm or disarm the kill switch. The core persists the choice and, when a
     /// tunnel is live, re-applies it in place by hot-swapping sing-box on the
-    /// same node (a brief connecting→connected dip, not a full reconnect).
+    /// same node (a brief connectingв†’connected dip, not a full reconnect).
     fn set_kill_switch(&self, on: bool) -> Result<State, String>;
     /// Switch the tun network stack. Same live re-apply semantics as the kill
     /// switch; when idle the choice simply applies on the next connect.
@@ -341,11 +357,16 @@ pub trait Backend: Send + Sync + 'static {
     /// armed, reconnects the last profile the next time the daemon itself
     /// starts (service mode: at boot); nothing about a live tunnel changes.
     fn set_autoconnect(&self, on: bool) -> Result<State, String>;
+    /// Record the crash-report consent (opt in or out). The core persists the
+    /// choice and reports it back; like autoconnect it changes nothing about a
+    /// live tunnel, and nothing is ever sent anywhere вЂ” it only governs whether
+    /// the GUI offers to surface a locally saved crash report on the next launch.
+    fn set_crash_reports(&self, on: bool) -> Result<State, String>;
     /// Record the DNS preferences: the ad/tracker-block toggle, the IPv4-only
     /// toggle, plus the two custom resolvers (the encrypted proxied resolver and
     /// the direct one). The core persists them and, when a tunnel is live,
     /// re-applies them in place by hot-swapping sing-box on the same node (a brief
-    /// connecting→connected dip, not a full reconnect). An empty resolver resets
+    /// connectingв†’connected dip, not a full reconnect). An empty resolver resets
     /// that one to the core's default; a malformed one is refused.
     fn set_dns(
         &self,
@@ -358,9 +379,9 @@ pub trait Backend: Send + Sync + 'static {
     /// presets: `rules_direct` pins destinations to the direct outbound,
     /// `rules_proxy` to the proxy, and the presets add bundled banking /
     /// government direct rules. The core validates each suffix (a malformed one is
-    /// refused), persists them, and — when a tunnel is live — re-applies them in
+    /// refused), persists them, and вЂ” when a tunnel is live вЂ” re-applies them in
     /// place by hot-swapping sing-box on the same node (a brief
-    /// connecting→connected dip, not a full reconnect).
+    /// connectingв†’connected dip, not a full reconnect).
     fn set_rules(
         &self,
         rules_direct: Vec<String>,
@@ -480,6 +501,8 @@ mod tests {
             rules_proxy: Some(vec!["work.example".into()]),
             preset_ru_banking: Some(true),
             preset_ru_gov: Some(true),
+            crash_reports: Some(true),
+            crash_reports_asked: true,
             error: None,
         };
         let json = to_value(&state).unwrap();
@@ -507,6 +530,8 @@ mod tests {
             rules_proxy: None,
             preset_ru_banking: None,
             preset_ru_gov: None,
+            crash_reports: None,
+            crash_reports_asked: false,
             error: None,
         };
         let obj = to_value(&state).unwrap();
@@ -530,6 +555,8 @@ mod tests {
             "rules_proxy",
             "preset_ru_banking",
             "preset_ru_gov",
+            "crash_reports",
+            "crash_reports_asked",
             "error",
         ] {
             assert!(
@@ -629,7 +656,7 @@ mod tests {
     #[test]
     fn ping_result_rtt_ms_is_i64_wire_compatible() {
         // The core emits RTTMs as int64. A negative sentinel and a value past
-        // u32::MAX must both decode — modelling rtt_ms as u32 would reject these
+        // u32::MAX must both decode вЂ” modelling rtt_ms as u32 would reject these
         // and fail the entire ping response.
         for rtt in [-1_i64, 0, 42, i64::from(u32::MAX) + 1, i64::MAX] {
             let value = json!({ "node": "n", "rttMs": rtt, "ok": false });

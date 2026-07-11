@@ -775,7 +775,7 @@ func (d *Daemon) setState(s State) {
 	// rather than whatever the transient State value carried. This keeps status
 	// reporting them correctly across connect/disconnect transitions without
 	// every call site restating them.
-	applySettingsToState(&s, d.routing, d.tun, d.autoconnect)
+	applySettingsToState(&s, d.routing, d.tun, d.autoconnect, d.crashReports)
 	d.state = s
 	emit := d.emit
 	d.mu.Unlock()

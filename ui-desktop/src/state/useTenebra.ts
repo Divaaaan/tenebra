@@ -51,6 +51,7 @@ export interface Tenebra {
   setKillSwitch: (on: boolean) => Promise<void>;
   setTun: (stack: TunStack) => Promise<void>;
   setAutoconnect: (on: boolean) => Promise<void>;
+  setCrashReports: (on: boolean) => Promise<void>;
   setDns: (
     adBlock: boolean,
     dnsRemote: string,
@@ -205,6 +206,11 @@ export function useTenebra(): Tenebra {
     setState(next);
   }, []);
 
+  const setCrashReports = useCallback(async (on: boolean) => {
+    const next = await api.setCrashReports(on);
+    setState(next);
+  }, []);
+
   const setDns = useCallback(
     async (
       adBlock: boolean,
@@ -251,6 +257,7 @@ export function useTenebra(): Tenebra {
     setKillSwitch,
     setTun,
     setAutoconnect,
+    setCrashReports,
     setDns,
     setRules,
     refreshProfiles,

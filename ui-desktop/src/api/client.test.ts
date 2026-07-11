@@ -180,6 +180,39 @@ describe("api command wrappers", () => {
     expect(mockInvoke).toHaveBeenCalledWith("set_autoconnect", { on: true });
   });
 
+  it("setCrashReports forwards the flag and returns the State", async () => {
+    const declined: State = {
+      state: "idle",
+      crash_reports: false,
+      crash_reports_asked: true,
+    };
+    mockInvoke.mockResolvedValueOnce(declined);
+    await expect(api.setCrashReports(false)).resolves.toEqual(declined);
+    expect(mockInvoke).toHaveBeenCalledWith("set_crash_reports", { on: false });
+  });
+
+  it("recordWebCrash forwards the message and stack with snake_case keys", async () => {
+    mockInvoke.mockResolvedValueOnce(undefined);
+    await api.recordWebCrash("boom", "at foo\nat bar");
+    expect(mockInvoke).toHaveBeenCalledWith("record_web_crash", {
+      message: "boom",
+      stack_excerpt: "at foo\nat bar",
+    });
+  });
+
+  it("checkCrashReport returns the report the core read back", async () => {
+    const report = { text: "message: boom", signature: "12-99" };
+    mockInvoke.mockResolvedValueOnce(report);
+    await expect(api.checkCrashReport()).resolves.toEqual(report);
+    expect(mockInvoke).toHaveBeenCalledWith("check_crash_report");
+  });
+
+  it("openReportUrl invokes the opener command with no arguments", async () => {
+    mockInvoke.mockResolvedValueOnce(undefined);
+    await api.openReportUrl();
+    expect(mockInvoke).toHaveBeenCalledWith("open_report_url");
+  });
+
   it("setDns forwards both toggles and resolvers with snake_case keys", async () => {
     const armed: State = {
       state: "connected",

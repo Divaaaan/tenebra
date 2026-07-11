@@ -1,4 +1,4 @@
-//! Tauri shell. It owns the backend, exposes the control protocol as Tauri
+﻿//! Tauri shell. It owns the backend, exposes the control protocol as Tauri
 //! commands, and bridges backend events onto the webview event bus.
 //!
 //! The backend is hidden behind the [`Backend`](backend::Backend) trait; see
@@ -7,6 +7,7 @@
 //! in-process mock on request).
 
 mod backend;
+mod crash;
 mod deeplink;
 mod tray;
 mod update_channel;
@@ -36,7 +37,7 @@ struct AppState {
 struct TauriSink {
     app: AppHandle,
     /// The last connection state delivered here, so a desktop notification fires
-    /// only on a real transition — not on every snapshot that leaves the state
+    /// only on a real transition вЂ” not on every snapshot that leaves the state
     /// unchanged (e.g. a live kill-switch or tun re-apply).
     last_state: Mutex<Option<ConnectionState>>,
 }
@@ -110,13 +111,13 @@ impl EventSink for TauriSink {
 //  2. On Windows, if a core is already listening on the control pipe (the
 //     installed service, or `tenebra-core --pipe` in a console), attach to it.
 //     The tunnel then outlives this process and the GUI needs no elevation.
-//     TENEBRA_PIPE renames the pipe or (`off`) skips it — see
+//     TENEBRA_PIPE renames the pipe or (`off`) skips it вЂ” see
 //     backend::pipe::configured_name.
 //  2'. On macOS, the same probe over the daemon's unix socket
 //     (`/var/run/tenebra.sock`): if the root LaunchDaemon is listening, attach.
-//     TENEBRA_SOCKET renames the path or (`off`) skips it — see
+//     TENEBRA_SOCKET renames the path or (`off`) skips it вЂ” see
 //     backend::unix::configured_path.
-//  3. Otherwise spawn the `tenebra-core` sidecar and own it — today's default
+//  3. Otherwise spawn the `tenebra-core` sidecar and own it вЂ” today's default
 //     and the development path.
 //
 // If the sidecar fails to spawn (e.g. the binary is missing), we log and fall
@@ -166,7 +167,7 @@ fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
 
     // Both the core and sing-box must resolve to an absolute, bundled path. If
     // either can't be located we fail closed to the demo backend rather than let
-    // a bare name resolve from the current directory or PATH — a spawn against a
+    // a bare name resolve from the current directory or PATH вЂ” a spawn against a
     // planted `tenebra-core`/`sing-box` in an attacker-chosen CWD would otherwise
     // run untrusted code with the app's privileges.
     let program = match backend::sidecar::SidecarBackend::default_program() {
@@ -345,7 +346,7 @@ async fn connect(
     profile: String,
     node: Option<String>,
     // Optional so an older/leaner caller can omit it; Tauri maps a missing arg to
-    // None, which we treat as "not auto" — the protocol's default order.
+    // None, which we treat as "not auto" вЂ” the protocol's default order.
     auto: Option<bool>,
 ) -> Result<State, String> {
     let auto = auto.unwrap_or(false);
@@ -397,6 +398,11 @@ async fn set_autoconnect(state: TauriState<'_, AppState>, on: bool) -> Result<St
     off_thread(Arc::clone(&state.backend), move |b| b.set_autoconnect(on)).await
 }
 
+#[tauri::command]
+async fn set_crash_reports(state: TauriState<'_, AppState>, on: bool) -> Result<State, String> {
+    off_thread(Arc::clone(&state.backend), move |b| b.set_crash_reports(on)).await
+}
+
 // rename_all keeps the JS-side argument keys snake_case (ad_block, dns_remote,
 // dns_direct, ipv4_only), matching this file's command convention. Tauri v2
 // otherwise expects camelCase keys by default; the existing single-word commands
@@ -418,7 +424,7 @@ async fn set_dns(
 
 // rename_all keeps the JS-side argument keys snake_case (rules_direct,
 // rules_proxy, preset_ru_banking, preset_ru_gov), matching this file's multi-word
-// command convention (see set_dns) — Tauri v2 would otherwise expect camelCase.
+// command convention (see set_dns) вЂ” Tauri v2 would otherwise expect camelCase.
 #[tauri::command(rename_all = "snake_case")]
 async fn set_rules(
     state: TauriState<'_, AppState>,
@@ -469,6 +475,10 @@ struct PingList {
 }
 
 pub fn run() {
+    // Capture GUI panics to the local crash file before Tauri starts. Under the
+    // release profile's panic=abort the hook runs and then the process aborts, so
+    // it is the only chance to persist a panic вЂ” install it first of all.
+    crash::install_panic_hook();
     tauri::Builder::default()
         // Single-instance must be the FIRST plugin so a second launch is caught
         // before any window or other plugin spins up. It focuses the window we
@@ -476,7 +486,7 @@ pub fn run() {
         // forwarding may not reach the primary instance on Windows), routes any
         // tenebra:// link the second launch carried in its argv. The deep-link
         // feature also forwards that argv to the deep-link plugin, so the same
-        // link can arrive twice — deliver_live de-dups it.
+        // link can arrive twice вЂ” deliver_live de-dups it.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             focus_main_window(app);
             deeplink::deliver_live(app, &deeplink::find_urls(&argv));
@@ -542,10 +552,14 @@ pub fn run() {
             set_autoconnect,
             set_dns,
             set_rules,
+            set_crash_reports,
             leak_check,
             quit_app,
             take_launch_deep_links,
             update_channel::check_update_for_channel,
+            crash::check_crash_report,
+            crash::record_web_crash,
+            crash::open_report_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tenebra");
@@ -565,7 +579,7 @@ fn setup_deep_link(app: &AppHandle) {
 
     // Cold start: the OS launches us with the link as a CLI argument. Collect it
     // from the plugin (get_current) and, defensively, the raw argv, then queue it
-    // for the front end to drain once the webview is listening — an event emitted
+    // for the front end to drain once the webview is listening вЂ” an event emitted
     // now, before setup finishes, would be lost.
     let mut launch: Vec<String> = Vec::new();
     if let Ok(Some(urls)) = app.deep_link().get_current() {
@@ -621,17 +635,17 @@ fn disconnect_backend(app: &AppHandle) {
 /// Pulled out so both the sink and the initial tray build agree on the wording.
 fn tooltip_for(state: ConnectionState) -> &'static str {
     match state {
-        ConnectionState::Idle => "Tenebra — Disconnected",
-        ConnectionState::Connecting => "Tenebra — Connecting…",
-        ConnectionState::Connected => "Tenebra — Connected",
-        ConnectionState::Error => "Tenebra — Error",
+        ConnectionState::Idle => "Tenebra вЂ” Disconnected",
+        ConnectionState::Connecting => "Tenebra вЂ” ConnectingвЂ¦",
+        ConnectionState::Connected => "Tenebra вЂ” Connected",
+        ConnectionState::Error => "Tenebra вЂ” Error",
     }
 }
 
 /// The desktop notification a state transition warrants, as `(title, body)`, or
 /// `None` when it isn't noteworthy: the first snapshot (`prev` is `None`, so the
 /// app just learned the current state rather than seeing it change), no change
-/// (`prev == new` — the debounce), or a transient `Connecting`. Pure so the
+/// (`prev == new` вЂ” the debounce), or a transient `Connecting`. Pure so the
 /// mapping is unit-tested without a Tauri app or a real toast.
 ///
 /// The wording is plain English (a system notification lives outside the
@@ -694,6 +708,8 @@ mod tests {
             rules_proxy: None,
             preset_ru_banking: None,
             preset_ru_gov: None,
+            crash_reports: None,
+            crash_reports_asked: false,
             error: None,
         }
     }
@@ -701,7 +717,7 @@ mod tests {
     #[test]
     fn first_snapshot_is_silent() {
         // No previous state: the app is just learning where it stands, not seeing
-        // a change, so nothing fires — even for connected.
+        // a change, so nothing fires вЂ” even for connected.
         assert_eq!(
             transition_notice(None, &state_with(ConnectionState::Connected)),
             None

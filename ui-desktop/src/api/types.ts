@@ -69,7 +69,29 @@ export interface State {
    */
   preset_ru_banking?: boolean;
   preset_ru_gov?: boolean;
+  /**
+   * Crash-report consent as a tri-state: `undefined` (omitted) when the user has
+   * not been asked yet, `true` opted in, `false` declined. Distinct from
+   * `crash_reports_asked` so "declined" reads apart from "not asked".
+   */
+  crash_reports?: boolean;
+  /**
+   * Whether the crash-report consent has been answered at all — the first-run
+   * prompt shows only while this is falsy. Omitted (treated as false) when the
+   * user has not been asked.
+   */
+  crash_reports_asked?: boolean;
   error?: string;
+}
+
+/**
+ * The local crash report the core read back from `crash-gui.txt`, plus a cheap
+ * change signature (file size + mtime) the UI stores on dismissal so the same
+ * crash isn't re-offered next launch, but a newer one (different signature) is.
+ */
+export interface CrashReport {
+  text: string;
+  signature: string;
 }
 
 export interface Node {
