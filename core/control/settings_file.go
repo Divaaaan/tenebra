@@ -34,6 +34,10 @@ type persistedSettings struct {
 	// files written before the field existed, which reads back as false — off,
 	// matching the pre-kill-switch behaviour.
 	KillSwitch bool `json:"kill_switch,omitempty"`
+	// TLSFragment remembers whether the user armed forced TLS ClientHello
+	// fragmentation. Absent in files written before the field existed, which reads
+	// back as false — off, matching the pre-fragmentation behaviour.
+	TLSFragment bool `json:"tls_fragment,omitempty"`
 	// TunStack remembers the chosen tun network stack (system/gvisor/mixed).
 	// Absent or unrecognized keeps the default; SetSettings validates it.
 	TunStack string `json:"tun_stack,omitempty"`

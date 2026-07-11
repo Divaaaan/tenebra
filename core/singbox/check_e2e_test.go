@@ -149,3 +149,42 @@ func TestRulesConfigPassesSingBoxCheck(t *testing.T) {
 	}
 	t.Run("smart", func(t *testing.T) { singBoxCheck(t, bin, smart) })
 }
+
+// TestFragmentConfigPassesSingBoxCheck feeds a real `sing-box check` two
+// fragmentation configs: the global toggle (routing.Options.TLSFragment), and a
+// per-node fragment set straight on the model TLS (what the adaptive walk's
+// fragment strategy produces). Both must decode cleanly — this is the guard that
+// the emitted tls.fragment / fragment_fallback_delay match the bundled sing-box
+// schema, which moved fragmentation into the tls object rather than an outbound
+// dial field. Skipped when no sing-box binary is available, like the sibling check.
+func TestFragmentConfigPassesSingBoxCheck(t *testing.T) {
+	bin, _, ok := findSingBox()
+	if !ok {
+		t.Skip("sing-box binary not found (resources/ or bin/ or PATH); skipping real config check")
+	}
+
+	global, err := Build(checkNodes(), "", routing.Options{
+		Mode:        routing.ModeGlobal,
+		TLSFragment: true,
+	}, TunOptions{})
+	if err != nil {
+		t.Fatalf("build global fragment config: %v", err)
+	}
+	t.Run("global", func(t *testing.T) { singBoxCheck(t, bin, global) })
+
+	// Per-node fragment on a checker-clean VLESS-over-TLS node, mirroring what a
+	// fragment strategy folds into a single node during the walk.
+	perNode := []model.Node{{
+		Protocol: model.VLESS,
+		Name:     "vless-frag",
+		Server:   "ws.example.test",
+		Port:     443,
+		UUID:     "22222222-2222-2222-2222-222222222222",
+		TLS:      &model.TLS{Enabled: true, ServerName: "ws.example.test", Fingerprint: "firefox", Fragment: true},
+	}}
+	cfg, err := Build(perNode, "", routing.Options{Mode: routing.ModeGlobal}, TunOptions{})
+	if err != nil {
+		t.Fatalf("build per-node fragment config: %v", err)
+	}
+	t.Run("per_node", func(t *testing.T) { singBoxCheck(t, bin, cfg) })
+}

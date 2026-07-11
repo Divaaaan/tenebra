@@ -106,6 +106,13 @@ func Build(nodes []model.Node, selectedTag string, ro routing.Options, tun TunOp
 	}
 	tun = tun.normalize()
 
+	// The global tls-fragment toggle forces fragmentation on every TLS-bearing
+	// node, converging on the same per-node tls.fragment field the adaptive walk
+	// sets, so buildNodes/tlsObject stay the single emission point.
+	if ro.TLSFragment {
+		nodes = forceFragment(nodes)
+	}
+
 	outs, endpoints, tags, err := buildNodes(nodes)
 	if err != nil {
 		return nil, err
@@ -186,6 +193,27 @@ func cacheFileBlock(dir string) map[string]any {
 		block["path"] = filepath.Join(dir, "cache.db")
 	}
 	return block
+}
+
+// forceFragment returns nodes with TLS fragmentation turned on for every
+// TLS-bearing node — the global tls-fragment toggle. A node without a TLS block
+// (Shadowsocks, WireGuard, or a Trojan/Hysteria2 node relying on the builder's
+// force-emit default) has no ClientHello to fragment through the model and is
+// returned unchanged, matching the adaptive walk's own scope. The slice and each
+// mutated node's TLS are copied so the caller's nodes — the connect loop reuses
+// one slice across attempts — are never altered in place.
+func forceFragment(nodes []model.Node) []model.Node {
+	out := make([]model.Node, len(nodes))
+	copy(out, nodes)
+	for i := range out {
+		if out[i].TLS == nil {
+			continue
+		}
+		tls := *out[i].TLS
+		tls.Fragment = true
+		out[i].TLS = &tls
+	}
+	return out
 }
 
 // buildNodes converts nodes into outbounds and endpoints, assigning each a

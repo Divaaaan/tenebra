@@ -36,6 +36,7 @@ const (
 	CmdSetRouting         = "set_routing"
 	CmdSetSplit           = "set_split"
 	CmdSetKillSwitch      = "set_kill_switch"
+	CmdSetTLSFragment     = "set_tls_fragment"
 	CmdSetTun             = "set_tun"
 	CmdSetAutoconnect     = "set_autoconnect"
 	CmdSetDNS             = "set_dns"
@@ -196,6 +197,11 @@ type State struct {
 	// tun, plus an automatic relaunch if the tunnel process dies). Omitted when
 	// off, like the split fields.
 	KillSwitch bool `json:"kill_switch,omitempty"`
+	// TLSFragment reports whether forced TLS ClientHello fragmentation is armed —
+	// every TLS-bearing outbound carries tls.fragment. Omitted when off, like the
+	// kill switch. The adaptive walk still reaches fragmentation per-node on a
+	// censored handshake regardless of this global override.
+	TLSFragment bool `json:"tls_fragment,omitempty"`
 	// TunStack is the tun network stack (system/gvisor/mixed) the current or
 	// next tunnel uses. Always present once the daemon has normalized it.
 	TunStack string `json:"tun_stack,omitempty"`
