@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -245,6 +246,10 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	// Normalize to fill with the defaults.
 	d.routing.DNSRemote = ps.DNSRemote
 	d.routing.DNSDirect = ps.DNSDirect
+	d.routing.RulesDirect = ps.RulesDirect
+	d.routing.RulesProxy = ps.RulesProxy
+	d.routing.PresetRuBanking = ps.PresetRuBanking
+	d.routing.PresetRuGov = ps.PresetRuGov
 	d.routing = d.routing.Normalize()
 	// A stack value from a corrupt or hand-edited file must not reach sing-box;
 	// anything unknown keeps the default.
@@ -294,18 +299,22 @@ func (d *Daemon) persistSettings() {
 // options. Callers must hold d.mu.
 func (d *Daemon) settingsLocked() persistedSettings {
 	return persistedSettings{
-		Version:     settingsVersion,
-		SplitMode:   string(d.routing.SplitMode),
-		SplitApps:   d.routing.SplitApps,
-		KillSwitch:  d.routing.KillSwitch,
-		TunStack:    d.tun.Stack,
-		Autoconnect: d.autoconnect,
-		AdBlock:     d.routing.AdBlock,
-		IPv4Only:    d.routing.IPv4Only,
-		DNSRemote:   d.routing.DNSRemote,
-		DNSDirect:   d.routing.DNSDirect,
-		LastProfile: d.lastProfile,
-		LastNode:    d.lastNode,
+		Version:         settingsVersion,
+		SplitMode:       string(d.routing.SplitMode),
+		SplitApps:       d.routing.SplitApps,
+		KillSwitch:      d.routing.KillSwitch,
+		TunStack:        d.tun.Stack,
+		Autoconnect:     d.autoconnect,
+		AdBlock:         d.routing.AdBlock,
+		IPv4Only:        d.routing.IPv4Only,
+		DNSRemote:       d.routing.DNSRemote,
+		DNSDirect:       d.routing.DNSDirect,
+		RulesDirect:     d.routing.RulesDirect,
+		RulesProxy:      d.routing.RulesProxy,
+		PresetRuBanking: d.routing.PresetRuBanking,
+		PresetRuGov:     d.routing.PresetRuGov,
+		LastProfile:     d.lastProfile,
+		LastNode:        d.lastNode,
 	}
 }
 
@@ -347,6 +356,8 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleSetAutoconnect(req)
 	case CmdSetDNS:
 		return d.handleSetDNS(req)
+	case CmdSetRules:
+		return d.handleSetRules(req)
 	case CmdLeakCheck:
 		return d.handleLeakCheck(ctx, req)
 	default:
@@ -911,6 +922,61 @@ func dnsPrefsDiffer(a, b routing.Options) bool {
 		a.DNSDirect != b.DNSDirect || a.IPv4Only != b.IPv4Only
 }
 
+// handleSetRules records the custom domain-suffix routing rules and the RU
+// direct-rule presets. Like set_dns it validates first — a malformed suffix
+// rejects the whole command (nothing half-applies or reaches sing-box) — then
+// records, persists, reflects the choice back, and, when a tunnel is live,
+// re-applies it in place via reapplyLive (a hot-swap on the same node, not a
+// reconnect). The suffixes are normalized (lowercased, trimmed, de-duplicated,
+// sorted), so the reported and persisted values are stable.
+func (d *Daemon) handleSetRules(req Request) Response {
+	for _, s := range req.RulesDirect {
+		if !routing.ValidDomainSuffix(s) {
+			return newError(req.ID, fmt.Sprintf("set_rules: invalid direct rule %q", s))
+		}
+	}
+	for _, s := range req.RulesProxy {
+		if !routing.ValidDomainSuffix(s) {
+			return newError(req.ID, fmt.Sprintf("set_rules: invalid proxy rule %q", s))
+		}
+	}
+
+	d.mu.Lock()
+	// d.routing is always kept normalized, so "before" already holds the effective
+	// (sorted, de-duplicated) rules to compare the new choice against.
+	before := d.routing
+	d.routing.RulesDirect = req.RulesDirect
+	d.routing.RulesProxy = req.RulesProxy
+	d.routing.PresetRuBanking = req.PresetRuBanking
+	d.routing.PresetRuGov = req.PresetRuGov
+	d.routing = d.routing.Normalize()
+	changed := rulesPrefsDiffer(before, d.routing)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect)
+	d.mu.Unlock()
+
+	d.persistSettings()
+	if changed {
+		d.reapplyLive()
+	}
+
+	resp, err := newResult(req.ID, d.snapshotState())
+	if err != nil {
+		return newError(req.ID, err.Error())
+	}
+	return resp
+}
+
+// rulesPrefsDiffer reports whether the custom-rule preferences (the two suffix
+// lists and the two preset toggles) differ between two option snapshots. It gates
+// the live hot-swap so only a real change restarts sing-box. Both snapshots are
+// normalized, so slices.Equal compares two stable, sorted lists.
+func rulesPrefsDiffer(a, b routing.Options) bool {
+	return a.PresetRuBanking != b.PresetRuBanking ||
+		a.PresetRuGov != b.PresetRuGov ||
+		!slices.Equal(a.RulesDirect, b.RulesDirect) ||
+		!slices.Equal(a.RulesProxy, b.RulesProxy)
+}
+
 // applySettingsToState mirrors the daemon-wide preferences onto a State: the
 // normalized split config, the kill switch, the tun stack, the autoconnect
 // preference, and the DNS choices (ad-block, IPv4-only, plus the two resolvers).
@@ -934,6 +1000,13 @@ func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, 
 	s.IPv4Only = ro.IPv4Only
 	s.DNSRemote = ro.DNSRemote
 	s.DNSDirect = ro.DNSDirect
+	// The rule lists are copied so the State never aliases the daemon's live
+	// options; an empty list collapses to nil, so the wire form omits it (like the
+	// split fields), keeping unset rules invisible to the UI.
+	s.RulesDirect = append([]string(nil), ro.RulesDirect...)
+	s.RulesProxy = append([]string(nil), ro.RulesProxy...)
+	s.PresetRuBanking = ro.PresetRuBanking
+	s.PresetRuGov = ro.PresetRuGov
 }
 
 // handlePing measures dial latency to every server in a profile and returns the

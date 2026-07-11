@@ -461,6 +461,125 @@ describe("SettingsScreen", () => {
     });
   });
 
+  describe("custom rules", () => {
+    const rulesState = {
+      state: "idle",
+      rules_direct: ["bank.example"],
+      rules_proxy: ["work.example"],
+      preset_ru_banking: true,
+    } as State;
+
+    // The preset switch's accessible name is its own ON/OFF text, so find the row
+    // by its label and take the switch inside it (same shape as the ad-block row).
+    function presetToggle(label: string): HTMLElement {
+      const row = screen.getByText(label).closest(".set-row");
+      if (!row) {
+        throw new Error(`${label} row not found`);
+      }
+      const toggle = row.querySelector('[role="switch"]');
+      if (!toggle) {
+        throw new Error(`${label} switch not found`);
+      }
+      return toggle as HTMLElement;
+    }
+
+    it("reflects the RU presets from core state", () => {
+      const tenebra = makeTenebra({ state: rulesState });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+      expect(
+        presetToggle("Russian banking sites stay direct"),
+      ).toHaveAttribute("aria-checked", "true");
+      expect(
+        presetToggle("Russian government sites stay direct"),
+      ).toHaveAttribute("aria-checked", "false");
+    });
+
+    it("toggling a preset sends the whole rule set, lists and other preset unchanged", async () => {
+      const tenebra = makeTenebra({ state: rulesState });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(presetToggle("Russian government sites stay direct"));
+      // Flips gov on, carrying the current lists and the banking preset (on).
+      expect(tenebra.setRules).toHaveBeenCalledWith(
+        ["bank.example"],
+        ["work.example"],
+        true,
+        true,
+      );
+    });
+
+    it("prefills and lists the configured domains", () => {
+      const tenebra = makeTenebra({ state: rulesState });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+      expect(screen.getByText("bank.example")).toBeInTheDocument();
+      expect(screen.getByText("work.example")).toBeInTheDocument();
+    });
+
+    it("adds a normalized domain to the direct list on Enter", async () => {
+      const tenebra = makeTenebra({ state: rulesState });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      const input = screen.getByLabelText("Always direct");
+      await user.type(input, "Sberbank.RU{Enter}");
+      // Trimmed + lowercased, appended to the direct list; proxy + presets held.
+      expect(tenebra.setRules).toHaveBeenCalledWith(
+        ["bank.example", "sberbank.ru"],
+        ["work.example"],
+        true,
+        false,
+      );
+    });
+
+    it("adds to the proxy list independently of the direct list", async () => {
+      const tenebra = makeTenebra({ state: rulesState });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      const input = screen.getByLabelText("Always through the tunnel");
+      await user.type(input, "vpn.example{Enter}");
+      expect(tenebra.setRules).toHaveBeenCalledWith(
+        ["bank.example"],
+        ["work.example", "vpn.example"],
+        true,
+        false,
+      );
+    });
+
+    it("removes a domain from the direct list", async () => {
+      const tenebra = makeTenebra({ state: rulesState });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(
+        screen.getByRole("button", { name: "Remove bank.example" }),
+      );
+      // Filters the one entry out, leaving an empty direct list; proxy unchanged.
+      expect(tenebra.setRules).toHaveBeenCalledWith(
+        [],
+        ["work.example"],
+        true,
+        false,
+      );
+    });
+
+    it("flags a malformed domain and refuses to add it", async () => {
+      const tenebra = makeTenebra({ state: rulesState });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      const input = screen.getByLabelText("Always direct");
+      await user.type(input, "https://nope");
+      expect(input).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByRole("alert")).toHaveTextContent("Enter a domain like");
+
+      // Enter must not push an invalid domain to the core.
+      await user.type(input, "{Enter}");
+      expect(tenebra.setRules).not.toHaveBeenCalled();
+    });
+  });
+
   describe("startup", () => {
     // The switch's accessible name is its own text ("ON"/"OFF"), not the sibling
     // label, so locate the row by its label text and grab the switch within it.

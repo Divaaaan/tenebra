@@ -104,6 +104,27 @@ func (o Options) dnsRules() []map[string]any {
 			"server":       dnsRemoteTag,
 		})
 	}
+	// Mirror the route-layer custom/preset rules onto DNS so each domain resolves
+	// through the resolver its traffic uses: a domain pinned direct resolves via
+	// dns-direct, one pinned to the proxy via dns-remote. Without this a domain
+	// forced direct would still resolve over the proxy resolver (or vice versa) —
+	// the same split-tunnel DNS mismatch the include rule above fixes. Placed
+	// before the smart RU rule so a user rule wins over the RU preset, matching the
+	// route order; both are empty in direct mode (rulesActive).
+	if direct := o.directRuleSuffixes(); len(direct) > 0 {
+		rules = append(rules, map[string]any{
+			"domain_suffix": direct,
+			"action":        "route",
+			"server":        dnsDirectTag,
+		})
+	}
+	if proxy := o.proxyRuleSuffixes(); len(proxy) > 0 {
+		rules = append(rules, map[string]any{
+			"domain_suffix": proxy,
+			"action":        "route",
+			"server":        dnsRemoteTag,
+		})
+	}
 	if o.Mode == ModeSmart {
 		rules = append(rules, map[string]any{
 			"rule_set": []string{ruleSetGeositeRU},

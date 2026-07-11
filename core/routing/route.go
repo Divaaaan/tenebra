@@ -105,6 +105,22 @@ func (o Options) RouteRules() []map[string]any {
 	// otherwise hand unlisted traffic to the proxy and defeat "only these apps".
 	includeOnly := o.SplitMode == SplitInclude && len(o.SplitApps) > 0
 
+	// Custom and preset domain rules sit here: after the per-app split (an app
+	// rule still wins) and before the geo split (a user rule beats the RU geo
+	// preset). Direct rules first, then proxy rules, each collapsed into a single
+	// domain_suffix match. Both are empty in direct mode (rulesActive), where
+	// nothing is tunnelled.
+	if direct := o.directRuleSuffixes(); len(direct) > 0 {
+		rules = append(rules,
+			route(map[string]any{"domain_suffix": direct}, tagDirect),
+		)
+	}
+	if proxy := o.proxyRuleSuffixes(); len(proxy) > 0 {
+		rules = append(rules,
+			route(map[string]any{"domain_suffix": proxy}, tagProxy),
+		)
+	}
+
 	if !includeOnly {
 		switch o.Mode {
 		case ModeDirect:

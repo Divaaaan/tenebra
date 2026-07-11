@@ -71,6 +71,10 @@ impl MockBackend {
                 dns_remote: Some("tls://1.1.1.1".into()),
                 dns_direct: Some("https://77.88.8.8/dns-query".into()),
                 ipv4_only: None,
+                rules_direct: None,
+                rules_proxy: None,
+                preset_ru_banking: None,
+                preset_ru_gov: None,
                 error: None,
             },
             profiles: demo_profiles(),
@@ -482,6 +486,35 @@ impl Backend for MockBackend {
         } else {
             dns_direct
         });
+        let snapshot = inner.state.clone();
+        drop(inner);
+        self.shared.emit_state(&snapshot);
+        Ok(snapshot)
+    }
+
+    fn set_rules(
+        &self,
+        rules_direct: Vec<String>,
+        rules_proxy: Vec<String>,
+        preset_ru_banking: bool,
+        preset_ru_gov: bool,
+    ) -> Result<State, String> {
+        // Mirror the core: an empty list drops the field; a live tunnel would
+        // hot-swap, which the mock abbreviates to the state change. The mock does
+        // not normalize (the core owns that); it just echoes what it was handed.
+        let mut inner = self.shared.inner.lock().unwrap();
+        inner.state.rules_direct = if rules_direct.is_empty() {
+            None
+        } else {
+            Some(rules_direct)
+        };
+        inner.state.rules_proxy = if rules_proxy.is_empty() {
+            None
+        } else {
+            Some(rules_proxy)
+        };
+        inner.state.preset_ru_banking = if preset_ru_banking { Some(true) } else { None };
+        inner.state.preset_ru_gov = if preset_ru_gov { Some(true) } else { None };
         let snapshot = inner.state.clone();
         drop(inner);
         self.shared.emit_state(&snapshot);
@@ -1062,6 +1095,43 @@ mod tests {
         assert_eq!(s.ad_block, None);
         assert_eq!(s.ipv4_only, None);
         assert_eq!(s.dns_remote.as_deref(), Some("tls://1.1.1.1"));
+    }
+
+    #[test]
+    fn set_rules_records_lists_and_presets_and_emits() {
+        let (b, sink) = backend();
+        // The mock starts with no custom rules.
+        assert_eq!(b.status().unwrap().rules_direct, None);
+
+        let s = b
+            .set_rules(
+                vec!["bank.example".into()],
+                vec!["work.example".into()],
+                true,
+                false,
+            )
+            .unwrap();
+        assert_eq!(
+            s.rules_direct.as_deref(),
+            Some(&["bank.example".to_string()][..])
+        );
+        assert_eq!(
+            s.rules_proxy.as_deref(),
+            Some(&["work.example".to_string()][..])
+        );
+        assert_eq!(s.preset_ru_banking, Some(true));
+        assert_eq!(s.preset_ru_gov, None);
+        assert_eq!(
+            sink.last_state().unwrap().rules_direct.as_deref(),
+            Some(&["bank.example".to_string()][..])
+        );
+
+        // Clearing the lists and the preset drops every field again.
+        let s = b.set_rules(vec![], vec![], false, false).unwrap();
+        assert_eq!(s.rules_direct, None);
+        assert_eq!(s.rules_proxy, None);
+        assert_eq!(s.preset_ru_banking, None);
+        assert_eq!(s.preset_ru_gov, None);
     }
 
     #[test]

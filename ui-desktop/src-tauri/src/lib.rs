@@ -416,6 +416,23 @@ async fn set_dns(
     .await
 }
 
+// rename_all keeps the JS-side argument keys snake_case (rules_direct,
+// rules_proxy, preset_ru_banking, preset_ru_gov), matching this file's multi-word
+// command convention (see set_dns) — Tauri v2 would otherwise expect camelCase.
+#[tauri::command(rename_all = "snake_case")]
+async fn set_rules(
+    state: TauriState<'_, AppState>,
+    rules_direct: Vec<String>,
+    rules_proxy: Vec<String>,
+    preset_ru_banking: bool,
+    preset_ru_gov: bool,
+) -> Result<State, String> {
+    off_thread(Arc::clone(&state.backend), move |b| {
+        b.set_rules(rules_direct, rules_proxy, preset_ru_banking, preset_ru_gov)
+    })
+    .await
+}
+
 #[tauri::command]
 async fn leak_check(state: TauriState<'_, AppState>) -> Result<LeakCheck, String> {
     off_thread(Arc::clone(&state.backend), |b| b.leak_check()).await
@@ -524,6 +541,7 @@ pub fn run() {
             set_tun,
             set_autoconnect,
             set_dns,
+            set_rules,
             leak_check,
             quit_app,
             take_launch_deep_links,
@@ -672,6 +690,10 @@ mod tests {
             dns_remote: None,
             dns_direct: None,
             ipv4_only: None,
+            rules_direct: None,
+            rules_proxy: None,
+            preset_ru_banking: None,
+            preset_ru_gov: None,
             error: None,
         }
     }

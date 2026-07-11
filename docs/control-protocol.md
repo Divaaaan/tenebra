@@ -129,6 +129,7 @@ surface.
 | `set_tun`              | `stack` (`system`/`gvisor`/`mixed`) | `State`                    |
 | `set_autoconnect`      | `on` (boolean)                     | `State`                     |
 | `set_dns`              | `ad_block` (boolean), `dns_remote`, `dns_direct`, `ipv4_only` (boolean) | `State` |
+| `set_rules`            | `rules_direct` (string[]), `rules_proxy` (string[]), `preset_ru_banking` (boolean), `preset_ru_gov` (boolean) | `State` |
 | `leak_check`           | —                                  | `LeakCheck`                 |
 
 ```
@@ -324,6 +325,41 @@ request:  {"id":12,"cmd":"set_dns","ad_block":true,"dns_remote":"tls://9.9.9.9",
 response: {"id":12,"ok":true,"data":{"state":"idle","tun_stack":"system","ad_block":true,"ipv4_only":true,"dns_remote":"tls://9.9.9.9","dns_direct":"https://77.88.8.8/dns-query"}}
 ```
 
+### Custom rules (`set_rules`)
+
+Sets the custom domain-suffix routing rules and the RU direct-rule presets in one
+command: `rules_direct` pins matching destinations to the direct outbound,
+`rules_proxy` sends them through the proxy, and `preset_ru_banking` /
+`preset_ru_gov` add bundled lists of major Russian banking / government domains as
+direct rules (those services often reject connections from a foreign address, so
+keeping them off the tunnel is a split-routing convenience). All are persisted in
+`settings.json` and reported back in `State` (`rules_direct`, `rules_proxy`,
+`preset_ru_banking`, `preset_ru_gov`).
+
+Each element is a bare domain suffix — ASCII letters, digits, dots and hyphens,
+matched by suffix so it also covers subdomains (`sberbank.ru` matches
+`online.sberbank.ru`). A **malformed** element (one carrying a scheme, slash,
+port, whitespace or `@`) rejects the whole command (`ok: false`) before anything
+is recorded. Suffixes are normalized server-side (trimmed, lowercased,
+de-duplicated, sorted), so the `State` echoed back may differ from the input
+order/casing.
+
+The rules are emitted **after** per-app split tunnelling and **before** the
+smart-mode RU geo split, so a per-app rule still wins and a user rule beats the RU
+geo preset. Each rule gets a mirrored DNS rule (a direct-pinned domain resolves
+via the direct resolver, a proxy-pinned one via the encrypted resolver), so a
+domain's lookups follow its traffic. They are inert in `direct` routing mode,
+where nothing is tunnelled.
+
+Like the kill switch, `set_rules` re-applies to a **live** tunnel in place (a
+brief `connecting → connected` dip on the same node); a resend that changes
+nothing does not restart the tunnel.
+
+```
+request:  {"id":13,"cmd":"set_rules","rules_direct":["bank.example"],"rules_proxy":["work.example"],"preset_ru_banking":true,"preset_ru_gov":false}
+response: {"id":13,"ok":true,"data":{"state":"idle","tun_stack":"system","dns_remote":"tls://1.1.1.1","dns_direct":"https://77.88.8.8/dns-query","rules_direct":["bank.example"],"rules_proxy":["work.example"],"preset_ru_banking":true}}
+```
+
 ### Per-app split tunnelling (`set_split`)
 
 `apps` is a list of executable file names matched case-insensitively against the
@@ -424,6 +460,10 @@ type State = {
   ipv4_only?: boolean;            // DNS strategy pinned to IPv4-only; omitted when off
   dns_remote?: string;            // effective encrypted resolver (over the proxy)
   dns_direct?: string;            // effective direct resolver
+  rules_direct?: string[];        // custom domain suffixes pinned direct; omitted when empty
+  rules_proxy?: string[];         // custom domain suffixes pinned through the tunnel; omitted when empty
+  preset_ru_banking?: boolean;    // RU banking direct-rule preset; omitted when off
+  preset_ru_gov?: boolean;        // RU government direct-rule preset; omitted when off
   error?: string;
 };
 

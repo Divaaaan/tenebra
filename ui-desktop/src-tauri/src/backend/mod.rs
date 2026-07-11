@@ -133,6 +133,19 @@ pub struct State {
     /// absent (treated as off) when it isn't.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ipv4_only: Option<bool>,
+    /// The custom domain-suffix routing rules the current or next tunnel uses:
+    /// destinations pinned to the direct outbound, and to the proxy. Normalized;
+    /// absent when empty, like the split fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules_direct: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules_proxy: Option<Vec<String>>,
+    /// Whether the bundled Russian banking / government direct-rule presets are
+    /// on; absent (treated as off) when they aren't.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset_ru_banking: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset_ru_gov: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -341,6 +354,20 @@ pub trait Backend: Send + Sync + 'static {
         dns_direct: String,
         ipv4_only: bool,
     ) -> Result<State, String>;
+    /// Record the custom domain-suffix routing rules and the RU direct-rule
+    /// presets: `rules_direct` pins destinations to the direct outbound,
+    /// `rules_proxy` to the proxy, and the presets add bundled banking /
+    /// government direct rules. The core validates each suffix (a malformed one is
+    /// refused), persists them, and — when a tunnel is live — re-applies them in
+    /// place by hot-swapping sing-box on the same node (a brief
+    /// connecting→connected dip, not a full reconnect).
+    fn set_rules(
+        &self,
+        rules_direct: Vec<String>,
+        rules_proxy: Vec<String>,
+        preset_ru_banking: bool,
+        preset_ru_gov: bool,
+    ) -> Result<State, String>;
     fn leak_check(&self) -> Result<LeakCheck, String>;
 }
 
@@ -449,6 +476,10 @@ mod tests {
             dns_remote: Some("tls://1.1.1.1".into()),
             dns_direct: Some("https://77.88.8.8/dns-query".into()),
             ipv4_only: Some(true),
+            rules_direct: Some(vec!["sberbank.ru".into(), "bank.example".into()]),
+            rules_proxy: Some(vec!["work.example".into()]),
+            preset_ru_banking: Some(true),
+            preset_ru_gov: Some(true),
             error: None,
         };
         let json = to_value(&state).unwrap();
@@ -472,6 +503,10 @@ mod tests {
             dns_remote: None,
             dns_direct: None,
             ipv4_only: None,
+            rules_direct: None,
+            rules_proxy: None,
+            preset_ru_banking: None,
+            preset_ru_gov: None,
             error: None,
         };
         let obj = to_value(&state).unwrap();
@@ -491,6 +526,10 @@ mod tests {
             "dns_remote",
             "dns_direct",
             "ipv4_only",
+            "rules_direct",
+            "rules_proxy",
+            "preset_ru_banking",
+            "preset_ru_gov",
             "error",
         ] {
             assert!(

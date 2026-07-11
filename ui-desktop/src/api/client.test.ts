@@ -201,6 +201,26 @@ describe("api command wrappers", () => {
     });
   });
 
+  it("setRules forwards the rule lists and presets with snake_case keys", async () => {
+    const armed: State = {
+      state: "connected",
+      rules_direct: ["bank.example"],
+      rules_proxy: ["work.example"],
+      preset_ru_banking: true,
+    };
+    mockInvoke.mockResolvedValueOnce(armed);
+    await expect(
+      api.setRules(["bank.example"], ["work.example"], true, false),
+    ).resolves.toEqual(armed);
+    // rename_all="snake_case" on the Rust side, so the wire keys are snake_case.
+    expect(mockInvoke).toHaveBeenCalledWith("set_rules", {
+      rules_direct: ["bank.example"],
+      rules_proxy: ["work.example"],
+      preset_ru_banking: true,
+      preset_ru_gov: false,
+    });
+  });
+
   it("leakCheck passes the LeakCheck verdict through", async () => {
     const leak: LeakCheck = {
       connected: false,
