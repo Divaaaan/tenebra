@@ -59,6 +59,27 @@ const (
 	EventTraffic  = "traffic"
 	EventLog      = "log"
 	EventProfiles = "profiles"
+	EventAttempts = "attempts"
+)
+
+// Attempt statuses reported per candidate in an attempts event. A candidate
+// starts waiting, becomes trying when the loop reaches it, then settles on ok
+// (its connectivity probe succeeded) or blocked (it failed and the walk moved
+// on).
+const (
+	AttemptWaiting = "waiting"
+	AttemptTrying  = "trying"
+	AttemptBlocked = "blocked"
+	AttemptOK      = "ok"
+)
+
+// Attempt-walk outcomes reported in the "outcome" field of an attempts event.
+// An empty outcome means the walk is still in progress; the terminal snapshot
+// carries either a success or exhaustion.
+const (
+	AttemptOutcomePending   = ""
+	AttemptOutcomeConnected = "ok"
+	AttemptOutcomeExhausted = "exhausted"
 )
 
 // Log levels for log events.
@@ -202,6 +223,29 @@ type TrafficEvent struct {
 type LogEvent struct {
 	Level string `json:"level"`
 	Msg   string `json:"msg"`
+}
+
+// attemptItem is one candidate's line in an attempts event: its position in the
+// fallback plan, the protocol and node it targets, its current status, and
+// whether it is the profile's last-good node (the one the walk leads with). The
+// node/protocol values are the same identifiers a state event carries, so the UI
+// can cross-reference them.
+type attemptItem struct {
+	Seq      int    `json:"seq"`
+	Protocol string `json:"protocol"`
+	Node     string `json:"node"`
+	Status   string `json:"status"`
+	LastGood bool   `json:"last_good"`
+}
+
+// attemptsEvent is the body of an attempts event: a full snapshot of the current
+// fallback walk. It is re-emitted on every status change, so a client always has
+// the complete picture from the latest event alone. Items is always a non-nil
+// slice so the wire form is [] rather than null. Outcome is "" while the walk is
+// in progress and settles to "ok" or "exhausted" on the terminal snapshot.
+type attemptsEvent struct {
+	Items   []attemptItem `json:"items"`
+	Outcome string        `json:"outcome"`
 }
 
 // newResult builds a successful Response for id, marshalling v as the data

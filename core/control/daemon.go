@@ -72,6 +72,13 @@ type Daemon struct {
 	// it to publish state/traffic/log events. Guarded by mu.
 	emit emitFunc
 
+	// attempts holds the latest fallback-walk snapshot (the body of the last
+	// attempts event), or nil when no walk is in flight. The connect loop keeps it
+	// current so a client that attaches mid-walk can be handed the live picture on
+	// its status re-sync; teardown clears it when a walk ends or is superseded.
+	// Guarded by mu.
+	attempts *attemptsEvent
+
 	// lastGood remembers the node that last connected per profile, feeding node
 	// selection on a connect without an explicit node.
 	lastGood fallback.LastGood
@@ -371,12 +378,32 @@ func (d *Daemon) snapshotRouting() routing.Options {
 }
 
 // handleStatus answers a status command with the current connection snapshot.
+// It also re-pushes the live fallback-walk snapshot when one is in flight: a
+// client re-syncs by sending status on connect (see docs/control-protocol.md),
+// so a UI that attached mid-walk learns of it here rather than only seeing the
+// steps that happen after it subscribed.
 func (d *Daemon) handleStatus(req Request) Response {
 	resp, err := newResult(req.ID, d.snapshotState())
 	if err != nil {
 		return newError(req.ID, err.Error())
 	}
+	d.pushAttemptsIfActive()
 	return resp
+}
+
+// pushAttemptsIfActive re-emits the stored fallback-walk snapshot when a walk is
+// in progress (the state is still connecting and a snapshot is held), so a
+// client attaching mid-walk sees it. It no-ops once the walk has settled — a
+// completed walk is not replayed to a client that connected after it finished.
+func (d *Daemon) pushAttemptsIfActive() {
+	d.mu.Lock()
+	snap := d.attempts
+	active := d.state.State == StateConnecting && snap != nil
+	emit := d.emit
+	d.mu.Unlock()
+	if active && emit != nil {
+		emit(EventAttempts, *snap)
+	}
 }
 
 // redactedNode is the subset of a stored server the UI renders: its stable ID

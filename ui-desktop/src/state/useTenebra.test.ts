@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
+  AttemptsEvent,
   LogEvent,
   Profile,
   State,
@@ -20,6 +21,7 @@ const h = vi.hoisted(() => ({
   traffic: undefined as ((e: TrafficEvent) => void) | undefined,
   log: undefined as ((e: LogEvent) => void) | undefined,
   profiles: undefined as (() => void) | undefined,
+  attempts: undefined as ((e: AttemptsEvent) => void) | undefined,
 }));
 
 const mockApi = vi.hoisted(() => ({
@@ -55,6 +57,10 @@ vi.mock("../api", async (orig) => {
       h.profiles = handler;
       return Promise.resolve(() => {});
     }),
+    onAttempts: vi.fn((handler) => {
+      h.attempts = handler;
+      return Promise.resolve(() => {});
+    }),
   };
 });
 
@@ -66,6 +72,7 @@ beforeEach(() => {
   h.traffic = undefined;
   h.log = undefined;
   h.profiles = undefined;
+  h.attempts = undefined;
   // Sensible defaults; individual tests override as needed.
   mockApi.status.mockResolvedValue(idleState);
   mockApi.listProfiles.mockResolvedValue([]);
@@ -193,6 +200,46 @@ describe("log events", () => {
 
     act(() => result.current.clearLogs());
     expect(result.current.logs).toEqual([]);
+  });
+});
+
+describe("attempts events", () => {
+  const walking: AttemptsEvent = {
+    items: [
+      { seq: 1, protocol: "vless", node: "n1", status: "trying", last_good: true },
+      { seq: 2, protocol: "hysteria2", node: "n2", status: "waiting", last_good: false },
+    ],
+    outcome: "",
+  };
+  const settled: AttemptsEvent = {
+    items: [
+      { seq: 1, protocol: "vless", node: "n1", status: "blocked", last_good: true },
+      { seq: 2, protocol: "hysteria2", node: "n2", status: "ok", last_good: false },
+    ],
+    outcome: "ok",
+  };
+
+  it("starts null and stores the latest snapshot from each event", async () => {
+    const { result } = await mountReady();
+    expect(result.current.attempts).toBeNull();
+
+    act(() => h.attempts?.(walking));
+    expect(result.current.attempts).toEqual(walking);
+
+    // A later event fully replaces the snapshot (the core sends the whole walk).
+    act(() => h.attempts?.(settled));
+    expect(result.current.attempts).toEqual(settled);
+  });
+
+  it("keeps the last snapshot after the connection ends (no reset to null)", async () => {
+    const { result } = await mountReady();
+
+    act(() => h.attempts?.(settled));
+    // A disconnect zeroes traffic but must not wipe the walk snapshot — the UI
+    // owns when to stop showing it.
+    act(() => h.state?.({ state: "idle" }));
+
+    expect(result.current.attempts).toEqual(settled);
   });
 });
 

@@ -854,6 +854,10 @@ mod tests {
         fn profiles(&self) {
             self.profiles.fetch_add(1, Ordering::SeqCst);
         }
+        fn attempts(&self, _snapshot: &crate::backend::AttemptsSnapshot) {
+            // The mock never runs a fallback walk, so it emits no attempts; this
+            // exists only to satisfy the sink trait.
+        }
     }
 
     /// A backend plus the sink it reports to, so tests can drive one and inspect

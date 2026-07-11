@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
+  AttemptsEvent,
   BatchImportResult,
   LogEvent,
   PingResult,
@@ -223,6 +224,15 @@ export function onLog(handler: (e: LogEvent) => void): Promise<UnlistenFn> {
 // The renderer responds by re-fetching the profile list so the view stays live.
 export function onProfilesChanged(handler: () => void): Promise<UnlistenFn> {
   return listen("profiles", () => handler());
+}
+
+// The core pushes a full fallback-walk snapshot on every status change (and on a
+// status re-sync while a walk is live), so the UI can show the anti-DPI attempt
+// sequence — which protocols were tried, blocked, and which came up.
+export function onAttempts(
+  handler: (e: AttemptsEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<AttemptsEvent>("attempts", (event) => handler(event.payload));
 }
 
 // Tray-originated events. The tray can disconnect on its own, but connecting and

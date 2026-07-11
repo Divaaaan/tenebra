@@ -43,6 +43,7 @@ export function makeTenebra(overrides: Partial<Tenebra> = {}): Tenebra {
     traffic: { up: 0, down: 0, upRate: 0, downRate: 0 },
     profiles: [],
     logs: [],
+    attempts: null,
     connect: vi.fn().mockResolvedValue(undefined),
     disconnect: vi.fn().mockResolvedValue(undefined),
     setRouting: vi.fn().mockResolvedValue(undefined),

@@ -42,6 +42,7 @@ const mocks = vi.hoisted(() => ({
   onTraffic: vi.fn(),
   onLog: vi.fn(),
   onProfilesChanged: vi.fn(),
+  onAttempts: vi.fn(),
   onTrayConnect: vi.fn(),
   onTrayShow: vi.fn(),
   onDeepLink: vi.fn(),
@@ -64,6 +65,7 @@ vi.mock("./api", () => ({
   onTraffic: mocks.onTraffic,
   onLog: mocks.onLog,
   onProfilesChanged: mocks.onProfilesChanged,
+  onAttempts: mocks.onAttempts,
   onTrayConnect: mocks.onTrayConnect,
   onTrayShow: mocks.onTrayShow,
   onDeepLink: mocks.onDeepLink,
@@ -102,6 +104,7 @@ describe("App deep-link connect gate", () => {
     mocks.onTraffic.mockResolvedValue(noopUnlisten);
     mocks.onLog.mockResolvedValue(noopUnlisten);
     mocks.onProfilesChanged.mockResolvedValue(noopUnlisten);
+    mocks.onAttempts.mockResolvedValue(noopUnlisten);
     mocks.onTrayConnect.mockResolvedValue(noopUnlisten);
     mocks.onTrayShow.mockResolvedValue(noopUnlisten);
     mocks.takeLaunchDeepLinks.mockResolvedValue([]);
