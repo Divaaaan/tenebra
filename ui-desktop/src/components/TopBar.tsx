@@ -1,6 +1,10 @@
 import type { Profile } from "../api";
 import { useI18n } from "../i18n/I18nContext";
-import { formatExpiry, formatTrafficUsage } from "../lib/format";
+import {
+  formatExpiry,
+  formatTrafficUsage,
+  trafficUsedFraction,
+} from "../lib/format";
 
 // Injected at build time from package.json (vite/vitest `define`), which
 // scripts/set-version.mjs keeps in lockstep with the rest of the release.
@@ -22,6 +26,11 @@ export function TopBar({ activeProfile }: TopBarProps) {
 
   const usage = activeProfile
     ? formatTrafficUsage(activeProfile.trafficUsed, activeProfile.trafficTotal)
+    : null;
+  // A metered plan gets a slim consumption meter beside the usage text; unmetered
+  // (or usage the header omits) yields null and no bar.
+  const usedFraction = activeProfile
+    ? trafficUsedFraction(activeProfile.trafficUsed, activeProfile.trafficTotal)
     : null;
   const expiry = activeProfile
     ? formatExpiry(activeProfile.expiresAt, lang, {
@@ -50,6 +59,22 @@ export function TopBar({ activeProfile }: TopBarProps) {
                   ·
                 </span>
                 <span className="tnum">{usage}</span>
+                {usedFraction !== null && (
+                  <svg
+                    className="usage-bar"
+                    width="64"
+                    height="3"
+                    viewBox="0 0 64 3"
+                    aria-hidden="true"
+                  >
+                    <rect width="64" height="3" fill="var(--line)" />
+                    <rect
+                      width={(usedFraction * 64).toFixed(1)}
+                      height="3"
+                      fill="var(--text-dim)"
+                    />
+                  </svg>
+                )}
               </>
             )}
             {expiry && (
