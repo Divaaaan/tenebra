@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   onTraffic: vi.fn(),
   onLog: vi.fn(),
   onProfilesChanged: vi.fn(),
+  onAttempts: vi.fn(),
   onTrayConnect: vi.fn(),
   onTrayShow: vi.fn(),
   onDeepLink: vi.fn(),
@@ -42,6 +43,7 @@ vi.mock("./api", () => ({
   onTraffic: mocks.onTraffic,
   onLog: mocks.onLog,
   onProfilesChanged: mocks.onProfilesChanged,
+  onAttempts: mocks.onAttempts,
   onTrayConnect: mocks.onTrayConnect,
   onTrayShow: mocks.onTrayShow,
   onDeepLink: mocks.onDeepLink,
@@ -61,6 +63,7 @@ function armEvents() {
     mocks.onTraffic,
     mocks.onLog,
     mocks.onProfilesChanged,
+    mocks.onAttempts,
     mocks.onTrayConnect,
     mocks.onTrayShow,
   ]) {
