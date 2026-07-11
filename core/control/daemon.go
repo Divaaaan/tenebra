@@ -986,7 +986,7 @@ func (d *Daemon) handleSetRules(req Request) Response {
 	d.routing.PresetRuGov = req.PresetRuGov
 	d.routing = d.routing.Normalize()
 	changed := rulesPrefsDiffer(before, d.routing)
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.crashReports)
 	d.mu.Unlock()
 
 	d.persistSettings()
