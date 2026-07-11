@@ -543,6 +543,8 @@ type Profile = {
   expiresAt?: string;    // from the subscription user-info header
   trafficUsed?: number;  // bytes
   trafficTotal?: number; // bytes
+  managed?: boolean;     // recognised as an operator-served subscription; drives a badge, omitted when false
+  tier?: "premium" | "free"; // entitlement tier resolved for a managed subscription; UX only, omitted when unknown
 };
 
 type PingResult = { node: string; rttMs: number; ok: boolean };

@@ -60,6 +60,19 @@ type Profile struct {
 	ExpiresAt    *time.Time `json:"expiresAt,omitempty"`
 	TrafficUsed  int64      `json:"trafficUsed,omitempty"`
 	TrafficTotal int64      `json:"trafficTotal,omitempty"`
+	// Managed marks a subscription recognised as one served by the operator's own
+	// infrastructure — its host and path shape match the managed-subscription
+	// form (see subscription.DetectManaged). It gates only presentation: an
+	// entitlement lookup against the same origin, and a badge. It is never a
+	// security property, so a manual profile, a third-party subscription, or a
+	// fork simply leaves it false.
+	Managed bool `json:"managed,omitempty"`
+	// Tier is the entitlement tier last resolved for a managed subscription:
+	// "premium", "free", or "" when unknown or not applicable. It exists purely
+	// for the UI (a badge). Any real premium capability is derived from data the
+	// operator's server returns, not from this flag, so a client that forces it
+	// to "premium" gains only the label.
+	Tier string `json:"tier,omitempty"`
 }
 
 // NewProfile builds a profile from a freshly parsed set of nodes, assigning a

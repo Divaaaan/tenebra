@@ -236,6 +236,18 @@ pub struct Profile {
     pub traffic_used: Option<u64>,
     #[serde(rename = "trafficTotal", skip_serializing_if = "Option::is_none")]
     pub traffic_total: Option<u64>,
+    /// Whether the core recognised this as a managed subscription — one served by
+    /// the operator's own infrastructure (host + path shape). Presentation only
+    /// (it drives a badge), never a security property. The core omits it when
+    /// false, so `#[serde(default)]` treats a missing field as `false`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub managed: bool,
+    /// Entitlement tier the core last resolved for a managed subscription:
+    /// "premium", "free", or "" (unknown / not applicable). Kept as a plain
+    /// string so an unrecognised future value still deserializes rather than
+    /// dropping the profile. UX only — it drives a badge, nothing more.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tier: String,
 }
 
 /// Result of a batch link import (`import_links`): the single profile created
@@ -679,6 +691,8 @@ mod tests {
             expires_at: Some("2026-02-01T00:00:00Z".into()),
             traffic_used: Some(7),
             traffic_total: Some(100),
+            managed: false,
+            tier: String::new(),
         };
         let obj = to_value(&profile).unwrap();
         let map = obj.as_object().unwrap();
@@ -710,10 +724,19 @@ mod tests {
             expires_at: None,
             traffic_used: None,
             traffic_total: None,
+            managed: false,
+            tier: String::new(),
         };
         let obj = to_value(&profile).unwrap();
         let map = obj.as_object().unwrap();
-        for absent in ["url", "expiresAt", "trafficUsed", "trafficTotal"] {
+        for absent in [
+            "url",
+            "expiresAt",
+            "trafficUsed",
+            "trafficTotal",
+            "managed",
+            "tier",
+        ] {
             assert!(
                 !map.contains_key(absent),
                 "expected {absent} omitted in {obj}"
@@ -721,6 +744,44 @@ mod tests {
         }
         let back: Profile = from_value(obj).unwrap();
         assert_eq!(back, profile);
+    }
+
+    #[test]
+    fn managed_premium_profile_round_trips() {
+        // A managed, premium subscription carries both new fields on the wire; a
+        // client that never saw them (missing keys) decodes to the free/unmanaged
+        // default rather than failing.
+        let profile = Profile {
+            id: "demo-sub".into(),
+            name: "Managed".into(),
+            source: Source::Subscription,
+            url: Some("https://vpsxd.pro/sub".into()),
+            nodes: vec![sample_node()],
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            expires_at: None,
+            traffic_used: None,
+            traffic_total: None,
+            managed: true,
+            tier: "premium".into(),
+        };
+        let obj = to_value(&profile).unwrap();
+        let map = obj.as_object().unwrap();
+        assert_eq!(map.get("managed"), Some(&json!(true)));
+        assert_eq!(map.get("tier"), Some(&json!("premium")));
+        let back: Profile = from_value(obj).unwrap();
+        assert_eq!(back, profile);
+
+        // Absent keys (an older core, or a free/unmanaged profile) default cleanly.
+        let bare: Profile = from_value(json!({
+            "id": "p",
+            "name": "Bare",
+            "source": "subscription",
+            "nodes": [],
+            "updatedAt": "2026-01-01T00:00:00Z",
+        }))
+        .unwrap();
+        assert!(!bare.managed);
+        assert_eq!(bare.tier, "");
     }
 
     #[test]

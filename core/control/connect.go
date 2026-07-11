@@ -952,6 +952,12 @@ func (d *Daemon) emitProfiles() {
 
 // Close tears down any active connection. The server calls it on shutdown.
 func (d *Daemon) Close() error {
+	// Cancel any in-flight background entitlement lookups so a slow endpoint
+	// doesn't hold shutdown; they only read the store and re-emit, so cutting
+	// them short loses nothing but a badge update.
+	if d.entCancel != nil {
+		d.entCancel()
+	}
 	d.connMu.Lock()
 	d.teardown(StateIdle, "", "")
 	d.connMu.Unlock()
@@ -960,6 +966,9 @@ func (d *Daemon) Close() error {
 	// of starting a tunnel. Wait for those goroutines to unwind (after releasing
 	// connMu, which a parked one needs to make its check) so none outlives us.
 	d.relaunchWG.Wait()
+	// The entitlement lookups were cancelled above; wait for them to unwind so
+	// none outlives us writing to the store.
+	d.entWG.Wait()
 	return nil
 }
 
