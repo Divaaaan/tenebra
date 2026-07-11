@@ -97,7 +97,9 @@ impl EventSink for TauriSink {
     }
 
     fn profiles(&self) {
-        // Payload-less: the renderer reloads the profile list on receipt.
+        // The stored profile set changed: refresh the tray's node submenu from the
+        // new list, then tell the renderer to reload its own (payload-less).
+        tray::sync_profiles(&self.app);
         let _ = self.app.emit(EVENT_PROFILES, ());
     }
 
@@ -661,6 +663,41 @@ fn disconnect_backend(app: &AppHandle) {
             );
         }
     }
+}
+
+/// Connect through the managed backend, straight from the tray — its quick
+/// connect and per-node items dial a profile without surfacing the window (unlike
+/// the front end's connect flow, which owns the selected profile and its
+/// prompts). `node` picks an exact exit; `None` lets the core walk its default
+/// order. Run on a worker thread: a connect blocks on the core's acknowledgement,
+/// and the menu handler runs on the event-loop thread we must not freeze. The
+/// backend's own state event drives the UI and tray; a failure is surfaced on the
+/// log channel the webview already listens to.
+fn connect_backend(app: &AppHandle, profile: String, node: Option<String>) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let backend = Arc::clone(&state.backend);
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(e) = backend.connect(profile, node, false) {
+            let _ = app.emit(
+                EVENT_LOG,
+                json!({ "level": "error", "msg": format!("connect failed: {e}") }),
+            );
+        }
+    });
+}
+
+/// Fetch the profile list through the managed backend for the tray's node
+/// submenu. Blocking, so the tray runs it on a worker thread (never the event
+/// reader thread, which would deadlock delivering its own response). `Err` when
+/// the backend isn't managed yet or the call fails.
+fn list_profiles_blocking(app: &AppHandle) -> Result<Vec<Profile>, String> {
+    let state = app
+        .try_state::<AppState>()
+        .ok_or("backend is not available")?;
+    state.backend.list_profiles()
 }
 
 /// The connection state the tray tooltip should reflect, as plain English.
