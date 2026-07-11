@@ -234,3 +234,138 @@ func TestSetDNSUnchangedDoesNotRestart(t *testing.T) {
 		t.Errorf("starts = %d, want 1 (a no-op set_dns must not restart)", h.runner.starts())
 	}
 }
+
+// TestSetDNSRecordsIPv4Only: set_dns records the IPv4-only toggle, echoes it in
+// its State, status reflects it, and the daemon's live routing options carry it
+// for the next connect. Disarming clears it again.
+func TestSetDNSRecordsIPv4Only(t *testing.T) {
+	h := newHarness(t)
+
+	h.send(Request{ID: 1, Cmd: CmdSetDNS, IPv4Only: true})
+	var st State
+	h.dataInto(h.await(), &st)
+	if !st.IPv4Only {
+		t.Errorf("ipv4_only = false, want true")
+	}
+
+	// Status reflects it.
+	h.send(Request{ID: 2, Cmd: CmdStatus})
+	var st2 State
+	h.dataInto(h.await(), &st2)
+	if !st2.IPv4Only {
+		t.Errorf("status ipv4_only = false, want true")
+	}
+
+	// The daemon's live routing options carry it so the next connect uses it.
+	if ro := h.daemon.snapshotRouting(); !ro.IPv4Only {
+		t.Errorf("daemon routing ipv4_only = false, want armed")
+	}
+
+	// Disarming clears the flag (omitted when off, so it decodes back to false).
+	h.send(Request{ID: 3, Cmd: CmdSetDNS, IPv4Only: false})
+	var st3 State
+	h.dataInto(h.await(), &st3)
+	if st3.IPv4Only {
+		t.Errorf("ipv4_only = true after disarming, want false")
+	}
+}
+
+// TestSetDNSIPv4OnlyPersistsAcrossRestart: the IPv4-only toggle round-trips
+// through the settings file into a fresh daemon.
+func TestSetDNSIPv4OnlyPersistsAcrossRestart(t *testing.T) {
+	dir := t.TempDir()
+
+	h := newHarness(t)
+	st, err := OpenFileSettings(dir)
+	if err != nil {
+		t.Fatalf("open settings: %v", err)
+	}
+	h.daemon.SetSettings(st)
+
+	h.send(Request{ID: 1, Cmd: CmdSetDNS, IPv4Only: true})
+	h.await()
+
+	// A "restarted" daemon over the same directory loads it back.
+	h2 := newHarness(t)
+	st2, err := OpenFileSettings(dir)
+	if err != nil {
+		t.Fatalf("reopen settings: %v", err)
+	}
+	h2.daemon.SetSettings(st2)
+	if !h2.daemon.snapshotState().IPv4Only {
+		t.Error("ipv4_only did not survive the restart")
+	}
+}
+
+// TestSetDNSIPv4OnlyLiveReapply: arming IPv4-only on a live tunnel hot-swaps
+// sing-box in place, and the new config's dns block pins strategy ipv4_only; a
+// resend of the same value must not bounce the tunnel again.
+func TestSetDNSIPv4OnlyLiveReapply(t *testing.T) {
+	h := newHarness(t)
+	p := seedMultiProto(t, h)
+
+	h.send(Request{ID: 1, Cmd: CmdConnect, Profile: p.ID})
+	h.await()
+	connected := h.awaitState(StateConnected)
+	node := connected["node"].(string)
+
+	h.send(Request{ID: 2, Cmd: CmdSetDNS, IPv4Only: true})
+	var st State
+	h.dataInto(h.await(), &st)
+	if !st.IPv4Only {
+		t.Fatal("response ipv4_only = false, want true")
+	}
+
+	// The swap dips through connecting and lands connected on the same node.
+	re := h.awaitState(StateConnected)
+	if re["node"] != node {
+		t.Errorf("reconnected node = %v, want the same node %s", re["node"], node)
+	}
+
+	cfgs := h.runner.startCfgs()
+	if len(cfgs) != 2 {
+		t.Fatalf("starts = %d, want 2 (one connect, one hot swap)", len(cfgs))
+	}
+	if _, has := dnsFromConfig(t, cfgs[0])["strategy"]; has {
+		t.Error("initial config already pinned a dns strategy")
+	}
+	if got := dnsFromConfig(t, cfgs[1])["strategy"]; got != "ipv4_only" {
+		t.Errorf("hot-swapped dns strategy = %v, want ipv4_only", got)
+	}
+
+	// Re-sending the same value changes nothing, so no second hot swap.
+	h.send(Request{ID: 3, Cmd: CmdSetDNS, IPv4Only: true})
+	h.await()
+	if got := h.runner.starts(); got != 2 {
+		t.Errorf("starts = %d after a no-op set_dns, want 2 (no extra restart)", got)
+	}
+}
+
+// TestSetDNSIPv4OnlyAbsentDefaultsOff: a settings file written before the field
+// existed carries no ipv4_only key (false is dropped by omitempty), and a fresh
+// daemon reads it back as off — while a sibling preference still loads, proving
+// the file was actually read rather than rejected.
+func TestSetDNSIPv4OnlyAbsentDefaultsOff(t *testing.T) {
+	dir := t.TempDir()
+	st, err := OpenFileSettings(dir)
+	if err != nil {
+		t.Fatalf("open settings: %v", err)
+	}
+	if err := st.Save(persistedSettings{Version: settingsVersion, KillSwitch: true}); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	h := newHarness(t)
+	st2, err := OpenFileSettings(dir)
+	if err != nil {
+		t.Fatalf("reopen settings: %v", err)
+	}
+	h.daemon.SetSettings(st2)
+	loaded := h.daemon.snapshotState()
+	if loaded.IPv4Only {
+		t.Error("ipv4_only should default off when absent from the settings file")
+	}
+	if !loaded.KillSwitch {
+		t.Error("the sibling preference did not load, so the file was not actually read")
+	}
+}

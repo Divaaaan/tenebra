@@ -70,6 +70,7 @@ impl MockBackend {
                 // the defaults so the UI's custom-DNS inputs come up prefilled.
                 dns_remote: Some("tls://1.1.1.1".into()),
                 dns_direct: Some("https://77.88.8.8/dns-query".into()),
+                ipv4_only: None,
                 error: None,
             },
             profiles: demo_profiles(),
@@ -464,11 +465,13 @@ impl Backend for MockBackend {
         ad_block: bool,
         dns_remote: String,
         dns_direct: String,
+        ipv4_only: bool,
     ) -> Result<State, String> {
         // Mirror the core: an empty resolver falls back to the default; a live
         // tunnel would hot-swap, which the mock abbreviates to the state change.
         let mut inner = self.shared.inner.lock().unwrap();
         inner.state.ad_block = if ad_block { Some(true) } else { None };
+        inner.state.ipv4_only = if ipv4_only { Some(true) } else { None };
         inner.state.dns_remote = Some(if dns_remote.is_empty() {
             "tls://1.1.1.1".into()
         } else {
@@ -1043,18 +1046,21 @@ mod tests {
         assert_eq!(start.dns_remote.as_deref(), Some("tls://1.1.1.1"));
 
         let s = b
-            .set_dns(true, "tls://9.9.9.9".into(), "udp://8.8.8.8".into())
+            .set_dns(true, "tls://9.9.9.9".into(), "udp://8.8.8.8".into(), true)
             .unwrap();
         assert_eq!(s.ad_block, Some(true));
         assert_eq!(s.dns_remote.as_deref(), Some("tls://9.9.9.9"));
         assert_eq!(s.dns_direct.as_deref(), Some("udp://8.8.8.8"));
+        assert_eq!(s.ipv4_only, Some(true));
         assert_eq!(sink.last_state().unwrap().ad_block, Some(true));
 
-        // Disarming drops ad_block, and an empty resolver falls back to the default.
+        // Disarming drops ad_block and ipv4_only, and an empty resolver falls back
+        // to the default.
         let s = b
-            .set_dns(false, String::new(), "udp://8.8.8.8".into())
+            .set_dns(false, String::new(), "udp://8.8.8.8".into(), false)
             .unwrap();
         assert_eq!(s.ad_block, None);
+        assert_eq!(s.ipv4_only, None);
         assert_eq!(s.dns_remote.as_deref(), Some("tls://1.1.1.1"));
     }
 

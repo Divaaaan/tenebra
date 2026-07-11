@@ -237,6 +237,8 @@ export interface Strings {
     dnsHint: string;
     adBlock: string;
     adBlockHint: string;
+    ipv4Only: string;
+    ipv4OnlyHint: string;
     dnsRemote: string;
     dnsRemoteHint: string;
     dnsDirect: string;
@@ -505,6 +507,9 @@ const en: Strings = {
     adBlock: "Block ads and trackers",
     adBlockHint:
       "Refuse DNS lookups for a bundled list of ad and tracker domains. Off by default.",
+    ipv4Only: "IPv4-only DNS",
+    ipv4OnlyHint:
+      "Resolve only IPv4 addresses. Helps when IPv6-capable sites misbehave through the tunnel.",
     dnsRemote: "Encrypted resolver",
     dnsRemoteHint:
       "Resolves general destinations over the tunnel. Leave empty for the default.",
@@ -763,6 +768,9 @@ const ru: Strings = {
     adBlock: "Блокировать рекламу и трекеры",
     adBlockHint:
       "Отклонять DNS-запросы к встроенному списку рекламных и трекерных доменов. По умолчанию выключено.",
+    ipv4Only: "Только IPv4 в DNS",
+    ipv4OnlyHint:
+      "Резолвить только IPv4-адреса. Помогает, когда сайты с IPv6 работают через туннель некорректно.",
     dnsRemote: "Шифрованный резолвер",
     dnsRemoteHint:
       "Резолвит обычные адреса через туннель. Оставьте пустым для значения по умолчанию.",

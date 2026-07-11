@@ -240,6 +240,7 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	d.routing.SplitApps = apps
 	d.routing.KillSwitch = ps.KillSwitch
 	d.routing.AdBlock = ps.AdBlock
+	d.routing.IPv4Only = ps.IPv4Only
 	// Empty resolvers (absent in an old file, or never customized) are left for
 	// Normalize to fill with the defaults.
 	d.routing.DNSRemote = ps.DNSRemote
@@ -300,6 +301,7 @@ func (d *Daemon) settingsLocked() persistedSettings {
 		TunStack:    d.tun.Stack,
 		Autoconnect: d.autoconnect,
 		AdBlock:     d.routing.AdBlock,
+		IPv4Only:    d.routing.IPv4Only,
 		DNSRemote:   d.routing.DNSRemote,
 		DNSDirect:   d.routing.DNSDirect,
 		LastProfile: d.lastProfile,
@@ -856,10 +858,11 @@ func (d *Daemon) handleSetAutoconnect(req Request) Response {
 	return resp
 }
 
-// handleSetDNS records the DNS preferences: the ad/tracker-block toggle and the
-// two custom resolvers. Like the kill switch it applies to a live tunnel in place
-// via reapplyLive — all three feed the generated dns block, so "apply now" means a
-// hot-swap on the same node rather than waiting for the next connect. A resolver
+// handleSetDNS records the DNS preferences: the ad/tracker-block toggle, the
+// IPv4-only toggle, and the two custom resolvers. Like the kill switch it applies
+// to a live tunnel in place via reapplyLive — all of them feed the generated dns
+// block, so "apply now" means a hot-swap on the same node rather than waiting for
+// the next connect. A resolver
 // that fails validation rejects the whole command (nothing is recorded) so a typo
 // can't half-apply or reach sing-box; an empty resolver is accepted and Normalize
 // substitutes the default. The normalized choice is persisted so it survives a
@@ -877,6 +880,7 @@ func (d *Daemon) handleSetDNS(req Request) Response {
 	// (default-substituted) resolvers to compare the new choice against.
 	before := d.routing
 	d.routing.AdBlock = req.AdBlock
+	d.routing.IPv4Only = req.IPv4Only
 	d.routing.DNSRemote = req.DNSRemote
 	d.routing.DNSDirect = req.DNSDirect
 	// Normalize turns an empty resolver back into the default, so the recorded and
@@ -899,16 +903,18 @@ func (d *Daemon) handleSetDNS(req Request) Response {
 	return resp
 }
 
-// dnsPrefsDiffer reports whether the DNS-affecting preferences (ad-block and the
-// two resolvers) differ between two option snapshots. It gates the live hot-swap
-// so only a real change restarts sing-box.
+// dnsPrefsDiffer reports whether the DNS-affecting preferences (ad-block,
+// IPv4-only, and the two resolvers) differ between two option snapshots. It gates
+// the live hot-swap so only a real change restarts sing-box.
 func dnsPrefsDiffer(a, b routing.Options) bool {
-	return a.AdBlock != b.AdBlock || a.DNSRemote != b.DNSRemote || a.DNSDirect != b.DNSDirect
+	return a.AdBlock != b.AdBlock || a.DNSRemote != b.DNSRemote ||
+		a.DNSDirect != b.DNSDirect || a.IPv4Only != b.IPv4Only
 }
 
 // applySettingsToState mirrors the daemon-wide preferences onto a State: the
 // normalized split config, the kill switch, the tun stack, the autoconnect
-// preference, and the DNS choices (ad-block plus the two resolvers). Split off
+// preference, and the DNS choices (ad-block, IPv4-only, plus the two resolvers).
+// Split off
 // collapses to empty fields so the wire form omits them, keeping a no-op split
 // invisible to the UI; the app slice is copied so the State never aliases the
 // daemon's live routing options. The resolvers are always the normalized
@@ -925,6 +931,7 @@ func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, 
 	s.TunStack = tun.Stack
 	s.Autoconnect = autoconnect
 	s.AdBlock = ro.AdBlock
+	s.IPv4Only = ro.IPv4Only
 	s.DNSRemote = ro.DNSRemote
 	s.DNSDirect = ro.DNSDirect
 }

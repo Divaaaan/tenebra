@@ -55,6 +55,7 @@ export interface Tenebra {
     adBlock: boolean,
     dnsRemote: string,
     dnsDirect: string,
+    ipv4Only: boolean,
   ) => Promise<void>;
   refreshProfiles: () => Promise<void>;
   clearLogs: () => void;
@@ -199,8 +200,13 @@ export function useTenebra(): Tenebra {
   }, []);
 
   const setDns = useCallback(
-    async (adBlock: boolean, dnsRemote: string, dnsDirect: string) => {
-      const next = await api.setDns(adBlock, dnsRemote, dnsDirect);
+    async (
+      adBlock: boolean,
+      dnsRemote: string,
+      dnsDirect: string,
+      ipv4Only: boolean,
+    ) => {
+      const next = await api.setDns(adBlock, dnsRemote, dnsDirect, ipv4Only);
       setState(next);
     },
     [],

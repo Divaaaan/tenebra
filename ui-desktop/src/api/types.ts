@@ -51,6 +51,11 @@ export interface State {
    */
   dns_remote?: string;
   dns_direct?: string;
+  /**
+   * Whether the DNS strategy is pinned to IPv4-only (A records, no AAAA);
+   * omitted (treated as off) when it isn't.
+   */
+  ipv4_only?: boolean;
   error?: string;
 }
 
