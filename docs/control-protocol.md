@@ -132,6 +132,8 @@ surface.
 | `set_rules`            | `rules_direct` (string[]), `rules_proxy` (string[]), `preset_ru_banking` (boolean), `preset_ru_gov` (boolean) | `State` |
 | `set_crash_reports`    | `on` (boolean)                     | `State`                     |
 | `leak_check`           | —                                  | `LeakCheck`                 |
+| `run_stun_check`       | —                                  | `StunCheck`                 |
+| `run_speed_test`       | —                                  | `SpeedTest` (connected only) |
 
 ```
 request:  {"id":7,"cmd":"connect","profile":"p1","node":"n3"}
@@ -444,6 +446,41 @@ response: {"id":9,"ok":true,"data":{
   "dns":{"status":"inconclusive","resolvers":["1.1.1.1"],
          "message":"Observed resolver(s) shown; reported as inconclusive rather than a pass."}
 }}
+```
+
+### Network diagnostics (`run_stun_check`, `run_speed_test`)
+
+Two probes that characterise the current network path. Both take no fields.
+
+`run_stun_check` sends a minimal STUN Binding Request (RFC 5389) over UDP to two
+public STUN servers from a single socket and reports:
+
+- `udp_ok` — whether any server answered. `false` means outbound UDP (or at least
+  STUN) looks blocked from this vantage.
+- `external_ip` — the reflexive public IP a server observed for us, when one
+  answered.
+- `nat_type` — a best-effort NAT-mapping classification aimed at peer-to-peer
+  reachability rather than the full RFC 3489 cone taxonomy: `open` (the reflexive
+  address is one of our own interfaces — no NAT), `endpoint-independent` (both
+  servers saw the same mapping — cone-like, P2P-friendly), `endpoint-dependent`
+  (the servers saw different mappings — symmetric, P2P-hostile), `unknown` (only
+  one server answered, too little to classify), or `blocked` (no answer).
+
+```
+request:  {"id":11,"cmd":"run_stun_check"}
+response: {"id":11,"ok":true,"data":{"udp_ok":true,"nat_type":"endpoint-independent","external_ip":"203.0.113.7"}}
+```
+
+`run_speed_test` measures **download throughput through the active tunnel**: it
+streams a sample from a neutral CDN endpoint and times it. It is gated on a live
+connection — issued while idle it returns an error, since a throughput reading
+off the tunnel would be meaningless. The result carries the rate in megabits per
+second, the bytes the sample actually read, and how long that took.
+
+```
+request:  {"id":12,"cmd":"run_speed_test"}
+response: {"id":12,"ok":true,"data":{"mbps":94.3,"sample_bytes":10485760,"duration_ms":890}}
+error:    {"id":12,"ok":false,"error":"speed test requires an active connection"}
 ```
 
 ## Events
