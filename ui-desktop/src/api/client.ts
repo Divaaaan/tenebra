@@ -134,6 +134,28 @@ export const api = {
     });
   },
 
+  // Set the custom domain-suffix routing rules and the RU direct-rule presets:
+  // `rulesDirect` pins destinations to the direct outbound, `rulesProxy` to the
+  // tunnel, and the presets add bundled banking / government direct rules. The
+  // core validates each suffix (a malformed one rejects the whole call),
+  // normalizes them, persists the set, and — when a tunnel is live — re-applies
+  // it in place (a brief connecting→connected dip on the same node). The returned
+  // State echoes the normalized values back. The snake_case keys match the
+  // command's rename_all="snake_case" on the Rust side.
+  setRules(
+    rulesDirect: string[],
+    rulesProxy: string[],
+    presetRuBanking: boolean,
+    presetRuGov: boolean,
+  ): Promise<State> {
+    return invoke<State>("set_rules", {
+      rules_direct: rulesDirect,
+      rules_proxy: rulesProxy,
+      preset_ru_banking: presetRuBanking,
+      preset_ru_gov: presetRuGov,
+    });
+  },
+
   /**
    * Run the IP / DNS leak check. The core performs the probes and returns the
    * assembled verdict (see {@link LeakCheck}); a live tunnel is needed for a

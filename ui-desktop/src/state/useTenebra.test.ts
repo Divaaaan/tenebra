@@ -32,6 +32,7 @@ const mockApi = vi.hoisted(() => ({
   setKillSwitch: vi.fn(),
   setTun: vi.fn(),
   setAutoconnect: vi.fn(),
+  setRules: vi.fn(),
 }));
 
 vi.mock("../api", async (orig) => {
@@ -305,6 +306,35 @@ describe("actions", () => {
 
     expect(mockApi.setAutoconnect).toHaveBeenCalledWith(true);
     expect(result.current.state.autoconnect).toBe(true);
+  });
+
+  it("setRules calls api.setRules and applies the returned state", async () => {
+    const next: State = {
+      state: "idle",
+      rules_direct: ["bank.example"],
+      rules_proxy: ["work.example"],
+      preset_ru_banking: true,
+    };
+    mockApi.setRules.mockResolvedValue(next);
+    const { result } = await mountReady();
+
+    await act(async () => {
+      await result.current.setRules(
+        ["bank.example"],
+        ["work.example"],
+        true,
+        false,
+      );
+    });
+
+    expect(mockApi.setRules).toHaveBeenCalledWith(
+      ["bank.example"],
+      ["work.example"],
+      true,
+      false,
+    );
+    expect(result.current.state.rules_direct).toEqual(["bank.example"]);
+    expect(result.current.state.preset_ru_banking).toBe(true);
   });
 });
 

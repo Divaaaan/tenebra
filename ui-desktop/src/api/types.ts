@@ -56,6 +56,19 @@ export interface State {
    * omitted (treated as off) when it isn't.
    */
   ipv4_only?: boolean;
+  /**
+   * Custom domain-suffix routing rules: destinations pinned to the direct
+   * outbound, and to the proxy (tunnel). Normalized by the core; omitted when
+   * empty, like the split fields.
+   */
+  rules_direct?: string[];
+  rules_proxy?: string[];
+  /**
+   * Whether the bundled Russian banking / government direct-rule presets are on;
+   * omitted (treated as off) when they aren't.
+   */
+  preset_ru_banking?: boolean;
+  preset_ru_gov?: boolean;
   error?: string;
 }
 

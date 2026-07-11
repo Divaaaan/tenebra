@@ -247,6 +247,27 @@ export interface Strings {
     dnsPlaceholder: string;
     /** Localized hint shown when a typed resolver is malformed. */
     dnsInvalid: string;
+    /**
+     * Custom rules section: the two RU direct-rule preset toggles and the two
+     * per-domain rule lists (always direct / always through the tunnel).
+     */
+    rules: string;
+    rulesHint: string;
+    presetRuBanking: string;
+    presetRuBankingHint: string;
+    presetRuGov: string;
+    presetRuGovHint: string;
+    rulesDirect: string;
+    rulesDirectHint: string;
+    rulesProxy: string;
+    rulesProxyHint: string;
+    rulesAdd: string;
+    /** Example shown in an empty rule-domain field. */
+    rulesAddPlaceholder: string;
+    rulesRemove: string;
+    rulesEmpty: string;
+    /** Localized hint shown when a typed rule domain is malformed. */
+    rulesInvalid: string;
     /** Update-channel radiogroup: label plus the stable/beta options. */
     updateChannel: string;
     updateChannelStable: string;
@@ -519,6 +540,26 @@ const en: Strings = {
     dnsPlaceholder: "tls://1.1.1.1",
     dnsInvalid:
       "Enter a resolver like tls://1.1.1.1 or https://dns.example/dns-query.",
+    rules: "Custom rules",
+    rulesHint:
+      "Send specific domains direct or through the tunnel, on top of the routing above.",
+    presetRuBanking: "Russian banking sites stay direct",
+    presetRuBankingHint:
+      "Banks often reject connections from a foreign address, so keep them off the tunnel.",
+    presetRuGov: "Russian government sites stay direct",
+    presetRuGovHint:
+      "Public-service sites often reject a foreign address, so keep them off the tunnel.",
+    rulesDirect: "Always direct",
+    rulesDirectHint:
+      "Domains kept off the tunnel, matched by suffix (subdomains included).",
+    rulesProxy: "Always through the tunnel",
+    rulesProxyHint:
+      "Domains forced through the tunnel, matched by suffix (subdomains included).",
+    rulesAdd: "Add",
+    rulesAddPlaceholder: "example.com",
+    rulesRemove: "Remove",
+    rulesEmpty: "No domains yet.",
+    rulesInvalid: "Enter a domain like example.com — no scheme, port, or slash.",
     updateChannel: "Update channel",
     updateChannelStable: "Stable",
     updateChannelStableHint: "Tested releases only.",
@@ -780,6 +821,26 @@ const ru: Strings = {
     dnsPlaceholder: "tls://1.1.1.1",
     dnsInvalid:
       "Введите резолвер вида tls://1.1.1.1 или https://dns.example/dns-query.",
+    rules: "Свои правила",
+    rulesHint:
+      "Направляйте отдельные домены напрямую или через туннель, поверх маршрутизации выше.",
+    presetRuBanking: "Российские банки — напрямую",
+    presetRuBankingHint:
+      "Банки часто отклоняют подключения с зарубежного адреса — держим их мимо туннеля.",
+    presetRuGov: "Госсайты РФ — напрямую",
+    presetRuGovHint:
+      "Госсервисы часто отклоняют зарубежный адрес — держим их мимо туннеля.",
+    rulesDirect: "Всегда напрямую",
+    rulesDirectHint:
+      "Домены мимо туннеля, по суффиксу (включая поддомены).",
+    rulesProxy: "Всегда через туннель",
+    rulesProxyHint:
+      "Домены принудительно через туннель, по суффиксу (включая поддомены).",
+    rulesAdd: "Добавить",
+    rulesAddPlaceholder: "example.com",
+    rulesRemove: "Удалить",
+    rulesEmpty: "Пока нет доменов.",
+    rulesInvalid: "Введите домен вида example.com — без схемы, порта и слэша.",
     updateChannel: "Канал обновлений",
     updateChannelStable: "Стабильный",
     updateChannelStableHint: "Только проверенные релизы.",

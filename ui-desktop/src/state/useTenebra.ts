@@ -57,6 +57,12 @@ export interface Tenebra {
     dnsDirect: string,
     ipv4Only: boolean,
   ) => Promise<void>;
+  setRules: (
+    rulesDirect: string[],
+    rulesProxy: string[],
+    presetRuBanking: boolean,
+    presetRuGov: boolean,
+  ) => Promise<void>;
   refreshProfiles: () => Promise<void>;
   clearLogs: () => void;
 }
@@ -212,6 +218,24 @@ export function useTenebra(): Tenebra {
     [],
   );
 
+  const setRules = useCallback(
+    async (
+      rulesDirect: string[],
+      rulesProxy: string[],
+      presetRuBanking: boolean,
+      presetRuGov: boolean,
+    ) => {
+      const next = await api.setRules(
+        rulesDirect,
+        rulesProxy,
+        presetRuBanking,
+        presetRuGov,
+      );
+      setState(next);
+    },
+    [],
+  );
+
   const clearLogs = useCallback(() => setLogs([]), []);
 
   return {
@@ -228,6 +252,7 @@ export function useTenebra(): Tenebra {
     setTun,
     setAutoconnect,
     setDns,
+    setRules,
     refreshProfiles,
     clearLogs,
   };

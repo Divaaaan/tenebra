@@ -18,10 +18,122 @@ import {
   type UpdateChannel,
 } from "../lib/settings";
 import { isValidDnsServer } from "../lib/dns";
+import { isValidDomainSuffix } from "../lib/rules";
 import { checkForUpdate, installUpdate, type UpdateStatus } from "../lib/updates";
 
 interface SettingsScreenProps {
   tenebra: Tenebra;
+}
+
+// A single custom-rule list editor: a validated domain input, an add button, and
+// the current domains as removable rows. Both the "always direct" and "always
+// through the tunnel" lists render this — only the label, hint, backing list, and
+// the add/remove callbacks differ. Kept at module scope (not nested in
+// SettingsScreen) so its draft state survives the parent's re-renders. The core
+// owns the canonical list, so the rendered rows come from props; the draft is the
+// only local state. onAdd receives the normalized (trimmed, lowercased) domain.
+function RuleListEditor({
+  idBase,
+  label,
+  hint,
+  domains,
+  onAdd,
+  onRemove,
+}: {
+  idBase: string;
+  label: string;
+  hint: string;
+  domains: string[];
+  onAdd: (domain: string) => void;
+  onRemove: (domain: string) => void;
+}) {
+  const { t } = useI18n();
+  const [draft, setDraft] = useState("");
+
+  const trimmed = draft.trim();
+  const normalized = trimmed.toLowerCase();
+  // An empty draft is not "invalid" (nothing typed yet); a non-empty one is
+  // flagged the moment it can't be a domain, mirroring the DNS resolver field.
+  const valid = trimmed === "" || isValidDomainSuffix(trimmed);
+  const canAdd =
+    trimmed !== "" && isValidDomainSuffix(trimmed) && !domains.includes(normalized);
+  const errorId = `${idBase}-error`;
+
+  function add() {
+    if (!canAdd) {
+      return;
+    }
+    onAdd(normalized);
+    setDraft("");
+  }
+
+  function onKey(e: KeyboardEvent) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      add();
+    }
+  }
+
+  return (
+    <div className="set-apps">
+      <span className="set-eyebrow">{label}</span>
+      <span className="set-row-hint">{hint}</span>
+      <div className="set-add">
+        <span className={`set-field${valid ? "" : " is-invalid"}`}>
+          <span className="set-prompt" aria-hidden="true">
+            $
+          </span>
+          <input
+            id={idBase}
+            type="text"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={onKey}
+            placeholder={t.settings.rulesAddPlaceholder}
+            aria-label={label}
+            aria-invalid={!valid}
+            aria-describedby={valid ? undefined : errorId}
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+          />
+        </span>
+        <button
+          type="button"
+          className="set-btn"
+          onClick={add}
+          disabled={!canAdd}
+          aria-label={`${t.settings.rulesAdd} — ${label}`}
+        >
+          {t.settings.rulesAdd}
+        </button>
+      </div>
+      {!valid && (
+        <p id={errorId} className="set-error" role="alert">
+          {t.settings.rulesInvalid}
+        </p>
+      )}
+      {domains.length === 0 ? (
+        <p className="set-empty">{t.settings.rulesEmpty}</p>
+      ) : (
+        <ul className="set-app-list">
+          {domains.map((name) => (
+            <li key={name} className="set-app-row">
+              <span className="set-app-name">{name}</span>
+              <button
+                type="button"
+                className="set-remove"
+                onClick={() => onRemove(name)}
+                aria-label={`${t.settings.rulesRemove} ${name}`}
+              >
+                <span aria-hidden="true">✕</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 export function SettingsScreen({ tenebra }: SettingsScreenProps) {
@@ -388,6 +500,36 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     }
   }
 
+  // Custom routing rules: two RU direct-rule presets plus two per-domain lists.
+  // Core-owned like the rest — the daemon validates, normalizes, persists, and
+  // (when a tunnel is live) re-applies in place. Each set_rules carries the whole
+  // set, so every toggle/edit re-sends the current values of the others alongside
+  // the one it changes.
+  const rulesDirect = tenebra.state.rules_direct ?? [];
+  const rulesProxy = tenebra.state.rules_proxy ?? [];
+  const presetRuBanking = tenebra.state.preset_ru_banking ?? false;
+  const presetRuGov = tenebra.state.preset_ru_gov ?? false;
+
+  function pushRules(
+    nextDirect: string[],
+    nextProxy: string[],
+    nextBanking: boolean,
+    nextGov: boolean,
+  ) {
+    // Failures surface on the state/log channels the UI already renders.
+    void tenebra
+      .setRules(nextDirect, nextProxy, nextBanking, nextGov)
+      .catch(() => {});
+  }
+
+  function toggleRuleBanking() {
+    pushRules(rulesDirect, rulesProxy, !presetRuBanking, presetRuGov);
+  }
+
+  function toggleRuleGov() {
+    pushRules(rulesDirect, rulesProxy, presetRuBanking, !presetRuGov);
+  }
+
   const themeOptions: { value: "dark" | "light"; label: string }[] = [
     { value: "dark", label: t.settings.themeDark },
     { value: "light", label: t.settings.themeLight },
@@ -516,6 +658,97 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             )}
           </div>
         )}
+      </section>
+
+      <section className="set-section">
+        <div className="set-section-head">
+          <h2 className="set-eyebrow">{t.settings.rules}</h2>
+          <p className="set-sub">{t.settings.rulesHint}</p>
+        </div>
+
+        <div className="set-row">
+          <span className="set-row-text">
+            <span className="set-row-label">{t.settings.presetRuBanking}</span>
+            <span className="set-row-hint">{t.settings.presetRuBankingHint}</span>
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={presetRuBanking}
+            className={`set-switch${presetRuBanking ? " is-on" : ""}`}
+            onClick={toggleRuleBanking}
+          >
+            <span className="set-switch-box" aria-hidden="true">
+              {presetRuBanking ? "▣" : "▢"}
+            </span>
+            {presetRuBanking ? "ON" : "OFF"}
+          </button>
+        </div>
+
+        <div className="set-row">
+          <span className="set-row-text">
+            <span className="set-row-label">{t.settings.presetRuGov}</span>
+            <span className="set-row-hint">{t.settings.presetRuGovHint}</span>
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={presetRuGov}
+            className={`set-switch${presetRuGov ? " is-on" : ""}`}
+            onClick={toggleRuleGov}
+          >
+            <span className="set-switch-box" aria-hidden="true">
+              {presetRuGov ? "▣" : "▢"}
+            </span>
+            {presetRuGov ? "ON" : "OFF"}
+          </button>
+        </div>
+
+        <RuleListEditor
+          idBase="rules-direct"
+          label={t.settings.rulesDirect}
+          hint={t.settings.rulesDirectHint}
+          domains={rulesDirect}
+          onAdd={(domain) =>
+            pushRules(
+              [...rulesDirect, domain],
+              rulesProxy,
+              presetRuBanking,
+              presetRuGov,
+            )
+          }
+          onRemove={(domain) =>
+            pushRules(
+              rulesDirect.filter((d) => d !== domain),
+              rulesProxy,
+              presetRuBanking,
+              presetRuGov,
+            )
+          }
+        />
+
+        <RuleListEditor
+          idBase="rules-proxy"
+          label={t.settings.rulesProxy}
+          hint={t.settings.rulesProxyHint}
+          domains={rulesProxy}
+          onAdd={(domain) =>
+            pushRules(
+              rulesDirect,
+              [...rulesProxy, domain],
+              presetRuBanking,
+              presetRuGov,
+            )
+          }
+          onRemove={(domain) =>
+            pushRules(
+              rulesDirect,
+              rulesProxy.filter((d) => d !== domain),
+              presetRuBanking,
+              presetRuGov,
+            )
+          }
+        />
       </section>
 
       <section className="set-section">
