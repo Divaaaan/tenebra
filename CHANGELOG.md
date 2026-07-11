@@ -11,6 +11,22 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Adaptive transport escalation.** When a node's entry accepts a TCP connection
+  but its handshake then makes no progress and draws no reset — the signature of
+  destination-level interference, as distinct from a dead server — the connect
+  walk now re-tries the *same* node under a different transport strategy (a
+  reshaped TLS handshake: the uTLS fingerprint, then the SNI) before moving on to
+  the next node. A failure classifier separates this case from a dead entry (a
+  reset or an unreachable/unresolvable address, which advances straight to the
+  next node) and from an ambiguous one, so a strategy escalation is spent only on
+  real evidence of interference — not on ordinary packet loss or a downed host.
+  The fallback `attempts` snapshot gains two optional fields: `strategy` (the
+  non-default variation a candidate is being tried under or came up on) and
+  `reason` (`"censored"` when a node was abandoned after its handshake looked
+  interfered with), so the walk narrates the adaptation for the UI.
+
 ## [0.3.7] - 2026-07-11
 
 ### Security

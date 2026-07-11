@@ -483,6 +483,15 @@ and whether it is the profile's `last_good` lead.
   connectivity probe succeeded) or `blocked` (it failed and the walk moved on).
 - `outcome` is `""` while the walk runs, and the terminal snapshot carries `"ok"`
   (a candidate came up) or `"exhausted"` (every candidate failed).
+- Two optional annotations narrate the **adaptive transport** walk. When a
+  candidate's entry is reachable but its handshake is being dropped, the core
+  re-tries the **same node** under a different transport strategy (a reshaped TLS
+  handshake — fingerprint, SNI) before moving on. `strategy` names the non-default
+  variation a candidate is being tried under or came up on; it is omitted while
+  the candidate is on its own parameters. `reason` carries the failure
+  classification when a candidate was abandoned because its handshake looked
+  interfered with (`"censored"`); it is omitted for an ordinary block. Both are
+  absent from the common, unadapted snapshot.
 
 Because each event is the complete picture, a client only needs the latest one.
 An **explicit-node** connect and a live **re-apply** hot-swap run the same walk
@@ -555,6 +564,8 @@ type Attempt = {
   node: string;       // node id, as in a state event's `node`
   status: "waiting" | "trying" | "blocked" | "ok";
   last_good: boolean; // the profile's last-good lead candidate
+  strategy?: string;  // non-default transport strategy tried/connected under; omitted when native
+  reason?: string;    // failure classification on a block ("censored"); omitted otherwise
 };
 
 // Body of an `attempts` event: a full snapshot of the current fallback walk.

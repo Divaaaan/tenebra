@@ -151,6 +151,13 @@ type Daemon struct {
 	now  func() time.Time
 	dial func(ctx context.Context, network, address string) (net.Conn, error)
 
+	// classify decides why a failed connect attempt failed, so the fallback loop
+	// can escalate a transport strategy on a node whose handshake looks interfered
+	// with but keep advancing past a dead one. Injectable so the escalation is
+	// unit-testable without a live network; production uses classifyAttemptFailure
+	// (a direct TCP probe of the entry plus the through-tunnel stall signal).
+	classify func(ctx context.Context, node model.Node, stalled bool) fallback.FailureClass
+
 	// fallback-loop timings, injectable so tests run fast and deterministically.
 	// probeWarmup is how long to wait after Start before the first probe (the
 	// clash API needs a moment to listen). probeRetry is the gap between probe
@@ -234,6 +241,10 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 	// local tun rather than the real server. Binding the socket to the physical NIC
 	// steers each probe past the tun so the RTT readout stays meaningful mid-session.
 	d.dial = newPingDialer().DialContext
+	// The adaptive-transport escalation asks classify why an attempt failed; the
+	// production classifier pairs a direct TCP probe of the entry with the probe's
+	// stall signal (see classifyAttemptFailure).
+	d.classify = d.classifyAttemptFailure
 	// Background entitlement lookups run under this context so Close can cancel a
 	// slow one instead of blocking shutdown on it.
 	d.entCtx, d.entCancel = context.WithCancel(context.Background())
@@ -1311,6 +1322,38 @@ func profileNodes(p profile.Profile) []model.Node {
 		nodes[i] = s.Node
 	}
 	return nodes
+}
+
+// serverIDs returns each server's stable ID in profile order, parallel to
+// profileNodes, so the connect loop can map a node back to the server it came
+// from when it folds a per-node transport strategy into that one node.
+func serverIDs(p profile.Profile) []string {
+	ids := make([]string, len(p.Servers))
+	for i, s := range p.Servers {
+		ids[i] = s.ID
+	}
+	return ids
+}
+
+// applyStrategyToNodes returns the node slice for one connect attempt with strat's
+// handshake reshaping folded into the single node identified by targetID (matched
+// through the parallel nodeIDs), leaving every other node untouched so the
+// selector still lists them all. The default strategy reshapes nothing, so the
+// original slice is returned as-is; otherwise the slice is copied and only the
+// target node is replaced, so the loop's shared node slice is never mutated in
+// place. A targetID absent from nodeIDs leaves the slice unchanged.
+func applyStrategyToNodes(nodes []model.Node, nodeIDs []string, targetID string, strat fallback.Strategy) []model.Node {
+	if strat.IsDefault() {
+		return nodes
+	}
+	out := make([]model.Node, len(nodes))
+	copy(out, nodes)
+	for i := range out {
+		if i < len(nodeIDs) && nodeIDs[i] == targetID {
+			out[i] = strat.ApplyTo(out[i])
+		}
+	}
+	return out
 }
 
 // buildCandidates turns a profile's servers into fallback attempts. An explicit
