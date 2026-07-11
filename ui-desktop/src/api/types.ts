@@ -168,3 +168,34 @@ export interface LogEvent {
   level: LogLevel;
   msg: string;
 }
+
+/**
+ * One candidate's status within a fallback walk. `waiting` until the walk
+ * reaches it, `trying` while its connectivity is probed, then `ok` (it came up)
+ * or `blocked` (it failed and the walk moved on).
+ */
+export type AttemptStatus = "waiting" | "trying" | "blocked" | "ok";
+
+/**
+ * One line of a fallback-walk snapshot: a candidate's place in the plan, the
+ * protocol and node it targets, its status, and whether it is the profile's
+ * last-good node (the one the walk leads with).
+ */
+export interface Attempt {
+  seq: number;
+  protocol: NodeProtocol;
+  node: string;
+  status: AttemptStatus;
+  last_good: boolean;
+}
+
+/**
+ * A full snapshot of the anti-DPI fallback walk. The core re-emits it on every
+ * status change, so the latest snapshot is always the complete picture.
+ * `outcome` is "" while the walk is in progress and settles to "ok" (a candidate
+ * came up) or "exhausted" (every candidate failed).
+ */
+export interface AttemptsEvent {
+  items: Attempt[];
+  outcome: "" | "ok" | "exhausted";
+}

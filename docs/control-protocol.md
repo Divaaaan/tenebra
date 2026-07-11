@@ -454,6 +454,7 @@ response: {"id":9,"ok":true,"data":{
 | `traffic`  | `up`, `down` (bytes), `up_rate`, `down_rate` (bytes/s)             |
 | `log`      | `level` (`info`/`warn`/`error`), `msg`                            |
 | `profiles` | none — signal that the stored profile set changed; re-run `list_profiles` |
+| `attempts` | `items` (`Attempt[]`), `outcome` (`""`/`"ok"`/`"exhausted"`) — a fallback-walk snapshot |
 
 The `profiles` event is emitted after a profile's stored data changes outside a
 direct request — chiefly the background subscription auto-refresh — so the UI can
@@ -464,6 +465,37 @@ reload usage and node lists without polling. It is also emitted after a manual
 {"event":"state","state":"connected","node":"n3"}
 {"event":"traffic","up":10240,"down":51200,"up_rate":2048,"down_rate":8192}
 {"event":"profiles"}
+```
+
+### Fallback attempts (`attempts`)
+
+While a `connect` walks the anti-DPI fallback order (REALITY-flavoured VLESS →
+Hysteria2 → AmneziaWG, led by the profile's last-good node — see [Node
+selection](#node-selection-connect)), the core narrates the walk as `attempts`
+events, one **full snapshot** per change. Each `item` is a candidate in the plan:
+its `seq` (1-based position in the order it will be tried), the `protocol` and
+`node` it targets (the same identifiers a `state` event carries), its `status`,
+and whether it is the profile's `last_good` lead.
+
+- The **first** snapshot goes out at the start of the walk with every candidate
+  `waiting` — the order is already resolved, so the whole plan is known up front.
+- A candidate flips to `trying` just before its process starts, then to `ok` (its
+  connectivity probe succeeded) or `blocked` (it failed and the walk moved on).
+- `outcome` is `""` while the walk runs, and the terminal snapshot carries `"ok"`
+  (a candidate came up) or `"exhausted"` (every candidate failed).
+
+Because each event is the complete picture, a client only needs the latest one.
+An **explicit-node** connect and a live **re-apply** hot-swap run the same walk
+with a single candidate, so they emit a one-item snapshot (`waiting` → `trying` →
+`ok`/`blocked`), keeping the UI's view uniform. A client that **attaches
+mid-walk** is re-synced on its `status` request: while a walk is in flight the
+core re-pushes the current snapshot, so a UI that connected late still sees it.
+Snapshots from a walk that a newer connect superseded are dropped, never emitted
+over the connection that replaced it.
+
+```
+{"event":"attempts","items":[{"seq":1,"protocol":"vless","node":"nl-ams-01","status":"blocked","last_good":true},{"seq":2,"protocol":"hysteria2","node":"fi-hel-01","status":"trying","last_good":false}],"outcome":""}
+{"event":"attempts","items":[{"seq":1,"protocol":"vless","node":"nl-ams-01","status":"blocked","last_good":true},{"seq":2,"protocol":"hysteria2","node":"fi-hel-01","status":"ok","last_good":false}],"outcome":"ok"}
 ```
 
 ## Types
@@ -514,6 +546,17 @@ type Profile = {
 };
 
 type PingResult = { node: string; rttMs: number; ok: boolean };
+
+type Attempt = {
+  seq: number;        // 1-based position in the fallback order
+  protocol: "vless" | "hysteria2" | "amneziawg" | "shadowsocks" | "trojan" | "vmess";
+  node: string;       // node id, as in a state event's `node`
+  status: "waiting" | "trying" | "blocked" | "ok";
+  last_good: boolean; // the profile's last-good lead candidate
+};
+
+// Body of an `attempts` event: a full snapshot of the current fallback walk.
+type Attempts = { items: Attempt[]; outcome: "" | "ok" | "exhausted" };
 
 type LeakCheck = {
   public_ip?: string;   // omitted if every echo endpoint failed

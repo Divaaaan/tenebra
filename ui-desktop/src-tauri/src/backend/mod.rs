@@ -33,6 +33,7 @@ pub const EVENT_STATE: &str = "state";
 pub const EVENT_TRAFFIC: &str = "traffic";
 pub const EVENT_LOG: &str = "log";
 pub const EVENT_PROFILES: &str = "profiles";
+pub const EVENT_ATTEMPTS: &str = "attempts";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -182,6 +183,43 @@ pub struct Node {
     pub insecure: bool,
 }
 
+/// One candidate's status in a fallback walk, mirroring the core's attempt
+/// statuses. A candidate is `Waiting` until the walk reaches it, `Trying` while
+/// its connectivity is probed, then `Ok` (it came up) or `Blocked` (it failed and
+/// the walk moved on).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AttemptStatus {
+    Waiting,
+    Trying,
+    Blocked,
+    Ok,
+}
+
+/// One line of a fallback-walk snapshot: a candidate's place in the plan, the
+/// protocol and node it targets, its status, and whether it is the profile's
+/// last-good node (the one the walk leads with). Mirrors the core's attempt item.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attempt {
+    pub seq: u32,
+    pub protocol: Protocol,
+    pub node: String,
+    pub status: AttemptStatus,
+    pub last_good: bool,
+}
+
+/// A full snapshot of the anti-DPI fallback walk (the body of an `attempts`
+/// event): every candidate with its current status, plus the walk outcome. The
+/// core re-emits it on every status change, so the latest snapshot is always the
+/// complete picture. `outcome` is empty while the walk runs and settles to `"ok"`
+/// or `"exhausted"`; it is kept as a plain string so an unrecognized future value
+/// still deserializes rather than dropping the whole snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttemptsSnapshot {
+    pub items: Vec<Attempt>,
+    pub outcome: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
     pub id: String,
@@ -315,6 +353,9 @@ pub trait EventSink: Send + Sync + 'static {
     /// subscription refresh updated usage or node lists). Carries no payload;
     /// the UI re-fetches the profile list in response.
     fn profiles(&self);
+    /// Deliver a fallback-walk snapshot (the anti-DPI attempt sequence) so the UI
+    /// can show which protocols the core is trying and how far the walk got.
+    fn attempts(&self, snapshot: &AttemptsSnapshot);
 }
 
 /// Everything the control protocol exposes. Methods return a plain `Result`
@@ -456,6 +497,52 @@ mod tests {
     fn source_tokens() {
         assert_token(Source::Subscription, "subscription");
         assert_token(Source::Manual, "manual");
+    }
+
+    #[test]
+    fn attempt_status_tokens() {
+        assert_token(AttemptStatus::Waiting, "waiting");
+        assert_token(AttemptStatus::Trying, "trying");
+        assert_token(AttemptStatus::Blocked, "blocked");
+        assert_token(AttemptStatus::Ok, "ok");
+    }
+
+    #[test]
+    fn attempts_snapshot_round_trips() {
+        // The exact wire shape the core emits: items in plan order, a last_good
+        // lead, and an outcome. It must survive deserialize -> re-serialize so the
+        // webview sees it byte for byte.
+        let value = json!({
+            "items": [
+                { "seq": 1, "protocol": "vless", "node": "nl-ams-01", "status": "blocked", "last_good": true },
+                { "seq": 2, "protocol": "hysteria2", "node": "fi-hel-01", "status": "ok", "last_good": false },
+            ],
+            "outcome": "ok",
+        });
+        let snap: AttemptsSnapshot = from_value(value.clone()).unwrap();
+        assert_eq!(snap.items.len(), 2);
+        assert_eq!(snap.items[0].protocol, Protocol::Vless);
+        assert_eq!(snap.items[0].status, AttemptStatus::Blocked);
+        assert!(snap.items[0].last_good);
+        assert_eq!(snap.items[1].status, AttemptStatus::Ok);
+        assert_eq!(snap.outcome, "ok");
+        assert_eq!(to_value(&snap).unwrap(), value);
+    }
+
+    #[test]
+    fn attempts_snapshot_pending_walk_round_trips() {
+        // The opening snapshot: every candidate waiting, outcome still empty.
+        let value = json!({
+            "items": [
+                { "seq": 1, "protocol": "vless", "node": "n1", "status": "waiting", "last_good": false },
+                { "seq": 2, "protocol": "amneziawg", "node": "n2", "status": "trying", "last_good": false },
+            ],
+            "outcome": "",
+        });
+        let snap: AttemptsSnapshot = from_value(value.clone()).unwrap();
+        assert_eq!(snap.outcome, "");
+        assert_eq!(snap.items[1].protocol, Protocol::Amneziawg);
+        assert_eq!(to_value(&snap).unwrap(), value);
     }
 
     #[test]

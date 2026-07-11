@@ -24,8 +24,9 @@ use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
 use super::{
-    Backend, EventSink, ImportLinksResult, LeakCheck, PingResult, Profile, RoutingMode, SplitMode,
-    State, TunStack, EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
+    AttemptsSnapshot, Backend, EventSink, ImportLinksResult, LeakCheck, PingResult, Profile,
+    RoutingMode, SplitMode, State, TunStack, EVENT_ATTEMPTS, EVENT_LOG, EVENT_PROFILES,
+    EVENT_STATE, EVENT_TRAFFIC,
 };
 
 /// How long a request waits for its correlated response before giving up. The
@@ -273,6 +274,13 @@ fn forward_event(value: &Value, sink: &dyn EventSink) {
         Some(EVENT_PROFILES) => {
             // Signal-only: the body (if any) is ignored; the UI re-fetches.
             sink.profiles();
+        }
+        Some(EVENT_ATTEMPTS) => {
+            // A full fallback-walk snapshot; forward it typed, dropping a
+            // malformed one like a bad state rather than crashing the reader.
+            if let Ok(snapshot) = serde_json::from_value::<AttemptsSnapshot>(value.clone()) {
+                sink.attempts(&snapshot);
+            }
         }
         _ => {} // unknown event kind: ignore rather than guess
     }
@@ -645,6 +653,44 @@ mod tests {
     }
 
     #[test]
+    fn forward_event_routes_attempts() {
+        let sink = Rec::default();
+        forward_event(
+            &json!({
+                "event": "attempts",
+                "items": [
+                    { "seq": 1, "protocol": "vless", "node": "nl-ams-01", "status": "blocked", "last_good": true },
+                    { "seq": 2, "protocol": "hysteria2", "node": "fi-hel-01", "status": "trying", "last_good": false },
+                ],
+                "outcome": "",
+            }),
+            &sink,
+        );
+        let attempts = sink.attempts.lock().unwrap();
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(attempts[0].items.len(), 2);
+        assert_eq!(attempts[0].items[0].node, "nl-ams-01");
+        assert_eq!(
+            attempts[0].items[0].status,
+            super::super::AttemptStatus::Blocked
+        );
+        assert!(attempts[0].items[0].last_good);
+        assert_eq!(attempts[0].outcome, "");
+    }
+
+    #[test]
+    fn forward_event_drops_a_malformed_attempts() {
+        let sink = Rec::default();
+        // A bad status token makes the whole snapshot unparseable; it is swallowed,
+        // not forwarded.
+        forward_event(
+            &json!({ "event": "attempts", "items": [{ "seq": 1, "protocol": "vless", "node": "n", "status": "???", "last_good": false }], "outcome": "" }),
+            &sink,
+        );
+        assert!(sink.attempts.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn forward_event_ignores_unknown_kind() {
         let sink = Rec::default();
         forward_event(&json!({ "event": "bogus" }), &sink);
@@ -652,6 +698,7 @@ mod tests {
         assert!(sink.traffic.lock().unwrap().is_empty());
         assert!(sink.logs.lock().unwrap().is_empty());
         assert_eq!(sink.profiles.load(Ordering::SeqCst), 0);
+        assert!(sink.attempts.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -929,6 +976,7 @@ mod tests {
         fn traffic(&self, _up: u64, _down: u64, _up_rate: u64, _down_rate: u64) {}
         fn log(&self, _level: &str, _msg: &str) {}
         fn profiles(&self) {}
+        fn attempts(&self, _snapshot: &AttemptsSnapshot) {}
     }
 
     #[test]

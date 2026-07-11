@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   api,
+  onAttempts,
   onDeepLink,
   onLog,
   onProfilesChanged,
@@ -350,6 +351,23 @@ describe("event subscriptions", () => {
     expect(c.channel).toBe("profiles");
     c.fire(undefined);
     expect(handler).toHaveBeenCalledTimes(1);
+    expect(result).toBe(c.unlisten);
+  });
+
+  it("onAttempts listens on the attempts channel and delivers the snapshot", async () => {
+    const c = capture();
+    const handler = vi.fn();
+    const result = await onAttempts(handler);
+
+    expect(c.channel).toBe("attempts");
+    const payload = {
+      items: [
+        { seq: 1, protocol: "vless", node: "n1", status: "trying", last_good: true },
+      ],
+      outcome: "",
+    };
+    c.fire(payload);
+    expect(handler).toHaveBeenCalledWith(payload);
     expect(result).toBe(c.unlisten);
   });
 

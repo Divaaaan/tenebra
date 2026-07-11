@@ -3,10 +3,12 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 
 import {
   api,
+  onAttempts,
   onLog,
   onProfilesChanged,
   onState,
   onTraffic,
+  type AttemptsEvent,
   type LogEvent,
   type LogLevel,
   type Profile,
@@ -43,6 +45,14 @@ export interface Tenebra {
   traffic: Traffic;
   profiles: Profile[];
   logs: LogLine[];
+  /**
+   * The latest fallback-walk snapshot (the anti-DPI attempt sequence), or null
+   * until the first attempts event of the session. It is the full current
+   * picture — the core re-emits it on every change — and is kept after the walk
+   * settles (the UI decides when to hide it), so it is never reset to null once
+   * seen.
+   */
+  attempts: AttemptsEvent | null;
 
   connect: (profile: string, node?: string, auto?: boolean) => Promise<void>;
   disconnect: () => Promise<void>;
@@ -80,6 +90,7 @@ export function useTenebra(): Tenebra {
   const [traffic, setTraffic] = useState<Traffic>(ZERO_TRAFFIC);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [logs, setLogs] = useState<LogLine[]>([]);
+  const [attempts, setAttempts] = useState<AttemptsEvent | null>(null);
 
   const logSeq = useRef(0);
 
@@ -144,6 +155,10 @@ export function useTenebra(): Tenebra {
         }),
         onTraffic(applyTraffic),
         onLog(appendLog),
+        // Each attempts event is a full fallback-walk snapshot; keep the latest.
+        // We never reset it to null once seen — the walk data outlives the walk
+        // and the UI decides when to stop showing it.
+        onAttempts((e) => setAttempts(e)),
         // A background (or another window's) refresh changed the stored
         // profiles; reload so usage and node lists stay live.
         onProfilesChanged(() => {
@@ -250,6 +265,7 @@ export function useTenebra(): Tenebra {
     traffic,
     profiles,
     logs,
+    attempts,
     connect,
     disconnect,
     setRouting,

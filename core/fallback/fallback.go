@@ -288,3 +288,15 @@ func (m *Machine) Reset() { m.rebuild() }
 // When true, Next returns ok=false and the caller should surface ErrExhausted.
 // A machine with no candidates is exhausted from the start.
 func (m *Machine) Exhausted() bool { return m.cursor >= len(m.order) }
+
+// Order returns the resolved attempt sequence for the current walk, index 0
+// first — exactly the order Next hands attempts out in. It is a fresh copy the
+// caller may keep or mutate without affecting the machine. The layout is fixed
+// for the walk's duration (it is only recomputed on Success or Reset, both of
+// which restart the walk), so a caller can render the whole fallback plan up
+// front and then track each attempt's progress against it.
+func (m *Machine) Order() []Attempt {
+	out := make([]Attempt, len(m.order))
+	copy(out, m.order)
+	return out
+}

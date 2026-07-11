@@ -261,6 +261,10 @@ func (d *Daemon) teardown(newState ConnState, profileID, nodeID string) {
 	// Bump generation so any in-flight loop/watcher/poller from the old connection
 	// recognises it is superseded and won't emit further state.
 	d.generation++
+	// Drop the old walk's snapshot: it no longer describes the live state, so a
+	// client attaching after this teardown must not be handed it. A new connect's
+	// loop repopulates it from its own first snapshot.
+	d.attempts = nil
 	d.mu.Unlock()
 
 	if cancel != nil {
@@ -302,6 +306,102 @@ type fallbackLoop struct {
 	requestedNode string
 }
 
+// attemptTracker records the progress of one fallback walk and emits an
+// "attempts" snapshot on every status change, giving the UI a step-by-step view
+// of the anti-DPI walk. It is built from the machine's resolved plan up front, so
+// the opening snapshot already lists every candidate (waiting) in the order they
+// will be tried. A single runFallback goroutine owns it, so its item slice needs
+// no lock; only the publish crosses into the daemon (under d.mu).
+type attemptTracker struct {
+	d        *Daemon
+	gen      uint64
+	items    []attemptItem
+	byNodeID map[string]int // node ID -> index into items
+}
+
+// newAttemptTracker builds a tracker for loop's walk: one item per candidate in
+// the machine's resolved order, each waiting, with the profile's last-good node
+// flagged. The last-good lookup is done once here so every snapshot of this walk
+// marks the same node even if last-good changes on a success mid-walk.
+func (d *Daemon) newAttemptTracker(loop fallbackLoop) *attemptTracker {
+	order := loop.machine.Order()
+	lastGoodID := ""
+	if d.lastGood != nil {
+		if id, ok := d.lastGood.Get(loop.profileID); ok {
+			lastGoodID = id
+		}
+	}
+	items := make([]attemptItem, len(order))
+	byNodeID := make(map[string]int, len(order))
+	for i, a := range order {
+		items[i] = attemptItem{
+			Seq:      i + 1,
+			Protocol: string(a.Node.Protocol),
+			Node:     a.NodeID,
+			Status:   AttemptWaiting,
+			LastGood: a.NodeID == lastGoodID,
+		}
+		byNodeID[a.NodeID] = i
+	}
+	return &attemptTracker{d: d, gen: loop.gen, items: items, byNodeID: byNodeID}
+}
+
+// begin emits the opening snapshot: every candidate waiting, walk in progress.
+func (t *attemptTracker) begin() { t.publish(AttemptOutcomePending) }
+
+// trying, blocked and succeeded move one candidate (matched by node ID) to the
+// named status and emit. succeeded also closes the walk with the "ok" outcome.
+func (t *attemptTracker) trying(a fallback.Attempt) { t.set(a, AttemptTrying, AttemptOutcomePending) }
+func (t *attemptTracker) blocked(a fallback.Attempt) {
+	t.set(a, AttemptBlocked, AttemptOutcomePending)
+}
+func (t *attemptTracker) succeeded(a fallback.Attempt) { t.set(a, AttemptOK, AttemptOutcomeConnected) }
+
+// exhausted emits the terminal snapshot when every candidate failed: the items
+// keep their last (blocked) statuses and the walk closes with "exhausted".
+func (t *attemptTracker) exhausted() { t.publish(AttemptOutcomeExhausted) }
+
+// set updates one candidate's status and publishes the resulting snapshot. A
+// node not in the plan is a no-op on the items but still republishes, which never
+// happens in practice (every attempt came from the same machine).
+func (t *attemptTracker) set(a fallback.Attempt, status, outcome string) {
+	if i, ok := t.byNodeID[a.NodeID]; ok {
+		t.items[i].Status = status
+	}
+	t.publish(outcome)
+}
+
+// publish snapshots the current items with outcome and hands them to the daemon
+// to store and emit. The items are copied so the emitted/stored snapshot never
+// aliases the tracker's mutable slice.
+func (t *attemptTracker) publish(outcome string) {
+	snap := attemptsEvent{
+		Items:   append([]attemptItem(nil), t.items...),
+		Outcome: outcome,
+	}
+	t.d.emitAttempts(t.gen, snap)
+}
+
+// emitAttempts stores snap as the live walk snapshot (so a mid-walk attach can be
+// handed it) and pushes it to the client — but only while gen is still the
+// current generation. A superseded walk must neither clobber a newer walk's
+// stored snapshot nor emit a stale step over it, mirroring how the rest of the
+// loop gates on isCurrent before touching shared state.
+func (d *Daemon) emitAttempts(gen uint64, snap attemptsEvent) {
+	d.mu.Lock()
+	if d.generation != gen {
+		d.mu.Unlock()
+		return
+	}
+	stored := snap
+	d.attempts = &stored
+	emit := d.emit
+	d.mu.Unlock()
+	if emit != nil {
+		emit(EventAttempts, snap)
+	}
+}
+
 // runFallback drives the fallback machine for one connect. Per candidate it
 // builds a config with that node selected, starts sing-box, waits for the clash
 // API to confirm real traffic flows through the selector (Probe), and on success
@@ -311,6 +411,15 @@ type fallbackLoop struct {
 // error state. The whole loop bails the moment its generation is superseded or
 // ctx is cancelled, stopping any process it started.
 func (d *Daemon) runFallback(ctx context.Context, loop fallbackLoop) {
+	// The tracker publishes the walk as "attempts" snapshots. The opening one
+	// lists every candidate (waiting) in the order they will be tried — the plan
+	// is already resolved — so the UI can render the whole walk before the first
+	// probe. An explicit-node connect and a hot-swap re-apply run this same loop
+	// with a single candidate, so they emit a one-item snapshot (waiting -> trying
+	// -> ok/blocked), keeping the UI's fallback view uniform.
+	tracker := d.newAttemptTracker(loop)
+	tracker.begin()
+
 	for {
 		if ctx.Err() != nil || !d.isCurrent(loop.gen) {
 			_ = d.runner.Stop()
@@ -320,6 +429,7 @@ func (d *Daemon) runFallback(ctx context.Context, loop fallbackLoop) {
 		if !ok {
 			// Exhausted: every candidate was tried and failed.
 			if d.isCurrent(loop.gen) {
+				tracker.exhausted()
 				d.emitLog(LogError, "connect: all protocols failed")
 				d.setState(State{State: StateError, Profile: loop.profileID,
 					Error: "all protocols failed", Routing: d.snapshotState().Routing})
@@ -327,11 +437,15 @@ func (d *Daemon) runFallback(ctx context.Context, loop fallbackLoop) {
 			return
 		}
 
+		// About to attempt this candidate: mark it trying before the process starts.
+		tracker.trying(attempt)
+
 		tag := loop.tags[attempt.NodeID]
 		cfgJSON, err := buildConfigJSON(loop.nodes, tag, loop.ro, loop.tun)
 		if err != nil {
 			// A node we can't even render is not worth a process; skip it.
 			d.emitLog(LogWarn, fmt.Sprintf("connect: skip %s: %v", protoLabel(attempt.Node), err))
+			tracker.blocked(attempt)
 			loop.machine.Failure(attempt)
 			continue
 		}
@@ -342,6 +456,7 @@ func (d *Daemon) runFallback(ctx context.Context, loop fallbackLoop) {
 				return
 			}
 			d.emitLog(LogWarn, fmt.Sprintf("connect: start %s failed: %v", protoLabel(attempt.Node), err))
+			tracker.blocked(attempt)
 			loop.machine.Failure(attempt)
 			continue
 		}
@@ -357,6 +472,9 @@ func (d *Daemon) runFallback(ctx context.Context, loop fallbackLoop) {
 			if loop.remember {
 				d.rememberLastConn(loop.profileID, loop.requestedNode)
 			}
+			// Close the walk snapshot as succeeded before flipping the connection
+			// state, so the "ok" step precedes the connected event on the wire.
+			tracker.succeeded(attempt)
 			// Capture the connected instant before publishing it, so the uptime the
 			// relaunch budget reads later is measured from a fixed point.
 			connectedAt := d.now()
@@ -378,6 +496,7 @@ func (d *Daemon) runFallback(ctx context.Context, loop fallbackLoop) {
 		}
 		d.emitLog(LogWarn, fmt.Sprintf("connect: %s blocked, trying next", protoLabel(attempt.Node)))
 		_ = d.runner.Stop()
+		tracker.blocked(attempt)
 		loop.machine.Failure(attempt)
 	}
 }

@@ -20,8 +20,9 @@ use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_notification::NotificationExt;
 
 use backend::{
-    Backend, ConnectionState, EventSink, ImportLinksResult, LeakCheck, PingResult, Profile,
-    RoutingMode, SplitMode, State, TunStack, EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
+    AttemptsSnapshot, Backend, ConnectionState, EventSink, ImportLinksResult, LeakCheck,
+    PingResult, Profile, RoutingMode, SplitMode, State, TunStack, EVENT_ATTEMPTS, EVENT_LOG,
+    EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
 /// Held in Tauri's managed state and shared by every command handler. The
@@ -98,6 +99,12 @@ impl EventSink for TauriSink {
     fn profiles(&self) {
         // Payload-less: the renderer reloads the profile list on receipt.
         let _ = self.app.emit(EVENT_PROFILES, ());
+    }
+
+    fn attempts(&self, snapshot: &AttemptsSnapshot) {
+        // Forward the fallback-walk snapshot verbatim; the renderer renders the
+        // anti-DPI attempt sequence from it.
+        let _ = self.app.emit(EVENT_ATTEMPTS, snapshot);
     }
 }
 

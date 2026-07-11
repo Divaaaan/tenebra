@@ -88,6 +88,37 @@ func TestLastGoodLeadsThenPreference(t *testing.T) {
 	eq(t, drain(m), []string{"wg", "re", "hy"})
 }
 
+func TestOrderReflectsResolvedPlan(t *testing.T) {
+	// Order must return the same sequence Next hands out, up front and without
+	// advancing the walk. last-good leads, then protocol preference.
+	lg := NewMemLastGood()
+	lg.Set("p1", "wg")
+	cands := []Attempt{
+		node("re", model.VLESS),
+		node("hy", model.Hysteria2),
+		node("wg", model.AmneziaWG),
+	}
+	m := New("p1", cands, nil, lg)
+
+	order := m.Order()
+	got := make([]string, len(order))
+	for i, a := range order {
+		got[i] = a.NodeID
+	}
+	eq(t, got, []string{"wg", "re", "hy"})
+
+	// Order does not consume the walk: Next still yields the lead, and the drained
+	// order matches what Order reported.
+	if a, ok := m.Next(); !ok || a.NodeID != "wg" {
+		t.Fatalf("Next after Order = %q,%v; want wg,true", a.NodeID, ok)
+	}
+	eq(t, drain(m), []string{"wg", "re", "hy"})
+
+	// The returned slice is a copy: mutating it must not disturb the machine.
+	order[0].NodeID = "tampered"
+	eq(t, drain(New("p1", cands, nil, lg)), []string{"wg", "re", "hy"})
+}
+
 func TestFailureAdvances(t *testing.T) {
 	cands := []Attempt{
 		node("re", model.VLESS),
