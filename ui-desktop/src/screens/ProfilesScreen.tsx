@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, type PingResult, type Profile } from "../api";
 import type { Tenebra } from "../state/useTenebra";
 import { useI18n } from "../i18n/I18nContext";
 import type { Strings } from "../i18n/strings";
 import { formatDate, formatExpiry, formatTrafficUsage } from "../lib/format";
+import { pushToast } from "../lib/toast";
 import { ClipboardError, readClipboardText } from "../lib/clipboard";
 import {
   decodeQrFromBlob,
@@ -26,6 +27,14 @@ interface ProfilesScreenProps {
    */
   initialImport?: string | null;
   onImportConsumed?: () => void;
+  /**
+   * Connecting from a profile card is a "go" action: it should dismiss the
+   * overlay so the main panel (and the fallback walk) is in view. The overlay is
+   * owned by the shell, so the screen asks it to close through this callback
+   * rather than reaching for that state itself. Optional — absent, a card connect
+   * still runs, it just leaves the overlay up.
+   */
+  onConnected?: () => void;
 }
 
 export function ProfilesScreen({
@@ -34,6 +43,7 @@ export function ProfilesScreen({
   onSelectProfile,
   initialImport = null,
   onImportConsumed,
+  onConnected,
 }: ProfilesScreenProps) {
   const { t } = useI18n();
   const { profiles, state } = tenebra;
@@ -41,6 +51,41 @@ export function ProfilesScreen({
   const [importing, setImporting] = useState(false);
   const [presetUrl, setPresetUrl] = useState<string | null>(null);
   const [pings, setPings] = useState<Record<string, PingResult[]>>({});
+
+  // Two-step delete state, lifted so only one card can be armed at a time: a
+  // first click on a card's Remove arms it (id held here); a second within the
+  // window confirms; the 3s timer disarms it otherwise. Arming another card
+  // supersedes the first. Kept out of the card so the timer has one owner and one
+  // cleanup, and arming B visibly disarms A.
+  const [removeArmedId, setRemoveArmedId] = useState<string | null>(null);
+  const removeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearRemoveTimer = useCallback(() => {
+    if (removeTimer.current !== null) {
+      clearTimeout(removeTimer.current);
+      removeTimer.current = null;
+    }
+  }, []);
+
+  const armRemove = useCallback(
+    (id: string) => {
+      clearRemoveTimer();
+      setRemoveArmedId(id);
+      removeTimer.current = setTimeout(() => {
+        removeTimer.current = null;
+        setRemoveArmedId(null);
+      }, 3000);
+    },
+    [clearRemoveTimer],
+  );
+
+  const disarmRemove = useCallback(() => {
+    clearRemoveTimer();
+    setRemoveArmedId(null);
+  }, [clearRemoveTimer]);
+
+  // Drop a pending disarm timer if the screen unmounts mid-window.
+  useEffect(() => clearRemoveTimer, [clearRemoveTimer]);
 
   // A deep-link import: open the dialog pre-filled with the subscription URL, and
   // tell the caller it has been taken so a re-render doesn't reopen it.
@@ -92,6 +137,10 @@ export function ProfilesScreen({
               onPings={(results) =>
                 setPings((prev) => ({ ...prev, [profile.id]: results }))
               }
+              removeArmed={removeArmedId === profile.id}
+              onArmRemove={() => armRemove(profile.id)}
+              onDisarmRemove={disarmRemove}
+              onConnected={onConnected}
             />
           ))}
         </ul>
@@ -119,6 +168,14 @@ interface ProfileCardProps {
   onSelect: () => void;
   pings?: PingResult[];
   onPings: (results: PingResult[]) => void;
+  /** Whether this card's delete is armed (first click landed, awaiting confirm). */
+  removeArmed: boolean;
+  /** Arm this card's delete (starts the parent's confirm window). */
+  onArmRemove: () => void;
+  /** Cancel the armed window (on confirm, so the timer doesn't fire late). */
+  onDisarmRemove: () => void;
+  /** Ask the shell to dismiss the overlay after a connect started from here. */
+  onConnected?: () => void;
 }
 
 // Calendar-day tone for the expiry readout, mirroring the day math in
@@ -155,6 +212,10 @@ function ProfileCard({
   onSelect,
   pings,
   onPings,
+  removeArmed,
+  onArmRemove,
+  onDisarmRemove,
+  onConnected,
 }: ProfileCardProps) {
   const { t, lang } = useI18n();
   const [expanded, setExpanded] = useState(false);
@@ -179,10 +240,26 @@ function ProfileCard({
     return ok.reduce((best, r) => (r.rttMs < best.rttMs ? r : best));
   }, [pings]);
 
+  // Set this profile active and confirm it. Only reachable when not already
+  // selected (the button is disabled then), so the toast always marks a change.
+  function setActive() {
+    onSelect();
+    pushToast(t.toast.profileActive.replace("{name}", profile.name));
+  }
+
   async function runPing() {
     setPinging(true);
     try {
-      onPings(await api.ping(profile.id));
+      const results = await api.ping(profile.id);
+      onPings(results);
+      // Confirm with a live reachable/total summary, mirroring the badges that
+      // just updated in place.
+      const alive = results.filter((r) => r.ok).length;
+      pushToast(
+        t.toast.profilePinged
+          .replace("{alive}", String(alive))
+          .replace("{total}", String(profile.nodes.length)),
+      );
     } catch {
       // Leave previous results untouched on failure.
     } finally {
@@ -194,6 +271,10 @@ function ProfileCard({
     setBusy(true);
     try {
       await tenebra.connect(profile.id, nodeId);
+      // A card connect is a "go": hand the overlay back so the main panel and the
+      // fallback walk are in view. The "tunnel up" toast is raised by the shell
+      // on the state transition, so it isn't duplicated here.
+      onConnected?.();
     } catch {
       // The state stream surfaces the failure.
     } finally {
@@ -207,6 +288,7 @@ function ProfileCard({
       // The core emits a profiles event when the refresh changes stored data,
       // which reloads the list; no explicit refetch needed here.
       await api.refreshSubscription(profile.id);
+      pushToast(t.toast.profileRefreshed.replace("{name}", profile.name));
     } catch {
       // Non-fatal; keep the stale view.
     } finally {
@@ -214,13 +296,26 @@ function ProfileCard({
     }
   }
 
-  async function remove() {
-    if (!window.confirm(t.profiles.removeConfirm)) {
-      return;
+  // Two-step delete, replacing a blocking window.confirm: a first click arms the
+  // button (parent-owned, so only one card is armed and the 3s timer has a single
+  // owner); a second click within the window commits. Disarm first so the pending
+  // timer can't fire against an already-removed card.
+  function handleRemoveClick() {
+    if (removeArmed) {
+      onDisarmRemove();
+      void remove();
+    } else {
+      onArmRemove();
     }
+  }
+
+  async function remove() {
     setBusy(true);
     try {
       await api.removeProfile(profile.id);
+      pushToast(t.toast.profileRemoved.replace("{name}", profile.name));
+      // On success the profiles event reloads the list and unmounts this card, so
+      // there's nothing to re-enable; only a failure falls through to clear busy.
       await tenebra.refreshProfiles();
     } catch {
       setBusy(false);
@@ -312,7 +407,7 @@ function ProfileCard({
           type="button"
           className="prof-ghost"
           disabled={selected}
-          onClick={onSelect}
+          onClick={setActive}
         >
           {selected ? t.profiles.active : t.profiles.setActive}
         </button>
@@ -346,11 +441,13 @@ function ProfileCard({
         )}
         <button
           type="button"
-          className="prof-ghost prof-ghost--danger"
+          className={`prof-ghost prof-ghost--danger${
+            removeArmed ? " is-armed" : ""
+          }`}
           disabled={busy}
-          onClick={remove}
+          onClick={handleRemoveClick}
         >
-          {t.profiles.remove}
+          {removeArmed ? t.profiles.removeConfirm : t.profiles.remove}
         </button>
       </div>
     </li>
@@ -459,8 +556,17 @@ function ImportDialog({ tenebra, onClose, initialUrl }: ImportDialogProps) {
     setError(null);
     setResult(null);
     try {
-      await action();
+      const created = await action();
       await tenebra.refreshProfiles();
+      // Confirm the single import by the profile's own name (the import calls
+      // resolve to the created Profile); the dialog then closes.
+      const createdName =
+        created && typeof created === "object" && "name" in created
+          ? String((created as { name: unknown }).name)
+          : undefined;
+      if (createdName) {
+        pushToast(t.toast.profileImported.replace("{name}", createdName));
+      }
       onClose();
     } catch (e) {
       // The raw error is English and often carries the subscription URL, so we
@@ -481,11 +587,13 @@ function ImportDialog({ tenebra, onClose, initialUrl }: ImportDialogProps) {
     try {
       const res = await api.importLinks(links, name.trim() || undefined);
       await tenebra.refreshProfiles();
-      setResult(
-        t.profiles.import.batchResult
-          .replace("{imported}", String(res.imported))
-          .replace("{skipped}", String(res.skipped)),
-      );
+      // The batch keeps the dialog open with the counts inline; also raise the
+      // same line as a toast so the action confirms like every other one.
+      const line = t.profiles.import.batchResult
+        .replace("{imported}", String(res.imported))
+        .replace("{skipped}", String(res.skipped));
+      setResult(line);
+      pushToast(line);
     } catch {
       // The core rejects a batch with no parseable links; tell the user plainly.
       setError(t.errors.batchEmpty);
