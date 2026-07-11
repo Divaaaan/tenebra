@@ -73,4 +73,30 @@ describe("TopBar", () => {
     );
     expect(container.querySelector("svg.usage-bar")).not.toBeInTheDocument();
   });
+
+  it("shows the premium badge when the active profile's tier is premium", () => {
+    const profile = makeProfile({ name: "Acme VPN", managed: true, tier: "premium" });
+    const { container } = renderWithProviders(
+      <TopBar activeProfile={profile} />,
+    );
+    const badge = container.querySelector(".acct-badge--premium");
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveTextContent("premium");
+  });
+
+  it("omits the premium badge for a free or unmarked subscription", () => {
+    // No tier, an explicit free tier, and a managed-but-not-premium profile all
+    // render without the badge — premium is the only state that earns it.
+    for (const overrides of [
+      {},
+      { tier: "free" as const },
+      { managed: true, tier: "free" as const },
+    ]) {
+      const { container, unmount } = renderWithProviders(
+        <TopBar activeProfile={makeProfile(overrides)} />,
+      );
+      expect(container.querySelector(".acct-badge")).not.toBeInTheDocument();
+      unmount();
+    }
+  });
 });

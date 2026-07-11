@@ -26,6 +26,8 @@ export interface Strings {
   /** Top bar: brand line + the active subscription's meta. */
   topbar: {
     noSubscription: string;
+    /** Badge shown beside the active subscription's name when its tier is premium. */
+    premium: string;
   };
 
   /** Left connection pane. */
@@ -450,6 +452,7 @@ const en: Strings = {
   },
   topbar: {
     noSubscription: "no subscription",
+    premium: "premium",
   },
   conn: {
     eyebrow: "Tunnel status",
@@ -786,6 +789,7 @@ const ru: Strings = {
   },
   topbar: {
     noSubscription: "нет подписки",
+    premium: "премиум",
   },
   conn: {
     eyebrow: "Статус туннеля",

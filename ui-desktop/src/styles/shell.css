@@ -76,6 +76,29 @@
   color: var(--line-2);
 }
 
+/* Entitlement badge beside the active subscription name — mono, bracketed like
+   the wordmark, in the rationed accent. A status marker, not a control; the
+   brackets auto-dim relative to whatever colour the badge carries. */
+.acct-badge {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.acct-badge::before {
+  content: "[ ";
+  color: color-mix(in srgb, currentColor 50%, transparent);
+}
+.acct-badge::after {
+  content: " ]";
+  color: color-mix(in srgb, currentColor 50%, transparent);
+}
+.acct-badge--premium {
+  color: var(--signal);
+}
+
 /* ── kill-switch banner ── */
 .kill-banner {
   background: var(--signal);

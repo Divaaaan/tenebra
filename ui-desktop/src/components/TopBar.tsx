@@ -53,6 +53,11 @@ export function TopBar({ activeProfile }: TopBarProps) {
         {activeProfile ? (
           <>
             <span className="b">{activeProfile.name}</span>
+            {activeProfile.tier === "premium" && (
+              <span className="acct-badge acct-badge--premium">
+                {t.topbar.premium}
+              </span>
+            )}
             {usage && (
               <>
                 <span className="sep" aria-hidden="true">
