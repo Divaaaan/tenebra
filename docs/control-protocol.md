@@ -129,6 +129,7 @@ surface.
 | `set_tun`              | `stack` (`system`/`gvisor`/`mixed`) | `State`                    |
 | `set_autoconnect`      | `on` (boolean)                     | `State`                     |
 | `set_dns`              | `ad_block` (boolean), `dns_remote`, `dns_direct`, `ipv4_only` (boolean) | `State` |
+| `set_crash_reports`    | `on` (boolean)                     | `State`                     |
 | `leak_check`           | —                                  | `LeakCheck`                 |
 
 ```
@@ -292,6 +293,28 @@ request:  {"id":11,"cmd":"set_autoconnect","on":true}
 response: {"id":11,"ok":true,"data":{"state":"idle","tun_stack":"system","autoconnect":true}}
 ```
 
+### Crash reports (`set_crash_reports`)
+
+`on: true` opts in to crash reporting, `false` opts out; the choice is persisted
+in `settings.json` and reported back in `State`. Like autoconnect it changes
+nothing about a live tunnel, and — unlike everything else here — it governs a
+purely local behaviour: **the core never sends anything anywhere.** A GUI panic
+or an uncaught webview error is always written to a local file (`crash-gui.txt`,
+beside `core.log`); the consent only decides whether the app offers, after the
+fact, to let the user review that file and open a pre-filled GitHub issue in
+their browser. There is no telemetry and no network path.
+
+Consent is a genuine tri-state so the UI can tell "not asked yet" from "off":
+`crash_reports` is omitted until the user answers, then carries their explicit
+`true`/`false`, and `crash_reports_asked` becomes `true` once they have (it is
+omitted while false). An omitted `on` in the request decodes to `false`
+(opt-out), matching the other toggles.
+
+```
+request:  {"id":12,"cmd":"set_crash_reports","on":true}
+response: {"id":12,"ok":true,"data":{"state":"idle","tun_stack":"system","crash_reports":true,"crash_reports_asked":true}}
+```
+
 ### DNS (`set_dns`)
 
 Sets the DNS preferences in one command: `ad_block` toggles ad/tracker blocking,
@@ -424,6 +447,8 @@ type State = {
   ipv4_only?: boolean;            // DNS strategy pinned to IPv4-only; omitted when off
   dns_remote?: string;            // effective encrypted resolver (over the proxy)
   dns_direct?: string;            // effective direct resolver
+  crash_reports?: boolean;        // crash-report consent; omitted until asked, then the choice
+  crash_reports_asked?: boolean;  // whether consent has been answered; omitted while false
   error?: string;
 };
 

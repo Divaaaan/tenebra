@@ -86,6 +86,12 @@ type Daemon struct {
 	// it starts (see AutoconnectOnStart). Persisted with the other preferences.
 	// Guarded by mu.
 	autoconnect bool
+	// crashReports remembers the crash-report consent (see State.CrashReports):
+	// nil when the user has not been asked, else a pointer to their explicit
+	// choice. It governs only whether the GUI offers to surface a crash report on
+	// the next launch; the core never sends anything anywhere. Persisted with the
+	// other preferences. Guarded by mu.
+	crashReports *bool
 	// lastProfile and lastNode record the last successful user-commanded
 	// connect: the profile, and the node only when the request pinned an
 	// explicit exit. They are what autoconnect re-issues at the next daemon
@@ -252,9 +258,13 @@ func (d *Daemon) SetSettings(store settingsStore) {
 		d.tun.Stack = ps.TunStack
 	}
 	d.autoconnect = ps.Autoconnect
+	// The loaded struct is a fresh local, so holding its pointer is safe; later
+	// writes always replace the pointer (never mutate through it), so no snapshot
+	// ever races a change.
+	d.crashReports = ps.CrashReports
 	d.lastProfile = ps.LastProfile
 	d.lastNode = ps.LastNode
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.crashReports)
 	d.mu.Unlock()
 }
 
@@ -294,18 +304,19 @@ func (d *Daemon) persistSettings() {
 // options. Callers must hold d.mu.
 func (d *Daemon) settingsLocked() persistedSettings {
 	return persistedSettings{
-		Version:     settingsVersion,
-		SplitMode:   string(d.routing.SplitMode),
-		SplitApps:   d.routing.SplitApps,
-		KillSwitch:  d.routing.KillSwitch,
-		TunStack:    d.tun.Stack,
-		Autoconnect: d.autoconnect,
-		AdBlock:     d.routing.AdBlock,
-		IPv4Only:    d.routing.IPv4Only,
-		DNSRemote:   d.routing.DNSRemote,
-		DNSDirect:   d.routing.DNSDirect,
-		LastProfile: d.lastProfile,
-		LastNode:    d.lastNode,
+		Version:      settingsVersion,
+		SplitMode:    string(d.routing.SplitMode),
+		SplitApps:    d.routing.SplitApps,
+		KillSwitch:   d.routing.KillSwitch,
+		TunStack:     d.tun.Stack,
+		Autoconnect:  d.autoconnect,
+		CrashReports: d.crashReports,
+		AdBlock:      d.routing.AdBlock,
+		IPv4Only:     d.routing.IPv4Only,
+		DNSRemote:    d.routing.DNSRemote,
+		DNSDirect:    d.routing.DNSDirect,
+		LastProfile:  d.lastProfile,
+		LastNode:     d.lastNode,
 	}
 }
 
@@ -347,6 +358,8 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleSetAutoconnect(req)
 	case CmdSetDNS:
 		return d.handleSetDNS(req)
+	case CmdSetCrashReports:
+		return d.handleSetCrashReports(req)
 	case CmdLeakCheck:
 		return d.handleLeakCheck(ctx, req)
 	default:
@@ -772,7 +785,7 @@ func (d *Daemon) handleSetSplit(req Request) Response {
 	d.routing.SplitMode = mode
 	d.routing.SplitApps = req.Apps
 	d.routing = d.routing.Normalize()
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.crashReports)
 	cur := d.state
 	d.mu.Unlock()
 
@@ -796,7 +809,7 @@ func (d *Daemon) handleSetKillSwitch(req Request) Response {
 	d.mu.Lock()
 	changed := d.routing.KillSwitch != req.On
 	d.routing.KillSwitch = req.On
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.crashReports)
 	d.mu.Unlock()
 
 	d.persistSettings()
@@ -823,7 +836,7 @@ func (d *Daemon) handleSetTun(req Request) Response {
 	d.mu.Lock()
 	changed := d.tun.Stack != req.Stack
 	d.tun.Stack = req.Stack
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.crashReports)
 	d.mu.Unlock()
 
 	d.persistSettings()
@@ -846,7 +859,29 @@ func (d *Daemon) handleSetTun(req Request) Response {
 func (d *Daemon) handleSetAutoconnect(req Request) Response {
 	d.mu.Lock()
 	d.autoconnect = req.On
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.crashReports)
+	d.mu.Unlock()
+
+	d.persistSettings()
+
+	resp, err := newResult(req.ID, d.snapshotState())
+	if err != nil {
+		return newError(req.ID, err.Error())
+	}
+	return resp
+}
+
+// handleSetCrashReports records the crash-report consent. Like autoconnect it
+// changes nothing about a live tunnel — it only governs whether the GUI offers
+// to surface a locally saved crash report on the next launch, and nothing is
+// ever sent anywhere by the core — so there is no live re-apply. The choice is
+// stored as an explicit true/false (never left nil once the user has answered),
+// so the first-run prompt does not return after they have decided.
+func (d *Daemon) handleSetCrashReports(req Request) Response {
+	d.mu.Lock()
+	v := req.On
+	d.crashReports = &v
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.crashReports)
 	d.mu.Unlock()
 
 	d.persistSettings()
@@ -888,7 +923,7 @@ func (d *Daemon) handleSetDNS(req Request) Response {
 	// already-default field to "" compares equal below and is correctly a no-op.
 	d.routing = d.routing.Normalize()
 	changed := dnsPrefsDiffer(before, d.routing)
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.crashReports)
 	d.mu.Unlock()
 
 	d.persistSettings()
@@ -919,7 +954,7 @@ func dnsPrefsDiffer(a, b routing.Options) bool {
 // invisible to the UI; the app slice is copied so the State never aliases the
 // daemon's live routing options. The resolvers are always the normalized
 // (effective) values, so the UI can prefill its custom-DNS inputs.
-func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, autoconnect bool) {
+func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, autoconnect bool, crashReports *bool) {
 	if ro.SplitMode == routing.SplitOff || len(ro.SplitApps) == 0 {
 		s.Split = ""
 		s.SplitApps = nil
@@ -930,6 +965,17 @@ func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, 
 	s.KillSwitch = ro.KillSwitch
 	s.TunStack = tun.Stack
 	s.Autoconnect = autoconnect
+	// Copy the crash-report consent by value so the State never aliases the
+	// daemon's live pointer: nil stays "not asked" (both fields cleared), a set
+	// value is mirrored with the has-been-asked bit raised.
+	if crashReports == nil {
+		s.CrashReports = nil
+		s.CrashReportsAsked = false
+	} else {
+		v := *crashReports
+		s.CrashReports = &v
+		s.CrashReportsAsked = true
+	}
 	s.AdBlock = ro.AdBlock
 	s.IPv4Only = ro.IPv4Only
 	s.DNSRemote = ro.DNSRemote

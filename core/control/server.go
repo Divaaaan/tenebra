@@ -2,7 +2,10 @@ package control
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"log"
+	"runtime/debug"
 	"sync"
 )
 
@@ -114,8 +117,25 @@ func (s *Server) handleLine(ctx context.Context, line []byte) {
 		s.writeResponse(newError(0, err.Error()))
 		return
 	}
-	resp := s.daemon.Handle(ctx, req)
-	s.writeResponse(resp)
+	s.writeResponse(dispatchRequest(ctx, req, s.daemon.Handle))
+}
+
+// dispatchRequest hands one request to handle, guarding the call with a recover
+// so a panic in a command handler becomes an error response for that one request
+// instead of an unrecovered panic that unwinds the serve goroutine and takes the
+// daemon — and the live tunnel — down with it. The panic value and stack go to
+// the core log (the process's standard logger, captured to the sidecar/service
+// log file) for diagnosis; the client sees an internal-error reply correlated by
+// the request id, and the next request is served normally. handle is a parameter
+// so the recover can be unit-tested with a panicking stub.
+func dispatchRequest(ctx context.Context, req Request, handle func(context.Context, Request) Response) (resp Response) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("control: recovered from panic handling %q (id %d): %v\n%s", req.Cmd, req.ID, r, debug.Stack())
+			resp = newError(req.ID, fmt.Sprintf("internal error: %v", r))
+		}
+	}()
+	return handle(ctx, req)
 }
 
 // writeResponse serialises a response to the writer under the write lock.

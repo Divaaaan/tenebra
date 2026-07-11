@@ -57,6 +57,14 @@ type persistedSettings struct {
 	// written before the field existed, which reads back as false — off, matching
 	// the pre-IPv4-only behaviour.
 	IPv4Only bool `json:"ipv4_only,omitempty"`
+
+	// CrashReports remembers the crash-report consent. A *bool so the three
+	// states stay distinct across a restart: absent (nil) means the user has not
+	// been asked, so the GUI still shows the first-run prompt; a stored true/false
+	// is their explicit choice. Being a pointer, an old file written before the
+	// field existed reads back as nil — "not asked" — so no version bump is
+	// needed to add it.
+	CrashReports *bool `json:"crash_reports,omitempty"`
 	// LastProfile and LastNode record the last successful user-commanded
 	// connect: the profile, and the node only when the request pinned an
 	// explicit exit (empty when the fallback walk chose). Autoconnect re-issues

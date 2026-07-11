@@ -39,6 +39,7 @@ const (
 	CmdSetTun             = "set_tun"
 	CmdSetAutoconnect     = "set_autoconnect"
 	CmdSetDNS             = "set_dns"
+	CmdSetCrashReports    = "set_crash_reports"
 	CmdLeakCheck          = "leak_check"
 )
 
@@ -178,8 +179,17 @@ type State struct {
 	DNSDirect string `json:"dns_direct,omitempty"`
 	// IPv4Only reports whether the DNS strategy is pinned to IPv4-only (A records,
 	// no AAAA). Omitted when off, like the kill switch.
-	IPv4Only bool   `json:"ipv4_only,omitempty"`
-	Error    string `json:"error,omitempty"`
+	IPv4Only bool `json:"ipv4_only,omitempty"`
+	// CrashReports reports the crash-report consent as a tri-state pointer: nil
+	// when the user has not been asked yet, else a pointer to their explicit
+	// choice. Unlike the other bool flags it is a *bool so a declined choice
+	// (false) still rides the wire — a non-nil pointer is not "empty", so
+	// omitempty drops only the nil (not-asked) case, letting the GUI tell "off"
+	// apart from "not asked". CrashReportsAsked carries the same has-been-asked
+	// bit explicitly so a consumer never has to lean on that pointer subtlety.
+	CrashReports      *bool  `json:"crash_reports,omitempty"`
+	CrashReportsAsked bool   `json:"crash_reports_asked,omitempty"`
+	Error             string `json:"error,omitempty"`
 }
 
 // PingResult is one node's dial-latency probe outcome.
