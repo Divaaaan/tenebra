@@ -78,6 +78,19 @@ export interface Strings {
     settings: string;
   };
 
+  /**
+   * One-line action confirmations shown by the toast host, bottom-left. Each is
+   * raised on a real state transition; `{mode}` in `route` is the localized
+   * routing label, and `tunnelUp` is a prefix the caller appends node · protocol
+   * to.
+   */
+  toast: {
+    tunnelUp: string;
+    killOn: string;
+    killOff: string;
+    route: string;
+  };
+
   /** Update banner shown when the launch check finds a newer release. */
   update: {
     /** "{version}" interpolated by the caller. */
@@ -416,6 +429,12 @@ const en: Strings = {
     leakCheck: "leak-check",
     settings: "settings",
   },
+  toast: {
+    tunnelUp: "tunnel up",
+    killOn: "kill-switch · on",
+    killOff: "kill-switch · off",
+    route: "route · {mode}",
+  },
   update: {
     available: "Version {version} is available",
     install: "Update",
@@ -715,6 +734,12 @@ const ru: Strings = {
       "Блокировать трафик в обход туннеля; при падении туннеля — перезапустить его. Применяется сразу; коннект с ним грубее.",
     leakCheck: "проверка",
     settings: "настройки",
+  },
+  toast: {
+    tunnelUp: "туннель поднят",
+    killOn: "kill-switch · вкл",
+    killOff: "kill-switch · выкл",
+    route: "маршрут · {mode}",
   },
   update: {
     available: "Доступна версия {version}",
