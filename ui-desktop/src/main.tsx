@@ -27,6 +27,9 @@ import "./styles/settings.css";
 import "./styles/profiles.css";
 import "./styles/logs.css";
 import "./styles/crash.css";
+import "./styles/simple.css";
+import "./styles/eclipse.css";
+import "./styles/credits.css";
 
 // Apply the persisted theme before anything renders. index.html hardcodes
 // data-theme="dark" (the canonical default must survive without JS), so a

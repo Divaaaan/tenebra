@@ -194,6 +194,24 @@ export interface Strings {
   };
 
   /**
+   * Simple mode: the stripped-down one-button screen for non-technical users.
+   * Plain, calm language — no jargon. The connect/disconnect verbs and the status
+   * words are reused from `home`/`state`.
+   */
+  simple: {
+    /** Reassurance line under the status word while connected. */
+    statusOn: string;
+    /** Calm line under the status word while idle or errored. */
+    statusOff: string;
+    /** Friendly label above the server picker. */
+    server: string;
+    /** The automatic / fastest option in the server picker. */
+    auto: string;
+    /** Shown in place of the pickers when no subscription is present. */
+    noProfile: string;
+  };
+
+  /**
    * Confirmation shown before a `tenebra://` deep link performs a
    * state-changing action (today: connect). A link can come from any web page,
    * so the action is never taken silently — the user approves it first.
@@ -564,6 +582,13 @@ const en: Strings = {
     autoNode: "Auto (lowest ping)",
     sessionTraffic: "This session",
   },
+  simple: {
+    statusOn: "You're protected",
+    statusOff: "You're not connected",
+    server: "Server",
+    auto: "Automatic — fastest",
+    noProfile: "Import a subscription to get started.",
+  },
   deeplink: {
     connectTitle: "Connect request",
     connectBody: "Connect the “{profile}” subscription now?",
@@ -901,6 +926,13 @@ const ru: Strings = {
     activeNode: "Сервер",
     autoNode: "Авто (мин. пинг)",
     sessionTraffic: "За сессию",
+  },
+  simple: {
+    statusOn: "Вы под защитой",
+    statusOff: "Вы не подключены",
+    server: "Сервер",
+    auto: "Автоматически — быстрее всего",
+    noProfile: "Импортируйте подписку, чтобы начать.",
   },
   deeplink: {
     connectTitle: "Запрос на подключение",

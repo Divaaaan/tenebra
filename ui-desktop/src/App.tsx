@@ -14,6 +14,9 @@ import { ProfilesScreen } from "./screens/ProfilesScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { LogsScreen } from "./screens/LogsScreen";
 import { ToastHost } from "./components/ToastHost";
+import { SimpleView } from "./components/SimpleView";
+import { EclipseOverlay } from "./components/EclipseOverlay";
+import { useKonami } from "./hooks/useKonami";
 import { useTenebra } from "./state/useTenebra";
 import { useI18n } from "./i18n/I18nContext";
 import type { RoutingMode } from "./api";
@@ -37,6 +40,15 @@ import { getAutoFastest, migrateLegacyAutoconnect } from "./lib/settings";
 
 type Overlay = "profiles" | "settings" | "logs" | null;
 
+// Renderer-owned preference, written by the Settings toggle. Simple mode swaps the
+// full shell for the one-button SimpleView. Tolerant of both the codebase's "1"/"0"
+// convention and a plain "true", so a divergent writer can't silently disable it.
+const SIMPLE_MODE_KEY = "tenebra.simpleMode";
+function readSimpleMode(): boolean {
+  const v = localStorage.getItem(SIMPLE_MODE_KEY);
+  return v === "1" || v === "true";
+}
+
 export function App() {
   const tenebra = useTenebra();
   const { t } = useI18n();
@@ -53,6 +65,37 @@ export function App() {
   const [query, setQuery] = useState("");
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [busy, setBusy] = useState(false);
+
+  // Simple mode: the Settings toggle writes `tenebra.simpleMode`; we mirror it here
+  // and swap the whole shell for SimpleView when it's on. A cross-window write
+  // arrives as a `storage` event; the same-window toggle can nudge us with a
+  // `tenebra:simple-mode` custom event. Either way we re-read the source of truth.
+  const [simpleMode, setSimpleMode] = useState(readSimpleMode);
+  useEffect(() => {
+    const sync = () => setSimpleMode(readSimpleMode());
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === SIMPLE_MODE_KEY || e.key === null) sync();
+    };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("tenebra:simple-mode", sync);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("tenebra:simple-mode", sync);
+    };
+  }, []);
+
+  // Konami code → a brief "eclipse" over the main screen. Purely cosmetic; the
+  // overlay is inert and clears itself. A stable ender keeps the overlay's timer
+  // from restarting on unrelated re-renders (traffic ticks, etc.).
+  const [eclipse, setEclipse] = useState(false);
+  const endEclipse = useCallback(() => setEclipse(false), []);
+  useKonami(
+    useCallback(() => {
+      setEclipse(true);
+      // A quiet line for anyone with the console open.
+      console.info("%c◐ eclipse · in tenebris lux", "color:#ff3d00");
+    }, []),
+  );
 
   // Deep-link (tenebra://) intents. `importPreset` carries a subscription URL to
   // pre-fill the import flow with; `pendingConnect` names a profile to connect
@@ -427,6 +470,31 @@ export function App() {
     };
   }, []);
 
+  // Simple mode: one calm screen instead of the full shell. It reads the same
+  // connection state and shares the same actions, so the two never disagree. The
+  // eclipse easter egg still rides along; the console/toast layers do too.
+  if (simpleMode) {
+    return (
+      <div className="app app--simple" data-conn={phase}>
+        <SimpleView
+          phase={phase}
+          busy={busy}
+          onPrimary={handlePrimary}
+          nodeName={displayedNode?.name ?? ""}
+          profiles={profiles}
+          selectedProfileId={selectedProfileId}
+          onSelectProfile={handleSelectProfile}
+          nodes={nodes}
+          selectedNodeId={selectedNodeId}
+          onSelectNode={handleSelectNode}
+          onSelectAuto={handleSelectAuto}
+        />
+        <EclipseOverlay active={eclipse} onDone={endEclipse} />
+        <ToastHost />
+      </div>
+    );
+  }
+
   return (
     <div className="app" data-conn={phase}>
       <TopBar activeProfile={metaProfile} />
@@ -567,6 +635,8 @@ export function App() {
           onClose={() => setViewingReport(false)}
         />
       )}
+
+      <EclipseOverlay active={eclipse} onDone={endEclipse} />
 
       <ToastHost />
     </div>

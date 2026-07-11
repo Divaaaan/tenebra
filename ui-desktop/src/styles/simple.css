@@ -1,0 +1,197 @@
+/* ── simple mode ──
+   The one-button screen that replaces the full shell for non-technical users. A
+   centred column with more air than the shell: a quiet wordmark, the big status
+   word (reusing the shell's live-dot vocabulary and its blink-pending / breathe
+   keyframes), one large primary control, and a minimal server picker. Same tokens,
+   same accent discipline — just far less on screen. */
+
+.simple {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-8);
+  padding: var(--sp-8) var(--sp-6);
+  overflow-y: auto;
+}
+
+.simple-brand {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: var(--fs-brand);
+  letter-spacing: 0.01em;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text);
+}
+.simple-brand .bracket {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.simple-core {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-5);
+  text-align: center;
+}
+
+.simple-word {
+  font-family: var(--display);
+  font-size: var(--fs-word);
+  font-weight: 700;
+  letter-spacing: var(--track-word);
+  line-height: 1;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--word-off);
+}
+.simple-word .simple-ind {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  display: inline-block;
+}
+
+.simple-word.idle {
+  color: var(--word-off);
+}
+.simple-word.idle .simple-ind {
+  border: var(--bw-emphasis) solid var(--text-dim-2);
+}
+
+.simple-word.connecting,
+.simple-word.health_reconnecting {
+  color: var(--word-pending);
+}
+.simple-word.connecting .simple-ind,
+.simple-word.health_reconnecting .simple-ind {
+  background: var(--word-pending);
+  animation: blink-pending 1s steps(2) infinite;
+}
+
+.simple-word.connected {
+  color: var(--word-on);
+}
+.simple-word.connected .simple-ind {
+  background: var(--word-on);
+  animation: breathe 2.2s ease-in-out infinite;
+}
+
+.simple-word.error {
+  color: var(--signal);
+}
+.simple-word.error .simple-ind {
+  background: var(--signal);
+}
+
+.simple-sub {
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  letter-spacing: var(--track-body);
+  color: var(--text-dim);
+}
+
+/* ── primary control ── */
+.simple-btn {
+  font-family: var(--mono);
+  font-size: var(--fs-sku); /* 22px — larger than the shell's connect CTA */
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding: 20px 56px;
+  min-width: 300px;
+  max-width: 100%;
+  border: var(--bw-emphasis) solid var(--signal);
+  color: var(--signal);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  transition:
+    background 160ms ease,
+    color 160ms ease,
+    border-color 160ms ease,
+    transform 80ms ease;
+}
+/* Idle / error: fill on hover. Scoped away from the on/pending variants. */
+.simple-btn:not(.on):not(.pending):hover {
+  background: var(--signal);
+  color: var(--on-signal);
+}
+.simple-btn:active {
+  transform: scale(0.99);
+}
+.simple-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.simple-btn.on {
+  border-color: var(--text-dim-2);
+  color: var(--text-dim);
+}
+.simple-btn.on:hover {
+  border-color: var(--signal);
+  color: var(--signal);
+}
+.simple-btn.pending {
+  border-color: var(--warn-soft);
+  color: var(--warn-soft);
+}
+.simple-btn.pending:hover {
+  border-color: var(--signal);
+  color: var(--signal);
+}
+
+/* ── server picker ── */
+.simple-pick {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  width: min(360px, 100%);
+}
+.simple-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.simple-field-lab {
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-cap);
+  text-transform: uppercase;
+  color: var(--text-dim);
+  text-align: center;
+}
+.simple-select {
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  letter-spacing: var(--track-body);
+  color: var(--text);
+  background: var(--bg);
+  border: var(--bw) solid var(--line-2);
+  padding: 12px 14px;
+  text-align: center;
+  text-align-last: center;
+  cursor: pointer;
+  transition: border-color var(--t-fast);
+}
+.simple-select:hover {
+  border-color: var(--text-dim);
+}
+.simple-select:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+.simple-empty {
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  letter-spacing: var(--track-body);
+  color: var(--text-dim);
+  text-align: center;
+}
