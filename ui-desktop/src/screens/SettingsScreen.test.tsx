@@ -671,6 +671,184 @@ describe("SettingsScreen", () => {
     });
   });
 
+  describe("censorship bypass", () => {
+    function tlsToggle(): HTMLElement {
+      const row = screen
+        .getByText("DPI bypass — TLS fragmentation")
+        .closest(".set-row");
+      if (!row) {
+        throw new Error("tls-fragment row not found");
+      }
+      const toggle = row.querySelector('[role="switch"]');
+      if (!toggle) {
+        throw new Error("tls-fragment switch not found");
+      }
+      return toggle as HTMLElement;
+    }
+
+    it("reflects the armed TLS-fragmentation state from the core", () => {
+      const tenebra = makeTenebra({
+        state: { state: "idle", tls_fragment: true } as State,
+      });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+      expect(tlsToggle()).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("starts off when the core omits the field", () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+      expect(tlsToggle()).toHaveAttribute("aria-checked", "false");
+    });
+
+    it("arms fragmentation through the core", async () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(tlsToggle());
+      expect(tenebra.setTlsFragment).toHaveBeenCalledWith(true);
+    });
+
+    it("disarms from the reported on state", async () => {
+      const tenebra = makeTenebra({
+        state: { state: "idle", tls_fragment: true } as State,
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(tlsToggle());
+      expect(tenebra.setTlsFragment).toHaveBeenCalledWith(false);
+    });
+  });
+
+  describe("reliability", () => {
+    function failoverToggle(): HTMLElement {
+      const row = screen
+        .getByText("Auto-switch on node failure")
+        .closest(".set-row");
+      if (!row) {
+        throw new Error("auto-failover row not found");
+      }
+      const toggle = row.querySelector('[role="switch"]');
+      if (!toggle) {
+        throw new Error("auto-failover switch not found");
+      }
+      return toggle as HTMLElement;
+    }
+
+    // The core defaults the watchdog on and projects that into State as a concrete
+    // `auto_failover: true` (present), so an armed default arrives set; the field
+    // is only ever absent after the user disarms it. Reading a missing field as
+    // off is therefore correct and matches every other core-owned toggle here.
+    it("reflects the armed default the core reports (present true)", () => {
+      const tenebra = makeTenebra({
+        state: { state: "idle", auto_failover: true } as State,
+      });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+      expect(failoverToggle()).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("reads as off once disarmed (the core omits the field)", () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+      expect(failoverToggle()).toHaveAttribute("aria-checked", "false");
+    });
+
+    it("disarms through the core from the armed state", async () => {
+      const tenebra = makeTenebra({
+        state: { state: "idle", auto_failover: true } as State,
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(failoverToggle());
+      expect(tenebra.setAutoFailover).toHaveBeenCalledWith(false);
+    });
+
+    it("re-arms through the core from the disarmed state", async () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(failoverToggle());
+      expect(tenebra.setAutoFailover).toHaveBeenCalledWith(true);
+    });
+  });
+
+  describe("diagnostics", () => {
+    it("gates the speed test on a live connection", () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+      expect(screen.getByRole("button", { name: "Speed test" })).toBeDisabled();
+    });
+
+    it("enables the speed test once connected", () => {
+      const tenebra = makeTenebra({ state: { state: "connected" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+      expect(screen.getByRole("button", { name: "Speed test" })).toBeEnabled();
+    });
+
+    it("always offers the STUN probe, connected or not", () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+      expect(
+        screen.getByRole("button", { name: "Check UDP / NAT" }),
+      ).toBeEnabled();
+    });
+  });
+
+  describe("simple mode", () => {
+    function simpleToggle(): HTMLElement {
+      const row = screen.getByText("Simple mode").closest(".set-row");
+      if (!row) {
+        throw new Error("simple-mode row not found");
+      }
+      const toggle = row.querySelector('[role="switch"]');
+      if (!toggle) {
+        throw new Error("simple-mode switch not found");
+      }
+      return toggle as HTMLElement;
+    }
+
+    it("starts off when the flag is unset", () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+      expect(simpleToggle()).toHaveAttribute("aria-checked", "false");
+    });
+
+    it("reads the persisted flag on mount", () => {
+      localStorage.setItem("tenebra.simpleMode", "true");
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+      expect(simpleToggle()).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("writes the exact key/value and raises a storage event for the shell", async () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      const seen: StorageEvent[] = [];
+      const onStorage = (e: StorageEvent) => seen.push(e);
+      window.addEventListener("storage", onStorage);
+      try {
+        renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+        await user.click(simpleToggle());
+        // The flag is written verbatim ('true'/'false'), the shell's contract.
+        expect(localStorage.getItem("tenebra.simpleMode")).toBe("true");
+        expect(simpleToggle()).toHaveAttribute("aria-checked", "true");
+        // A same-document storage event, keyed on the flag, reaches the shell.
+        const hit = seen.find((e) => e.key === "tenebra.simpleMode");
+        expect(hit).toBeDefined();
+        expect(hit?.newValue).toBe("true");
+
+        await user.click(simpleToggle());
+        expect(localStorage.getItem("tenebra.simpleMode")).toBe("false");
+      } finally {
+        window.removeEventListener("storage", onStorage);
+      }
+    });
+  });
+
   describe("appearance", () => {
     it("applies the chosen theme to the document", async () => {
       const tenebra = makeTenebra({ state: { state: "idle" } as State });
@@ -997,11 +1175,14 @@ describe("SettingsScreen", () => {
 
       const rail = screen.getByRole("navigation", { name: "Settings sections" });
       const links = within(rail).getAllByRole("button");
-      // routing, split, rules, tunnel, dns, appearance, startup, updates.
-      expect(links).toHaveLength(8);
+      // routing, split, rules, tunnel, dns, bypass, reliability, diagnostics,
+      // appearance, startup, updates.
+      expect(links).toHaveLength(11);
       expect(links[0]).toHaveTextContent("Routing");
       expect(links[2]).toHaveTextContent("Custom rules");
-      expect(links[7]).toHaveTextContent("Updates");
+      expect(links[5]).toHaveTextContent("Censorship bypass");
+      expect(links[7]).toHaveTextContent("Diagnostics");
+      expect(links[10]).toHaveTextContent("Updates");
     });
 
     it("scrolls to a section and highlights its link on click", async () => {
@@ -1064,6 +1245,9 @@ describe("SettingsScreen", () => {
         "Custom rules",
         "Tunnel",
         "DNS",
+        "Censorship bypass",
+        "Reliability",
+        "Diagnostics",
         "Appearance",
         "Startup",
         "Updates",

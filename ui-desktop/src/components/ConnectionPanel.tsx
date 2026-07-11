@@ -118,12 +118,19 @@ export function ConnectionPanel({
   const { t } = useI18n();
   const connected = phase === "connected";
   const pending = phase === "connecting";
+  // The automatic health-failover recovery: the core is reconnecting to a
+  // healthy node on its own after the active one degraded. It runs the same
+  // in-flight affordances as a user connect (progress rail, abort), but reads
+  // apart from it — its own status word, sub-line and accent — so an unattended
+  // switch never looks like something the user started.
+  const reconnecting = phase === "health_reconnecting";
+  const inFlight = pending || reconnecting;
 
   const word = t.state[phase];
   const displayWord = useScrambledText(word);
   const buttonLabel = connected
     ? `▢ ${t.home.disconnect}`
-    : pending
+    : inFlight
       ? `· · · ${t.conn.abort}`
       : `▶ ${t.home.connect}`;
 
@@ -155,6 +162,9 @@ export function ConnectionPanel({
       {exitServer && " · "}
       {protocolLabel} · <span className="b">{t.conn.subConnected}</span>
     </span>
+  ) : reconnecting ? (
+    // An automatic failover after a node degraded — distinct from a user connect.
+    <span className="sig">{t.conn.subReconnecting}</span>
   ) : pending ? (
     // A connecting state normally means a tunnel handshake (the generic
     // negotiating line); when the backend attaches a message — e.g. the GUI is
@@ -187,8 +197,11 @@ export function ConnectionPanel({
               {displayWord}
             </span>
           </div>
-          {pending && (
-            <div className="conn-rail" aria-hidden="true">
+          {inFlight && (
+            <div
+              className={`conn-rail${reconnecting ? " reconnecting" : ""}`}
+              aria-hidden="true"
+            >
               <span className="conn-rail-run" />
             </div>
           )}
@@ -198,7 +211,7 @@ export function ConnectionPanel({
         <div className="connect-row">
           <button
             type="button"
-            className={`connect-btn${connected ? " on" : ""}${pending ? " pending" : ""}`}
+            className={`connect-btn${connected ? " on" : ""}${pending ? " pending" : ""}${reconnecting ? " reconnecting" : ""}`}
             onClick={onPrimary}
           >
             {buttonLabel}

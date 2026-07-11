@@ -100,6 +100,33 @@
   background: var(--signal);
 }
 
+/* Automatic health-failover recovery. Rides the accent (--signal) with a round,
+   urgently-pulsing dot — deliberately unlike the connecting blink (warn) and the
+   connected breathe (good), and unlike the static error dot — so an unattended
+   node switch reads as its own distinct event, not a user connect. */
+.conn-word.health_reconnecting {
+  color: var(--signal);
+}
+.conn-word.health_reconnecting .ind {
+  background: var(--signal);
+  border-radius: 50%;
+  animation: reconnect-pulse 0.9s ease-out infinite;
+}
+@keyframes reconnect-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--signal) 55%, transparent);
+    opacity: 1;
+  }
+  70% {
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--signal) 0%, transparent);
+    opacity: 0.6;
+  }
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--signal) 0%, transparent);
+    opacity: 1;
+  }
+}
+
 @keyframes blink-pending {
   0%,
   50% {
@@ -152,6 +179,10 @@
     left: 100%;
   }
 }
+/* Recovery rail rides the accent instead of the warn tone of a plain connect. */
+.conn-rail.reconnecting .conn-rail-run {
+  background: var(--signal);
+}
 
 .conn-sub {
   font-size: var(--fs-data);
@@ -189,9 +220,9 @@
     border-color 160ms ease,
     transform 80ms ease;
 }
-/* Idle / error: fill on hover. Scoped away from the on/pending variants so their
-   own hover rules aren't overridden by the fill. */
-.connect-btn:not(.on):not(.pending):hover {
+/* Idle / error: fill on hover. Scoped away from the on/pending/reconnecting
+   variants so their own hover rules aren't overridden by the fill. */
+.connect-btn:not(.on):not(.pending):not(.reconnecting):hover {
   background: var(--signal);
   color: var(--on-signal);
 }
@@ -221,6 +252,22 @@
 .connect-btn.pending:hover {
   border-color: var(--signal);
   color: var(--signal);
+}
+/* Recovering: accent-toned to match the status word, with a slow opacity pulse
+   marking it live. Neutralized under reduced motion by the global rule. */
+.connect-btn.reconnecting {
+  border-color: var(--signal);
+  color: var(--signal);
+  animation: btn-recover 1s ease-in-out infinite;
+}
+@keyframes btn-recover {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.72;
+  }
 }
 @keyframes stripes {
   0% {

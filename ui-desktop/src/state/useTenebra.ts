@@ -59,8 +59,10 @@ export interface Tenebra {
   setRouting: (mode: RoutingMode) => Promise<void>;
   setSplit: (mode: SplitMode, apps: string[]) => Promise<void>;
   setKillSwitch: (on: boolean) => Promise<void>;
+  setTlsFragment: (on: boolean) => Promise<void>;
   setTun: (stack: TunStack) => Promise<void>;
   setAutoconnect: (on: boolean) => Promise<void>;
+  setAutoFailover: (on: boolean) => Promise<void>;
   setCrashReports: (on: boolean) => Promise<void>;
   setDns: (
     adBlock: boolean,
@@ -211,6 +213,11 @@ export function useTenebra(): Tenebra {
     setState(next);
   }, []);
 
+  const setTlsFragment = useCallback(async (on: boolean) => {
+    const next = await api.setTlsFragment(on);
+    setState(next);
+  }, []);
+
   const setTun = useCallback(async (stack: TunStack) => {
     const next = await api.setTun(stack);
     setState(next);
@@ -218,6 +225,11 @@ export function useTenebra(): Tenebra {
 
   const setAutoconnect = useCallback(async (on: boolean) => {
     const next = await api.setAutoconnect(on);
+    setState(next);
+  }, []);
+
+  const setAutoFailover = useCallback(async (on: boolean) => {
+    const next = await api.setAutoFailover(on);
     setState(next);
   }, []);
 
@@ -271,8 +283,10 @@ export function useTenebra(): Tenebra {
     setRouting,
     setSplit,
     setKillSwitch,
+    setTlsFragment,
     setTun,
     setAutoconnect,
+    setAutoFailover,
     setCrashReports,
     setDns,
     setRules,
