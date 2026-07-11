@@ -234,7 +234,13 @@ export function App() {
     setBusy(true);
     void (async () => {
       try {
-        if (connected || phase === "connecting") {
+        if (
+          connected ||
+          phase === "connecting" ||
+          phase === "health_reconnecting"
+        ) {
+          // A click during an auto-recovery aborts it too, rather than racing a
+          // fresh connect against the watchdog's in-flight reconnect.
           await tenebra.disconnect();
         } else if (selectedProfileId) {
           // No explicit node → let the core choose. The persisted "auto-select
