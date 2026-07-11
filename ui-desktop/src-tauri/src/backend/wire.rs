@@ -25,8 +25,8 @@ use serde_json::{json, Value};
 
 use super::{
     AttemptsSnapshot, Backend, EventSink, ImportLinksResult, LeakCheck, PingResult, Profile,
-    RoutingMode, SplitMode, State, TunStack, EVENT_ATTEMPTS, EVENT_LOG, EVENT_PROFILES,
-    EVENT_STATE, EVENT_TRAFFIC,
+    RoutingMode, SpeedTest, SplitMode, State, StunCheck, TunStack, EVENT_ATTEMPTS, EVENT_LOG,
+    EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
 /// How long a request waits for its correlated response before giving up. The
@@ -419,6 +419,11 @@ impl<T: WireSession> Backend for T {
             .request_into("set_kill_switch", obj([("on", json!(on))]))
     }
 
+    fn set_tls_fragment(&self, on: bool) -> Result<State, String> {
+        self.session()?
+            .request_into("set_tls_fragment", obj([("on", json!(on))]))
+    }
+
     fn set_tun(&self, stack: TunStack) -> Result<State, String> {
         let stack = match stack {
             TunStack::System => "system",
@@ -432,6 +437,11 @@ impl<T: WireSession> Backend for T {
     fn set_autoconnect(&self, on: bool) -> Result<State, String> {
         self.session()?
             .request_into("set_autoconnect", obj([("on", json!(on))]))
+    }
+
+    fn set_auto_failover(&self, on: bool) -> Result<State, String> {
+        self.session()?
+            .request_into("set_auto_failover", obj([("on", json!(on))]))
     }
 
     fn set_crash_reports(&self, on: bool) -> Result<State, String> {
@@ -482,6 +492,20 @@ impl<T: WireSession> Backend for T {
         // ample.
         self.session()?.request_into("leak_check", obj([]))
     }
+
+    fn run_stun_check(&self) -> Result<StunCheck, String> {
+        // The core sends the STUN Binding Requests and classifies the mapping;
+        // we just deserialize the verdict. Like the leak check it touches the
+        // network but bounds itself, well within the request timeout.
+        self.session()?.request_into("run_stun_check", obj([]))
+    }
+
+    fn run_speed_test(&self) -> Result<SpeedTest, String> {
+        // The core streams the sample through the tunnel and times it. It errors
+        // when idle (a reading off the tunnel is meaningless), which surfaces here
+        // as the protocol error the caller sees.
+        self.session()?.request_into("run_speed_test", obj([]))
+    }
 }
 
 // Response envelopes mirroring the core's wrapped payloads. The inner `Profile`
@@ -511,7 +535,7 @@ mod tests {
     //! tests in `pipe.rs`.
 
     use super::super::testutil::{duplex, Rec};
-    use super::super::ConnectionState;
+    use super::super::{ConnectionState, NatType};
     use super::*;
     use std::sync::atomic::AtomicBool;
     use std::thread;
@@ -935,6 +959,159 @@ mod tests {
         );
         assert_eq!(state.preset_ru_banking, Some(true));
         assert_eq!(state.preset_ru_gov, None);
+
+        server.join().expect("server thread");
+        stop.store(true, Ordering::SeqCst); // unstick the reader
+        reader.join().expect("reader thread");
+    }
+
+    #[test]
+    fn set_tls_fragment_maps_to_the_protocol_command() {
+        // Drive Backend::set_tls_fragment through the blanket impl and assert the
+        // exact wire line, plus that the core's echoed tls_fragment round-trips.
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ours, theirs) = duplex(&stop);
+
+        let client = WireClient::new(ours.writer);
+        let sink: Arc<dyn EventSink> = Arc::new(Rec::default());
+        let reader_client = Arc::clone(&client);
+        let reader = thread::spawn(move || read_loop(ours.reader, reader_client, sink));
+
+        let mut server_writer = theirs.writer;
+        let server = thread::spawn(move || {
+            let mut lines = BufReader::new(theirs.reader).lines();
+            let line = lines.next().expect("a request line").expect("readable");
+            let req: Value = serde_json::from_str(&line).expect("request is JSON");
+            assert_eq!(req["cmd"].as_str(), Some("set_tls_fragment"));
+            assert_eq!(req["on"].as_bool(), Some(true));
+            let id = req["id"].as_u64().expect("request carries an id");
+            let response = json!({
+                "id": id, "ok": true,
+                "data": { "state": "connecting", "tls_fragment": true },
+            });
+            writeln!(server_writer, "{response}").expect("write response");
+        });
+
+        let backend = FixedSession(Arc::clone(&client));
+        let state = backend.set_tls_fragment(true).expect("a response");
+        assert_eq!(state.state, ConnectionState::Connecting);
+        assert_eq!(state.tls_fragment, Some(true));
+
+        server.join().expect("server thread");
+        stop.store(true, Ordering::SeqCst); // unstick the reader
+        reader.join().expect("reader thread");
+    }
+
+    #[test]
+    fn set_auto_failover_maps_to_the_protocol_command() {
+        // Drive Backend::set_auto_failover through the blanket impl and assert the
+        // wire line, plus that a disarmed response (the field omitted) round-trips
+        // back to None.
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ours, theirs) = duplex(&stop);
+
+        let client = WireClient::new(ours.writer);
+        let sink: Arc<dyn EventSink> = Arc::new(Rec::default());
+        let reader_client = Arc::clone(&client);
+        let reader = thread::spawn(move || read_loop(ours.reader, reader_client, sink));
+
+        let mut server_writer = theirs.writer;
+        let server = thread::spawn(move || {
+            let mut lines = BufReader::new(theirs.reader).lines();
+            let line = lines.next().expect("a request line").expect("readable");
+            let req: Value = serde_json::from_str(&line).expect("request is JSON");
+            assert_eq!(req["cmd"].as_str(), Some("set_auto_failover"));
+            assert_eq!(req["on"].as_bool(), Some(false));
+            let id = req["id"].as_u64().expect("request carries an id");
+            // Disarmed: the core omits auto_failover entirely (off).
+            let response = json!({ "id": id, "ok": true, "data": { "state": "idle" } });
+            writeln!(server_writer, "{response}").expect("write response");
+        });
+
+        let backend = FixedSession(Arc::clone(&client));
+        let state = backend.set_auto_failover(false).expect("a response");
+        assert_eq!(state.state, ConnectionState::Idle);
+        assert_eq!(state.auto_failover, None);
+
+        server.join().expect("server thread");
+        stop.store(true, Ordering::SeqCst); // unstick the reader
+        reader.join().expect("reader thread");
+    }
+
+    #[test]
+    fn run_stun_check_maps_to_the_protocol_command() {
+        // Drive Backend::run_stun_check through the blanket impl: it takes no
+        // fields, and the core's STUN verdict (kebab-case nat_type and all) decodes
+        // back into the typed result.
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ours, theirs) = duplex(&stop);
+
+        let client = WireClient::new(ours.writer);
+        let sink: Arc<dyn EventSink> = Arc::new(Rec::default());
+        let reader_client = Arc::clone(&client);
+        let reader = thread::spawn(move || read_loop(ours.reader, reader_client, sink));
+
+        let mut server_writer = theirs.writer;
+        let server = thread::spawn(move || {
+            let mut lines = BufReader::new(theirs.reader).lines();
+            let line = lines.next().expect("a request line").expect("readable");
+            let req: Value = serde_json::from_str(&line).expect("request is JSON");
+            assert_eq!(req["cmd"].as_str(), Some("run_stun_check"));
+            let id = req["id"].as_u64().expect("request carries an id");
+            let response = json!({
+                "id": id, "ok": true,
+                "data": {
+                    "udp_ok": true,
+                    "nat_type": "endpoint-independent",
+                    "external_ip": "203.0.113.7",
+                },
+            });
+            writeln!(server_writer, "{response}").expect("write response");
+        });
+
+        let backend = FixedSession(Arc::clone(&client));
+        let stun = backend.run_stun_check().expect("a response");
+        assert!(stun.udp_ok);
+        assert_eq!(stun.nat_type, NatType::EndpointIndependent);
+        assert_eq!(stun.external_ip.as_deref(), Some("203.0.113.7"));
+
+        server.join().expect("server thread");
+        stop.store(true, Ordering::SeqCst); // unstick the reader
+        reader.join().expect("reader thread");
+    }
+
+    #[test]
+    fn run_speed_test_maps_to_the_protocol_command() {
+        // Drive Backend::run_speed_test through the blanket impl: no fields, and the
+        // core's throughput reading (a float rate plus the byte/duration counters)
+        // decodes back into the typed result.
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ours, theirs) = duplex(&stop);
+
+        let client = WireClient::new(ours.writer);
+        let sink: Arc<dyn EventSink> = Arc::new(Rec::default());
+        let reader_client = Arc::clone(&client);
+        let reader = thread::spawn(move || read_loop(ours.reader, reader_client, sink));
+
+        let mut server_writer = theirs.writer;
+        let server = thread::spawn(move || {
+            let mut lines = BufReader::new(theirs.reader).lines();
+            let line = lines.next().expect("a request line").expect("readable");
+            let req: Value = serde_json::from_str(&line).expect("request is JSON");
+            assert_eq!(req["cmd"].as_str(), Some("run_speed_test"));
+            let id = req["id"].as_u64().expect("request carries an id");
+            let response = json!({
+                "id": id, "ok": true,
+                "data": { "mbps": 94.3, "sample_bytes": 10485760, "duration_ms": 890 },
+            });
+            writeln!(server_writer, "{response}").expect("write response");
+        });
+
+        let backend = FixedSession(Arc::clone(&client));
+        let speed = backend.run_speed_test().expect("a response");
+        assert_eq!(speed.mbps, 94.3);
+        assert_eq!(speed.sample_bytes, 10_485_760);
+        assert_eq!(speed.duration_ms, 890);
 
         server.join().expect("server thread");
         stop.store(true, Ordering::SeqCst); // unstick the reader

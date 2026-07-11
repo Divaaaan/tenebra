@@ -42,6 +42,14 @@ pub enum ConnectionState {
     Connecting,
     Connected,
     Error,
+    /// A one-shot state the core announces right before an automatic health
+    /// failover reconnects to a different node (naming the degraded node it is
+    /// leaving), so a UI can tell an auto-failover apart from a user connect. The
+    /// ordinary `Connecting` → `Connected` sequence to the new node follows.
+    /// Rendered `health_reconnecting` on the wire (the container's lowercase rule
+    /// would otherwise drop the separator).
+    #[serde(rename = "health_reconnecting")]
+    HealthReconnecting,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,6 +125,10 @@ pub struct State {
     /// Whether the kill switch is armed; absent (treated as off) when it isn't.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kill_switch: Option<bool>,
+    /// Whether forced TLS ClientHello fragmentation is armed (the DPI-obfuscation
+    /// override); absent (treated as off) when it isn't.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_fragment: Option<bool>,
     /// The tun network stack the current or next tunnel uses.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tun_stack: Option<TunStack>,
@@ -124,6 +136,11 @@ pub struct State {
     /// absent (treated as off) when it doesn't.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub autoconnect: Option<bool>,
+    /// Whether the health-failover watchdog is armed — it reconnects to another
+    /// node when the active one degrades. On by default in the core, so a present
+    /// `Some(true)` is the norm; absent (treated as off) once the user disarms it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_failover: Option<bool>,
     /// Whether DNS ad/tracker blocking is armed; absent (treated as off) when it
     /// isn't.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -369,6 +386,57 @@ pub struct LeakCheck {
     pub dns: DnsResult,
 }
 
+/// Best-effort NAT-mapping classification from a STUN probe, mirroring the core's
+/// nat types. Aimed at peer-to-peer reachability rather than the full RFC 3489
+/// cone taxonomy: `open` (the reflexive address is one of our own interfaces — no
+/// NAT), `endpoint-independent` (both servers saw the same mapping — cone-like,
+/// P2P-friendly), `endpoint-dependent` (different mappings — symmetric,
+/// P2P-hostile), `unknown` (only one server answered — too little to classify), or
+/// `blocked` (no answer). The kebab-case tokens carry the separators the core
+/// emits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NatType {
+    Open,
+    EndpointIndependent,
+    EndpointDependent,
+    Unknown,
+    Blocked,
+}
+
+/// Result of the `run_stun_check` command. Mirrors the core's STUN probe result
+/// (see `docs/control-protocol.md`): whether any STUN server answered over UDP,
+/// the reflexive public IP one observed for us, and a best-effort NAT
+/// classification. `external_ip` is absent when no server answered (then `udp_ok`
+/// is false and `nat_type` is `Blocked`), matching the core's omitempty.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StunCheck {
+    /// Whether any STUN server answered. `false` means outbound UDP (or at least
+    /// STUN) looks blocked from this vantage.
+    pub udp_ok: bool,
+    /// Best-effort NAT-mapping classification for peer-to-peer reachability.
+    pub nat_type: NatType,
+    /// The reflexive public IP a STUN server observed for us, when one answered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_ip: Option<String>,
+}
+
+/// Result of the `run_speed_test` command. Mirrors the core's throughput
+/// measurement through the active tunnel: the download rate in megabits per
+/// second, the bytes the sample actually read, and how long that took. The core
+/// gates it on a live connection (an idle client gets an error), so this is only
+/// ever a success payload. `mbps` is a float, so this type carries `PartialEq`
+/// but not `Eq`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SpeedTest {
+    /// Download throughput in megabits per second.
+    pub mbps: f64,
+    /// The bytes the sample actually read.
+    pub sample_bytes: u64,
+    /// How long the sample took, in milliseconds.
+    pub duration_ms: u64,
+}
+
 /// Push events back to the UI. Implemented by the Tauri `AppHandle` wrapper in
 /// `lib.rs`; the backend stays unaware of Tauri itself.
 pub trait EventSink: Send + Sync + 'static {
@@ -417,6 +485,11 @@ pub trait Backend: Send + Sync + 'static {
     /// tunnel is live, re-applies it in place by hot-swapping sing-box on the
     /// same node (a brief connectingв†’connected dip, not a full reconnect).
     fn set_kill_switch(&self, on: bool) -> Result<State, String>;
+    /// Arm or disarm forced TLS ClientHello fragmentation (the unconditional
+    /// DPI-obfuscation override). Same live re-apply semantics as the kill switch —
+    /// the core persists the choice and hot-swaps sing-box on the same node when a
+    /// tunnel is live; when idle the choice applies on the next connect.
+    fn set_tls_fragment(&self, on: bool) -> Result<State, String>;
     /// Switch the tun network stack. Same live re-apply semantics as the kill
     /// switch; when idle the choice simply applies on the next connect.
     fn set_tun(&self, stack: TunStack) -> Result<State, String>;
@@ -424,6 +497,11 @@ pub trait Backend: Send + Sync + 'static {
     /// armed, reconnects the last profile the next time the daemon itself
     /// starts (service mode: at boot); nothing about a live tunnel changes.
     fn set_autoconnect(&self, on: bool) -> Result<State, String>;
+    /// Arm or disarm the health-failover watchdog. The core persists the choice
+    /// and reports it back; unlike the kill switch it changes nothing about a live
+    /// tunnel — the watchdog re-reads the flag on its next tick, so a mid-session
+    /// toggle takes effect without a reconnect.
+    fn set_auto_failover(&self, on: bool) -> Result<State, String>;
     /// Record the crash-report consent (opt in or out). The core persists the
     /// choice and reports it back; like autoconnect it changes nothing about a
     /// live tunnel, and nothing is ever sent anywhere вЂ” it only governs whether
@@ -457,6 +535,14 @@ pub trait Backend: Send + Sync + 'static {
         preset_ru_gov: bool,
     ) -> Result<State, String>;
     fn leak_check(&self) -> Result<LeakCheck, String>;
+    /// Probe the current network path with a STUN Binding Request: whether
+    /// outbound UDP works, the reflexive public IP, and a best-effort NAT
+    /// classification. Takes no fields and is not gated on a connection.
+    fn run_stun_check(&self) -> Result<StunCheck, String>;
+    /// Measure download throughput through the active tunnel. Gated on a live
+    /// connection — issued while idle it returns an error, since a throughput
+    /// reading off the tunnel would be meaningless.
+    fn run_speed_test(&self) -> Result<SpeedTest, String>;
 }
 
 #[cfg(test)]
@@ -486,6 +572,7 @@ mod tests {
         assert_token(ConnectionState::Connecting, "connecting");
         assert_token(ConnectionState::Connected, "connected");
         assert_token(ConnectionState::Error, "error");
+        assert_token(ConnectionState::HealthReconnecting, "health_reconnecting");
     }
 
     #[test]
@@ -621,6 +708,17 @@ mod tests {
     }
 
     #[test]
+    fn nat_type_tokens() {
+        // The kebab-case tokens the core emits — the two-word variants must keep
+        // their separator, which a plain lowercase rule would have dropped.
+        assert_token(NatType::Open, "open");
+        assert_token(NatType::EndpointIndependent, "endpoint-independent");
+        assert_token(NatType::EndpointDependent, "endpoint-dependent");
+        assert_token(NatType::Unknown, "unknown");
+        assert_token(NatType::Blocked, "blocked");
+    }
+
+    #[test]
     fn full_state_round_trips() {
         let state = State {
             state: ConnectionState::Connected,
@@ -630,8 +728,10 @@ mod tests {
             split: Some(SplitMode::Exclude),
             split_apps: Some(vec!["chrome.exe".into(), "steam.exe".into()]),
             kill_switch: Some(true),
+            tls_fragment: Some(true),
             tun_stack: Some(TunStack::Gvisor),
             autoconnect: Some(true),
+            auto_failover: Some(true),
             ad_block: Some(true),
             dns_remote: Some("tls://1.1.1.1".into()),
             dns_direct: Some("https://77.88.8.8/dns-query".into()),
@@ -659,8 +759,10 @@ mod tests {
             split: None,
             split_apps: None,
             kill_switch: None,
+            tls_fragment: None,
             tun_stack: None,
             autoconnect: None,
+            auto_failover: None,
             ad_block: None,
             dns_remote: None,
             dns_direct: None,
@@ -684,8 +786,10 @@ mod tests {
             "split",
             "split_apps",
             "kill_switch",
+            "tls_fragment",
             "tun_stack",
             "autoconnect",
+            "auto_failover",
             "ad_block",
             "dns_remote",
             "dns_direct",
@@ -943,6 +1047,62 @@ mod tests {
         // A payload without the key deserializes to an empty Vec (serde default).
         let parsed: DnsResult = from_value(json!({ "status": "ok", "message": "ok" })).unwrap();
         assert_eq!(parsed.resolvers, Vec::<String>::new());
+    }
+
+    #[test]
+    fn stun_check_round_trips() {
+        // The answered case: a reflexive IP and a NAT classification survive the
+        // deserialize -> re-serialize the webview relies on, kebab-case token and
+        // all.
+        let stun = StunCheck {
+            udp_ok: true,
+            nat_type: NatType::EndpointIndependent,
+            external_ip: Some("203.0.113.7".into()),
+        };
+        let obj = to_value(&stun).unwrap();
+        assert_eq!(obj.get("nat_type"), Some(&json!("endpoint-independent")));
+        let back: StunCheck = from_value(obj).unwrap();
+        assert_eq!(back, stun);
+    }
+
+    #[test]
+    fn stun_check_blocked_omits_external_ip() {
+        // No STUN server answered: external_ip is absent (matching the core's
+        // omitempty) while the required fields stay present.
+        let stun = StunCheck {
+            udp_ok: false,
+            nat_type: NatType::Blocked,
+            external_ip: None,
+        };
+        let obj = to_value(&stun).unwrap();
+        let map = obj.as_object().unwrap();
+        assert!(
+            !map.contains_key("external_ip"),
+            "external_ip should be omitted when absent: {obj}"
+        );
+        assert_eq!(map.get("udp_ok"), Some(&json!(false)));
+        assert_eq!(map.get("nat_type"), Some(&json!("blocked")));
+        // And a payload without the key decodes back to None.
+        let back: StunCheck =
+            from_value(json!({ "udp_ok": false, "nat_type": "blocked" })).unwrap();
+        assert_eq!(back, stun);
+    }
+
+    #[test]
+    fn speed_test_round_trips() {
+        // The float rate plus the byte/duration counters survive the round trip
+        // the webview sees byte for byte.
+        let speed = SpeedTest {
+            mbps: 94.3,
+            sample_bytes: 10_485_760,
+            duration_ms: 890,
+        };
+        let obj = to_value(&speed).unwrap();
+        assert_eq!(obj.get("mbps"), Some(&json!(94.3)));
+        assert_eq!(obj.get("sample_bytes"), Some(&json!(10_485_760)));
+        assert_eq!(obj.get("duration_ms"), Some(&json!(890)));
+        let back: SpeedTest = from_value(obj).unwrap();
+        assert_eq!(back, speed);
     }
 
     #[test]
