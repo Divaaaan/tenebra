@@ -446,6 +446,80 @@
   line-height: 1;
 }
 
+/* ── diagnostics: on-demand probe results (STUN / speed) ── */
+.set-diag {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+.set-diag-probe {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+/* Result facts: bordered label/value rows whose borders merge into one stacked
+   control, matching the split-app list vocabulary. */
+.set-facts {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+.set-fact {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: 9px 12px;
+  border: var(--bw) solid var(--line);
+  margin-bottom: -1px;
+}
+.set-fact dt {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.set-fact dd {
+  margin: 0;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--track-body);
+  color: var(--text);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Tone a single-value verdict: good (green) when healthy, signal (accent) when
+   blocked. Neutral facts keep the default text colour. */
+.set-fact[data-tone="good"] dd {
+  color: var(--good);
+}
+.set-fact[data-tone="signal"] dd {
+  color: var(--signal);
+}
+/* Speed KPI: the display-font throughput number, toned good like a live tunnel. */
+.set-fact-kpi {
+  font-family: var(--display);
+  font-size: var(--fs-sku);
+  font-weight: 600;
+  letter-spacing: var(--track-sku);
+  font-variant-numeric: tabular-nums;
+  color: var(--good);
+}
+.set-fact-unit {
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-dim);
+}
+.set-fact-note {
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  color: var(--text-dim);
+}
+
 /* ── overlay chrome, scoped to the settings shell ──
    The settings overlay is a touch wider than the shared panel and owns its own
    scroll (the content column), so widen it, neutralize the shared body scroll to

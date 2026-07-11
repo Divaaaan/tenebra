@@ -5,6 +5,7 @@ import type { Update } from "@tauri-apps/plugin-updater";
 
 import type { RoutingMode, SplitMode, TunStack } from "../api";
 import type { Tenebra } from "../state/useTenebra";
+import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import { useI18n } from "../i18n/I18nContext";
 import { useTheme } from "../theme/ThemeContext";
 import type { Language } from "../i18n/strings";
@@ -36,6 +37,9 @@ const NAV_SECTIONS = [
   "rules",
   "tunnel",
   "dns",
+  "bypass",
+  "reliability",
+  "diagnostics",
   "appearance",
   "startup",
   "updates",
@@ -316,6 +320,56 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
 
   function toggleCrashReports() {
     void tenebra.setCrashReports(!crashReports).catch(() => {});
+  }
+
+  // Forced TLS-ClientHello fragmentation — the DPI-obfuscation override. Core-owned
+  // like the kill switch: an opt-in override, off until armed, so an omitted field
+  // reads as off.
+  const tlsFragment = tenebra.state.tls_fragment ?? false;
+
+  function toggleTlsFragment() {
+    void tenebra.setTlsFragment(!tlsFragment).catch(() => {});
+  }
+
+  // Health-failover watchdog. On by default in the core, which projects the
+  // effective value into State as a concrete bool — so the armed default arrives
+  // as `auto_failover: true` (present) and only an explicit disarm is omitted.
+  // Reading a missing field as off is therefore correct: a fresh install is never
+  // missing it (the core sends true), and the sole time it is absent is after the
+  // user turned it off. Mirrors every other core-owned toggle here.
+  const autoFailover = tenebra.state.auto_failover ?? false;
+
+  function toggleAutoFailover() {
+    void tenebra.setAutoFailover(!autoFailover).catch(() => {});
+  }
+
+  // Whether a tunnel is live — gates the diagnostics speed test.
+  const connected = tenebra.state.state === "connected";
+
+  // Simple mode is renderer-owned like the theme: a localStorage flag the app
+  // shell reads to swap in a pared-back layout. Writing it raises a storage event
+  // the shell listens for, so the change lands without a reload. The exact key
+  // (`tenebra.simpleMode`) and "true"/"false" encoding are a contract with the
+  // shell — keep them verbatim.
+  const [simpleMode, setSimpleMode] = useState(
+    () => localStorage.getItem("tenebra.simpleMode") === "true",
+  );
+
+  function toggleSimpleMode() {
+    setSimpleMode((prev) => {
+      const next = !prev;
+      const value = next ? "true" : "false";
+      localStorage.setItem("tenebra.simpleMode", value);
+      // Same-document writes don't fire `storage` natively (that event is for
+      // *other* tabs), so raise it ourselves for the app shell's listener.
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: "tenebra.simpleMode",
+          newValue: value,
+        }),
+      );
+      return next;
+    });
   }
 
   function toggleAutoFastest() {
@@ -1060,6 +1114,79 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
 
         <section
           className="set-section"
+          id="set-sec-bypass"
+          ref={setSectionRef("bypass")}
+        >
+          <div className="set-section-head">
+            <h2 className="set-eyebrow">{t.settings.bypass}</h2>
+            <p className="set-sub">{t.settings.bypassHint}</p>
+          </div>
+
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.tlsFragment}</span>
+              <span className="set-row-hint">{t.settings.tlsFragmentHint}</span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={tlsFragment}
+              className={`set-switch${tlsFragment ? " is-on" : ""}`}
+              onClick={toggleTlsFragment}
+            >
+              <span className="set-switch-box" aria-hidden="true">
+                {tlsFragment ? "▣" : "▢"}
+              </span>
+              {tlsFragment ? "ON" : "OFF"}
+            </button>
+          </div>
+        </section>
+
+        <section
+          className="set-section"
+          id="set-sec-reliability"
+          ref={setSectionRef("reliability")}
+        >
+          <div className="set-section-head">
+            <h2 className="set-eyebrow">{t.settings.reliability}</h2>
+            <p className="set-sub">{t.settings.reliabilityHint}</p>
+          </div>
+
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.autoFailover}</span>
+              <span className="set-row-hint">{t.settings.autoFailoverHint}</span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autoFailover}
+              className={`set-switch${autoFailover ? " is-on" : ""}`}
+              onClick={toggleAutoFailover}
+            >
+              <span className="set-switch-box" aria-hidden="true">
+                {autoFailover ? "▣" : "▢"}
+              </span>
+              {autoFailover ? "ON" : "OFF"}
+            </button>
+          </div>
+        </section>
+
+        <section
+          className="set-section"
+          id="set-sec-diagnostics"
+          ref={setSectionRef("diagnostics")}
+        >
+          <div className="set-section-head">
+            <h2 className="set-eyebrow">{t.settings.diagnostics}</h2>
+            <p className="set-sub">{t.settings.diagnosticsHint}</p>
+          </div>
+
+          <DiagnosticsPanel connected={connected} />
+        </section>
+
+        <section
+          className="set-section"
           id="set-sec-appearance"
           ref={setSectionRef("appearance")}
         >
@@ -1103,6 +1230,25 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
                 </button>
               ))}
             </div>
+          </div>
+
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.simpleMode}</span>
+              <span className="set-row-hint">{t.settings.simpleModeHint}</span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={simpleMode}
+              className={`set-switch${simpleMode ? " is-on" : ""}`}
+              onClick={toggleSimpleMode}
+            >
+              <span className="set-switch-box" aria-hidden="true">
+                {simpleMode ? "▣" : "▢"}
+              </span>
+              {simpleMode ? "ON" : "OFF"}
+            </button>
           </div>
         </section>
 

@@ -36,6 +36,12 @@ export interface Strings {
     eyebrow: string;
     subOff: string;
     subPending: string;
+    /**
+     * Sub-line for the automatic health-failover recovery (`health_reconnecting`).
+     * Distinct from `subPending` so a UI can tell an unattended failover apart
+     * from a user-initiated connect.
+     */
+    subReconnecting: string;
     /** Trailing reassurance on the connected sub-line; prefix is server·proto. */
     subConnected: string;
     abort: string;
@@ -370,6 +376,59 @@ export interface Strings {
     updateChannelBeta: string;
     updateChannelBetaHint: string;
     /**
+     * Censorship-bypass section: the forced TLS-ClientHello-fragmentation
+     * override (an anti-DPI obfuscation applied to every TLS-bearing outbound).
+     */
+    bypass: string;
+    bypassHint: string;
+    tlsFragment: string;
+    tlsFragmentHint: string;
+    /**
+     * Reliability section: the health-failover watchdog that reconnects to
+     * another node on its own when the active one degrades. Armed by default.
+     */
+    reliability: string;
+    reliabilityHint: string;
+    autoFailover: string;
+    autoFailoverHint: string;
+    /**
+     * Diagnostics section: an on-demand STUN/NAT probe (outbound-UDP reachability
+     * plus a NAT-mapping class) and a tunnel throughput test. The speed test is
+     * gated on a live connection.
+     */
+    diagnostics: string;
+    diagnosticsHint: string;
+    stunCheck: string;
+    stunChecking: string;
+    /** STUN result labels: outbound-UDP verdict, NAT class, reflexive IP. */
+    stunUdp: string;
+    stunUdpOk: string;
+    stunUdpBlocked: string;
+    stunNat: string;
+    stunIp: string;
+    stunError: string;
+    /** NAT-mapping classifications, keyed to the core's nat_type. */
+    natOpen: string;
+    natEndpointIndependent: string;
+    natEndpointDependent: string;
+    natUnknown: string;
+    natBlocked: string;
+    speedTest: string;
+    speedTesting: string;
+    /** Speed result: the "Download" label and a "{mb} MB in {s} s" sample note. */
+    speedResult: string;
+    speedSample: string;
+    speedError: string;
+    /** Shown in place of the speed-test result while disconnected (gate). */
+    speedGateHint: string;
+    /**
+     * "Simple mode" toggle: renderer-owned like the theme. Writing it flips the
+     * `tenebra.simpleMode` localStorage flag and raises a storage event the app
+     * shell reacts to; the label and its explanation.
+     */
+    simpleMode: string;
+    simpleModeHint: string;
+    /**
      * Section-navigation rail: its own accessible label, the sticky close
      * control (visible "esc" hint plus an aria-label), and the version/licence
      * line pinned at the rail's foot.
@@ -460,6 +519,7 @@ const en: Strings = {
     eyebrow: "Tunnel status",
     subOff: "traffic unprotected · select a node and connect",
     subPending: "establishing tunnel · negotiating · · ·",
+    subReconnecting: "node failed · switching to a healthy exit on its own",
     subConnected: "no logs",
     abort: "ABORT",
     exitIp: "exit node",
@@ -725,6 +785,43 @@ const en: Strings = {
     updateChannelBeta: "Beta",
     updateChannelBetaHint:
       "Get prereleases early, plus every stable release. May be rougher around the edges.",
+    bypass: "Censorship bypass",
+    bypassHint:
+      "Defeat deep-packet inspection that fingerprints and blocks the tunnel handshake.",
+    tlsFragment: "DPI bypass — TLS fragmentation",
+    tlsFragmentHint:
+      "Split the TLS ClientHello across packets so filters can't match it whole. Applies to every TLS-bearing outbound; connects get a touch slower.",
+    reliability: "Reliability",
+    reliabilityHint:
+      "How Tenebra behaves when the active node stops carrying traffic.",
+    autoFailover: "Auto-switch on node failure",
+    autoFailoverHint:
+      "While connected, watch the active node and reconnect to another one on its own when it degrades. On by default.",
+    diagnostics: "Diagnostics",
+    diagnosticsHint:
+      "On-demand network probes. Nothing runs until you ask, and nothing is sent anywhere.",
+    stunCheck: "Check UDP / NAT",
+    stunChecking: "Probing…",
+    stunUdp: "Outbound UDP",
+    stunUdpOk: "reachable",
+    stunUdpBlocked: "blocked",
+    stunNat: "NAT type",
+    stunIp: "External IP",
+    stunError: "Couldn't reach any STUN server. Check your connection.",
+    natOpen: "open — no NAT",
+    natEndpointIndependent: "endpoint-independent (P2P-friendly)",
+    natEndpointDependent: "endpoint-dependent (symmetric)",
+    natUnknown: "unknown",
+    natBlocked: "blocked",
+    speedTest: "Speed test",
+    speedTesting: "Measuring…",
+    speedResult: "Download",
+    speedSample: "{mb} MB in {s} s",
+    speedError: "The speed test failed. Try again.",
+    speedGateHint: "Connect to a node to measure tunnel throughput.",
+    simpleMode: "Simple mode",
+    simpleModeHint:
+      "A pared-back interface: just connect and pick a node, with the advanced panels tucked away.",
     nav: "Settings sections",
     close: "Close settings",
     escLabel: "esc",
@@ -798,6 +895,7 @@ const ru: Strings = {
     eyebrow: "Статус туннеля",
     subOff: "трафик не защищён · выберите узел и подключитесь",
     subPending: "поднимаю туннель · согласование · · ·",
+    subReconnecting: "узел отказал · сам переключаюсь на рабочий выход",
     subConnected: "без логов",
     abort: "ОТМЕНА",
     exitIp: "узел выхода",
@@ -1063,6 +1161,43 @@ const ru: Strings = {
     updateChannelBeta: "Бета",
     updateChannelBetaHint:
       "Ранний доступ к предрелизам и все стабильные версии. Может быть сырее.",
+    bypass: "Обход блокировок",
+    bypassHint:
+      "Обойти глубокую инспекцию пакетов (DPI), которая распознаёт и блокирует рукопожатие туннеля.",
+    tlsFragment: "Обход DPI — фрагментация TLS",
+    tlsFragmentHint:
+      "Режет TLS-рукопожатие (ClientHello) на пакеты, чтобы фильтры не могли распознать его целиком. Применяется ко всем TLS-соединениям; коннект чуть медленнее.",
+    reliability: "Надёжность",
+    reliabilityHint:
+      "Как Tenebra ведёт себя, когда активный узел перестаёт пропускать трафик.",
+    autoFailover: "Автопереключение при сбое ноды",
+    autoFailoverHint:
+      "Во время подключения следит за активным узлом и сам переподключается к другому, когда тот деградирует. Включено по умолчанию.",
+    diagnostics: "Диагностика",
+    diagnosticsHint:
+      "Сетевые проверки по запросу. Ничего не запускается без вашего действия и никуда не отправляется.",
+    stunCheck: "Проверить UDP / NAT",
+    stunChecking: "Проверяю…",
+    stunUdp: "Исходящий UDP",
+    stunUdpOk: "доступен",
+    stunUdpBlocked: "заблокирован",
+    stunNat: "Тип NAT",
+    stunIp: "Внешний IP",
+    stunError: "Не удалось связаться ни с одним STUN-сервером. Проверьте соединение.",
+    natOpen: "открытый — без NAT",
+    natEndpointIndependent: "endpoint-independent (годен для P2P)",
+    natEndpointDependent: "endpoint-dependent (симметричный)",
+    natUnknown: "неизвестно",
+    natBlocked: "заблокирован",
+    speedTest: "Тест скорости",
+    speedTesting: "Измеряю…",
+    speedResult: "Загрузка",
+    speedSample: "{mb} МБ за {s} с",
+    speedError: "Тест скорости не удался. Попробуйте ещё раз.",
+    speedGateHint: "Подключитесь к узлу, чтобы измерить скорость через туннель.",
+    simpleMode: "Простой режим",
+    simpleModeHint:
+      "Упрощённый интерфейс: только подключение и выбор узла, продвинутые панели скрыты.",
     nav: "Разделы настроек",
     close: "Закрыть настройки",
     escLabel: "esc",

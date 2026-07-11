@@ -111,6 +111,46 @@ describe("ConnectionPanel", () => {
     });
   });
 
+  describe("health_reconnecting", () => {
+    it("reads apart from a plain connect: own word, sub-line and accent", () => {
+      const { container } = renderWithProviders(
+        <ConnectionPanel {...baseProps({ phase: "health_reconnecting" })} />,
+      );
+
+      // Its own status word, not the connecting one.
+      expect(screen.getByText("Reconnecting…")).toBeInTheDocument();
+      expect(screen.queryByText("Connecting…")).not.toBeInTheDocument();
+
+      // The auto-failover sub-line, distinct from the generic negotiating line so
+      // an unattended switch never looks like a user connect.
+      expect(
+        screen.getByText("node failed · switching to a healthy exit on its own"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText("establishing tunnel · negotiating · · ·"),
+      ).not.toBeInTheDocument();
+
+      // The distinct visual hook the stylesheet keys the accent/animation off.
+      expect(
+        container.querySelector(".conn-word.health_reconnecting"),
+      ).toBeInTheDocument();
+      expect(
+        container.querySelector(".connect-btn.reconnecting"),
+      ).toBeInTheDocument();
+    });
+
+    it("offers the in-flight abort affordance while recovering", () => {
+      renderWithProviders(
+        <ConnectionPanel {...baseProps({ phase: "health_reconnecting" })} />,
+      );
+      // A recovery is in progress, so the CTA is the abort, not connect/disconnect.
+      expect(screen.getByRole("button", { name: /ABORT/ })).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /Connect/ }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   describe("interactions", () => {
     it("calls onPrimary when the primary button is clicked", async () => {
       const onPrimary = vi.fn();
