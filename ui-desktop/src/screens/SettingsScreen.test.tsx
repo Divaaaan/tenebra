@@ -642,6 +642,49 @@ describe("SettingsScreen", () => {
       await screen.findByText("Current version 0.1.0");
     });
 
+    // The crash-reports switch is core-owned like autoconnect: found by its row
+    // label, and a click toggles through the daemon rather than localStorage.
+    function crashReportsToggle(): HTMLElement {
+      const row = screen.getByText("Crash reports").closest(".set-row");
+      if (!row) {
+        throw new Error("crash-reports row not found");
+      }
+      const toggle = row.querySelector('[role="switch"]');
+      if (!toggle) {
+        throw new Error("crash-reports switch not found");
+      }
+      return toggle as HTMLElement;
+    }
+
+    it("crash reports start off when the core omits the field", () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(crashReportsToggle()).toHaveAttribute("aria-checked", "false");
+    });
+
+    it("crash reports reflect the reported on state", () => {
+      const tenebra = makeTenebra({
+        state: {
+          state: "idle",
+          crash_reports: true,
+          crash_reports_asked: true,
+        } as State,
+      });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(crashReportsToggle()).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("crash reports toggle through the core, not localStorage", async () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(crashReportsToggle());
+      expect(tenebra.setCrashReports).toHaveBeenCalledWith(true);
+    });
+
     it("moves from checking to available when the updater finds a release", async () => {
       const update = { version: "9.9.9", downloadAndInstall: vi.fn() };
       // Hold the check open so the transient "checking" state is observable

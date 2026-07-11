@@ -93,6 +93,15 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     void tenebra.setAutoconnect(!autoconnect).catch(() => {});
   }
 
+  // Crash reports are core-owned and opt-in, like autoconnect: the daemon
+  // persists the choice; the UI reflects and toggles it over the protocol.
+  // Undefined (never asked) reads as off here.
+  const crashReports = tenebra.state.crash_reports ?? false;
+
+  function toggleCrashReports() {
+    void tenebra.setCrashReports(!crashReports).catch(() => {});
+  }
+
   function toggleAutoFastest() {
     setAutoFastestState((prev) => {
       const next = !prev;
@@ -848,6 +857,25 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
               {autoInstall ? "▣" : "▢"}
             </span>
             {autoInstall ? "ON" : "OFF"}
+          </button>
+        </div>
+
+        <div className="set-row">
+          <span className="set-row-text">
+            <span className="set-row-label">{t.settings.crashReports}</span>
+            <span className="set-row-hint">{t.settings.crashReportsHint}</span>
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={crashReports}
+            className={`set-switch${crashReports ? " is-on" : ""}`}
+            onClick={toggleCrashReports}
+          >
+            <span className="set-switch-box" aria-hidden="true">
+              {crashReports ? "▣" : "▢"}
+            </span>
+            {crashReports ? "ON" : "OFF"}
           </button>
         </div>
       </section>

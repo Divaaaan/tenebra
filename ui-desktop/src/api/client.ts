@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
   BatchImportResult,
+  CrashReport,
   LogEvent,
   PingResult,
   Profile,
@@ -113,6 +114,14 @@ export const api = {
     return invoke<State>("set_autoconnect", { on });
   },
 
+  // Record the crash-report consent (opt in or out). The core persists it and
+  // echoes the tri-state back in `State`; like autoconnect it changes nothing
+  // about a live tunnel, and nothing is ever sent — it only governs whether the
+  // GUI offers to surface a locally saved crash report on the next launch.
+  setCrashReports(on: boolean): Promise<State> {
+    return invoke<State>("set_crash_reports", { on });
+  },
+
   // Set the DNS preferences: the ad/tracker-block toggle, the IPv4-only toggle,
   // plus the two custom resolvers (the encrypted proxied resolver and the direct
   // one). The core persists them and, when a tunnel is live, re-applies them in
@@ -146,6 +155,40 @@ export const api = {
   /** Actually exit the app. Closing the window only hides it to the tray. */
   quit(): Promise<void> {
     return invoke<void>("quit_app");
+  },
+
+  // --- crash diagnostics (local only, never networked) ---
+
+  /**
+   * Append an uncaught webview error to the local crash file. The webview can't
+   * write files (CSP/capability), so the global error handlers and the
+   * ErrorBoundary hand the message and a short stack excerpt to the core, which
+   * appends them next to any native panic. Best-effort; the promise resolves
+   * once written and is safe to ignore.
+   */
+  recordWebCrash(message: string, stackExcerpt: string): Promise<void> {
+    return invoke<void>("record_web_crash", {
+      message,
+      stack_excerpt: stackExcerpt,
+    });
+  },
+
+  /**
+   * Read the local crash file, if any. Resolves to null in the healthy case
+   * (no file, or blank). Reading is local file I/O in the core — no network.
+   */
+  checkCrashReport(): Promise<CrashReport | null> {
+    return invoke<CrashReport | null>("check_crash_report");
+  },
+
+  /**
+   * Open a pre-filled GitHub issue for the recorded crash in the user's default
+   * browser. The core builds the whole URL (fixed repo host + a short title from
+   * the local file) and opens it from Rust — the webview has no shell:open
+   * capability. The full report is pasted by the user from the Copy button.
+   */
+  openReportUrl(): Promise<void> {
+    return invoke<void>("open_report_url");
   },
 };
 
