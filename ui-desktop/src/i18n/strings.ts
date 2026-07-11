@@ -21,6 +21,7 @@ export interface Strings {
     connecting: string;
     connected: string;
     error: string;
+    health_reconnecting: string;
   };
 
   /** Top bar: brand line + the active subscription's meta. */
@@ -449,6 +450,7 @@ const en: Strings = {
     connecting: "Connecting…",
     connected: "Connected",
     error: "Error",
+    health_reconnecting: "Reconnecting…",
   },
   topbar: {
     noSubscription: "no subscription",
@@ -786,6 +788,7 @@ const ru: Strings = {
     connecting: "Подключение…",
     connected: "Подключено",
     error: "Ошибка",
+    health_reconnecting: "Переподключение…",
   },
   topbar: {
     noSubscription: "нет подписки",

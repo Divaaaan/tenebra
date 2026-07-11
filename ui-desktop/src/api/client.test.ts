@@ -17,7 +17,9 @@ import type {
   LeakCheck,
   PingResult,
   Profile,
+  SpeedTestResult,
   State,
+  StunResult,
 } from "./index";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -167,6 +169,13 @@ describe("api command wrappers", () => {
     expect(mockInvoke).toHaveBeenCalledWith("set_kill_switch", { on: true });
   });
 
+  it("setTlsFragment forwards the flag and returns the State", async () => {
+    const armed: State = { state: "connected", tls_fragment: true };
+    mockInvoke.mockResolvedValueOnce(armed);
+    await expect(api.setTlsFragment(true)).resolves.toEqual(armed);
+    expect(mockInvoke).toHaveBeenCalledWith("set_tls_fragment", { on: true });
+  });
+
   it("setTun forwards the stack and returns the State", async () => {
     const swapped: State = { state: "idle", tun_stack: "gvisor" };
     mockInvoke.mockResolvedValueOnce(swapped);
@@ -179,6 +188,14 @@ describe("api command wrappers", () => {
     mockInvoke.mockResolvedValueOnce(armed);
     await expect(api.setAutoconnect(true)).resolves.toEqual(armed);
     expect(mockInvoke).toHaveBeenCalledWith("set_autoconnect", { on: true });
+  });
+
+  it("setAutoFailover forwards the flag and returns the State", async () => {
+    // Disarming the default-on watchdog: the core drops the field (absent = off).
+    const disarmed: State = { state: "idle" };
+    mockInvoke.mockResolvedValueOnce(disarmed);
+    await expect(api.setAutoFailover(false)).resolves.toEqual(disarmed);
+    expect(mockInvoke).toHaveBeenCalledWith("set_auto_failover", { on: false });
   });
 
   it("setCrashReports forwards the flag and returns the State", async () => {
@@ -265,6 +282,38 @@ describe("api command wrappers", () => {
     mockInvoke.mockResolvedValueOnce(leak);
     await expect(api.leakCheck()).resolves.toEqual(leak);
     expect(mockInvoke).toHaveBeenCalledWith("leak_check");
+  });
+
+  it("runStunCheck passes the STUN result through", async () => {
+    const stun: StunResult = {
+      udp_ok: true,
+      nat_type: "endpoint-independent",
+      external_ip: "203.0.113.7",
+    };
+    mockInvoke.mockResolvedValueOnce(stun);
+    await expect(api.runStunCheck()).resolves.toEqual(stun);
+    expect(mockInvoke).toHaveBeenCalledWith("run_stun_check");
+  });
+
+  it("runSpeedTest passes the throughput result through", async () => {
+    const speed: SpeedTestResult = {
+      mbps: 94.3,
+      sample_bytes: 10485760,
+      duration_ms: 890,
+    };
+    mockInvoke.mockResolvedValueOnce(speed);
+    await expect(api.runSpeedTest()).resolves.toEqual(speed);
+    expect(mockInvoke).toHaveBeenCalledWith("run_speed_test");
+  });
+
+  it("runSpeedTest rejects when the core reports no active connection", async () => {
+    // The throughput probe is gated on a live tunnel; the core's rejection
+    // propagates straight through the wrapper.
+    mockInvoke.mockRejectedValueOnce("speed test requires an active connection");
+    await expect(api.runSpeedTest()).rejects.toBe(
+      "speed test requires an active connection",
+    );
+    expect(mockInvoke).toHaveBeenCalledWith("run_speed_test");
   });
 
   it("quit invokes the explicit exit command", async () => {
