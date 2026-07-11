@@ -57,6 +57,16 @@ type persistedSettings struct {
 	// written before the field existed, which reads back as false — off, matching
 	// the pre-IPv4-only behaviour.
 	IPv4Only bool `json:"ipv4_only,omitempty"`
+
+	// RulesDirect and RulesProxy remember the custom domain-suffix routing rules.
+	// Absent in files written before the field existed, which reads back as empty.
+	RulesDirect []string `json:"rules_direct,omitempty"`
+	RulesProxy  []string `json:"rules_proxy,omitempty"`
+	// PresetRuBanking and PresetRuGov remember whether the bundled Russian
+	// banking / government direct-rule presets are on. Absent reads back as false —
+	// off, matching the pre-preset behaviour.
+	PresetRuBanking bool `json:"preset_ru_banking,omitempty"`
+	PresetRuGov     bool `json:"preset_ru_gov,omitempty"`
 	// LastProfile and LastNode record the last successful user-commanded
 	// connect: the profile, and the node only when the request pinned an
 	// explicit exit (empty when the fallback walk chose). Autoconnect re-issues

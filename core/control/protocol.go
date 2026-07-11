@@ -39,6 +39,7 @@ const (
 	CmdSetTun             = "set_tun"
 	CmdSetAutoconnect     = "set_autoconnect"
 	CmdSetDNS             = "set_dns"
+	CmdSetRules           = "set_rules"
 	CmdLeakCheck          = "leak_check"
 )
 
@@ -124,6 +125,18 @@ type Request struct {
 	// for set_dns. Like AdBlock, an omitted field decodes to false — the safe
 	// "off" reading for an opt-in preference.
 	IPv4Only bool `json:"ipv4_only,omitempty"`
+	// RulesDirect and RulesProxy are the custom domain-suffix routing rules for
+	// set_rules: destinations to pin to the direct outbound, and to the proxy. Each
+	// element must be a bare domain suffix (see routing.ValidDomainSuffix); an
+	// invalid element rejects the whole command, like a malformed resolver in
+	// set_dns.
+	RulesDirect []string `json:"rules_direct,omitempty"`
+	RulesProxy  []string `json:"rules_proxy,omitempty"`
+	// PresetRuBanking and PresetRuGov arm the bundled Russian banking / government
+	// direct-rule presets for set_rules. Like On, an omitted field decodes to
+	// false — the safe "off" reading for an opt-in preset.
+	PresetRuBanking bool `json:"preset_ru_banking,omitempty"`
+	PresetRuGov     bool `json:"preset_ru_gov,omitempty"`
 }
 
 // Response is a core -> UI reply to a Request, correlated by ID. Exactly one of
@@ -178,8 +191,17 @@ type State struct {
 	DNSDirect string `json:"dns_direct,omitempty"`
 	// IPv4Only reports whether the DNS strategy is pinned to IPv4-only (A records,
 	// no AAAA). Omitted when off, like the kill switch.
-	IPv4Only bool   `json:"ipv4_only,omitempty"`
-	Error    string `json:"error,omitempty"`
+	IPv4Only bool `json:"ipv4_only,omitempty"`
+	// RulesDirect and RulesProxy report the custom domain-suffix routing rules the
+	// current or next tunnel uses (destinations pinned direct / through the
+	// tunnel). Normalized; omitted when empty, like the split fields.
+	RulesDirect []string `json:"rules_direct,omitempty"`
+	RulesProxy  []string `json:"rules_proxy,omitempty"`
+	// PresetRuBanking and PresetRuGov report whether the bundled Russian banking /
+	// government direct-rule presets are on. Omitted when off, like the kill switch.
+	PresetRuBanking bool   `json:"preset_ru_banking,omitempty"`
+	PresetRuGov     bool   `json:"preset_ru_gov,omitempty"`
+	Error           string `json:"error,omitempty"`
 }
 
 // PingResult is one node's dial-latency probe outcome.
