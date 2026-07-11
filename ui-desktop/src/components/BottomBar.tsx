@@ -15,11 +15,14 @@ interface BottomBarProps {
 // routing mode — the choice Tenebra actually exposes. "direct" lives in Settings;
 // the bar is the quick smart↔global switch, so neither segment lights when the
 // mode is direct.
-const SEGMENTS: { mode: RoutingMode; labelKey: "routingSmart" | "routingGlobal" }[] =
-  [
-    { mode: "smart", labelKey: "routingSmart" },
-    { mode: "global", labelKey: "routingGlobal" },
-  ];
+const SEGMENTS: {
+  mode: RoutingMode;
+  labelKey: "routingSmart" | "routingGlobal";
+  hintKey: "routingSmartHint" | "routingGlobalHint";
+}[] = [
+  { mode: "smart", labelKey: "routingSmart", hintKey: "routingSmartHint" },
+  { mode: "global", labelKey: "routingGlobal", hintKey: "routingGlobalHint" },
+];
 
 export function BottomBar({
   routing,
@@ -36,12 +39,13 @@ export function BottomBar({
       <div className="proto">
         <span className="proto-lab">{t.bottom.routing}</span>
         <div className="seg" role="group" aria-label={t.bottom.routing}>
-          {SEGMENTS.map(({ mode, labelKey }) => (
+          {SEGMENTS.map(({ mode, labelKey, hintKey }) => (
             <button
               type="button"
               key={mode}
               className={routing === mode ? "on" : ""}
               aria-pressed={routing === mode}
+              title={t.settings[hintKey]}
               onClick={() => onSetRouting(mode)}
             >
               {t.settings[labelKey]}

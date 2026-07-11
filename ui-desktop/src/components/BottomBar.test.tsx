@@ -4,6 +4,9 @@ import userEvent from "@testing-library/user-event";
 
 import { BottomBar } from "./BottomBar";
 import { renderWithProviders } from "../test/renderWithProviders";
+import { dictionaries } from "../i18n/strings";
+
+const en = dictionaries.en;
 
 function baseProps(overrides: Partial<Parameters<typeof BottomBar>[0]> = {}) {
   return {
@@ -42,6 +45,28 @@ describe("BottomBar", () => {
       await user.click(screen.getByRole("button", { name: "Global" }));
       expect(onSetRouting).toHaveBeenCalledWith("global");
     });
+
+    it("marks only the active segment with the on class (its filled state)", () => {
+      renderWithProviders(<BottomBar {...baseProps({ routing: "global" })} />);
+
+      expect(screen.getByRole("button", { name: "Global" })).toHaveClass("on");
+      expect(screen.getByRole("button", { name: "Smart" })).not.toHaveClass(
+        "on",
+      );
+    });
+
+    it("titles each segment with its routing hint", () => {
+      renderWithProviders(<BottomBar {...baseProps()} />);
+
+      expect(screen.getByRole("button", { name: "Smart" })).toHaveAttribute(
+        "title",
+        en.settings.routingSmartHint,
+      );
+      expect(screen.getByRole("button", { name: "Global" })).toHaveAttribute(
+        "title",
+        en.settings.routingGlobalHint,
+      );
+    });
   });
 
   describe("kill-switch", () => {
@@ -64,6 +89,23 @@ describe("BottomBar", () => {
       expect(button).toHaveAttribute("aria-pressed", "false");
       await user.click(button);
       expect(onToggleKillSwitch).toHaveBeenCalledTimes(1);
+    });
+
+    it("gives the armed kill-switch the on class (its filled state)", () => {
+      renderWithProviders(<BottomBar {...baseProps({ killSwitch: true })} />);
+
+      expect(screen.getByRole("button", { name: /kill-switch/ })).toHaveClass(
+        "on",
+      );
+    });
+
+    it("titles the kill-switch with its hint", () => {
+      renderWithProviders(<BottomBar {...baseProps()} />);
+
+      expect(screen.getByRole("button", { name: /kill-switch/ })).toHaveAttribute(
+        "title",
+        en.bottom.killSwitchHint,
+      );
     });
   });
 
