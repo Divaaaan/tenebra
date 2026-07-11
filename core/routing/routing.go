@@ -121,6 +121,22 @@ type Options struct {
 	SplitMode SplitMode
 	SplitApps []string // executable names, normalized to lowercase
 
+	// RulesDirect and RulesProxy are user-defined domain-suffix routing rules:
+	// destinations matching RulesDirect are pinned to the direct outbound, those
+	// matching RulesProxy to the proxy. They are normalized (lowercased, trimmed,
+	// de-duplicated, sorted) like SplitApps and are emitted after the per-app split
+	// and before the geo split, so a user rule beats the RU geo preset. They are
+	// inert in direct mode, where nothing is tunnelled (see rulesActive).
+	RulesDirect []string
+	RulesProxy  []string
+
+	// PresetRuBanking and PresetRuGov opt into the bundled direct-rule presets
+	// (major Russian banking / government domains). When on, their suffixes are
+	// merged into the direct rules. Off by default. See rules.go for the lists and
+	// why those destinations are kept off the tunnel.
+	PresetRuBanking bool
+	PresetRuGov     bool
+
 	// RuleSetDir is the absolute directory holding the bundled RU rule-set
 	// binaries (geoip-ru.srs / geosite-ru.srs). When set, smart mode references
 	// them as local rule-sets loaded from disk, so sing-box starts instantly and
@@ -157,6 +173,10 @@ func (o Options) Normalize() Options {
 	if len(n.SplitApps) == 0 {
 		n.SplitMode = SplitOff
 	}
+	// Normalize the custom rule suffixes the same way, so the reported state and
+	// the emitted config stay stable regardless of input order or casing.
+	n.RulesDirect = normalizeSuffixes(n.RulesDirect)
+	n.RulesProxy = normalizeSuffixes(n.RulesProxy)
 	return n
 }
 
@@ -206,6 +226,19 @@ func (o Options) Validate() error {
 		// Empty is the unset zero value and means off; Normalize canonicalizes it.
 	default:
 		return fmt.Errorf("routing: unknown split mode %q", o.SplitMode)
+	}
+	// Reject a malformed custom rule suffix so garbage can never reach sing-box.
+	// The control layer already refuses one at the command boundary; this is the
+	// second net for any caller that builds Options directly.
+	for _, s := range o.RulesDirect {
+		if !ValidDomainSuffix(s) {
+			return fmt.Errorf("routing: invalid direct rule suffix %q", s)
+		}
+	}
+	for _, s := range o.RulesProxy {
+		if !ValidDomainSuffix(s) {
+			return fmt.Errorf("routing: invalid proxy rule suffix %q", s)
+		}
 	}
 	return nil
 }
