@@ -120,6 +120,10 @@ type Request struct {
 	// resets that resolver to its default.
 	DNSRemote string `json:"dns_remote,omitempty"`
 	DNSDirect string `json:"dns_direct,omitempty"`
+	// IPv4Only pins the DNS resolution strategy to IPv4 (A records only, no AAAA)
+	// for set_dns. Like AdBlock, an omitted field decodes to false — the safe
+	// "off" reading for an opt-in preference.
+	IPv4Only bool `json:"ipv4_only,omitempty"`
 }
 
 // Response is a core -> UI reply to a Request, correlated by ID. Exactly one of
@@ -172,7 +176,10 @@ type State struct {
 	// the effective values — the configured ones, or the defaults when unset.
 	DNSRemote string `json:"dns_remote,omitempty"`
 	DNSDirect string `json:"dns_direct,omitempty"`
-	Error     string `json:"error,omitempty"`
+	// IPv4Only reports whether the DNS strategy is pinned to IPv4-only (A records,
+	// no AAAA). Omitted when off, like the kill switch.
+	IPv4Only bool   `json:"ipv4_only,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 // PingResult is one node's dial-latency probe outcome.

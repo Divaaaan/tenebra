@@ -311,6 +311,20 @@ describe("SettingsScreen", () => {
       return toggle as HTMLElement;
     }
 
+    // The IPv4-only switch mirrors the ad-block one: found by its row label, then
+    // the switch inside that row.
+    function ipv4OnlyToggle(): HTMLElement {
+      const row = screen.getByText("IPv4-only DNS").closest(".set-row");
+      if (!row) {
+        throw new Error("ipv4-only row not found");
+      }
+      const toggle = row.querySelector('[role="switch"]');
+      if (!toggle) {
+        throw new Error("ipv4-only switch not found");
+      }
+      return toggle as HTMLElement;
+    }
+
     it("reflects the ad-block toggle from core state", () => {
       const tenebra = makeTenebra({ state: dnsState });
       renderWithProviders(<SettingsScreen tenebra={tenebra} />);
@@ -329,11 +343,42 @@ describe("SettingsScreen", () => {
       renderWithProviders(<SettingsScreen tenebra={tenebra} />);
 
       await user.click(adBlockToggle());
-      // Flips ad-block off, carrying the current effective resolvers along.
+      // Flips ad-block off, carrying the current effective resolvers and the
+      // IPv4-only toggle (off here) along.
       expect(tenebra.setDns).toHaveBeenCalledWith(
         false,
         "tls://1.1.1.1",
         "https://77.88.8.8/dns-query",
+        false,
+      );
+    });
+
+    it("reflects the IPv4-only toggle from core state", () => {
+      const tenebra = makeTenebra({
+        state: { ...dnsState, ipv4_only: true } as State,
+      });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+      expect(ipv4OnlyToggle()).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("IPv4-only starts off when the core omits the field", () => {
+      const tenebra = makeTenebra({ state: dnsState });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+      expect(ipv4OnlyToggle()).toHaveAttribute("aria-checked", "false");
+    });
+
+    it("toggling IPv4-only sends the whole DNS set, ad-block and resolvers unchanged", async () => {
+      const tenebra = makeTenebra({ state: dnsState });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(ipv4OnlyToggle());
+      // Flips IPv4-only on, carrying the current ad-block and resolvers along.
+      expect(tenebra.setDns).toHaveBeenCalledWith(
+        true,
+        "tls://1.1.1.1",
+        "https://77.88.8.8/dns-query",
+        true,
       );
     });
 
@@ -361,6 +406,7 @@ describe("SettingsScreen", () => {
         true,
         "quic://dns.adguard.com",
         "https://77.88.8.8/dns-query",
+        false,
       );
     });
 
@@ -376,6 +422,7 @@ describe("SettingsScreen", () => {
         true,
         "tls://1.1.1.1",
         "tls://8.8.8.8:853",
+        false,
       );
     });
 
@@ -405,7 +452,12 @@ describe("SettingsScreen", () => {
       await user.clear(direct);
       await user.tab();
       // Empty is valid; the core substitutes the default and echoes it back.
-      expect(tenebra.setDns).toHaveBeenCalledWith(true, "tls://1.1.1.1", "");
+      expect(tenebra.setDns).toHaveBeenCalledWith(
+        true,
+        "tls://1.1.1.1",
+        "",
+        false,
+      );
     });
   });
 

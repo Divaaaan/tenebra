@@ -113,18 +113,24 @@ export const api = {
     return invoke<State>("set_autoconnect", { on });
   },
 
-  // Set the DNS preferences: the ad/tracker-block toggle plus the two custom
-  // resolvers (the encrypted proxied resolver and the direct one). The core
-  // persists them and, when a tunnel is live, re-applies them in place (a brief
-  // connecting→connected dip while sing-box hot-swaps on the same node). An empty
-  // resolver resets that one to the core's default; the returned State echoes the
-  // effective values back. The snake_case keys match the command's
-  // rename_all="snake_case" on the Rust side (see the header note).
-  setDns(adBlock: boolean, dnsRemote: string, dnsDirect: string): Promise<State> {
+  // Set the DNS preferences: the ad/tracker-block toggle, the IPv4-only toggle,
+  // plus the two custom resolvers (the encrypted proxied resolver and the direct
+  // one). The core persists them and, when a tunnel is live, re-applies them in
+  // place (a brief connecting→connected dip while sing-box hot-swaps on the same
+  // node). An empty resolver resets that one to the core's default; the returned
+  // State echoes the effective values back. The snake_case keys match the
+  // command's rename_all="snake_case" on the Rust side (see the header note).
+  setDns(
+    adBlock: boolean,
+    dnsRemote: string,
+    dnsDirect: string,
+    ipv4Only: boolean,
+  ): Promise<State> {
     return invoke<State>("set_dns", {
       ad_block: adBlock,
       dns_remote: dnsRemote,
       dns_direct: dnsDirect,
+      ipv4_only: ipv4Only,
     });
   },
 

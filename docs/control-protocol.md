@@ -128,7 +128,7 @@ surface.
 | `set_kill_switch`      | `on` (boolean)                     | `State`                     |
 | `set_tun`              | `stack` (`system`/`gvisor`/`mixed`) | `State`                    |
 | `set_autoconnect`      | `on` (boolean)                     | `State`                     |
-| `set_dns`              | `ad_block` (boolean), `dns_remote`, `dns_direct` | `State`       |
+| `set_dns`              | `ad_block` (boolean), `dns_remote`, `dns_direct`, `ipv4_only` (boolean) | `State` |
 | `leak_check`           | —                                  | `LeakCheck`                 |
 
 ```
@@ -295,10 +295,12 @@ response: {"id":11,"ok":true,"data":{"state":"idle","tun_stack":"system","autoco
 ### DNS (`set_dns`)
 
 Sets the DNS preferences in one command: `ad_block` toggles ad/tracker blocking,
-and `dns_remote` / `dns_direct` set the two resolvers — the encrypted one reached
-over the proxy for general lookups, and the direct one for destinations kept off
-the tunnel. All three are persisted in `settings.json` and reported back in
-`State` (`ad_block`, `dns_remote`, `dns_direct`).
+`ipv4_only` pins the resolution strategy to IPv4 (A records only, no AAAA — this
+helps when an IPv6-capable site misbehaves through a tunnel whose exit has no
+IPv6), and `dns_remote` / `dns_direct` set the two resolvers — the encrypted one
+reached over the proxy for general lookups, and the direct one for destinations
+kept off the tunnel. All are persisted in `settings.json` and reported back in
+`State` (`ad_block`, `ipv4_only`, `dns_remote`, `dns_direct`).
 
 Like the kill switch, `set_dns` re-applies to a **live** tunnel in place: the core
 rebuilds the config for the node it is already on and hot-swaps sing-box (a brief
@@ -318,8 +320,8 @@ every mode. The blocklist ships strictly as a local rule-set, so it is inert on 
 build that lacks the bundled file rather than fetching anything at runtime.
 
 ```
-request:  {"id":12,"cmd":"set_dns","ad_block":true,"dns_remote":"tls://9.9.9.9","dns_direct":""}
-response: {"id":12,"ok":true,"data":{"state":"idle","tun_stack":"system","ad_block":true,"dns_remote":"tls://9.9.9.9","dns_direct":"https://77.88.8.8/dns-query"}}
+request:  {"id":12,"cmd":"set_dns","ad_block":true,"dns_remote":"tls://9.9.9.9","dns_direct":"","ipv4_only":true}
+response: {"id":12,"ok":true,"data":{"state":"idle","tun_stack":"system","ad_block":true,"ipv4_only":true,"dns_remote":"tls://9.9.9.9","dns_direct":"https://77.88.8.8/dns-query"}}
 ```
 
 ### Per-app split tunnelling (`set_split`)
@@ -419,6 +421,7 @@ type State = {
   tun_stack?: "system" | "gvisor" | "mixed";
   autoconnect?: boolean;          // reconnect at daemon start; omitted when off
   ad_block?: boolean;             // DNS ad/tracker blocking; omitted when off
+  ipv4_only?: boolean;            // DNS strategy pinned to IPv4-only; omitted when off
   dns_remote?: string;            // effective encrypted resolver (over the proxy)
   dns_direct?: string;            // effective direct resolver
   error?: string;

@@ -398,18 +398,20 @@ async fn set_autoconnect(state: TauriState<'_, AppState>, on: bool) -> Result<St
 }
 
 // rename_all keeps the JS-side argument keys snake_case (ad_block, dns_remote,
-// dns_direct), matching this file's command convention. Tauri v2 otherwise
-// expects camelCase keys by default; the existing single-word commands don't
-// expose the difference, but this multi-word one would, so pin it explicitly.
+// dns_direct, ipv4_only), matching this file's command convention. Tauri v2
+// otherwise expects camelCase keys by default; the existing single-word commands
+// don't expose the difference, but these multi-word ones would, so pin it
+// explicitly.
 #[tauri::command(rename_all = "snake_case")]
 async fn set_dns(
     state: TauriState<'_, AppState>,
     ad_block: bool,
     dns_remote: String,
     dns_direct: String,
+    ipv4_only: bool,
 ) -> Result<State, String> {
     off_thread(Arc::clone(&state.backend), move |b| {
-        b.set_dns(ad_block, dns_remote, dns_direct)
+        b.set_dns(ad_block, dns_remote, dns_direct, ipv4_only)
     })
     .await
 }
@@ -669,6 +671,7 @@ mod tests {
             ad_block: None,
             dns_remote: None,
             dns_direct: None,
+            ipv4_only: None,
             error: None,
         }
     }

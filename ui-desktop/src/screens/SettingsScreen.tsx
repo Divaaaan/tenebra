@@ -328,11 +328,13 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     stackRefs.current[nextIndex]?.focus();
   }
 
-  // DNS: ad/tracker blocking plus the two custom resolvers. Core-owned like the
-  // rest — the daemon validates, persists, and (when a tunnel is live) re-applies
-  // them in place. Each set_dns carries the whole triple, so we derive it from the
-  // current toggle and the two resolver drafts, ignoring a malformed draft.
+  // DNS: ad/tracker blocking, IPv4-only, plus the two custom resolvers. Core-owned
+  // like the rest — the daemon validates, persists, and (when a tunnel is live)
+  // re-applies them in place. Each set_dns carries the whole set, so we derive it
+  // from the current toggles and the two resolver drafts, ignoring a malformed
+  // draft.
   const adBlock = tenebra.state.ad_block ?? false;
+  const ipv4Only = tenebra.state.ipv4_only ?? false;
   const dnsRemote = tenebra.state.dns_remote ?? "";
   const dnsDirect = tenebra.state.dns_direct ?? "";
   const [remoteDraft, setRemoteDraft] = useState(dnsRemote);
@@ -353,13 +355,21 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   const remoteValue = remoteValid ? remoteDraft.trim() : dnsRemote;
   const directValue = directValid ? directDraft.trim() : dnsDirect;
 
-  function pushDns(nextAdBlock: boolean) {
+  // Every set_dns carries the whole set of preferences, so each toggle/edit path
+  // re-sends the current values of the others alongside the one it changes.
+  function pushDns(nextAdBlock: boolean, nextIpv4Only: boolean) {
     // Failures surface on the state/log channels the UI already renders.
-    void tenebra.setDns(nextAdBlock, remoteValue, directValue).catch(() => {});
+    void tenebra
+      .setDns(nextAdBlock, remoteValue, directValue, nextIpv4Only)
+      .catch(() => {});
   }
 
   function toggleAdBlock() {
-    pushDns(!adBlock);
+    pushDns(!adBlock, ipv4Only);
+  }
+
+  function toggleIpv4Only() {
+    pushDns(adBlock, !ipv4Only);
   }
 
   // Commit a resolver edit: only when a valid draft actually changes an effective
@@ -368,7 +378,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     if (remoteValue === dnsRemote && directValue === dnsDirect) {
       return;
     }
-    pushDns(adBlock);
+    pushDns(adBlock, ipv4Only);
   }
 
   function onResolverKey(e: KeyboardEvent) {
@@ -563,6 +573,25 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
               {adBlock ? "▣" : "▢"}
             </span>
             {adBlock ? "ON" : "OFF"}
+          </button>
+        </div>
+
+        <div className="set-row">
+          <span className="set-row-text">
+            <span className="set-row-label">{t.settings.ipv4Only}</span>
+            <span className="set-row-hint">{t.settings.ipv4OnlyHint}</span>
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={ipv4Only}
+            className={`set-switch${ipv4Only ? " is-on" : ""}`}
+            onClick={toggleIpv4Only}
+          >
+            <span className="set-switch-box" aria-hidden="true">
+              {ipv4Only ? "▣" : "▢"}
+            </span>
+            {ipv4Only ? "ON" : "OFF"}
           </button>
         </div>
 

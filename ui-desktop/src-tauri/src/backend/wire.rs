@@ -431,6 +431,7 @@ impl<T: WireSession> Backend for T {
         ad_block: bool,
         dns_remote: String,
         dns_direct: String,
+        ipv4_only: bool,
     ) -> Result<State, String> {
         self.session()?.request_into(
             "set_dns",
@@ -438,6 +439,7 @@ impl<T: WireSession> Backend for T {
                 ("ad_block", json!(ad_block)),
                 ("dns_remote", json!(dns_remote)),
                 ("dns_direct", json!(dns_direct)),
+                ("ipv4_only", json!(ipv4_only)),
             ]),
         )
     }
@@ -722,8 +724,8 @@ mod tests {
     #[test]
     fn set_dns_maps_to_the_protocol_command() {
         // Drive Backend::set_dns through the blanket impl and assert the exact line
-        // it puts on the wire (the toggle plus both resolvers), plus that the core's
-        // reported DNS state round-trips back.
+        // it puts on the wire (the two toggles plus both resolvers), plus that the
+        // core's reported DNS state round-trips back.
         let stop = Arc::new(AtomicBool::new(false));
         let (ours, theirs) = duplex(&stop);
 
@@ -741,6 +743,7 @@ mod tests {
             assert_eq!(req["ad_block"].as_bool(), Some(true));
             assert_eq!(req["dns_remote"].as_str(), Some("tls://9.9.9.9"));
             assert_eq!(req["dns_direct"].as_str(), Some("udp://8.8.8.8"));
+            assert_eq!(req["ipv4_only"].as_bool(), Some(true));
             let id = req["id"].as_u64().expect("request carries an id");
             let response = json!({
                 "id": id, "ok": true,
@@ -749,6 +752,7 @@ mod tests {
                     "ad_block": true,
                     "dns_remote": "tls://9.9.9.9",
                     "dns_direct": "udp://8.8.8.8",
+                    "ipv4_only": true,
                 },
             });
             writeln!(server_writer, "{response}").expect("write response");
@@ -756,11 +760,12 @@ mod tests {
 
         let backend = FixedSession(Arc::clone(&client));
         let state = backend
-            .set_dns(true, "tls://9.9.9.9".into(), "udp://8.8.8.8".into())
+            .set_dns(true, "tls://9.9.9.9".into(), "udp://8.8.8.8".into(), true)
             .expect("a response");
         assert_eq!(state.ad_block, Some(true));
         assert_eq!(state.dns_remote.as_deref(), Some("tls://9.9.9.9"));
         assert_eq!(state.dns_direct.as_deref(), Some("udp://8.8.8.8"));
+        assert_eq!(state.ipv4_only, Some(true));
 
         server.join().expect("server thread");
         stop.store(true, Ordering::SeqCst); // unstick the reader

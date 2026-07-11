@@ -53,6 +53,10 @@ type persistedSettings struct {
 	// defaults.
 	DNSRemote string `json:"dns_remote,omitempty"`
 	DNSDirect string `json:"dns_direct,omitempty"`
+	// IPv4Only remembers whether the user pinned DNS to IPv4-only. Absent in files
+	// written before the field existed, which reads back as false — off, matching
+	// the pre-IPv4-only behaviour.
+	IPv4Only bool `json:"ipv4_only,omitempty"`
 	// LastProfile and LastNode record the last successful user-commanded
 	// connect: the profile, and the node only when the request pinned an
 	// explicit exit (empty when the fallback walk chose). Autoconnect re-issues
