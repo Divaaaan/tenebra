@@ -102,6 +102,13 @@
   color: var(--signal);
   border-color: var(--signal);
 }
+/* Armed (first click landed): the button holds the accent until a confirming
+   second click or the 3s window lapses — a standing warning, not just a hover. */
+.prof-ghost--danger.is-armed,
+.prof-ghost--danger.is-armed:hover {
+  color: var(--signal);
+  border-color: var(--signal);
+}
 
 /* ── empty state ── */
 .prof-empty {

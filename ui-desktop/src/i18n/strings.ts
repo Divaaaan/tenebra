@@ -130,6 +130,15 @@ export interface Strings {
     killOn: string;
     killOff: string;
     route: string;
+    /** Profile overlay confirmations. "{name}" is the profile name; "{alive}"/
+     *  "{total}" are the reachable/total node counts for the ping summary. */
+    profileActive: string;
+    profilePinged: string;
+    profileRefreshed: string;
+    profileRemoved: string;
+    profileImported: string;
+    /** Raised when the log console is cleared. */
+    logsCleared: string;
   };
 
   /** Update banner shown when the launch check finds a newer release. */
@@ -205,6 +214,7 @@ export interface Strings {
     setActive: string;
     refresh: string;
     remove: string;
+    /** Armed label of the two-step delete button; a second click confirms. */
     removeConfirm: string;
     pingAll: string;
     pinging: string;
@@ -506,6 +516,12 @@ const en: Strings = {
     killOn: "kill-switch · on",
     killOff: "kill-switch · off",
     route: "route · {mode}",
+    profileActive: "active profile · {name}",
+    profilePinged: "ping updated · {alive}/{total} alive",
+    profileRefreshed: "subscription refreshed · {name}",
+    profileRemoved: "profile removed · {name}",
+    profileImported: "profile imported · {name}",
+    logsCleared: "log cleared",
   },
   update: {
     available: "Version {version} is available",
@@ -559,7 +575,7 @@ const en: Strings = {
     setActive: "Set active",
     refresh: "Refresh",
     remove: "Remove",
-    removeConfirm: "Remove this profile?",
+    removeConfirm: "Really remove?",
     pingAll: "Ping all",
     pinging: "Pinging…",
     autoSelect: "Auto-select fastest",
@@ -836,6 +852,12 @@ const ru: Strings = {
     killOn: "kill-switch · вкл",
     killOff: "kill-switch · выкл",
     route: "маршрут · {mode}",
+    profileActive: "активный профиль · {name}",
+    profilePinged: "пинг обновлён · {alive}/{total} живы",
+    profileRefreshed: "подписка обновлена · {name}",
+    profileRemoved: "профиль удалён · {name}",
+    profileImported: "профиль импортирован · {name}",
+    logsCleared: "журнал очищен",
   },
   update: {
     available: "Доступна версия {version}",
@@ -889,7 +911,7 @@ const ru: Strings = {
     setActive: "Сделать активным",
     refresh: "Обновить",
     remove: "Удалить",
-    removeConfirm: "Удалить этот профиль?",
+    removeConfirm: "Точно удалить?",
     pingAll: "Пинговать все",
     pinging: "Пингую…",
     autoSelect: "Выбрать самый быстрый",
