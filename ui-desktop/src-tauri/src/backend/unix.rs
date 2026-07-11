@@ -239,6 +239,8 @@ fn reconnecting_state() -> State {
         dns_remote: None,
         dns_direct: None,
         ipv4_only: None,
+        crash_reports: None,
+        crash_reports_asked: false,
         error: Some("Reconnecting to the Tenebra daemon…".to_string()),
     }
 }
@@ -263,6 +265,8 @@ fn lost_state() -> State {
         dns_remote: None,
         dns_direct: None,
         ipv4_only: None,
+        crash_reports: None,
+        crash_reports_asked: false,
         error: Some("Lost the connection to the Tenebra daemon; reconnecting.".to_string()),
     }
 }

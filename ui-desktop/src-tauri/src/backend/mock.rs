@@ -71,6 +71,10 @@ impl MockBackend {
                 dns_remote: Some("tls://1.1.1.1".into()),
                 dns_direct: Some("https://77.88.8.8/dns-query".into()),
                 ipv4_only: None,
+                // Not asked yet: the mock starts fresh, so the GUI shows its
+                // first-run consent prompt just as it would against a new core.
+                crash_reports: None,
+                crash_reports_asked: false,
                 error: None,
             },
             profiles: demo_profiles(),
@@ -454,6 +458,19 @@ impl Backend for MockBackend {
         // at its own next start, so there is nothing more for the mock to do.
         let mut inner = self.shared.inner.lock().unwrap();
         inner.state.autoconnect = if on { Some(true) } else { None };
+        let snapshot = inner.state.clone();
+        drop(inner);
+        self.shared.emit_state(&snapshot);
+        Ok(snapshot)
+    }
+
+    fn set_crash_reports(&self, on: bool) -> Result<State, String> {
+        // Record the explicit choice. Unlike autoconnect, "off" is a real
+        // declined state the GUI must tell apart from "never asked", so store
+        // Some(on) and raise the asked bit rather than clearing back to None.
+        let mut inner = self.shared.inner.lock().unwrap();
+        inner.state.crash_reports = Some(on);
+        inner.state.crash_reports_asked = true;
         let snapshot = inner.state.clone();
         drop(inner);
         self.shared.emit_state(&snapshot);
@@ -1025,6 +1042,22 @@ mod tests {
         // Disarming drops the field entirely (off is reported as absent).
         let s = b.set_autoconnect(false).unwrap();
         assert_eq!(s.autoconnect, None);
+    }
+
+    #[test]
+    fn set_crash_reports_records_the_explicit_choice() {
+        let (b, sink) = backend();
+
+        let s = b.set_crash_reports(true).unwrap();
+        assert_eq!(s.crash_reports, Some(true));
+        assert!(s.crash_reports_asked);
+        assert_eq!(sink.last_state().unwrap().crash_reports, Some(true));
+
+        // Declining stays distinct from "never asked": Some(false), asked = true
+        // (unlike autoconnect, "off" is a real recorded state, not an absence).
+        let s = b.set_crash_reports(false).unwrap();
+        assert_eq!(s.crash_reports, Some(false));
+        assert!(s.crash_reports_asked);
     }
 
     #[test]

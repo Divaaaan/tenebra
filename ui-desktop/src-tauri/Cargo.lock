@@ -4261,6 +4261,7 @@ dependencies = [
 name = "tenebra-desktop"
 version = "0.3.7"
 dependencies = [
+ "open",
  "serde",
  "serde_json",
  "tauri",

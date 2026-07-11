@@ -148,16 +148,12 @@ impl WireSession for SidecarBackend {
     }
 }
 
-/// Where the core's stderr diagnostics are written. Next to the app's data
-/// (`%LOCALAPPDATA%\Tenebra` on Windows), falling back to the temp dir, so a
-/// user hitting a problem has one file to share.
+/// Where the core's stderr diagnostics are written: `core.log` in the Tenebra
+/// data directory (`%LOCALAPPDATA%\Tenebra`, temp-dir fallback), so a user hitting
+/// a problem has one file to share. Shares [`crash::data_dir`](crate::crash::data_dir)
+/// with the GUI crash log so both land in the same place.
 fn core_log_path() -> Option<PathBuf> {
-    let base = std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    let dir = base.join("Tenebra");
-    std::fs::create_dir_all(&dir).ok()?;
-    Some(dir.join("core.log"))
+    crate::crash::data_dir().map(|d| d.join("core.log"))
 }
 
 /// A valid stderr target for the core: the log file if it can be opened,

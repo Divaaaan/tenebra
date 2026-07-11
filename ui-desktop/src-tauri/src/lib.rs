@@ -7,6 +7,7 @@
 //! in-process mock on request).
 
 mod backend;
+mod crash;
 mod deeplink;
 mod tray;
 mod update_channel;
@@ -397,6 +398,11 @@ async fn set_autoconnect(state: TauriState<'_, AppState>, on: bool) -> Result<St
     off_thread(Arc::clone(&state.backend), move |b| b.set_autoconnect(on)).await
 }
 
+#[tauri::command]
+async fn set_crash_reports(state: TauriState<'_, AppState>, on: bool) -> Result<State, String> {
+    off_thread(Arc::clone(&state.backend), move |b| b.set_crash_reports(on)).await
+}
+
 // rename_all keeps the JS-side argument keys snake_case (ad_block, dns_remote,
 // dns_direct, ipv4_only), matching this file's command convention. Tauri v2
 // otherwise expects camelCase keys by default; the existing single-word commands
@@ -452,6 +458,10 @@ struct PingList {
 }
 
 pub fn run() {
+    // Capture GUI panics to the local crash file before Tauri starts. Under the
+    // release profile's panic=abort the hook runs and then the process aborts, so
+    // it is the only chance to persist a panic — install it first of all.
+    crash::install_panic_hook();
     tauri::Builder::default()
         // Single-instance must be the FIRST plugin so a second launch is caught
         // before any window or other plugin spins up. It focuses the window we
@@ -524,10 +534,14 @@ pub fn run() {
             set_tun,
             set_autoconnect,
             set_dns,
+            set_crash_reports,
             leak_check,
             quit_app,
             take_launch_deep_links,
             update_channel::check_update_for_channel,
+            crash::check_crash_report,
+            crash::record_web_crash,
+            crash::open_report_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tenebra");
@@ -672,6 +686,8 @@ mod tests {
             dns_remote: None,
             dns_direct: None,
             ipv4_only: None,
+            crash_reports: None,
+            crash_reports_asked: false,
             error: None,
         }
     }

@@ -92,6 +92,12 @@ pub enum Source {
     Manual,
 }
 
+/// serde `skip_serializing_if` predicate: drop a bool field when it is false, so
+/// the wire form matches the Go core's `omitempty` on the same field.
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct State {
     pub state: ConnectionState,
@@ -133,6 +139,16 @@ pub struct State {
     /// absent (treated as off) when it isn't.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ipv4_only: Option<bool>,
+    /// Crash-report consent as a tri-state: `None` when the user has not been
+    /// asked yet, `Some(true)` opted in, `Some(false)` declined. Mirrors the
+    /// core's `*bool` so the UI can tell "declined" apart from "not asked".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crash_reports: Option<bool>,
+    /// Whether the crash-report consent has been answered at all. Carried
+    /// explicitly (rather than inferred from `crash_reports`) so the first-run
+    /// prompt has an unambiguous gate; omitted when false, matching the core.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub crash_reports_asked: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -328,6 +344,11 @@ pub trait Backend: Send + Sync + 'static {
     /// armed, reconnects the last profile the next time the daemon itself
     /// starts (service mode: at boot); nothing about a live tunnel changes.
     fn set_autoconnect(&self, on: bool) -> Result<State, String>;
+    /// Record the crash-report consent (opt in or out). The core persists the
+    /// choice and reports it back; like autoconnect it changes nothing about a
+    /// live tunnel, and nothing is ever sent anywhere — it only governs whether
+    /// the GUI offers to surface a locally saved crash report on the next launch.
+    fn set_crash_reports(&self, on: bool) -> Result<State, String>;
     /// Record the DNS preferences: the ad/tracker-block toggle, the IPv4-only
     /// toggle, plus the two custom resolvers (the encrypted proxied resolver and
     /// the direct one). The core persists them and, when a tunnel is live,
@@ -449,6 +470,8 @@ mod tests {
             dns_remote: Some("tls://1.1.1.1".into()),
             dns_direct: Some("https://77.88.8.8/dns-query".into()),
             ipv4_only: Some(true),
+            crash_reports: Some(true),
+            crash_reports_asked: true,
             error: None,
         };
         let json = to_value(&state).unwrap();
@@ -472,6 +495,8 @@ mod tests {
             dns_remote: None,
             dns_direct: None,
             ipv4_only: None,
+            crash_reports: None,
+            crash_reports_asked: false,
             error: None,
         };
         let obj = to_value(&state).unwrap();
@@ -491,6 +516,8 @@ mod tests {
             "dns_remote",
             "dns_direct",
             "ipv4_only",
+            "crash_reports",
+            "crash_reports_asked",
             "error",
         ] {
             assert!(
