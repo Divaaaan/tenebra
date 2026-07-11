@@ -15,7 +15,7 @@ func TestParseLinksMixedValidInvalidBlank(t *testing.T) {
 		"",
 		"// inline note",
 		"this-is-not-a-link", // no scheme -> skipped
-		"vmess://%%%bad",      // bad base64 -> skipped
+		"vmess://%%%bad",     // bad base64 -> skipped
 		"trojan://pw@example.com:443#t",
 		"   ", // whitespace-only -> ignored
 	}, "\n")
