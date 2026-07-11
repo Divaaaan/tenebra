@@ -356,6 +356,18 @@ export interface Strings {
     updateChannelStableHint: string;
     updateChannelBeta: string;
     updateChannelBetaHint: string;
+    /**
+     * Section-navigation rail: its own accessible label, the sticky close
+     * control (visible "esc" hint plus an aria-label), and the version/licence
+     * line pinned at the rail's foot.
+     */
+    nav: string;
+    close: string;
+    escLabel: string;
+    /** "v{version} · GPLv3" — the version is interpolated by the caller. */
+    rail: string;
+    /** Licence-only fallback for the rail when the version can't be read. */
+    license: string;
   };
 
   logs: {
@@ -692,6 +704,11 @@ const en: Strings = {
     updateChannelBeta: "Beta",
     updateChannelBetaHint:
       "Get prereleases early, plus every stable release. May be rougher around the edges.",
+    nav: "Settings sections",
+    close: "Close settings",
+    escLabel: "esc",
+    rail: "v{version} · GPLv3",
+    license: "GPLv3",
   },
   logs: {
     title: "Logs",
@@ -1017,6 +1034,11 @@ const ru: Strings = {
     updateChannelBeta: "Бета",
     updateChannelBetaHint:
       "Ранний доступ к предрелизам и все стабильные версии. Может быть сырее.",
+    nav: "Разделы настроек",
+    close: "Закрыть настройки",
+    escLabel: "esc",
+    rail: "v{version} · GPLv3",
+    license: "GPLv3",
   },
   logs: {
     title: "Журнал",
