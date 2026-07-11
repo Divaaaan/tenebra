@@ -101,12 +101,13 @@ const (
 // Options is the routing configuration. The zero value is not valid; call
 // Normalize (or rely on Build, which does) to fill defaults.
 type Options struct {
-	Mode       Mode
-	BypassLAN  bool   // keep private/LAN ranges on the direct outbound
-	IPv4Only   bool   // resolve A records only (strategy ipv4_only)
-	KillSwitch bool   // drop proxied traffic instead of leaking when tun is down
-	DNSRemote  string // resolver for proxied destinations, e.g. tls://1.1.1.1
-	DNSDirect  string // resolver for direct destinations, e.g. https://77.88.8.8/dns-query
+	Mode        Mode
+	BypassLAN   bool   // keep private/LAN ranges on the direct outbound
+	IPv4Only    bool   // resolve A records only (strategy ipv4_only)
+	KillSwitch  bool   // drop proxied traffic instead of leaking when tun is down
+	TLSFragment bool   // force TLS ClientHello fragmentation on every TLS outbound
+	DNSRemote   string // resolver for proxied destinations, e.g. tls://1.1.1.1
+	DNSDirect   string // resolver for direct destinations, e.g. https://77.88.8.8/dns-query
 
 	// AdBlock opts into DNS-level ad/tracker blocking: matching lookups are
 	// sinkholed (answered REFUSED) before any routing rule, in every mode. It is

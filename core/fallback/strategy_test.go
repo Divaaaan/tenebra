@@ -70,6 +70,64 @@ func TestStrategyApplyReshapesTLS(t *testing.T) {
 	}
 }
 
+// TestFragmentStrategyIsLastAndMostDivergent pins the fragmentation rung: it is
+// the final, most divergent step of the cascade, reached only after the reshaped
+// fingerprint and SNI have failed, and it carries all three axes so escalation
+// never steps back toward the node's own parameters.
+func TestFragmentStrategyIsLastAndMostDivergent(t *testing.T) {
+	last := DefaultStrategies[len(DefaultStrategies)-1]
+	if !last.Fragment {
+		t.Errorf("last rung %+v does not fragment; fragmentation must be the final escalation", last)
+	}
+	if last.Fingerprint == "" || last.ServerName == "" {
+		t.Errorf("fragment rung %+v drops a lighter axis; it must stack on the fingerprint and SNI", last)
+	}
+	// No earlier rung may fragment: fragmentation is the heaviest axis and must not
+	// be reached before the cheaper reshapings have been tried.
+	for i, s := range DefaultStrategies[:len(DefaultStrategies)-1] {
+		if s.Fragment {
+			t.Errorf("rung %d (%q) fragments but is not the last rung", i, s.Name)
+		}
+	}
+}
+
+// TestStrategyApplyFragments confirms a fragmenting strategy sets tls.Fragment on
+// the reshaped node while still overriding the fingerprint and SNI, and that a
+// strategy whose only axis is fragmentation is not mistaken for the default.
+func TestStrategyApplyFragments(t *testing.T) {
+	node := model.Node{
+		Protocol: model.VLESS,
+		Server:   "example.test",
+		Port:     443,
+		TLS:      &model.TLS{Enabled: true, ServerName: "origin.example", Fingerprint: "chrome"},
+	}
+	s := Strategy{Name: "tls-fragment", Fingerprint: "firefox", ServerName: "alt.example", Fragment: true}
+	if s.IsDefault() {
+		t.Fatal("a fragmenting strategy must not report IsDefault")
+	}
+	got := s.ApplyTo(node)
+	if !got.TLS.Fragment {
+		t.Errorf("fragment not applied: %+v", got.TLS)
+	}
+	if got.TLS.Fingerprint != "firefox" || got.TLS.ServerName != "alt.example" {
+		t.Errorf("fingerprint/SNI not applied alongside fragment: %+v", got.TLS)
+	}
+	// The input node keeps its native TLS — ApplyTo copied it before setting fragment.
+	if node.TLS.Fragment || node.TLS.Fingerprint != "chrome" {
+		t.Errorf("input TLS was mutated: %+v", node.TLS)
+	}
+}
+
+// TestFragmentOnlyStrategyIsNotDefault guards the IsDefault contract: a strategy
+// that fragments but reshapes neither the fingerprint nor the SNI must still count
+// as a real escalation, or the walk would treat it as the pass-through lead rung
+// and skip its reshaping entirely.
+func TestFragmentOnlyStrategyIsNotDefault(t *testing.T) {
+	if (Strategy{Name: "frag-only", Fragment: true}).IsDefault() {
+		t.Error("a fragment-only strategy must not be the default")
+	}
+}
+
 // TestStrategyApplyDoesNotMutateInput is the safety property the connect loop
 // relies on: it reuses one node slice across every attempt, so ApplyTo must never
 // write through to the caller's node or its shared TLS pointer.

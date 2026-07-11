@@ -189,8 +189,23 @@ func tlsObject(t *model.TLS) map[string]any {
 		}
 		o["reality"] = r
 	}
+	// TLS fragmentation splits the ClientHello across TCP segments to defeat DPI
+	// that matches on the plaintext SNI in a single first packet. In sing-box it is
+	// a field of the tls object (not an outbound dial field), so it is emitted here
+	// alongside utls/reality. The fallback delay is the value sing-box itself
+	// defaults to when it cannot infer the split point; naming it keeps the config
+	// explicit rather than leaning on an implicit default.
+	if t.Fragment {
+		o["fragment"] = true
+		o["fragment_fallback_delay"] = fragmentFallbackDelay
+	}
 	return o
 }
+
+// fragmentFallbackDelay is the tls.fragment_fallback_delay emitted with every
+// fragmented outbound: the wait sing-box uses when it cannot determine the
+// ClientHello split point automatically. It matches sing-box's own default.
+const fragmentFallbackDelay = "500ms"
 
 // transportObject renders a model.Transport into the sing-box transport
 // sub-object, or nil for raw TCP (empty type). Only ws and grpc are commonly

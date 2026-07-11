@@ -48,7 +48,12 @@ type TLS struct {
 	Insecure    bool     `json:"insecure,omitempty"`
 	ALPN        []string `json:"alpn,omitempty"`
 	Fingerprint string   `json:"fingerprint,omitempty"` // uTLS, e.g. chrome
-	Reality     *Reality `json:"reality,omitempty"`
+	// Fragment splits the TLS ClientHello across multiple TCP segments so DPI that
+	// keys on the plaintext SNI in a single first packet cannot match it. It maps to
+	// the sing-box outbound tls.fragment option (the fallback delay is fixed by the
+	// builder). Meaningful only over TCP-based TLS; inert on QUIC protocols.
+	Fragment bool     `json:"fragment,omitempty"`
+	Reality  *Reality `json:"reality,omitempty"`
 }
 
 // Reality holds REALITY handshake parameters (VLESS).

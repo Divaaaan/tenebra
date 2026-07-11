@@ -126,6 +126,7 @@ surface.
 | `set_routing`          | `mode` (`smart`/`global`/`direct`) | `State`                     |
 | `set_split`            | `mode` (`off`/`exclude`/`include`), `apps?` | `State`            |
 | `set_kill_switch`      | `on` (boolean)                     | `State`                     |
+| `set_tls_fragment`     | `on` (boolean)                     | `State`                     |
 | `set_tun`              | `stack` (`system`/`gvisor`/`mixed`) | `State`                    |
 | `set_autoconnect`      | `on` (boolean)                     | `State`                     |
 | `set_dns`              | `ad_block` (boolean), `dns_remote`, `dns_direct`, `ipv4_only` (boolean) | `State` |
@@ -195,9 +196,9 @@ response: {"id":7,"ok":true,"data":{"profile":{ /* …two servers… */ },"impor
 new split takes effect on the **next connect** (live retuning would require
 restarting sing-box). The returned `State` reflects the stored choice.
 
-`set_kill_switch` and `set_tun` go further: both are recorded and persisted the
-same way, but when a tunnel is **live** the core also re-applies them in place —
-see below.
+`set_kill_switch`, `set_tls_fragment` and `set_tun` go further: all are recorded
+and persisted the same way, but when a tunnel is **live** the core also re-applies
+them in place — see below.
 
 `set_autoconnect` is recorded and persisted the same way but changes nothing
 about a live tunnel; it takes effect when the daemon itself next starts (see
@@ -228,6 +229,24 @@ before a relaunch lands, or after the budget is spent — the OS routes normally
 and traffic is not blocked.** A guarantee across that window would need an
 OS-level firewall hold owned by something that outlives sing-box; the protocol
 does not promise it.
+
+### TLS fragmentation (`set_tls_fragment`)
+
+`on: true` forces TLS ClientHello fragmentation on every TLS-bearing outbound;
+`false` (or an omitted field) turns it off. Armed, the core emits sing-box's
+`tls.fragment` (with an explicit `fragment_fallback_delay`) on each outbound that
+carries TLS, splitting the ClientHello across TCP segments so DPI keying on the
+plaintext SNI in a single first packet cannot match it. It is a transport-layer
+reshaping only — the protocol, credentials and destination are untouched — and is
+inert for non-TLS protocols (Shadowsocks, WireGuard) and for QUIC-based ones
+(Hysteria2), where there is no TCP ClientHello to split.
+
+Like the kill switch it re-applies to a **live** tunnel in place: the core
+rebuilds the config for the node it is already on and hot-swaps sing-box, so
+arming does not wait for a reconnect. It is independent of the adaptive walk,
+which already reaches fragmentation per-node when a node's handshake looks
+censored (the last rung of the transport-strategy cascade); this toggle is the
+user's unconditional override for a network that blocks the SNI outright.
 
 ### Tun stack (`set_tun`)
 
@@ -518,6 +537,7 @@ type State = {
   split?: "exclude" | "include";  // omitted when off
   split_apps?: string[];          // normalized executable names; omitted when off
   kill_switch?: boolean;          // omitted when off
+  tls_fragment?: boolean;         // forced TLS ClientHello fragmentation; omitted when off
   tun_stack?: "system" | "gvisor" | "mixed";
   autoconnect?: boolean;          // reconnect at daemon start; omitted when off
   ad_block?: boolean;             // DNS ad/tracker blocking; omitted when off

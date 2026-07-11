@@ -932,14 +932,17 @@ func (d *Daemon) AutoconnectOnStart() bool {
 // It converges: the hot-swap's own connect re-runs this check, and once the
 // options settle it finds no divergence and stops — so a burst of toggles costs at
 // most one extra swap per settled value, not an endless loop. Only the live-reapply
-// options (kill switch, tun stack) are compared; routing mode and split are
-// deferred-to-next-connect by design, matching what reapplyLive itself applies.
+// options (kill switch, TLS fragmentation, tun stack) are compared; routing mode
+// and split are deferred-to-next-connect by design, matching what reapplyLive
+// itself applies.
 func (d *Daemon) reconcileConnectingOptions(loop fallbackLoop, nodeID string) {
 	d.mu.Lock()
 	curRo := d.routing
 	curTun := d.tun
 	d.mu.Unlock()
-	if loop.ro.KillSwitch == curRo.KillSwitch && loop.tun.Stack == curTun.Stack {
+	if loop.ro.KillSwitch == curRo.KillSwitch &&
+		loop.ro.TLSFragment == curRo.TLSFragment &&
+		loop.tun.Stack == curTun.Stack {
 		return // nothing that applies live changed during the connecting window
 	}
 	p, ok := d.store.Get(loop.profileID)

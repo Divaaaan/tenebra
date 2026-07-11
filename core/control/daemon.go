@@ -282,6 +282,7 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	d.routing.SplitMode = mode
 	d.routing.SplitApps = apps
 	d.routing.KillSwitch = ps.KillSwitch
+	d.routing.TLSFragment = ps.TLSFragment
 	d.routing.AdBlock = ps.AdBlock
 	d.routing.IPv4Only = ps.IPv4Only
 	// Empty resolvers (absent in an old file, or never customized) are left for
@@ -349,6 +350,7 @@ func (d *Daemon) settingsLocked() persistedSettings {
 		SplitMode:       string(d.routing.SplitMode),
 		SplitApps:       d.routing.SplitApps,
 		KillSwitch:      d.routing.KillSwitch,
+		TLSFragment:     d.routing.TLSFragment,
 		TunStack:        d.tun.Stack,
 		Autoconnect:     d.autoconnect,
 		CrashReports:    d.crashReports,
@@ -397,6 +399,8 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleSetSplit(req)
 	case CmdSetKillSwitch:
 		return d.handleSetKillSwitch(req)
+	case CmdSetTLSFragment:
+		return d.handleSetTLSFragment(req)
 	case CmdSetTun:
 		return d.handleSetTun(req)
 	case CmdSetAutoconnect:
@@ -976,6 +980,33 @@ func (d *Daemon) handleSetKillSwitch(req Request) Response {
 	return resp
 }
 
+// handleSetTLSFragment arms or disarms forced TLS ClientHello fragmentation. Like
+// the kill switch the choice is recorded, persisted, and — unlike
+// set_routing/set_split — applied to a live tunnel in place: the daemon rebuilds
+// the config for the node it is already on and hot-swaps the sing-box process (see
+// reapplyLive), so arming doesn't wait for a reconnect. Armed folds tls.fragment
+// into every TLS-bearing outbound the config builds. The adaptive walk still
+// reaches fragmentation per-node on a censored handshake; this is the user's
+// unconditional override for a network that blocks the plaintext SNI outright.
+func (d *Daemon) handleSetTLSFragment(req Request) Response {
+	d.mu.Lock()
+	changed := d.routing.TLSFragment != req.On
+	d.routing.TLSFragment = req.On
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.crashReports)
+	d.mu.Unlock()
+
+	d.persistSettings()
+	if changed {
+		d.reapplyLive()
+	}
+
+	resp, err := newResult(req.ID, d.snapshotState())
+	if err != nil {
+		return newError(req.ID, err.Error())
+	}
+	return resp
+}
+
 // handleSetTun switches the tun network stack (system/gvisor/mixed). Recorded,
 // persisted, and applied to a live tunnel in place via reapplyLive — the stack
 // is a startup option of the tun inbound, so the swap restarts sing-box on the
@@ -1170,6 +1201,7 @@ func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, 
 		s.SplitApps = append([]string(nil), ro.SplitApps...)
 	}
 	s.KillSwitch = ro.KillSwitch
+	s.TLSFragment = ro.TLSFragment
 	s.TunStack = tun.Stack
 	s.Autoconnect = autoconnect
 	// Copy the crash-report consent by value so the State never aliases the
