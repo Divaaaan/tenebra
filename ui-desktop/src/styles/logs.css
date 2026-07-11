@@ -98,10 +98,51 @@
   border-color: var(--line);
 }
 
+/* ── check-in-flight rail: a runner sweeps left→right under the header while the
+   leak check is out. Parked off-track (left:-30%) at rest, so reduced-motion
+   leaves nothing frozen mid-sweep — it simply doesn't show. Mirrors the
+   connecting rail's timing. ── */
+.log-rail {
+  position: relative;
+  height: 2px;
+  background: var(--line);
+  overflow: hidden;
+  margin-top: var(--sp-5);
+}
+.log-rail-run {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -30%;
+  width: 30%;
+  background: var(--warn-soft);
+  animation: log-rail-sweep 1.1s linear infinite;
+}
+@keyframes log-rail-sweep {
+  0% {
+    left: -30%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
 /* ── leak-check readout: titled spec-sheet block, one verdict per row ── */
 .log-spec {
   border: var(--bw) solid var(--line);
   margin-top: var(--sp-5);
+  /* A considered entrance when the finding lands; neutralised by reduced-motion. */
+  animation: log-spec-in var(--t-enter) both;
+}
+@keyframes log-spec-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 .log-spec-row {
   padding: 18px 20px;
