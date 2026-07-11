@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Divaaaan/tenebra/core/fallback"
 	"github.com/Divaaaan/tenebra/core/model"
 	"github.com/Divaaaan/tenebra/core/profile"
 )
@@ -47,6 +48,10 @@ func newHarness(t *testing.T) *harness {
 	d.probeRetry = time.Millisecond
 	d.probeTimeout = 200 * time.Millisecond
 	d.probeBudget = 60 * time.Millisecond
+	// Adaptive escalation is off by default in the harness: the fake runner's
+	// nodes aren't real, so a live classify would dial the network on every
+	// blocked candidate. Tests that exercise escalation override d.classify.
+	d.classify = func(context.Context, model.Node, bool) fallback.FailureClass { return fallback.Unknown }
 
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()

@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Divaaaan/tenebra/core/fallback"
+	"github.com/Divaaaan/tenebra/core/model"
 	"github.com/Divaaaan/tenebra/core/profile"
 )
 
@@ -74,6 +76,10 @@ func newTestDaemon(t *testing.T) (*Daemon, *fakeRunner) {
 	d.probeRetry = time.Millisecond
 	d.probeTimeout = 200 * time.Millisecond
 	d.probeBudget = 60 * time.Millisecond
+	// Adaptive escalation is off by default: the fake runner's nodes aren't real,
+	// so a live classify would dial the network on every blocked candidate.
+	// Escalation tests override d.classify with a scripted verdict.
+	d.classify = func(context.Context, model.Node, bool) fallback.FailureClass { return fallback.Unknown }
 	return d, runner
 }
 

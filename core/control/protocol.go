@@ -262,12 +262,24 @@ type LogEvent struct {
 // whether it is the profile's last-good node (the one the walk leads with). The
 // node/protocol values are the same identifiers a state event carries, so the UI
 // can cross-reference them.
+//
+// Strategy and Reason annotate the adaptive-transport walk and are both
+// omitempty, so a candidate that connected on its native parameters and was not
+// classified carries neither — the common shape is byte-for-byte what it was
+// before adaptation existed. Strategy names the non-default transport variation a
+// candidate is being tried under or came up on (a reshaped handshake on the same
+// node); it is absent while the candidate is on its own parameters. Reason
+// carries the failure classification when a candidate was abandoned because its
+// handshake looked interfered with ("censored"), giving a future UI the "why"
+// behind a block without it having to infer one.
 type attemptItem struct {
 	Seq      int    `json:"seq"`
 	Protocol string `json:"protocol"`
 	Node     string `json:"node"`
 	Status   string `json:"status"`
 	LastGood bool   `json:"last_good"`
+	Strategy string `json:"strategy,omitempty"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 // attemptsEvent is the body of an attempts event: a full snapshot of the current

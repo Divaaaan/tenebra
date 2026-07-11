@@ -117,6 +117,7 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 	d.mu.Unlock()
 
 	nodes := profileNodes(p)
+	nodeIDs := serverIDs(p)
 	tags := serverTags(p)
 
 	// Tear down any existing connection (and any in-flight loop) before starting a
@@ -138,6 +139,7 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 		gen:           gen,
 		profileID:     p.ID,
 		nodes:         nodes,
+		nodeIDs:       nodeIDs,
 		tags:          tags,
 		ro:            ro,
 		tun:           tun,
@@ -293,10 +295,14 @@ type fallbackLoop struct {
 	gen       uint64
 	profileID string
 	nodes     []model.Node
-	tags      map[string]string // server ID -> sing-box selector tag
-	ro        routing.Options
-	tun       singbox.TunOptions
-	machine   *fallback.Machine
+	// nodeIDs is the server ID of each entry in nodes, at the same index, so the
+	// loop can find which node an attempt selects when it folds a transport
+	// strategy into that one node before building the config.
+	nodeIDs []string
+	tags    map[string]string // server ID -> sing-box selector tag
+	ro      routing.Options
+	tun     singbox.TunOptions
+	machine *fallback.Machine
 	// remember marks a user-commanded connect: on success the daemon records
 	// (profileID, requestedNode) as the last-connect intent for autoconnect.
 	// Off-command connects (relaunch, reconcile, autoconnect) leave it false.
@@ -349,27 +355,66 @@ func (d *Daemon) newAttemptTracker(loop fallbackLoop) *attemptTracker {
 // begin emits the opening snapshot: every candidate waiting, walk in progress.
 func (t *attemptTracker) begin() { t.publish(AttemptOutcomePending) }
 
-// trying, blocked and succeeded move one candidate (matched by node ID) to the
-// named status and emit. succeeded also closes the walk with the "ok" outcome.
-func (t *attemptTracker) trying(a fallback.Attempt) { t.set(a, AttemptTrying, AttemptOutcomePending) }
-func (t *attemptTracker) blocked(a fallback.Attempt) {
-	t.set(a, AttemptBlocked, AttemptOutcomePending)
+// trying marks a candidate in flight on its native parameters (waiting -> trying)
+// and emits the snapshot.
+func (t *attemptTracker) trying(a fallback.Attempt) {
+	if i, ok := t.byNodeID[a.NodeID]; ok {
+		t.items[i].Status = AttemptTrying
+	}
+	t.publish(AttemptOutcomePending)
 }
-func (t *attemptTracker) succeeded(a fallback.Attempt) { t.set(a, AttemptOK, AttemptOutcomeConnected) }
+
+// escalating keeps a candidate in flight but records that it is now being tried
+// under a different transport strategy on the same node — the adaptive response
+// to a handshake that looked interfered with. It names the strategy now driving
+// the node and the reason for the switch, so the snapshot narrates the escalation
+// rather than looking like a stuck "trying".
+func (t *attemptTracker) escalating(a fallback.Attempt, strat fallback.Strategy) {
+	if i, ok := t.byNodeID[a.NodeID]; ok {
+		t.items[i].Status = AttemptTrying
+		t.items[i].Strategy = strat.Name
+		t.items[i].Reason = fallback.Censored.String()
+	}
+	t.publish(AttemptOutcomePending)
+}
+
+// blocked marks a candidate failed with no interference verdict (an ordinary
+// dead/unknown outcome), leaving its reason annotation empty — the pre-adaptation
+// shape.
+func (t *attemptTracker) blocked(a fallback.Attempt) { t.blockedWithReason(a, "") }
+
+// blockedWithReason marks a candidate failed and, when reason is non-empty,
+// records why the walk gave up on it (e.g. "censored" once its transport
+// strategies were exhausted). The walk stays in progress; a later candidate may
+// still come up.
+func (t *attemptTracker) blockedWithReason(a fallback.Attempt, reason string) {
+	if i, ok := t.byNodeID[a.NodeID]; ok {
+		t.items[i].Status = AttemptBlocked
+		if reason != "" {
+			t.items[i].Reason = reason
+		}
+	}
+	t.publish(AttemptOutcomePending)
+}
+
+// succeeded closes the walk on a candidate that came up. It records the transport
+// strategy it connected under when that was a non-default variation (so the UI
+// can surface a node that only worked after adaptation) and clears any interim
+// interference reason now that the node is connected.
+func (t *attemptTracker) succeeded(a fallback.Attempt, strat fallback.Strategy) {
+	if i, ok := t.byNodeID[a.NodeID]; ok {
+		t.items[i].Status = AttemptOK
+		t.items[i].Reason = ""
+		if !strat.IsDefault() {
+			t.items[i].Strategy = strat.Name
+		}
+	}
+	t.publish(AttemptOutcomeConnected)
+}
 
 // exhausted emits the terminal snapshot when every candidate failed: the items
 // keep their last (blocked) statuses and the walk closes with "exhausted".
 func (t *attemptTracker) exhausted() { t.publish(AttemptOutcomeExhausted) }
-
-// set updates one candidate's status and publishes the resulting snapshot. A
-// node not in the plan is a no-op on the items but still republishes, which never
-// happens in practice (every attempt came from the same machine).
-func (t *attemptTracker) set(a fallback.Attempt, status, outcome string) {
-	if i, ok := t.byNodeID[a.NodeID]; ok {
-		t.items[i].Status = status
-	}
-	t.publish(outcome)
-}
 
 // publish snapshots the current items with outcome and hands them to the daemon
 // to store and emit. The items are copied so the emitted/stored snapshot never
@@ -440,73 +485,159 @@ func (d *Daemon) runFallback(ctx context.Context, loop fallbackLoop) {
 		// About to attempt this candidate: mark it trying before the process starts.
 		tracker.trying(attempt)
 
-		tag := loop.tags[attempt.NodeID]
-		cfgJSON, err := buildConfigJSON(loop.nodes, tag, loop.ro, loop.tun)
-		if err != nil {
-			// A node we can't even render is not worth a process; skip it.
-			d.emitLog(LogWarn, fmt.Sprintf("connect: skip %s: %v", protoLabel(attempt.Node), err))
-			tracker.blocked(attempt)
+		// attemptNode walks this node across its transport-strategy cascade. A
+		// censored handshake escalates to the next strategy on THIS node; anything
+		// else — a dead/ambiguous failure, a render/start error, or an exhausted
+		// cascade — falls through here to the next node.
+		switch outcome, reason := d.attemptNode(ctx, loop, attempt, tracker); outcome {
+		case nodeConnected:
+			return // attemptNode promoted to connected and started the lifecycle
+		case nodeSuperseded:
+			return // teardown owns the state; the runner is already stopped
+		default: // nodeFailed
+			tracker.blockedWithReason(attempt, reason)
 			loop.machine.Failure(attempt)
-			continue
+		}
+	}
+}
+
+// nodeOutcome is the result of walking one node across its transport-strategy
+// cascade in attemptNode.
+type nodeOutcome int
+
+const (
+	// nodeConnected: the node came up (on some strategy); the connection was
+	// promoted and its lifecycle started, so the fallback loop returns.
+	nodeConnected nodeOutcome = iota
+	// nodeSuperseded: the generation moved or ctx was cancelled mid-attempt; the
+	// runner is stopped and the loop returns without touching state.
+	nodeSuperseded
+	// nodeFailed: the node did not come up under any strategy (or could not be
+	// rendered/started); the loop marks it blocked and advances to the next node.
+	nodeFailed
+)
+
+// attemptNode tries one node across the transport-strategy cascade. It begins
+// with the node's native parameters and escalates to the next strategy — a
+// reshaped handshake on the SAME node — only when a failure carries the
+// interference fingerprint (the entry is reachable but the handshake then
+// silently stalls). A dead or ambiguous failure, a render/start error, or an
+// exhausted cascade abandons the node for the next one. On success it promotes
+// the connection and hands it to the lifecycle goroutines. The returned reason
+// annotates a block: "censored" when the node was abandoned after its handshake
+// looked interfered with, empty otherwise.
+func (d *Daemon) attemptNode(ctx context.Context, loop fallbackLoop, attempt fallback.Attempt, tracker *attemptTracker) (nodeOutcome, string) {
+	tag := loop.tags[attempt.NodeID]
+	strategies := fallback.DefaultStrategies
+	censored := false // the node showed the interference fingerprint at least once
+
+	for si, strat := range strategies {
+		if ctx.Err() != nil || !d.isCurrent(loop.gen) {
+			_ = d.runner.Stop()
+			return nodeSuperseded, ""
+		}
+
+		// Build this candidate's config with the strategy's handshake reshaping
+		// folded into the selected node. The default (first) strategy reshapes
+		// nothing, so its config is byte-for-byte the pre-adaptation one.
+		nodes := applyStrategyToNodes(loop.nodes, loop.nodeIDs, attempt.NodeID, strat)
+		cfgJSON, err := buildConfigJSON(nodes, tag, loop.ro, loop.tun)
+		if err != nil {
+			// A node we can't even render is not worth a process, and no handshake
+			// reshaping fixes a render error — abandon the node outright.
+			d.emitLog(LogWarn, fmt.Sprintf("connect: skip %s: %v", protoLabel(attempt.Node), err))
+			return nodeFailed, ""
 		}
 
 		if err := d.runner.Start(ctx, cfgJSON); err != nil {
 			if !d.isCurrent(loop.gen) {
 				_ = d.runner.Stop()
-				return
+				return nodeSuperseded, ""
 			}
 			d.emitLog(LogWarn, fmt.Sprintf("connect: start %s failed: %v", protoLabel(attempt.Node), err))
-			tracker.blocked(attempt)
-			loop.machine.Failure(attempt)
-			continue
+			return nodeFailed, ""
 		}
 
-		// Probe through the selector ("proxy"). Success means traffic really flows.
-		if d.probeUntilUp(ctx, loop.gen) {
-			// Superseded mid-probe: probeUntilUp already returned false in that case,
-			// so reaching here means a genuine success on the current generation.
-			loop.machine.Success(attempt)
-			if d.lastGood != nil {
-				d.lastGood.Set(loop.profileID, attempt.NodeID)
-			}
-			if loop.remember {
-				d.rememberLastConn(loop.profileID, loop.requestedNode)
-			}
-			// Close the walk snapshot as succeeded before flipping the connection
-			// state, so the "ok" step precedes the connected event on the wire.
-			tracker.succeeded(attempt)
-			// Capture the connected instant before publishing it, so the uptime the
-			// relaunch budget reads later is measured from a fixed point.
-			connectedAt := d.now()
-			d.setState(State{State: StateConnected, Profile: loop.profileID,
-				Node: attempt.NodeID, Routing: d.snapshotState().Routing})
-			// Hand the live connection off to the watcher/poller and stop looping.
-			d.startLifecycle(ctx, loop.gen, loop.profileID, attempt.NodeID, connectedAt)
-			// A kill-switch/tun toggle that landed during the connecting window was
-			// recorded but not baked into this config; reconcile it now.
-			d.reconcileConnectingOptions(loop, attempt.NodeID)
-			return
+		// Probe through the selector ("proxy"). up=true means traffic really flows;
+		// stalled reports whether a failure was a silent stall (the through-tunnel
+		// half of the interference signal) rather than a fast, hard error.
+		up, stalled := d.probeUntilUp(ctx, loop.gen)
+		if up {
+			// Superseded mid-probe returns up=false, so reaching here is a genuine
+			// success on the current generation.
+			d.recordSuccess(ctx, loop, attempt, tracker, strat)
+			return nodeConnected, ""
 		}
-
-		// Probe failed, the process exited early, or we were superseded. If
-		// superseded, bail without touching state (teardown owns it).
 		if !d.isCurrent(loop.gen) {
 			_ = d.runner.Stop()
-			return
+			return nodeSuperseded, ""
 		}
-		d.emitLog(LogWarn, fmt.Sprintf("connect: %s blocked, trying next", protoLabel(attempt.Node)))
+
+		// Failed on the current generation. Stop this process before deciding.
 		_ = d.runner.Stop()
-		tracker.blocked(attempt)
-		loop.machine.Failure(attempt)
+
+		// Escalate to another transport strategy on THIS node only when there is a
+		// further one AND the failure looks like destination interference. A dead
+		// or ambiguous node gains nothing from a reshaped handshake, so we stop and
+		// let the outer loop advance to the next node.
+		if si < len(strategies)-1 {
+			if d.classify(ctx, attempt.Node, stalled) == fallback.Censored {
+				censored = true
+				next := strategies[si+1]
+				d.emitLog(LogWarn, fmt.Sprintf("connect: %s handshake stalled; escalating transport strategy to %s",
+					protoLabel(attempt.Node), next.Name))
+				tracker.escalating(attempt, next)
+				continue
+			}
+		}
+		break
 	}
+
+	d.emitLog(LogWarn, fmt.Sprintf("connect: %s blocked, trying next", protoLabel(attempt.Node)))
+	reason := ""
+	if censored {
+		reason = fallback.Censored.String()
+	}
+	return nodeFailed, reason
+}
+
+// recordSuccess promotes a candidate whose probe came up: it persists last-good,
+// records the last-connect intent for a user-commanded connect, closes the walk
+// snapshot as succeeded (before flipping the state, so the "ok" step precedes the
+// connected event on the wire), sets the connected state, hands the live
+// connection to the watcher/poller, and reconciles any option toggled during the
+// connecting window. strat is the strategy the node came up under, so a
+// non-default one is surfaced in the snapshot.
+func (d *Daemon) recordSuccess(ctx context.Context, loop fallbackLoop, attempt fallback.Attempt, tracker *attemptTracker, strat fallback.Strategy) {
+	loop.machine.Success(attempt)
+	if d.lastGood != nil {
+		d.lastGood.Set(loop.profileID, attempt.NodeID)
+	}
+	if loop.remember {
+		d.rememberLastConn(loop.profileID, loop.requestedNode)
+	}
+	tracker.succeeded(attempt, strat)
+	// Capture the connected instant before publishing it, so the uptime the
+	// relaunch budget reads later is measured from a fixed point.
+	connectedAt := d.now()
+	d.setState(State{State: StateConnected, Profile: loop.profileID,
+		Node: attempt.NodeID, Routing: d.snapshotState().Routing})
+	// Hand the live connection off to the watcher/poller.
+	d.startLifecycle(ctx, loop.gen, loop.profileID, attempt.NodeID, connectedAt)
+	// A kill-switch/tun toggle that landed during the connecting window was
+	// recorded but not baked into this config; reconcile it now.
+	d.reconcileConnectingOptions(loop, attempt.NodeID)
 }
 
 // probeUntilUp waits for the clash API to come up, then probes the selector
-// repeatedly within the per-candidate budget. It returns true only on a probe
-// success that is still the current generation. It returns false on budget
+// repeatedly within the per-candidate budget. It returns up=true only on a probe
+// success that is still the current generation. stalled reports, on a failure,
+// whether the last probe made no progress within its deadline — a silent stall,
+// the through-tunnel corroboration of destination interference — rather than
+// failing fast; it is meaningless when up is true. up is false on budget
 // exhaustion, an early process exit, ctx cancellation, or supersession — the
 // caller distinguishes these via isCurrent and runner state.
-func (d *Daemon) probeUntilUp(ctx context.Context, gen uint64) bool {
+func (d *Daemon) probeUntilUp(ctx context.Context, gen uint64) (up bool, stalled bool) {
 	done := d.runner.Done()
 
 	budget, cancelBudget := context.WithTimeout(ctx, d.probeBudget)
@@ -514,42 +645,58 @@ func (d *Daemon) probeUntilUp(ctx context.Context, gen uint64) bool {
 
 	// Initial warmup so the API has a chance to bind before the first probe.
 	if !sleepCtx(budget, d.probeWarmup) {
-		return false
+		return false, false
 	}
 
 	for {
 		if !d.isCurrent(gen) {
-			return false
+			return false, stalled
 		}
 		// A process exit before a successful probe is a hard failure for this
 		// candidate — don't keep probing a dead sing-box.
 		select {
 		case <-done:
-			return false
+			return false, stalled
 		default:
 		}
 
 		probeCtx, cancelProbe := context.WithTimeout(budget, d.probeTimeout)
+		start := d.now()
 		delay, err := d.runner.Probe(probeCtx, proxySelectorTag)
+		elapsed := d.now().Sub(start)
 		cancelProbe()
 		if err == nil {
 			if !d.isCurrent(gen) {
-				return false
+				return false, false
 			}
 			d.emitLog(LogInfo, fmt.Sprintf("connect: tunnel up (%dms)", delay))
-			return true
+			return true, false
 		}
+		// A probe that ran most of its deadline before failing made no progress: a
+		// silent stall. A fast failure (a refused/immediately-erroring entry) sits
+		// well under the threshold. The last probe's verdict is what the classifier
+		// pairs with the direct TCP observation.
+		stalled = elapsed >= d.probeStallThreshold()
 
 		// Wait before retrying, but give up the moment the budget or ctx expires or
 		// the process dies.
 		select {
 		case <-budget.Done():
-			return false
+			return false, stalled
 		case <-done:
-			return false
+			return false, stalled
 		case <-time.After(d.probeRetry):
 		}
 	}
+}
+
+// probeStallThreshold is the elapsed time past which a single failed probe counts
+// as a silent stall rather than a fast failure: three-quarters of one probe's
+// deadline. A stalled handshake consumes its whole deadline (or the clash API's
+// own timeout) and clears this; a refused or immediately-erroring entry fails far
+// under it.
+func (d *Daemon) probeStallThreshold() time.Duration {
+	return d.probeTimeout * 3 / 4
 }
 
 // proxySelectorTag is the sing-box selector tag the builder always emits; the
