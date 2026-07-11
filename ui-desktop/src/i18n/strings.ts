@@ -38,11 +38,37 @@ export interface Strings {
     abort: string;
     exitIp: string;
     change: string;
+    /** Chip on the node card when the exit is auto-picked, not chosen by hand. */
+    autoTag: string;
     statSession: string;
     statDown: string;
     statPing: string;
     unitMinSec: string;
     unitMbps: string;
+  };
+
+  /**
+   * Anti-DPI fallback panel: shown in place of the node card while the core walks
+   * the protocol-fallback order (REALITY → Hysteria2 → AmneziaWG). Every value is
+   * driven by the live attempts snapshot.
+   */
+  fallback: {
+    title: string;
+    /** Live header, "{n}"/"{m}" interpolated (attempt reached / total planned). */
+    attempt: string;
+    /** Header once a candidate comes up; "{proto}" is the transport. */
+    success: string;
+    /** Header when every candidate failed. */
+    blockedAll: string;
+    /** Chip marking the profile's last-good lead candidate. */
+    lastGood: string;
+    /** Per-row status words. */
+    statusWaiting: string;
+    statusTrying: string;
+    statusBlocked: string;
+    statusOk: string;
+    /** A candidate the walk will not reach because an earlier one succeeded. */
+    statusReserve: string;
   };
 
   /** Right server-list pane. */
@@ -396,11 +422,24 @@ const en: Strings = {
     abort: "ABORT",
     exitIp: "exit node",
     change: "change",
+    autoTag: "auto",
     statSession: "Session",
     statDown: "Down",
     statPing: "Ping",
     unitMinSec: "m:s",
     unitMbps: "Mbps",
+  },
+  fallback: {
+    title: "Protocol fallback",
+    attempt: "attempt {n}/{m}",
+    success: "success · {proto}",
+    blockedAll: "all blocked",
+    lastGood: "last-good",
+    statusWaiting: "waiting",
+    statusTrying: "trying…",
+    statusBlocked: "blocked",
+    statusOk: "ok",
+    statusReserve: "reserve",
   },
   servers: {
     title: "Nodes",
@@ -702,11 +741,24 @@ const ru: Strings = {
     abort: "ОТМЕНА",
     exitIp: "узел выхода",
     change: "сменить",
+    autoTag: "авто",
     statSession: "Сессия",
     statDown: "Загрузка",
     statPing: "Пинг",
     unitMinSec: "м:с",
     unitMbps: "Мбит/с",
+  },
+  fallback: {
+    title: "Обход блокировок",
+    attempt: "попытка {n}/{m}",
+    success: "успех · {proto}",
+    blockedAll: "заблокировано всё",
+    lastGood: "last-good",
+    statusWaiting: "ждёт",
+    statusTrying: "пробую…",
+    statusBlocked: "блок",
+    statusOk: "ок",
+    statusReserve: "в запасе",
   },
   servers: {
     title: "Узлы",

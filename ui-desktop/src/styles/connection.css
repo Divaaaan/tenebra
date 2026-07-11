@@ -1,5 +1,8 @@
-/* Connection panel (left pane) — status, connect CTA, current node, stats,
-   traffic sparkline. Spec-sheet: sharp borders, one accent, near-zero motion. */
+/* Connection panel (left pane) — status, connect CTA, current node / fallback
+   walk, stats, traffic sparkline. Spec-sheet: sharp borders, one accent. Motion
+   here is deliberately a touch richer than the token default (breathing live dot,
+   connecting rail + stripes), all neutralised under prefers-reduced-motion by the
+   global rule. */
 
 .pane.conn {
   border-right: var(--bw) solid var(--line);
@@ -21,10 +24,25 @@
 }
 
 .conn-eyebrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+}
+
+.conn-eyebrow-label {
   font-size: var(--fs-label);
   letter-spacing: var(--track-cap);
   text-transform: uppercase;
   color: var(--text-dim);
+}
+
+/* Current route, mirrored from the bottom bar. */
+.conn-route {
+  font-size: var(--fs-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim-2);
 }
 
 .conn-word {
@@ -39,6 +57,12 @@
   gap: 14px;
 }
 
+.conn-word-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
 .conn-word .ind {
   width: 16px;
   height: 16px;
@@ -50,7 +74,7 @@
   color: var(--word-off);
 }
 .conn-word.idle .ind {
-  border: 2px solid var(--text-dim-2);
+  border: var(--bw-emphasis) solid var(--text-dim-2);
 }
 
 .conn-word.connecting {
@@ -66,7 +90,7 @@
 }
 .conn-word.connected .ind {
   background: var(--word-on);
-  animation: blink-live 2.2s ease-in-out infinite;
+  animation: breathe 2.2s ease-in-out infinite;
 }
 
 .conn-word.error {
@@ -87,13 +111,45 @@
   }
 }
 
-@keyframes blink-live {
+/* Live "breathing": a soft green ring expands and fades as the dot dims. The
+   ring colour rides --good so it tracks the theme instead of a hard-coded rgba. */
+@keyframes breathe {
   0%,
   100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--good) 35%, transparent);
     opacity: 1;
   }
   50% {
-    opacity: 0.2;
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--good) 0%, transparent);
+    opacity: 0.75;
+  }
+}
+
+/* Connecting progress rail: a runner sweeps left→right under the status word. Its
+   resting position (left: -30%) is off-screen, so reduced-motion parks it unseen
+   rather than freezing a stray bar mid-track. */
+.conn-rail {
+  position: relative;
+  height: 2px;
+  background: var(--line);
+  overflow: hidden;
+  margin-top: 2px;
+}
+.conn-rail-run {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -30%;
+  width: 30%;
+  background: var(--warn-soft);
+  animation: rail-sweep 1.1s linear infinite;
+}
+@keyframes rail-sweep {
+  0% {
+    left: -30%;
+  }
+  100% {
+    left: 100%;
   }
 }
 
@@ -110,8 +166,12 @@
 }
 
 /* ── connect button ── */
+.connect-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
 .connect-btn {
-  align-self: flex-start;
   font-family: var(--mono);
   font-size: var(--fs-body);
   letter-spacing: 0.16em;
@@ -124,31 +184,105 @@
   align-items: center;
   gap: var(--sp-2);
   transition:
-    background var(--t-base),
-    color var(--t-base);
+    background 160ms ease,
+    color 160ms ease,
+    border-color 160ms ease,
+    transform 80ms ease;
 }
-.connect-btn:hover {
+/* Idle / error: fill on hover. Scoped away from the on/pending variants so their
+   own hover rules aren't overridden by the fill. */
+.connect-btn:not(.on):not(.pending):hover {
   background: var(--signal);
   color: var(--on-signal);
+}
+.connect-btn:active {
+  transform: scale(0.985);
 }
 .connect-btn.on {
   border-color: var(--text-dim-2);
   color: var(--text-dim);
 }
 .connect-btn.on:hover {
-  background: transparent;
   border-color: var(--signal);
   color: var(--signal);
+}
+/* Connecting: warning-toned with slow diagonal stripes crawling across. */
+.connect-btn.pending {
+  border-color: var(--warn-soft);
+  color: var(--warn-soft);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--warn-soft) 7%, transparent) 0 7px,
+    transparent 7px 14px
+  );
+  background-size: 28px 100%;
+  animation: stripes 0.8s linear infinite;
+}
+.connect-btn.pending:hover {
+  border-color: var(--signal);
+  color: var(--signal);
+}
+@keyframes stripes {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 28px 0;
+  }
+}
+
+/* Keycap hint beside the CTA. The Space shortcut itself lives in the shell. */
+.key-hint {
+  font-size: var(--fs-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim-2);
+  border: var(--bw) solid var(--line);
+  padding: 3px 7px;
 }
 
 /* ── current-node card ── */
 .cur-server {
+  position: relative;
   border: var(--bw) solid var(--line);
   padding: 18px 20px;
   display: grid;
   grid-template-columns: 1fr auto;
   gap: var(--sp-2) var(--sp-4);
   align-items: center;
+}
+/* Cross-hair "+" ticks sitting just outside the corners, punched over the canvas. */
+.cur-server .tick {
+  position: absolute;
+  color: var(--text-dim-2);
+  font-size: var(--fs-label);
+  line-height: 1;
+  background: var(--bg);
+  padding: 1px;
+}
+.cur-server .tick.tl {
+  top: -5px;
+  left: -5px;
+}
+.cur-server .tick.tr {
+  top: -5px;
+  right: -5px;
+}
+.cur-server .tick.bl {
+  bottom: -5px;
+  left: -5px;
+}
+.cur-server .tick.br {
+  bottom: -5px;
+  right: -5px;
+}
+.cur-head {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
 .cur-server .node {
   font-family: var(--display);
@@ -159,6 +293,16 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Shown when the exit is auto-picked, not chosen by hand. */
+.auto-chip {
+  flex: none;
+  font-size: var(--fs-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border: var(--bw) dashed var(--line-2);
+  padding: 2px 6px;
 }
 .cur-server .ip {
   font-family: var(--mono);
@@ -172,25 +316,47 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.cur-meta {
+  grid-column: 1;
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
 .cur-server .city {
   font-size: var(--fs-meta);
   color: var(--text-dim);
   letter-spacing: var(--track-body);
   text-transform: lowercase;
-  grid-column: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cur-rtt {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
 }
 .cur-server .swap {
   grid-row: 2;
   grid-column: 2;
-  text-align: right;
+  justify-self: end;
   font-size: var(--fs-label);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--text-dim);
-  transition: color var(--t-fast);
+  border: var(--bw) solid var(--line);
+  padding: 4px 9px;
+  transition:
+    color var(--t-fast),
+    border-color var(--t-fast);
 }
 .cur-server .swap:hover {
   color: var(--signal);
+  border-color: var(--signal);
 }
 
 /* ── stats row ── */
@@ -285,4 +451,24 @@
   display: block;
   width: 100%;
   height: 84px;
+}
+
+/* Live head on the download line: a solid dot with a ring that pulses out. The
+   ring rests at opacity 0, so reduced-motion leaves only the static dot rather
+   than a frozen disc. */
+.chart-dot {
+  fill: var(--signal);
+}
+.chart-pulse {
+  fill: var(--signal);
+  opacity: 0;
+  animation: head-pulse 1.2s ease-out infinite;
+}
+@keyframes head-pulse {
+  0% {
+    opacity: 0.55;
+  }
+  100% {
+    opacity: 0;
+  }
 }

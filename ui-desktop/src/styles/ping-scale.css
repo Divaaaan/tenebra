@@ -1,0 +1,40 @@
+/* Five-bar latency meter (PingScale). Heights are fixed per bar; the component
+   only toggles which bars are lit and their tone. Shared by the connection card
+   and the server list. */
+
+.ping-scale {
+  display: inline-flex;
+  gap: 2px;
+  align-items: flex-end;
+  flex: none;
+}
+
+.ping-scale-bar {
+  width: 3px;
+  background: var(--line);
+}
+.ping-scale-bar:nth-child(1) {
+  height: 4px;
+}
+.ping-scale-bar:nth-child(2) {
+  height: 6px;
+}
+.ping-scale-bar:nth-child(3) {
+  height: 8px;
+}
+.ping-scale-bar:nth-child(4) {
+  height: 10px;
+}
+.ping-scale-bar:nth-child(5) {
+  height: 12px;
+}
+
+.ping-scale-bar.on.good {
+  background: var(--good);
+}
+.ping-scale-bar.on.warn {
+  background: var(--warn-soft);
+}
+.ping-scale-bar.on.signal {
+  background: var(--signal);
+}

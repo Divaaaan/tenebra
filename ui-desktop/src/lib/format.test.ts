@@ -6,6 +6,7 @@ import {
   formatExpiry,
   formatTime,
   formatTrafficUsage,
+  trafficUsedFraction,
 } from "./format";
 
 describe("formatBytes", () => {
@@ -151,5 +152,28 @@ describe("formatTrafficUsage", () => {
     expect(formatTrafficUsage(1.2 * 1024 ** 3, 200 * 1024 ** 3)).toBe(
       "1.2 GB / 200 GB",
     );
+  });
+});
+
+describe("trafficUsedFraction", () => {
+  it("returns null without a metered total to measure against", () => {
+    expect(trafficUsedFraction(5, 0)).toBeNull();
+    expect(trafficUsedFraction(5, undefined)).toBeNull();
+    expect(trafficUsedFraction(undefined, 100)).toBeNull();
+  });
+
+  it("returns the consumed fraction of a metered plan", () => {
+    expect(trafficUsedFraction(25, 100)).toBe(0.25);
+    expect(trafficUsedFraction(50, 200)).toBe(0.25);
+  });
+
+  it("clamps at a full bar when usage meets or exceeds the cap", () => {
+    expect(trafficUsedFraction(100, 100)).toBe(1);
+    expect(trafficUsedFraction(150, 100)).toBe(1);
+  });
+
+  it("floors a negative or non-finite used value at empty", () => {
+    expect(trafficUsedFraction(-10, 100)).toBe(0);
+    expect(trafficUsedFraction(NaN, 100)).toBe(0);
   });
 });
