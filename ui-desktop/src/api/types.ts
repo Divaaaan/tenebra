@@ -192,6 +192,15 @@ export type AttemptStatus = "waiting" | "trying" | "blocked" | "ok";
  * One line of a fallback-walk snapshot: a candidate's place in the plan, the
  * protocol and node it targets, its status, and whether it is the profile's
  * last-good node (the one the walk leads with).
+ *
+ * `strategy` and `reason` annotate the adaptive-transport walk and are both
+ * optional (the core omits them when empty), so a candidate that connected on its
+ * native parameters carries neither. `strategy` names the non-default transport
+ * variation a candidate is being tried under or came up on — a reshaped handshake
+ * on the same node — and is absent while it is on its own parameters. `reason`
+ * carries the failure classification when a candidate was abandoned because its
+ * handshake looked interfered with (`"censored"`), giving the UI the "why" behind
+ * a block.
  */
 export interface Attempt {
   seq: number;
@@ -199,6 +208,8 @@ export interface Attempt {
   node: string;
   status: AttemptStatus;
   last_good: boolean;
+  strategy?: string;
+  reason?: string;
 }
 
 /**

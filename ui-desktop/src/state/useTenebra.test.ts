@@ -242,6 +242,26 @@ describe("attempts events", () => {
 
     expect(result.current.attempts).toEqual(settled);
   });
+
+  it("preserves the adaptive strategy and reason annotations on items", async () => {
+    const { result } = await mountReady();
+    // A walk that escalated a censored node's transport strategy: the item that
+    // came up names the non-default strategy, the abandoned one the censored
+    // reason. Both must survive verbatim so a future UI can surface them.
+    const adapted: AttemptsEvent = {
+      items: [
+        { seq: 1, protocol: "vless", node: "n1", status: "blocked", last_good: true, reason: "censored" },
+        { seq: 2, protocol: "vless", node: "n2", status: "ok", last_good: false, strategy: "firefox-fp" },
+      ],
+      outcome: "ok",
+    };
+
+    act(() => h.attempts?.(adapted));
+
+    expect(result.current.attempts).toEqual(adapted);
+    expect(result.current.attempts?.items[0].reason).toBe("censored");
+    expect(result.current.attempts?.items[1].strategy).toBe("firefox-fp");
+  });
 });
 
 describe("actions", () => {
