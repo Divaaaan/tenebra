@@ -1,0 +1,147 @@
+/* Anti-DPI fallback walk (FallbackPanel). Stands in for the node card while the
+   core steps through the protocol-fallback order. One row per candidate; the
+   status tone (waiting/trying/blocked/ok/reserve) drives its accents. */
+
+.fallback {
+  border: var(--bw) solid var(--line);
+  display: flex;
+  flex-direction: column;
+  animation: fallback-in 200ms ease-out both;
+}
+@keyframes fallback-in {
+  0% {
+    opacity: 0;
+    transform: translateY(12px) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.fallback-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding: 10px 14px;
+  border-bottom: var(--bw) solid var(--line);
+}
+.fallback-title {
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-cap);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.fallback-status {
+  font-size: var(--fs-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.fallback-status.trying {
+  color: var(--warn-soft);
+}
+.fallback-status.ok {
+  color: var(--good);
+}
+.fallback-status.bad {
+  color: var(--signal);
+}
+
+.fallback-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.fallback-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: 9px 14px;
+  border-bottom: var(--bw) solid var(--line);
+  border-left: var(--bw-emphasis) solid transparent;
+  transition:
+    border-color var(--t-fast),
+    background var(--t-fast);
+}
+.fallback-row:last-child {
+  border-bottom: none;
+}
+
+.fb-idx {
+  flex: none;
+  font-size: var(--fs-label);
+  color: var(--text-dim-2);
+}
+.fb-proto {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+.fb-node {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-label);
+  color: var(--text-dim);
+  letter-spacing: var(--track-body);
+  text-transform: lowercase;
+}
+.fb-tag {
+  flex: none;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border: var(--bw) dashed var(--line-2);
+  padding: 1px 5px;
+}
+.fb-state {
+  margin-left: auto;
+  flex: none;
+  font-size: var(--fs-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* Per-status colouring. The proto label, the state word and the left tick take
+   the status tone; trying / ok rows also get a faint wash. Row backgrounds prefer
+   the shared tokens when present, with a theme-aware color-mix fallback. */
+.fallback-row.status-waiting .fb-proto,
+.fallback-row.status-waiting .fb-state,
+.fallback-row.status-reserve .fb-proto,
+.fallback-row.status-reserve .fb-state {
+  color: var(--text-dim-2);
+}
+
+.fallback-row.status-trying {
+  border-left-color: var(--warn-soft);
+  background: var(--row-trying-bg, color-mix(in srgb, var(--warn-soft) 4%, transparent));
+}
+.fallback-row.status-trying .fb-proto,
+.fallback-row.status-trying .fb-state {
+  color: var(--warn-soft);
+}
+
+.fallback-row.status-ok {
+  border-left-color: var(--good);
+  background: var(--row-ok-bg, color-mix(in srgb, var(--good) 4%, transparent));
+}
+.fallback-row.status-ok .fb-proto,
+.fallback-row.status-ok .fb-state {
+  color: var(--good);
+}
+
+.fallback-row.status-blocked {
+  border-left-color: var(--signal);
+}
+.fallback-row.status-blocked .fb-proto,
+.fallback-row.status-blocked .fb-state {
+  color: var(--signal);
+}
+.fallback-row.status-blocked .fb-node {
+  text-decoration: line-through;
+}
