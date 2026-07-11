@@ -199,6 +199,16 @@ pub enum AttemptStatus {
 /// One line of a fallback-walk snapshot: a candidate's place in the plan, the
 /// protocol and node it targets, its status, and whether it is the profile's
 /// last-good node (the one the walk leads with). Mirrors the core's attempt item.
+///
+/// `strategy` and `reason` annotate the adaptive-transport walk and are both
+/// optional on the wire (the core omits them when empty), so a candidate that
+/// connected on its native parameters carries neither. `strategy` names the
+/// non-default transport variation a candidate is being tried under or came up on
+/// — a reshaped handshake on the same node — and is empty while it is on its own
+/// parameters. `reason` carries the failure classification when a candidate was
+/// abandoned because its handshake looked interfered with (`"censored"`), giving
+/// the UI the "why" behind a block. Both default to empty so an older core that
+/// does not send them still decodes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Attempt {
     pub seq: u32,
@@ -206,6 +216,10 @@ pub struct Attempt {
     pub node: String,
     pub status: AttemptStatus,
     pub last_good: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub strategy: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub reason: String,
 }
 
 /// A full snapshot of the anti-DPI fallback walk (the body of an `attempts`
@@ -554,6 +568,32 @@ mod tests {
         let snap: AttemptsSnapshot = from_value(value.clone()).unwrap();
         assert_eq!(snap.outcome, "");
         assert_eq!(snap.items[1].protocol, Protocol::Amneziawg);
+        assert_eq!(to_value(&snap).unwrap(), value);
+    }
+
+    #[test]
+    fn attempts_snapshot_carries_strategy_and_reason() {
+        // A walk that escalated a censored node's transport strategy: the item
+        // that came up names the non-default strategy it connected under, and the
+        // abandoned one carries the censored reason. Both annotations survive the
+        // round trip, and an item without them stays clean (they are omitted).
+        let value = json!({
+            "items": [
+                { "seq": 1, "protocol": "vless", "node": "n1", "status": "blocked", "last_good": true, "reason": "censored" },
+                { "seq": 2, "protocol": "vless", "node": "n2", "status": "ok", "last_good": false, "strategy": "firefox-fp" },
+                { "seq": 3, "protocol": "amneziawg", "node": "n3", "status": "waiting", "last_good": false },
+            ],
+            "outcome": "ok",
+        });
+        let snap: AttemptsSnapshot = from_value(value.clone()).unwrap();
+        assert_eq!(snap.items[0].reason, "censored");
+        assert_eq!(snap.items[0].strategy, "");
+        assert_eq!(snap.items[1].strategy, "firefox-fp");
+        assert_eq!(snap.items[1].reason, "");
+        assert_eq!(snap.items[2].strategy, "");
+        assert_eq!(snap.items[2].reason, "");
+        // The empty annotations are omitted on the way back out, so the wire shape
+        // is byte-for-byte what the core sent.
         assert_eq!(to_value(&snap).unwrap(), value);
     }
 
