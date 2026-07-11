@@ -1,0 +1,62 @@
+/* ── action-confirmation toasts ──
+   One inert bar, bottom-left, above every overlay. It confirms an action the user
+   just took; it never blocks input (pointer-events: none). Lifetime and queueing
+   are owned by ToastHost — here we own only the look and the in → hold → out
+   motion. The bilingual copy comes from strings.ts. */
+
+.toast-host {
+  position: absolute;
+  left: 22px;
+  bottom: 56px;
+  z-index: 50; /* above the overlay host (z-index 20) and its panels */
+  pointer-events: none;
+}
+
+.toast {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  background: var(--bg);
+  border: var(--bw) solid var(--line-2);
+  padding: 8px 14px;
+  font-family: var(--mono);
+  font-size: var(--fs-meta); /* 11px */
+  letter-spacing: 0.06em;
+  color: var(--text);
+  white-space: nowrap;
+  /* in (0→180ms) → hold → fade; `both` holds the final (invisible) frame until
+     the host unmounts the node ~100ms later, so there is no flash. */
+  animation: toast-life 2600ms ease-out both;
+}
+
+.toast-mark {
+  color: var(--signal);
+}
+
+@keyframes toast-life {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  7% {
+    opacity: 1;
+    transform: none;
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Reduced motion: no movement, no fade. The bar simply appears for its lifetime
+   and is removed by the host's timer. global.css already neutralises the
+   keyframes; this makes the intent explicit and — crucially — keeps the bar
+   visible instead of resting on the animation's final, invisible frame. */
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+    opacity: 1;
+  }
+}

@@ -46,4 +46,31 @@ describe("TopBar", () => {
     // The fallback copy must not appear once a subscription is active.
     expect(screen.queryByText("no subscription")).not.toBeInTheDocument();
   });
+
+  it("draws the consumption meter, filled to the used fraction, for a metered plan", () => {
+    const profile = makeProfile({
+      trafficUsed: 25 * 1024 ** 3,
+      trafficTotal: 100 * 1024 ** 3,
+    });
+    const { container } = renderWithProviders(
+      <TopBar activeProfile={profile} />,
+    );
+    const bar = container.querySelector("svg.usage-bar");
+    expect(bar).toBeInTheDocument();
+    // Two rects: the track, then the fill at 25/100 of the 64px track.
+    const rects = container.querySelectorAll("svg.usage-bar rect");
+    expect(rects).toHaveLength(2);
+    expect(rects[1]).toHaveAttribute("width", "16.0");
+  });
+
+  it("omits the consumption meter on an unmetered plan", () => {
+    const profile = makeProfile({
+      trafficUsed: 5 * 1024 ** 3,
+      trafficTotal: 0,
+    });
+    const { container } = renderWithProviders(
+      <TopBar activeProfile={profile} />,
+    );
+    expect(container.querySelector("svg.usage-bar")).not.toBeInTheDocument();
+  });
 });

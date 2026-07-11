@@ -1,6 +1,6 @@
 import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ServerList, type ServerRow } from "./ServerList";
@@ -254,5 +254,179 @@ describe("ServerList", () => {
 
     await user.click(screen.getByRole("button", { name: "+ add" }));
     expect(onAddSubscription).toHaveBeenCalledTimes(1);
+  });
+
+  describe("AUTO row", () => {
+    it("names the lowest-ping live node with its ping and a dashed tag", () => {
+      renderWithProviders(<ServerList {...baseProps()} />);
+
+      // Best live node is DE-FRA-01 at 27 ms (NL-AMS-02 is slower, US-NYC-01 is
+      // dead), named lowercased in the subtitle.
+      const autoRow = screen
+        .getByText("lowest ping · now de-fra-01")
+        .closest('[role="button"]')!;
+      expect(autoRow).toHaveClass("srv-auto");
+      expect(autoRow.querySelector(".srv-auto-rtt")).toHaveTextContent("27 ms");
+      expect(autoRow.querySelector(".srv-auto-tag")).toHaveTextContent("AUTO");
+    });
+
+    it("is active by default and calls onSelectAuto on click", async () => {
+      const onSelectAuto = vi.fn();
+      const user = userEvent.setup();
+      renderWithProviders(<ServerList {...baseProps({ onSelectAuto })} />);
+
+      const autoRow = screen
+        .getByText("lowest ping · now de-fra-01")
+        .closest('[role="button"]')!;
+      // No node is pinned (activeNodeId null) → AUTO carries the active state.
+      expect(autoRow).toHaveClass("srv-auto", "on");
+      expect(autoRow).toHaveAttribute("aria-pressed", "true");
+      expect(autoRow.querySelector(".srv-auto-dot")).toBeTruthy();
+
+      await user.click(autoRow);
+      expect(onSelectAuto).toHaveBeenCalledTimes(1);
+    });
+
+    it("stays neutral when no node has a ping, inventing nothing", () => {
+      const rows = makeRows().map((r) => ({
+        ...r,
+        rttMs: null,
+        dead: false,
+      }));
+      renderWithProviders(<ServerList {...baseProps({ rows })} />);
+
+      // No best node → the subtitle drops the name and the ping shows a
+      // placeholder rather than a guessed value.
+      const autoRow = screen
+        .getByText("lowest ping")
+        .closest('[role="button"]')!;
+      expect(autoRow.querySelector(".srv-auto-rtt")).toHaveTextContent("·");
+    });
+
+    it("deactivates when a node is pinned (auto=false)", () => {
+      renderWithProviders(
+        <ServerList {...baseProps({ auto: false, activeNodeId: "n-fra" })} />,
+      );
+
+      const autoRow = screen
+        .getByText("lowest ping · now de-fra-01")
+        .closest('[role="button"]')!;
+      expect(autoRow).not.toHaveClass("on");
+      expect(autoRow.querySelector(".srv-auto-dot")).toBeFalsy();
+
+      // The pinned node row carries the active marker instead.
+      const nodeRow = screen.getByText("DE-FRA-01").closest('[role="button"]')!;
+      expect(nodeRow).toHaveClass("active");
+      expect(nodeRow.querySelector(".srv-active-dot")).toBeTruthy();
+    });
+  });
+
+  describe("ping meter", () => {
+    it("lights a PingScale per live node and blanks it for a dead one", () => {
+      renderWithProviders(<ServerList {...baseProps()} />);
+
+      // DE-FRA-01 @ 27 ms → all five bars lit, in the "good" tone.
+      const liveRow = screen.getByText("DE-FRA-01").closest('[role="button"]')!;
+      expect(liveRow.querySelectorAll(".ping-scale-bar.on")).toHaveLength(5);
+      expect(liveRow.querySelector(".ping-scale-bar.on.good")).toBeTruthy();
+
+      // NL-AMS-02 @ 140 ms → two bars, in the "signal" (slow) tone.
+      const midRow = screen.getByText("NL-AMS-02").closest('[role="button"]')!;
+      expect(midRow.querySelectorAll(".ping-scale-bar.on")).toHaveLength(2);
+      expect(midRow.querySelector(".ping-scale-bar.on.signal")).toBeTruthy();
+
+      // US-NYC-01 dead → a blank meter still holds the column, nothing lit.
+      const deadRow = screen.getByText("US-NYC-01").closest('[role="button"]')!;
+      expect(deadRow.querySelectorAll(".ping-scale-bar")).toHaveLength(5);
+      expect(deadRow.querySelectorAll(".ping-scale-bar.on")).toHaveLength(0);
+    });
+  });
+
+  describe("focus-search event", () => {
+    it("focuses the search input when tenebra:focus-search fires", () => {
+      renderWithProviders(<ServerList {...baseProps()} />);
+      const input = screen.getByRole("textbox", {
+        name: "search node · de-fra",
+      });
+      expect(input).not.toHaveFocus();
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("tenebra:focus-search"));
+      });
+      expect(input).toHaveFocus();
+    });
+  });
+
+  describe("empty states", () => {
+    it("offers an import CTA when there is no subscription", async () => {
+      const onAddSubscription = vi.fn();
+      const user = userEvent.setup();
+      const { container } = renderWithProviders(
+        <ServerList
+          {...baseProps({ profiles: [], rows: [], onAddSubscription })}
+        />,
+      );
+
+      expect(container.querySelector(".srv-empty")).toHaveTextContent(
+        "no subscription",
+      );
+      // No nodes → no AUTO row to select.
+      expect(screen.queryByText(/lowest ping/)).not.toBeInTheDocument();
+
+      await user.click(
+        screen.getByRole("button", { name: "import subscription" }),
+      );
+      expect(onAddSubscription).toHaveBeenCalledTimes(1);
+    });
+
+    it("offers a reset CTA when a filter hides every node", async () => {
+      const onRegion = vi.fn();
+      const onQuery = vi.fn();
+      const user = userEvent.setup();
+      renderWithProviders(
+        <ServerList
+          {...baseProps({ query: "zzz-no-match", onRegion, onQuery })}
+        />,
+      );
+
+      expect(
+        screen.getByText("no nodes match this filter"),
+      ).toBeInTheDocument();
+      // AUTO is not subject to the filter — it stays put above the message.
+      expect(screen.getByText(/lowest ping/)).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "reset filter" }));
+      expect(onRegion).toHaveBeenCalledWith(null);
+      expect(onQuery).toHaveBeenCalledWith("");
+    });
+
+    it("names an empty subscription and offers import, not reset", () => {
+      renderWithProviders(<ServerList {...baseProps({ rows: [] })} />);
+
+      expect(
+        screen.getByText("this subscription has no nodes"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "import subscription" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "reset filter" }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  describe("row cascade", () => {
+    it("staggers row entrances by a growing animation delay", () => {
+      const { container } = renderWithProviders(
+        <ServerList {...baseProps()} />,
+      );
+      const rows = Array.from(
+        container.querySelectorAll<HTMLElement>(".srv-row"),
+      );
+      expect(rows).toHaveLength(3);
+      expect(rows[0].style.animationDelay).toBe("0ms");
+      expect(rows[1].style.animationDelay).toBe("26ms");
+      expect(rows[2].style.animationDelay).toBe("52ms");
+    });
   });
 });

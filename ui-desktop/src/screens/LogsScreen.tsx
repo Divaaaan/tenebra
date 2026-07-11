@@ -10,6 +10,7 @@ import type { Tenebra } from "../state/useTenebra";
 import { useI18n } from "../i18n/I18nContext";
 import type { Strings } from "../i18n/strings";
 import { formatTime } from "../lib/format";
+import { pushToast } from "../lib/toast";
 
 interface LogsScreenProps {
   tenebra: Tenebra;
@@ -98,6 +99,16 @@ export function LogsScreen({ tenebra }: LogsScreenProps) {
     }
   }
 
+  // Clear the console and confirm it. The button is disabled while empty, so this
+  // only fires with lines present; the guard keeps that true if called otherwise.
+  function clearLogs() {
+    if (logs.length === 0) {
+      return;
+    }
+    tenebra.clearLogs();
+    pushToast(t.toast.logsCleared);
+  }
+
   return (
     <section className="log-screen">
       <header className="log-head">
@@ -115,6 +126,12 @@ export function LogsScreen({ tenebra }: LogsScreenProps) {
         </button>
       </header>
 
+      {checking && (
+        <div className="log-rail" aria-hidden="true">
+          <span className="log-rail-run" />
+        </div>
+      )}
+
       {leak && <LeakReport leak={leak} t={t} />}
 
       <section className="log-console-block">
@@ -124,7 +141,7 @@ export function LogsScreen({ tenebra }: LogsScreenProps) {
             type="button"
             className="log-btn-ghost"
             disabled={logs.length === 0}
-            onClick={tenebra.clearLogs}
+            onClick={clearLogs}
           >
             {t.logs.clear}
           </button>

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { SettingsScreen } from "./SettingsScreen";
+import { SettingsScreen, pickActiveSection } from "./SettingsScreen";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { makeTenebra } from "../test/fixtures";
 import type { State } from "../api";
@@ -976,6 +976,102 @@ describe("SettingsScreen", () => {
       expect(stable).toHaveFocus();
       expect(stable).toHaveAttribute("aria-checked", "true");
       expect(localStorage.getItem("tenebra.updateChannel")).toBe("stable");
+    });
+  });
+
+  describe("section navigation", () => {
+    it("picks the active section from the scroll position (last past the threshold)", () => {
+      // Eight section tops; the picker returns the last whose top − 60 has been
+      // scrolled past, and never goes below the first.
+      const tops = [0, 300, 620, 900, 1250, 1600, 1850, 2200];
+      expect(pickActiveSection(0, tops)).toBe(0);
+      expect(pickActiveSection(50, tops)).toBe(0); // 50 < 300−60, still first
+      expect(pickActiveSection(240, tops)).toBe(1); // 240 ≥ 300−60
+      expect(pickActiveSection(560, tops)).toBe(2); // 560 ≥ 620−60
+      expect(pickActiveSection(1_000_000, tops)).toBe(7); // past the end → last
+    });
+
+    it("lists one rail link per section in order", () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      const rail = screen.getByRole("navigation", { name: "Settings sections" });
+      const links = within(rail).getAllByRole("button");
+      // routing, split, rules, tunnel, dns, appearance, startup, updates.
+      expect(links).toHaveLength(8);
+      expect(links[0]).toHaveTextContent("Routing");
+      expect(links[2]).toHaveTextContent("Custom rules");
+      expect(links[7]).toHaveTextContent("Updates");
+    });
+
+    it("scrolls to a section and highlights its link on click", async () => {
+      // jsdom doesn't implement scrollIntoView; install a spy so the jump is
+      // observable and the optional call actually fires.
+      const scrollIntoView = vi.fn();
+      Element.prototype.scrollIntoView = scrollIntoView;
+
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      const rail = screen.getByRole("navigation", { name: "Settings sections" });
+      const dnsLink = within(rail).getByRole("button", { name: "DNS" });
+      await user.click(dnsLink);
+
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      // The clicked link takes the active mark immediately.
+      expect(dnsLink).toHaveAttribute("aria-current", "true");
+    });
+
+    it("closes via the sticky esc button by re-raising Escape for the app handler", async () => {
+      // The screen has no close callback; the button re-raises the Escape the app
+      // already listens for. Prove the keydown reaches a window listener.
+      let escaped = false;
+      const onKey = (e: KeyboardEvent) => {
+        if (e.key === "Escape") {
+          escaped = true;
+        }
+      };
+      window.addEventListener("keydown", onKey);
+
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      try {
+        await user.click(screen.getByRole("button", { name: "Close settings" }));
+        expect(escaped).toBe(true);
+      } finally {
+        window.removeEventListener("keydown", onKey);
+      }
+    });
+
+    it("shows the app version and licence at the foot of the rail", async () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      // getVersion() resolves 0.1.0 (mocked); the rail reads "v{version} · GPLv3".
+      expect(await screen.findByText("v0.1.0 · GPLv3")).toBeInTheDocument();
+    });
+
+    it("still renders every section heading (controls preserved under the new shell)", () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      for (const name of [
+        "Routing",
+        "Split tunneling",
+        "Custom rules",
+        "Tunnel",
+        "DNS",
+        "Appearance",
+        "Startup",
+        "Updates",
+      ]) {
+        expect(
+          screen.getByRole("heading", { level: 2, name }),
+        ).toBeInTheDocument();
+      }
     });
   });
 });

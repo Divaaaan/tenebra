@@ -20,9 +20,46 @@ import {
 import { isValidDnsServer } from "../lib/dns";
 import { isValidDomainSuffix } from "../lib/rules";
 import { checkForUpdate, installUpdate, type UpdateStatus } from "../lib/updates";
+import { useReducedMotion } from "../lib/useReducedMotion";
 
 interface SettingsScreenProps {
   tenebra: Tenebra;
+}
+
+// The ordered sections, keyed so each key doubles as its i18n label
+// (t.settings[key]) and its DOM anchor id. The left rail lists these; the content
+// column renders a matching <section> per key. Kept at module scope so the
+// identity is stable across renders.
+const NAV_SECTIONS = [
+  "routing",
+  "split",
+  "rules",
+  "tunnel",
+  "dns",
+  "appearance",
+  "startup",
+  "updates",
+] as const;
+type SectionKey = (typeof NAV_SECTIONS)[number];
+
+/**
+ * Which section index is "active" for a given scroll position: the last section
+ * whose top has crossed the threshold line (offsetTop − threshold ≤ scrollTop).
+ * Pure and layout-free so the scroll tracking can be unit-tested without a real
+ * viewport; falls back to the first section when nothing has scrolled past.
+ */
+export function pickActiveSection(
+  scrollTop: number,
+  sectionTops: number[],
+  threshold = 60,
+): number {
+  let active = 0;
+  for (let i = 0; i < sectionTops.length; i += 1) {
+    if (scrollTop >= sectionTops[i] - threshold) {
+      active = i;
+    }
+  }
+  return active;
 }
 
 // A single custom-rule list editor: a validated domain input, an add button, and
@@ -139,6 +176,73 @@ function RuleListEditor({
 export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   const { t, lang, setLang } = useI18n();
   const { theme, setTheme } = useTheme();
+
+  // Section navigation. The content column owns its own scroll; the rail tracks
+  // which section is in view and jumps to one on click. A layout-free picker
+  // (pickActiveSection) turns the scroll position into the active index.
+  const reducedMotion = useReducedMotion();
+  const mainRef = useRef<HTMLDivElement>(null);
+  const sectionRefs = useRef<Map<SectionKey, HTMLElement>>(new Map());
+  const [activeSection, setActiveSection] = useState<SectionKey>("routing");
+
+  const setSectionRef = (key: SectionKey) => (el: HTMLElement | null) => {
+    if (el) {
+      sectionRefs.current.set(key, el);
+    }
+  };
+
+  // Track the active section by scroll position: read each section's offsetTop
+  // (relative to the positioned content column) and ask the picker which one the
+  // scroll has reached. The scroll handler is rAF-throttled; the initial pass runs
+  // synchronously so the rail is correct before the first scroll. Cleaned up on
+  // unmount.
+  useEffect(() => {
+    const main = mainRef.current;
+    if (!main) {
+      return;
+    }
+    const updateActive = () => {
+      const tops = NAV_SECTIONS.map(
+        (key) => sectionRefs.current.get(key)?.offsetTop ?? Number.POSITIVE_INFINITY,
+      );
+      setActiveSection(NAV_SECTIONS[pickActiveSection(main.scrollTop, tops)]);
+    };
+    let frame = 0;
+    const onScroll = () => {
+      if (frame) {
+        return;
+      }
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        updateActive();
+      });
+    };
+    updateActive();
+    main.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      main.removeEventListener("scroll", onScroll);
+      if (frame) {
+        cancelAnimationFrame(frame);
+      }
+    };
+  }, []);
+
+  function goToSection(key: SectionKey) {
+    // Optimistic highlight so the click lands instantly; the scroll tracker then
+    // confirms as the smooth scroll settles.
+    setActiveSection(key);
+    sectionRefs.current.get(key)?.scrollIntoView?.({
+      behavior: reducedMotion ? "auto" : "smooth",
+      block: "start",
+    });
+  }
+
+  function closeSettings() {
+    // The overlay's dismissal lives in App (an Escape key handler and the shared
+    // ✕). Rather than thread a close callback the screen doesn't have, re-raise the
+    // Escape the app already listens for — one owner for the close, no duplication.
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+  }
 
   // Launch-at-login mirrors the OS autostart registration; we read the real
   // state on mount so the toggle reflects what the system actually has set.
@@ -550,492 +654,71 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   ];
 
   return (
-    <section className="set-doc">
-      <h1 className="set-title">{t.settings.title}</h1>
-
-      <section className="set-section">
-        <div className="set-section-head">
-          <h2 className="set-eyebrow">{t.settings.routing}</h2>
-        </div>
-        <div className="set-options" role="radiogroup" aria-label={t.settings.routing}>
-          {routingOptions.map((opt, index) => {
-            const checked = routing === opt.mode;
+    <div className="set-shell">
+      <nav className="set-nav" aria-label={t.settings.nav}>
+        <h1 className="set-nav-title">{t.settings.title}</h1>
+        <div className="set-nav-list">
+          {NAV_SECTIONS.map((key) => {
+            const active = activeSection === key;
             return (
               <button
-                key={opt.mode}
-                ref={(el) => {
-                  routingRefs.current[index] = el;
-                }}
+                key={key}
                 type="button"
-                role="radio"
-                aria-checked={checked}
-                tabIndex={checked ? 0 : -1}
-                className={`set-option${checked ? " is-checked" : ""}`}
-                onClick={() => void tenebra.setRouting(opt.mode)}
-                onKeyDown={(e) => onRoutingKey(e, index)}
+                className={`set-nav-item${active ? " is-active" : ""}`}
+                aria-current={active ? "true" : undefined}
+                onClick={() => goToSection(key)}
               >
-                <span className="set-mark" aria-hidden="true">{checked ? "▣" : "▢"}</span>
-                <span className="set-option-text">
-                  <span className="set-option-label">{opt.label}</span>
-                  <span className="set-option-hint">{opt.hint}</span>
-                </span>
+                {t.settings[key]}
               </button>
             );
           })}
         </div>
-      </section>
+        <p className="set-nav-foot">
+          {appVersion
+            ? t.settings.rail.replace("{version}", appVersion)
+            : t.settings.license}
+        </p>
+      </nav>
 
-      <section className="set-section">
-        <div className="set-section-head">
-          <h2 className="set-eyebrow">{t.settings.split}</h2>
-          <p className="set-sub">{t.settings.splitHint}</p>
+      <div className="set-main" ref={mainRef}>
+        <div className="set-close-bar">
+          <button
+            type="button"
+            className="set-close"
+            onClick={closeSettings}
+            aria-label={t.settings.close}
+          >
+            <span className="set-close-key">{t.settings.escLabel}</span>
+            <span aria-hidden="true">✕</span>
+          </button>
         </div>
 
-        <div className="set-options" role="radiogroup" aria-label={t.settings.split}>
-          {splitOptions.map((opt, index) => {
-            const checked = splitMode === opt.mode;
-            return (
-              <button
-                key={opt.mode}
-                ref={(el) => {
-                  splitRefs.current[index] = el;
-                }}
-                type="button"
-                role="radio"
-                aria-checked={checked}
-                tabIndex={checked ? 0 : -1}
-                className={`set-option${checked ? " is-checked" : ""}`}
-                onClick={() => chooseSplitMode(opt.mode)}
-                onKeyDown={(e) => onSplitKey(e, index)}
-              >
-                <span className="set-mark" aria-hidden="true">{checked ? "▣" : "▢"}</span>
-                <span className="set-option-text">
-                  <span className="set-option-label">{opt.label}</span>
-                  <span className="set-option-hint">{opt.hint}</span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        {splitMode !== "off" && (
-          <div className="set-apps">
-            <span className="set-eyebrow">{t.settings.splitApps}</span>
-            <div className="set-add">
-              <span className="set-field">
-                <span className="set-prompt" aria-hidden="true">$</span>
-                <input
-                  type="text"
-                  value={appDraft}
-                  onChange={(e) => setAppDraft(e.target.value)}
-                  onKeyDown={onAppInputKey}
-                  placeholder={t.settings.splitAddPlaceholder}
-                  aria-label={t.settings.splitApps}
-                  spellCheck={false}
-                  autoCapitalize="off"
-                  autoCorrect="off"
-                />
-              </span>
-              <button
-                type="button"
-                className="set-btn"
-                onClick={addApp}
-                disabled={!canAddApp}
-              >
-                {t.settings.splitAdd}
-              </button>
-            </div>
-
-            {splitApps.length === 0 ? (
-              <p className="set-empty">{t.settings.splitAppsEmpty}</p>
-            ) : (
-              <ul className="set-app-list">
-                {splitApps.map((name) => (
-                  <li key={name} className="set-app-row">
-                    <span className="set-app-name">{name}</span>
-                    <button
-                      type="button"
-                      className="set-remove"
-                      onClick={() => removeApp(name)}
-                      aria-label={`${t.settings.splitRemove} ${name}`}
-                    >
-                      <span aria-hidden="true">✕</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
+        <section
+          className="set-section"
+          id="set-sec-routing"
+          ref={setSectionRef("routing")}
+        >
+          <div className="set-section-head">
+            <h2 className="set-eyebrow">{t.settings.routing}</h2>
           </div>
-        )}
-      </section>
-
-      <section className="set-section">
-        <div className="set-section-head">
-          <h2 className="set-eyebrow">{t.settings.rules}</h2>
-          <p className="set-sub">{t.settings.rulesHint}</p>
-        </div>
-
-        <div className="set-row">
-          <span className="set-row-text">
-            <span className="set-row-label">{t.settings.presetRuBanking}</span>
-            <span className="set-row-hint">{t.settings.presetRuBankingHint}</span>
-          </span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={presetRuBanking}
-            className={`set-switch${presetRuBanking ? " is-on" : ""}`}
-            onClick={toggleRuleBanking}
-          >
-            <span className="set-switch-box" aria-hidden="true">
-              {presetRuBanking ? "▣" : "▢"}
-            </span>
-            {presetRuBanking ? "ON" : "OFF"}
-          </button>
-        </div>
-
-        <div className="set-row">
-          <span className="set-row-text">
-            <span className="set-row-label">{t.settings.presetRuGov}</span>
-            <span className="set-row-hint">{t.settings.presetRuGovHint}</span>
-          </span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={presetRuGov}
-            className={`set-switch${presetRuGov ? " is-on" : ""}`}
-            onClick={toggleRuleGov}
-          >
-            <span className="set-switch-box" aria-hidden="true">
-              {presetRuGov ? "▣" : "▢"}
-            </span>
-            {presetRuGov ? "ON" : "OFF"}
-          </button>
-        </div>
-
-        <RuleListEditor
-          idBase="rules-direct"
-          label={t.settings.rulesDirect}
-          hint={t.settings.rulesDirectHint}
-          domains={rulesDirect}
-          onAdd={(domain) =>
-            pushRules(
-              [...rulesDirect, domain],
-              rulesProxy,
-              presetRuBanking,
-              presetRuGov,
-            )
-          }
-          onRemove={(domain) =>
-            pushRules(
-              rulesDirect.filter((d) => d !== domain),
-              rulesProxy,
-              presetRuBanking,
-              presetRuGov,
-            )
-          }
-        />
-
-        <RuleListEditor
-          idBase="rules-proxy"
-          label={t.settings.rulesProxy}
-          hint={t.settings.rulesProxyHint}
-          domains={rulesProxy}
-          onAdd={(domain) =>
-            pushRules(
-              rulesDirect,
-              [...rulesProxy, domain],
-              presetRuBanking,
-              presetRuGov,
-            )
-          }
-          onRemove={(domain) =>
-            pushRules(
-              rulesDirect,
-              rulesProxy.filter((d) => d !== domain),
-              presetRuBanking,
-              presetRuGov,
-            )
-          }
-        />
-      </section>
-
-      <section className="set-section">
-        <div className="set-section-head">
-          <h2 className="set-eyebrow">{t.settings.tunnel}</h2>
-          <p className="set-sub">{t.settings.tunnelHint}</p>
-        </div>
-        <div className="set-options" role="radiogroup" aria-label={t.settings.tunnel}>
-          {stackOptions.map((opt, index) => {
-            const checked = tunStack === opt.stack;
-            return (
-              <button
-                key={opt.stack}
-                ref={(el) => {
-                  stackRefs.current[index] = el;
-                }}
-                type="button"
-                role="radio"
-                aria-checked={checked}
-                tabIndex={checked ? 0 : -1}
-                className={`set-option${checked ? " is-checked" : ""}`}
-                onClick={() => chooseStack(opt.stack)}
-                onKeyDown={(e) => onStackKey(e, index)}
-              >
-                <span className="set-mark" aria-hidden="true">{checked ? "▣" : "▢"}</span>
-                <span className="set-option-text">
-                  <span className="set-option-label">{opt.label}</span>
-                  <span className="set-option-hint">{opt.hint}</span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="set-section">
-        <div className="set-section-head">
-          <h2 className="set-eyebrow">{t.settings.dns}</h2>
-          <p className="set-sub">{t.settings.dnsHint}</p>
-        </div>
-
-        <div className="set-row">
-          <span className="set-row-text">
-            <span className="set-row-label">{t.settings.adBlock}</span>
-            <span className="set-row-hint">{t.settings.adBlockHint}</span>
-          </span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={adBlock}
-            className={`set-switch${adBlock ? " is-on" : ""}`}
-            onClick={toggleAdBlock}
-          >
-            <span className="set-switch-box" aria-hidden="true">
-              {adBlock ? "▣" : "▢"}
-            </span>
-            {adBlock ? "ON" : "OFF"}
-          </button>
-        </div>
-
-        <div className="set-row">
-          <span className="set-row-text">
-            <span className="set-row-label">{t.settings.ipv4Only}</span>
-            <span className="set-row-hint">{t.settings.ipv4OnlyHint}</span>
-          </span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={ipv4Only}
-            className={`set-switch${ipv4Only ? " is-on" : ""}`}
-            onClick={toggleIpv4Only}
-          >
-            <span className="set-switch-box" aria-hidden="true">
-              {ipv4Only ? "▣" : "▢"}
-            </span>
-            {ipv4Only ? "ON" : "OFF"}
-          </button>
-        </div>
-
-        <div className="set-apps">
-          <label className="set-eyebrow" htmlFor="dns-remote">
-            {t.settings.dnsRemote}
-          </label>
-          <span className="set-row-hint">{t.settings.dnsRemoteHint}</span>
-          <span className={`set-field${remoteValid ? "" : " is-invalid"}`}>
-            <span className="set-prompt" aria-hidden="true">$</span>
-            <input
-              id="dns-remote"
-              type="text"
-              value={remoteDraft}
-              onChange={(e) => setRemoteDraft(e.target.value)}
-              onKeyDown={onResolverKey}
-              onBlur={commitResolvers}
-              placeholder={t.settings.dnsPlaceholder}
-              aria-label={t.settings.dnsRemote}
-              aria-invalid={!remoteValid}
-              aria-describedby={remoteValid ? undefined : "dns-remote-error"}
-              spellCheck={false}
-              autoCapitalize="off"
-              autoCorrect="off"
-            />
-          </span>
-          {!remoteValid && (
-            <p id="dns-remote-error" className="set-error" role="alert">
-              {t.settings.dnsInvalid}
-            </p>
-          )}
-        </div>
-
-        <div className="set-apps">
-          <label className="set-eyebrow" htmlFor="dns-direct">
-            {t.settings.dnsDirect}
-          </label>
-          <span className="set-row-hint">{t.settings.dnsDirectHint}</span>
-          <span className={`set-field${directValid ? "" : " is-invalid"}`}>
-            <span className="set-prompt" aria-hidden="true">$</span>
-            <input
-              id="dns-direct"
-              type="text"
-              value={directDraft}
-              onChange={(e) => setDirectDraft(e.target.value)}
-              onKeyDown={onResolverKey}
-              onBlur={commitResolvers}
-              placeholder={t.settings.dnsPlaceholder}
-              aria-label={t.settings.dnsDirect}
-              aria-invalid={!directValid}
-              aria-describedby={directValid ? undefined : "dns-direct-error"}
-              spellCheck={false}
-              autoCapitalize="off"
-              autoCorrect="off"
-            />
-          </span>
-          {!directValid && (
-            <p id="dns-direct-error" className="set-error" role="alert">
-              {t.settings.dnsInvalid}
-            </p>
-          )}
-        </div>
-      </section>
-
-      <section className="set-section">
-        <div className="set-section-head">
-          <h2 className="set-eyebrow">{t.settings.appearance}</h2>
-        </div>
-
-        <div className="set-row">
-          <span className="set-row-text">
-            <span className="set-row-label">{t.settings.theme}</span>
-          </span>
-          <div className="set-seg" role="group" aria-label={t.settings.theme}>
-            {themeOptions.map((opt) => (
-              <button
-                key={opt.value}
-                type="button"
-                aria-pressed={theme === opt.value}
-                className={`${theme === opt.value ? "is-active" : ""}`}
-                onClick={() => setTheme(opt.value)}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="set-row">
-          <span className="set-row-text">
-            <span className="set-row-label">{t.settings.language}</span>
-          </span>
-          <div className="set-seg" role="group" aria-label={t.settings.language}>
-            {langOptions.map((opt) => (
-              <button
-                key={opt.value}
-                type="button"
-                aria-pressed={lang === opt.value}
-                className={`${lang === opt.value ? "is-active" : ""}`}
-                onClick={() => setLang(opt.value)}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="set-section">
-        <div className="set-section-head">
-          <h2 className="set-eyebrow">{t.settings.startup}</h2>
-        </div>
-        <div className="set-row">
-          <span className="set-row-text">
-            <span className="set-row-label">{t.settings.launchAtLogin}</span>
-            <span className="set-row-hint">{t.settings.launchAtLoginHint}</span>
-          </span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={launchAtLogin}
-            disabled={launchBusy}
-            className={`set-switch${launchAtLogin ? " is-on" : ""}`}
-            onClick={() => void toggleLaunchAtLogin()}
-          >
-            <span className="set-switch-box" aria-hidden="true">
-              {launchAtLogin ? "▣" : "▢"}
-            </span>
-            {launchAtLogin ? "ON" : "OFF"}
-          </button>
-        </div>
-
-        <div className="set-row">
-          <span className="set-row-text">
-            <span className="set-row-label">{t.settings.autoconnect}</span>
-            <span className="set-row-hint">{t.settings.autoconnectHint}</span>
-          </span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={autoconnect}
-            className={`set-switch${autoconnect ? " is-on" : ""}`}
-            onClick={toggleAutoconnect}
-          >
-            <span className="set-switch-box" aria-hidden="true">
-              {autoconnect ? "▣" : "▢"}
-            </span>
-            {autoconnect ? "ON" : "OFF"}
-          </button>
-        </div>
-
-        <div className="set-row">
-          <span className="set-row-text">
-            <span className="set-row-label">{t.settings.autoFastest}</span>
-            <span className="set-row-hint">{t.settings.autoFastestHint}</span>
-          </span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={autoFastest}
-            className={`set-switch${autoFastest ? " is-on" : ""}`}
-            onClick={toggleAutoFastest}
-          >
-            <span className="set-switch-box" aria-hidden="true">
-              {autoFastest ? "▣" : "▢"}
-            </span>
-            {autoFastest ? "ON" : "OFF"}
-          </button>
-        </div>
-      </section>
-
-      <section className="set-section">
-        <div className="set-section-head">
-          <h2 className="set-eyebrow">{t.settings.updates}</h2>
-        </div>
-
-        <div className="set-channel">
-          <span className="set-eyebrow">{t.settings.updateChannel}</span>
-          <div
-            className="set-options"
-            role="radiogroup"
-            aria-label={t.settings.updateChannel}
-          >
-            {channelOptions.map((opt, index) => {
-              const checked = channel === opt.value;
+          <div className="set-options" role="radiogroup" aria-label={t.settings.routing}>
+            {routingOptions.map((opt, index) => {
+              const checked = routing === opt.mode;
               return (
                 <button
-                  key={opt.value}
+                  key={opt.mode}
                   ref={(el) => {
-                    channelRefs.current[index] = el;
+                    routingRefs.current[index] = el;
                   }}
                   type="button"
                   role="radio"
                   aria-checked={checked}
                   tabIndex={checked ? 0 : -1}
                   className={`set-option${checked ? " is-checked" : ""}`}
-                  onClick={() => chooseChannel(opt.value)}
-                  onKeyDown={(e) => onChannelKey(e, index)}
+                  onClick={() => void tenebra.setRouting(opt.mode)}
+                  onKeyDown={(e) => onRoutingKey(e, index)}
                 >
-                  <span className="set-mark" aria-hidden="true">
-                    {checked ? "▣" : "▢"}
-                  </span>
+                  <span className="set-mark" aria-hidden="true">{checked ? "▣" : "▢"}</span>
                   <span className="set-option-text">
                     <span className="set-option-label">{opt.label}</span>
                     <span className="set-option-hint">{opt.hint}</span>
@@ -1044,74 +727,564 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
               );
             })}
           </div>
-        </div>
+        </section>
 
-        <div className="set-row">
-          <span className="set-row-text">
-            <span className="set-row-label">{t.settings.updatesCheck}</span>
-            <span className="set-row-hint">{updateStatusText}</span>
-          </span>
-          {pendingUpdate &&
-          (updateStatus.kind === "available" || updateStatus.kind === "error") ? (
-            <button
-              type="button"
-              className="set-btn"
-              onClick={() => void applyUpdate()}
-            >
-              {t.settings.updatesInstall}
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="set-btn"
-              onClick={() => void checkUpdates()}
-              disabled={updateBusy}
-            >
-              {updateStatus.kind === "checking"
-                ? t.settings.updatesChecking
-                : t.settings.updatesCheck}
-            </button>
+        <section
+          className="set-section"
+          id="set-sec-split"
+          ref={setSectionRef("split")}
+        >
+          <div className="set-section-head">
+            <h2 className="set-eyebrow">{t.settings.split}</h2>
+            <p className="set-sub">{t.settings.splitHint}</p>
+          </div>
+
+          <div className="set-options" role="radiogroup" aria-label={t.settings.split}>
+            {splitOptions.map((opt, index) => {
+              const checked = splitMode === opt.mode;
+              return (
+                <button
+                  key={opt.mode}
+                  ref={(el) => {
+                    splitRefs.current[index] = el;
+                  }}
+                  type="button"
+                  role="radio"
+                  aria-checked={checked}
+                  tabIndex={checked ? 0 : -1}
+                  className={`set-option${checked ? " is-checked" : ""}`}
+                  onClick={() => chooseSplitMode(opt.mode)}
+                  onKeyDown={(e) => onSplitKey(e, index)}
+                >
+                  <span className="set-mark" aria-hidden="true">{checked ? "▣" : "▢"}</span>
+                  <span className="set-option-text">
+                    <span className="set-option-label">{opt.label}</span>
+                    <span className="set-option-hint">{opt.hint}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {splitMode !== "off" && (
+            <div className="set-apps">
+              <span className="set-eyebrow">{t.settings.splitApps}</span>
+              <div className="set-add">
+                <span className="set-field">
+                  <span className="set-prompt" aria-hidden="true">$</span>
+                  <input
+                    type="text"
+                    value={appDraft}
+                    onChange={(e) => setAppDraft(e.target.value)}
+                    onKeyDown={onAppInputKey}
+                    placeholder={t.settings.splitAddPlaceholder}
+                    aria-label={t.settings.splitApps}
+                    spellCheck={false}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                  />
+                </span>
+                <button
+                  type="button"
+                  className="set-btn"
+                  onClick={addApp}
+                  disabled={!canAddApp}
+                >
+                  {t.settings.splitAdd}
+                </button>
+              </div>
+
+              {splitApps.length === 0 ? (
+                <p className="set-empty">{t.settings.splitAppsEmpty}</p>
+              ) : (
+                <ul className="set-app-list">
+                  {splitApps.map((name) => (
+                    <li key={name} className="set-app-row">
+                      <span className="set-app-name">{name}</span>
+                      <button
+                        type="button"
+                        className="set-remove"
+                        onClick={() => removeApp(name)}
+                        aria-label={`${t.settings.splitRemove} ${name}`}
+                      >
+                        <span aria-hidden="true">✕</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           )}
-        </div>
+        </section>
 
-        <div className="set-row">
-          <span className="set-row-text">
-            <span className="set-row-label">{t.settings.autoInstall}</span>
-            <span className="set-row-hint">{t.settings.autoInstallHint}</span>
-          </span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={autoInstall}
-            className={`set-switch${autoInstall ? " is-on" : ""}`}
-            onClick={toggleAutoInstall}
-          >
-            <span className="set-switch-box" aria-hidden="true">
-              {autoInstall ? "▣" : "▢"}
-            </span>
-            {autoInstall ? "ON" : "OFF"}
-          </button>
-        </div>
+        <section
+          className="set-section"
+          id="set-sec-rules"
+          ref={setSectionRef("rules")}
+        >
+          <div className="set-section-head">
+            <h2 className="set-eyebrow">{t.settings.rules}</h2>
+            <p className="set-sub">{t.settings.rulesHint}</p>
+          </div>
 
-        <div className="set-row">
-          <span className="set-row-text">
-            <span className="set-row-label">{t.settings.crashReports}</span>
-            <span className="set-row-hint">{t.settings.crashReportsHint}</span>
-          </span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={crashReports}
-            className={`set-switch${crashReports ? " is-on" : ""}`}
-            onClick={toggleCrashReports}
-          >
-            <span className="set-switch-box" aria-hidden="true">
-              {crashReports ? "▣" : "▢"}
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.presetRuBanking}</span>
+              <span className="set-row-hint">{t.settings.presetRuBankingHint}</span>
             </span>
-            {crashReports ? "ON" : "OFF"}
-          </button>
-        </div>
-      </section>
-    </section>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={presetRuBanking}
+              className={`set-switch${presetRuBanking ? " is-on" : ""}`}
+              onClick={toggleRuleBanking}
+            >
+              <span className="set-switch-box" aria-hidden="true">
+                {presetRuBanking ? "▣" : "▢"}
+              </span>
+              {presetRuBanking ? "ON" : "OFF"}
+            </button>
+          </div>
+
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.presetRuGov}</span>
+              <span className="set-row-hint">{t.settings.presetRuGovHint}</span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={presetRuGov}
+              className={`set-switch${presetRuGov ? " is-on" : ""}`}
+              onClick={toggleRuleGov}
+            >
+              <span className="set-switch-box" aria-hidden="true">
+                {presetRuGov ? "▣" : "▢"}
+              </span>
+              {presetRuGov ? "ON" : "OFF"}
+            </button>
+          </div>
+
+          <RuleListEditor
+            idBase="rules-direct"
+            label={t.settings.rulesDirect}
+            hint={t.settings.rulesDirectHint}
+            domains={rulesDirect}
+            onAdd={(domain) =>
+              pushRules(
+                [...rulesDirect, domain],
+                rulesProxy,
+                presetRuBanking,
+                presetRuGov,
+              )
+            }
+            onRemove={(domain) =>
+              pushRules(
+                rulesDirect.filter((d) => d !== domain),
+                rulesProxy,
+                presetRuBanking,
+                presetRuGov,
+              )
+            }
+          />
+
+          <RuleListEditor
+            idBase="rules-proxy"
+            label={t.settings.rulesProxy}
+            hint={t.settings.rulesProxyHint}
+            domains={rulesProxy}
+            onAdd={(domain) =>
+              pushRules(
+                rulesDirect,
+                [...rulesProxy, domain],
+                presetRuBanking,
+                presetRuGov,
+              )
+            }
+            onRemove={(domain) =>
+              pushRules(
+                rulesDirect,
+                rulesProxy.filter((d) => d !== domain),
+                presetRuBanking,
+                presetRuGov,
+              )
+            }
+          />
+        </section>
+
+        <section
+          className="set-section"
+          id="set-sec-tunnel"
+          ref={setSectionRef("tunnel")}
+        >
+          <div className="set-section-head">
+            <h2 className="set-eyebrow">{t.settings.tunnel}</h2>
+            <p className="set-sub">{t.settings.tunnelHint}</p>
+          </div>
+          <div className="set-options" role="radiogroup" aria-label={t.settings.tunnel}>
+            {stackOptions.map((opt, index) => {
+              const checked = tunStack === opt.stack;
+              return (
+                <button
+                  key={opt.stack}
+                  ref={(el) => {
+                    stackRefs.current[index] = el;
+                  }}
+                  type="button"
+                  role="radio"
+                  aria-checked={checked}
+                  tabIndex={checked ? 0 : -1}
+                  className={`set-option${checked ? " is-checked" : ""}`}
+                  onClick={() => chooseStack(opt.stack)}
+                  onKeyDown={(e) => onStackKey(e, index)}
+                >
+                  <span className="set-mark" aria-hidden="true">{checked ? "▣" : "▢"}</span>
+                  <span className="set-option-text">
+                    <span className="set-option-label">{opt.label}</span>
+                    <span className="set-option-hint">{opt.hint}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section
+          className="set-section"
+          id="set-sec-dns"
+          ref={setSectionRef("dns")}
+        >
+          <div className="set-section-head">
+            <h2 className="set-eyebrow">{t.settings.dns}</h2>
+            <p className="set-sub">{t.settings.dnsHint}</p>
+          </div>
+
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.adBlock}</span>
+              <span className="set-row-hint">{t.settings.adBlockHint}</span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={adBlock}
+              className={`set-switch${adBlock ? " is-on" : ""}`}
+              onClick={toggleAdBlock}
+            >
+              <span className="set-switch-box" aria-hidden="true">
+                {adBlock ? "▣" : "▢"}
+              </span>
+              {adBlock ? "ON" : "OFF"}
+            </button>
+          </div>
+
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.ipv4Only}</span>
+              <span className="set-row-hint">{t.settings.ipv4OnlyHint}</span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={ipv4Only}
+              className={`set-switch${ipv4Only ? " is-on" : ""}`}
+              onClick={toggleIpv4Only}
+            >
+              <span className="set-switch-box" aria-hidden="true">
+                {ipv4Only ? "▣" : "▢"}
+              </span>
+              {ipv4Only ? "ON" : "OFF"}
+            </button>
+          </div>
+
+          <div className="set-apps">
+            <label className="set-eyebrow" htmlFor="dns-remote">
+              {t.settings.dnsRemote}
+            </label>
+            <span className="set-row-hint">{t.settings.dnsRemoteHint}</span>
+            <span className={`set-field${remoteValid ? "" : " is-invalid"}`}>
+              <span className="set-prompt" aria-hidden="true">$</span>
+              <input
+                id="dns-remote"
+                type="text"
+                value={remoteDraft}
+                onChange={(e) => setRemoteDraft(e.target.value)}
+                onKeyDown={onResolverKey}
+                onBlur={commitResolvers}
+                placeholder={t.settings.dnsPlaceholder}
+                aria-label={t.settings.dnsRemote}
+                aria-invalid={!remoteValid}
+                aria-describedby={remoteValid ? undefined : "dns-remote-error"}
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+              />
+            </span>
+            {!remoteValid && (
+              <p id="dns-remote-error" className="set-error" role="alert">
+                {t.settings.dnsInvalid}
+              </p>
+            )}
+          </div>
+
+          <div className="set-apps">
+            <label className="set-eyebrow" htmlFor="dns-direct">
+              {t.settings.dnsDirect}
+            </label>
+            <span className="set-row-hint">{t.settings.dnsDirectHint}</span>
+            <span className={`set-field${directValid ? "" : " is-invalid"}`}>
+              <span className="set-prompt" aria-hidden="true">$</span>
+              <input
+                id="dns-direct"
+                type="text"
+                value={directDraft}
+                onChange={(e) => setDirectDraft(e.target.value)}
+                onKeyDown={onResolverKey}
+                onBlur={commitResolvers}
+                placeholder={t.settings.dnsPlaceholder}
+                aria-label={t.settings.dnsDirect}
+                aria-invalid={!directValid}
+                aria-describedby={directValid ? undefined : "dns-direct-error"}
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+              />
+            </span>
+            {!directValid && (
+              <p id="dns-direct-error" className="set-error" role="alert">
+                {t.settings.dnsInvalid}
+              </p>
+            )}
+          </div>
+        </section>
+
+        <section
+          className="set-section"
+          id="set-sec-appearance"
+          ref={setSectionRef("appearance")}
+        >
+          <div className="set-section-head">
+            <h2 className="set-eyebrow">{t.settings.appearance}</h2>
+          </div>
+
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.theme}</span>
+            </span>
+            <div className="set-seg" role="group" aria-label={t.settings.theme}>
+              {themeOptions.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  aria-pressed={theme === opt.value}
+                  className={`${theme === opt.value ? "is-active" : ""}`}
+                  onClick={() => setTheme(opt.value)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.language}</span>
+            </span>
+            <div className="set-seg" role="group" aria-label={t.settings.language}>
+              {langOptions.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  aria-pressed={lang === opt.value}
+                  className={`${lang === opt.value ? "is-active" : ""}`}
+                  onClick={() => setLang(opt.value)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section
+          className="set-section"
+          id="set-sec-startup"
+          ref={setSectionRef("startup")}
+        >
+          <div className="set-section-head">
+            <h2 className="set-eyebrow">{t.settings.startup}</h2>
+          </div>
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.launchAtLogin}</span>
+              <span className="set-row-hint">{t.settings.launchAtLoginHint}</span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={launchAtLogin}
+              disabled={launchBusy}
+              className={`set-switch${launchAtLogin ? " is-on" : ""}`}
+              onClick={() => void toggleLaunchAtLogin()}
+            >
+              <span className="set-switch-box" aria-hidden="true">
+                {launchAtLogin ? "▣" : "▢"}
+              </span>
+              {launchAtLogin ? "ON" : "OFF"}
+            </button>
+          </div>
+
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.autoconnect}</span>
+              <span className="set-row-hint">{t.settings.autoconnectHint}</span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autoconnect}
+              className={`set-switch${autoconnect ? " is-on" : ""}`}
+              onClick={toggleAutoconnect}
+            >
+              <span className="set-switch-box" aria-hidden="true">
+                {autoconnect ? "▣" : "▢"}
+              </span>
+              {autoconnect ? "ON" : "OFF"}
+            </button>
+          </div>
+
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.autoFastest}</span>
+              <span className="set-row-hint">{t.settings.autoFastestHint}</span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autoFastest}
+              className={`set-switch${autoFastest ? " is-on" : ""}`}
+              onClick={toggleAutoFastest}
+            >
+              <span className="set-switch-box" aria-hidden="true">
+                {autoFastest ? "▣" : "▢"}
+              </span>
+              {autoFastest ? "ON" : "OFF"}
+            </button>
+          </div>
+        </section>
+
+        <section
+          className="set-section"
+          id="set-sec-updates"
+          ref={setSectionRef("updates")}
+        >
+          <div className="set-section-head">
+            <h2 className="set-eyebrow">{t.settings.updates}</h2>
+          </div>
+
+          <div className="set-channel">
+            <span className="set-eyebrow">{t.settings.updateChannel}</span>
+            <div
+              className="set-options"
+              role="radiogroup"
+              aria-label={t.settings.updateChannel}
+            >
+              {channelOptions.map((opt, index) => {
+                const checked = channel === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    ref={(el) => {
+                      channelRefs.current[index] = el;
+                    }}
+                    type="button"
+                    role="radio"
+                    aria-checked={checked}
+                    tabIndex={checked ? 0 : -1}
+                    className={`set-option${checked ? " is-checked" : ""}`}
+                    onClick={() => chooseChannel(opt.value)}
+                    onKeyDown={(e) => onChannelKey(e, index)}
+                  >
+                    <span className="set-mark" aria-hidden="true">
+                      {checked ? "▣" : "▢"}
+                    </span>
+                    <span className="set-option-text">
+                      <span className="set-option-label">{opt.label}</span>
+                      <span className="set-option-hint">{opt.hint}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.updatesCheck}</span>
+              <span className="set-row-hint">{updateStatusText}</span>
+            </span>
+            {pendingUpdate &&
+            (updateStatus.kind === "available" || updateStatus.kind === "error") ? (
+              <button
+                type="button"
+                className="set-btn"
+                onClick={() => void applyUpdate()}
+              >
+                {t.settings.updatesInstall}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="set-btn"
+                onClick={() => void checkUpdates()}
+                disabled={updateBusy}
+              >
+                {updateStatus.kind === "checking"
+                  ? t.settings.updatesChecking
+                  : t.settings.updatesCheck}
+              </button>
+            )}
+          </div>
+
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.autoInstall}</span>
+              <span className="set-row-hint">{t.settings.autoInstallHint}</span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autoInstall}
+              className={`set-switch${autoInstall ? " is-on" : ""}`}
+              onClick={toggleAutoInstall}
+            >
+              <span className="set-switch-box" aria-hidden="true">
+                {autoInstall ? "▣" : "▢"}
+              </span>
+              {autoInstall ? "ON" : "OFF"}
+            </button>
+          </div>
+
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.crashReports}</span>
+              <span className="set-row-hint">{t.settings.crashReportsHint}</span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={crashReports}
+              className={`set-switch${crashReports ? " is-on" : ""}`}
+              onClick={toggleCrashReports}
+            >
+              <span className="set-switch-box" aria-hidden="true">
+                {crashReports ? "▣" : "▢"}
+              </span>
+              {crashReports ? "ON" : "OFF"}
+            </button>
+          </div>
+        </section>
+      </div>
+    </div>
   );
 }

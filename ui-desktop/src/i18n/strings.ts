@@ -38,11 +38,37 @@ export interface Strings {
     abort: string;
     exitIp: string;
     change: string;
+    /** Chip on the node card when the exit is auto-picked, not chosen by hand. */
+    autoTag: string;
     statSession: string;
     statDown: string;
     statPing: string;
     unitMinSec: string;
     unitMbps: string;
+  };
+
+  /**
+   * Anti-DPI fallback panel: shown in place of the node card while the core walks
+   * the protocol-fallback order (REALITY → Hysteria2 → AmneziaWG). Every value is
+   * driven by the live attempts snapshot.
+   */
+  fallback: {
+    title: string;
+    /** Live header, "{n}"/"{m}" interpolated (attempt reached / total planned). */
+    attempt: string;
+    /** Header once a candidate comes up; "{proto}" is the transport. */
+    success: string;
+    /** Header when every candidate failed. */
+    blockedAll: string;
+    /** Chip marking the profile's last-good lead candidate. */
+    lastGood: string;
+    /** Per-row status words. */
+    statusWaiting: string;
+    statusTrying: string;
+    statusBlocked: string;
+    statusOk: string;
+    /** A candidate the walk will not reach because an earlier one succeeded. */
+    statusReserve: string;
   };
 
   /** Right server-list pane. */
@@ -59,6 +85,21 @@ export interface Strings {
     down: string;
     addSub: string;
     noNodes: string;
+    /** Pinned auto-select row heading, above the node list. */
+    auto: string;
+    /**
+     * Auto-row subtitle naming the current lowest-ping node; "{node}" is
+     * interpolated with that node's (lowercased) name.
+     */
+    autoSub: string;
+    /** Auto-row subtitle before any node has a ping — no best node to name yet. */
+    autoSubIdle: string;
+    /** Dashed tag on the auto row (kept latin in both languages). */
+    autoTag: string;
+    /** CTA under the "no nodes match" empty state: clears region + query. */
+    resetFilter: string;
+    /** CTA under the "no subscription" empty state: opens the import flow. */
+    importSub: string;
     /** Compact badge on a node whose TLS certificate is not verified. */
     insecureBadge: string;
     /** Full tooltip / screen-reader label for the insecure badge. */
@@ -76,6 +117,28 @@ export interface Strings {
     killSwitchHint: string;
     leakCheck: string;
     settings: string;
+  };
+
+  /**
+   * One-line action confirmations shown by the toast host, bottom-left. Each is
+   * raised on a real state transition; `{mode}` in `route` is the localized
+   * routing label, and `tunnelUp` is a prefix the caller appends node · protocol
+   * to.
+   */
+  toast: {
+    tunnelUp: string;
+    killOn: string;
+    killOff: string;
+    route: string;
+    /** Profile overlay confirmations. "{name}" is the profile name; "{alive}"/
+     *  "{total}" are the reachable/total node counts for the ping summary. */
+    profileActive: string;
+    profilePinged: string;
+    profileRefreshed: string;
+    profileRemoved: string;
+    profileImported: string;
+    /** Raised when the log console is cleared. */
+    logsCleared: string;
   };
 
   /** Update banner shown when the launch check finds a newer release. */
@@ -151,6 +214,7 @@ export interface Strings {
     setActive: string;
     refresh: string;
     remove: string;
+    /** Armed label of the two-step delete button; a second click confirms. */
     removeConfirm: string;
     pingAll: string;
     pinging: string;
@@ -302,6 +366,18 @@ export interface Strings {
     updateChannelStableHint: string;
     updateChannelBeta: string;
     updateChannelBetaHint: string;
+    /**
+     * Section-navigation rail: its own accessible label, the sticky close
+     * control (visible "esc" hint plus an aria-label), and the version/licence
+     * line pinned at the rail's foot.
+     */
+    nav: string;
+    close: string;
+    escLabel: string;
+    /** "v{version} · GPLv3" — the version is interpolated by the caller. */
+    rail: string;
+    /** Licence-only fallback for the rail when the version can't be read. */
+    license: string;
   };
 
   logs: {
@@ -383,11 +459,24 @@ const en: Strings = {
     abort: "ABORT",
     exitIp: "exit node",
     change: "change",
+    autoTag: "auto",
     statSession: "Session",
     statDown: "Down",
     statPing: "Ping",
     unitMinSec: "m:s",
     unitMbps: "Mbps",
+  },
+  fallback: {
+    title: "Protocol fallback",
+    attempt: "attempt {n}/{m}",
+    success: "success · {proto}",
+    blockedAll: "all blocked",
+    lastGood: "last-good",
+    statusWaiting: "waiting",
+    statusTrying: "trying…",
+    statusBlocked: "blocked",
+    statusOk: "ok",
+    statusReserve: "reserve",
   },
   servers: {
     title: "Nodes",
@@ -402,6 +491,12 @@ const en: Strings = {
     down: "down",
     addSub: "+ add",
     noNodes: "this subscription has no nodes",
+    auto: "AUTO",
+    autoSub: "lowest ping · now {node}",
+    autoSubIdle: "lowest ping",
+    autoTag: "AUTO",
+    resetFilter: "reset filter",
+    importSub: "import subscription",
     insecureBadge: "no-cert",
     insecureTitle: "TLS verification off — on-path interception possible",
     insecureSummary:
@@ -415,6 +510,18 @@ const en: Strings = {
       "Block traffic that tries to bypass the tunnel; if the tunnel dies, restart it. Applies live; connects get rougher while armed.",
     leakCheck: "leak-check",
     settings: "settings",
+  },
+  toast: {
+    tunnelUp: "tunnel up",
+    killOn: "kill-switch · on",
+    killOff: "kill-switch · off",
+    route: "route · {mode}",
+    profileActive: "active profile · {name}",
+    profilePinged: "ping updated · {alive}/{total} alive",
+    profileRefreshed: "subscription refreshed · {name}",
+    profileRemoved: "profile removed · {name}",
+    profileImported: "profile imported · {name}",
+    logsCleared: "log cleared",
   },
   update: {
     available: "Version {version} is available",
@@ -468,7 +575,7 @@ const en: Strings = {
     setActive: "Set active",
     refresh: "Refresh",
     remove: "Remove",
-    removeConfirm: "Remove this profile?",
+    removeConfirm: "Really remove?",
     pingAll: "Ping all",
     pinging: "Pinging…",
     autoSelect: "Auto-select fastest",
@@ -613,6 +720,11 @@ const en: Strings = {
     updateChannelBeta: "Beta",
     updateChannelBetaHint:
       "Get prereleases early, plus every stable release. May be rougher around the edges.",
+    nav: "Settings sections",
+    close: "Close settings",
+    escLabel: "esc",
+    rail: "v{version} · GPLv3",
+    license: "GPLv3",
   },
   logs: {
     title: "Logs",
@@ -683,11 +795,24 @@ const ru: Strings = {
     abort: "ОТМЕНА",
     exitIp: "узел выхода",
     change: "сменить",
+    autoTag: "авто",
     statSession: "Сессия",
     statDown: "Загрузка",
     statPing: "Пинг",
     unitMinSec: "м:с",
     unitMbps: "Мбит/с",
+  },
+  fallback: {
+    title: "Обход блокировок",
+    attempt: "попытка {n}/{m}",
+    success: "успех · {proto}",
+    blockedAll: "заблокировано всё",
+    lastGood: "last-good",
+    statusWaiting: "ждёт",
+    statusTrying: "пробую…",
+    statusBlocked: "блок",
+    statusOk: "ок",
+    statusReserve: "в запасе",
   },
   servers: {
     title: "Узлы",
@@ -702,6 +827,12 @@ const ru: Strings = {
     down: "недост.",
     addSub: "+ добавить",
     noNodes: "в этой подписке нет узлов",
+    auto: "АВТО",
+    autoSub: "минимальный пинг · сейчас {node}",
+    autoSubIdle: "минимальный пинг",
+    autoTag: "AUTO",
+    resetFilter: "сбросить фильтр",
+    importSub: "импортировать подписку",
     insecureBadge: "без серт.",
     insecureTitle: "Проверка TLS отключена — возможен перехват трафика",
     insecureSummary:
@@ -715,6 +846,18 @@ const ru: Strings = {
       "Блокировать трафик в обход туннеля; при падении туннеля — перезапустить его. Применяется сразу; коннект с ним грубее.",
     leakCheck: "проверка",
     settings: "настройки",
+  },
+  toast: {
+    tunnelUp: "туннель поднят",
+    killOn: "kill-switch · вкл",
+    killOff: "kill-switch · выкл",
+    route: "маршрут · {mode}",
+    profileActive: "активный профиль · {name}",
+    profilePinged: "пинг обновлён · {alive}/{total} живы",
+    profileRefreshed: "подписка обновлена · {name}",
+    profileRemoved: "профиль удалён · {name}",
+    profileImported: "профиль импортирован · {name}",
+    logsCleared: "журнал очищен",
   },
   update: {
     available: "Доступна версия {version}",
@@ -768,7 +911,7 @@ const ru: Strings = {
     setActive: "Сделать активным",
     refresh: "Обновить",
     remove: "Удалить",
-    removeConfirm: "Удалить этот профиль?",
+    removeConfirm: "Точно удалить?",
     pingAll: "Пинговать все",
     pinging: "Пингую…",
     autoSelect: "Выбрать самый быстрый",
@@ -913,6 +1056,11 @@ const ru: Strings = {
     updateChannelBeta: "Бета",
     updateChannelBetaHint:
       "Ранний доступ к предрелизам и все стабильные версии. Может быть сырее.",
+    nav: "Разделы настроек",
+    close: "Закрыть настройки",
+    escLabel: "esc",
+    rail: "v{version} · GPLv3",
+    license: "GPLv3",
   },
   logs: {
     title: "Журнал",

@@ -112,3 +112,22 @@ export function formatTrafficUsage(
   }
   return `${usedStr} / ${formatBytes(total)}`;
 }
+
+/**
+ * Fraction (0–1) of a subscription's traffic budget consumed, for the top-bar
+ * usage meter. Returns null when there is no metered total to measure against
+ * (unmetered plans, or usage the header omits). Clamped, so a provider that
+ * reports over the cap fills the bar rather than overflowing it.
+ */
+export function trafficUsedFraction(
+  used: number | undefined,
+  total: number | undefined,
+): number | null {
+  if (!total || total <= 0 || used === undefined) {
+    return null;
+  }
+  if (!Number.isFinite(used) || used <= 0) {
+    return 0;
+  }
+  return Math.min(1, used / total);
+}

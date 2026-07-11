@@ -86,6 +86,16 @@
   text-transform: uppercase;
   font-weight: 600;
   text-align: center;
+  /* Drops in from under the top bar when armed. Neutralised by reduced-motion. */
+  animation: kill-banner-in 180ms ease-out;
+}
+@keyframes kill-banner-in {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(0);
+  }
 }
 
 /* ── update banner — the launch check found a newer release ── */
@@ -175,11 +185,13 @@
   color: var(--text-dim);
   transition:
     color var(--t-fast),
-    border-color var(--t-fast);
+    border-color var(--t-fast),
+    background-color var(--t-fast);
 }
 .seg button.on {
   color: var(--signal);
   border-color: var(--signal);
+  background: var(--signal-faint);
   position: relative;
   z-index: 1;
 }
@@ -199,7 +211,8 @@
   gap: var(--sp-2);
   transition:
     color var(--t-fast),
-    border-color var(--t-fast);
+    border-color var(--t-fast),
+    background-color var(--t-fast);
 }
 .toggle:hover {
   color: var(--text);
@@ -208,6 +221,7 @@
 .toggle.on {
   color: var(--signal);
   border-color: var(--signal);
+  background: var(--signal-faint);
 }
 .toggle:disabled {
   opacity: 0.45;
@@ -250,12 +264,34 @@
   justify-content: center;
   padding: 36px 22px;
   overflow-y: auto;
+  /* Scrim fades up; the panel below rises on its own, slower curve. Both are
+     neutralised by the reduced-motion rule in global.css. */
+  animation: overlay-scrim-in 160ms ease-out;
 }
 .overlay-panel {
   position: relative;
   width: min(820px, 100%);
   background: var(--bg);
   border: var(--bw) solid var(--line-2);
+  animation: overlay-panel-in var(--t-panel);
+}
+@keyframes overlay-scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes overlay-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 .overlay-close {
   position: absolute;

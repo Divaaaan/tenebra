@@ -62,6 +62,13 @@
   --t-fast: 80ms linear; /* chip colour / border */
   --t-base: 100ms linear; /* button fill / row background */
 
+  /* The premium pass deliberately widens the motion budget for a few considered
+     moments — overlay entrances, list cascades, the toast. These two carry that
+     wider timing; the near-zero pair above still governs everyday hover / state
+     changes. Both are neutralised by the reduced-motion rule in global.css. */
+  --t-panel: 220ms cubic-bezier(0.2, 0.8, 0.2, 1); /* overlay panel entrance */
+  --t-enter: 240ms ease-out; /* element / list-row entrance */
+
   /* Status-word tints. The 52px hero word in pure --good/--text reads harsh, so
      it's softened (desaturated toward the text colour). Defined in terms of the
      theme vars below, so it adapts to dark and light on its own. The dot matches
@@ -96,6 +103,15 @@
   --warn-soft: #ffb300; /* heads-up, not critical */
   --on-signal: #0e0e0e; /* text on a filled --signal surface */
   --scrim: rgba(0, 0, 0, 0.62); /* dim layer behind overlays / modals */
+
+  /* Derived status washes — barely-there row / selection tints (each its accent
+     at 4–5% alpha). Kept as named tokens so every zone paints the trying / ok
+     attempt rows, the selected radio, and the active settings-nav item from one
+     source. The RGB tracks the theme accent; only that flips on light. */
+  --row-trying-bg: rgba(255, 179, 0, 0.04); /* "trying" attempt row (warn) */
+  --row-ok-bg: rgba(0, 230, 118, 0.04); /* "ok" attempt row (good) */
+  --radio-selected-bg: rgba(255, 61, 0, 0.04); /* selected radio row */
+  --nav-active-bg: rgba(255, 61, 0, 0.05); /* active settings-nav item */
 
   /* Grain over the canvas — a touch of texture so flat panels don't read as
      dead space. Off on light. */
@@ -152,6 +168,12 @@
   /* A 62% black scrim reads as a hole punched in the paper; ink at a lighter
      weight dims without going murky. */
   --scrim: rgba(22, 20, 18, 0.4);
+
+  /* Same derived washes on paper — theme accent RGB, matching alphas. */
+  --row-trying-bg: rgba(184, 120, 10, 0.04); /* "trying" attempt row (warn) */
+  --row-ok-bg: rgba(31, 138, 76, 0.04); /* "ok" attempt row (good) */
+  --radio-selected-bg: rgba(200, 56, 12, 0.04); /* selected radio row */
+  --nav-active-bg: rgba(200, 56, 12, 0.05); /* active settings-nav item */
 
   --grain-opacity: 0;
 }

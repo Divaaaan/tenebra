@@ -1,24 +1,111 @@
-/* Settings overlay — spec-sheet restyle. A plain vertical document: a title, then
-   titled sections divided by 1px rules. One accent (--signal), mono throughout,
-   sharp corners, near-zero motion. Lives inside .overlay-panel, so the top padding
-   clears the overlay's own ✕ close button (top-right). */
+/* Settings overlay — spec-sheet restyle. A two-column document: a fixed section
+   rail on the left, a scrolling content column on the right. One accent
+   (--signal), mono throughout, sharp corners, considered motion only. Lives
+   inside .overlay-panel / .overlay-body. */
 
-.set-doc {
-  display: flex;
-  flex-direction: column;
-  /* Top space so the title clears the overlay-close glyph; sides match the dense
-     panel rhythm. */
-  padding: 26px 24px 22px;
+/* ── shell: rail + content, filling the capped overlay-body height ── */
+.set-shell {
+  display: grid;
+  grid-template-columns: 190px 1fr;
+  /* Fill the overlay body's capped box (720 window − 72 overlay padding − the
+     body's own 8px padding top and bottom) so the rail spans full height and
+     only the content column scrolls. */
+  height: calc(720px - 72px - 2 * var(--sp-2));
 }
 
-.set-title {
+/* ── left rail: title, section links, version/licence foot ── */
+.set-nav {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--sp-5) 0;
+  border-right: var(--bw) solid var(--line);
+}
+.set-nav-title {
   font-family: var(--display);
   font-size: var(--fs-sku);
   font-weight: 600;
   letter-spacing: var(--track-sku);
   text-transform: uppercase;
-  /* Keep clear of the ✕ in the corner. */
-  padding-right: 40px;
+  padding: 0 18px;
+  margin-bottom: var(--sp-5);
+}
+.set-nav-list {
+  display: flex;
+  flex-direction: column;
+}
+.set-nav-item {
+  text-align: left;
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  /* 2px left tick reserved on every item (transparent until active) so the label
+     never shifts; 16px + 2px keeps the text aligned with the title's 18px. */
+  padding: 8px 18px 8px 16px;
+  border-left: var(--bw-emphasis) solid transparent;
+  color: var(--text-dim);
+  transition:
+    color var(--t-fast),
+    background var(--t-fast),
+    border-color var(--t-fast);
+}
+.set-nav-item:hover {
+  color: var(--text);
+}
+.set-nav-item.is-active {
+  color: var(--signal);
+  background: var(--nav-active-bg);
+  border-left-color: var(--signal);
+}
+.set-nav-foot {
+  margin-top: auto;
+  padding: var(--sp-4) 18px 0;
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-body);
+  color: var(--text-dim-2);
+}
+
+/* ── right content column: the scroll container ── */
+.set-main {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--sp-6) var(--sp-5);
+}
+
+/* Sticky "esc ✕" close, pinned to the top-right of the scrolling content. The
+   bar carries a solid background so section content scrolls cleanly underneath. */
+.set-close-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--sp-3) 0 var(--sp-2);
+  background: var(--bg);
+}
+.set-close {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  letter-spacing: var(--track-body);
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 4px 10px;
+  border: var(--bw) solid var(--line);
+  transition:
+    color var(--t-fast),
+    border-color var(--t-fast);
+}
+.set-close:hover {
+  color: var(--signal);
+  border-color: var(--signal);
 }
 
 /* ── section ── */
@@ -29,8 +116,11 @@
   padding: var(--sp-5) 0;
   border-top: var(--bw) solid var(--line);
 }
+/* The first section sits directly under the sticky close bar, so it drops the
+   top rule and extra margin the stacked sections carry. */
 .set-section:first-of-type {
-  margin-top: var(--sp-4);
+  border-top: none;
+  margin-top: 0;
 }
 
 .set-section-head {
@@ -78,6 +168,7 @@
 }
 .set-option.is-checked {
   border-color: var(--signal);
+  background: var(--radio-selected-bg);
   position: relative;
   z-index: 1;
 }
@@ -353,4 +444,21 @@
 .set-switch-box {
   font-size: var(--fs-data);
   line-height: 1;
+}
+
+/* ── overlay chrome, scoped to the settings shell ──
+   The settings overlay is a touch wider than the shared panel and owns its own
+   scroll (the content column), so widen it, neutralize the shared body scroll to
+   keep a single scrollbar, and hide the shared ✕ — the sticky "esc ✕" in the
+   content replaces it. Scoped via :has so the profiles/logs overlays are
+   untouched; where :has is unsupported the rules simply drop and the shared
+   chrome stands in (a graceful, still-working fallback). */
+.overlay-panel:has(.set-shell) {
+  width: min(880px, 100%);
+}
+.overlay-panel:has(.set-shell) .overlay-body {
+  overflow: hidden;
+}
+.overlay-panel:has(.set-shell) .overlay-close {
+  display: none;
 }

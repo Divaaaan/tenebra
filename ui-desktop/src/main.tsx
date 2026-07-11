@@ -17,8 +17,11 @@ import "@fontsource-variable/jetbrains-mono";
 
 import "./styles/global.css";
 import "./styles/ping-badge.css";
+import "./styles/ping-scale.css";
 import "./styles/shell.css";
+import "./styles/toast.css";
 import "./styles/connection.css";
+import "./styles/fallback.css";
 import "./styles/servers.css";
 import "./styles/settings.css";
 import "./styles/profiles.css";
