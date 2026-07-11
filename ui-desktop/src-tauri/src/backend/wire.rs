@@ -444,6 +444,24 @@ impl<T: WireSession> Backend for T {
         )
     }
 
+    fn set_rules(
+        &self,
+        rules_direct: Vec<String>,
+        rules_proxy: Vec<String>,
+        preset_ru_banking: bool,
+        preset_ru_gov: bool,
+    ) -> Result<State, String> {
+        self.session()?.request_into(
+            "set_rules",
+            obj([
+                ("rules_direct", json!(rules_direct)),
+                ("rules_proxy", json!(rules_proxy)),
+                ("preset_ru_banking", json!(preset_ru_banking)),
+                ("preset_ru_gov", json!(preset_ru_gov)),
+            ]),
+        )
+    }
+
     fn leak_check(&self) -> Result<LeakCheck, String> {
         // The core runs the IP/DNS probes itself and returns the assembled
         // verdict; we just deserialize it. It can touch the network, but the core
@@ -766,6 +784,67 @@ mod tests {
         assert_eq!(state.dns_remote.as_deref(), Some("tls://9.9.9.9"));
         assert_eq!(state.dns_direct.as_deref(), Some("udp://8.8.8.8"));
         assert_eq!(state.ipv4_only, Some(true));
+
+        server.join().expect("server thread");
+        stop.store(true, Ordering::SeqCst); // unstick the reader
+        reader.join().expect("reader thread");
+    }
+
+    #[test]
+    fn set_rules_maps_to_the_protocol_command() {
+        // Drive Backend::set_rules through the blanket impl and assert the exact
+        // line it puts on the wire (both suffix lists plus the two preset toggles),
+        // plus that the core's reported rule state round-trips back.
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ours, theirs) = duplex(&stop);
+
+        let client = WireClient::new(ours.writer);
+        let sink: Arc<dyn EventSink> = Arc::new(Rec::default());
+        let reader_client = Arc::clone(&client);
+        let reader = thread::spawn(move || read_loop(ours.reader, reader_client, sink));
+
+        let mut server_writer = theirs.writer;
+        let server = thread::spawn(move || {
+            let mut lines = BufReader::new(theirs.reader).lines();
+            let line = lines.next().expect("a request line").expect("readable");
+            let req: Value = serde_json::from_str(&line).expect("request is JSON");
+            assert_eq!(req["cmd"].as_str(), Some("set_rules"));
+            assert_eq!(req["rules_direct"][0].as_str(), Some("bank.example"));
+            assert_eq!(req["rules_proxy"][0].as_str(), Some("work.example"));
+            assert_eq!(req["preset_ru_banking"].as_bool(), Some(true));
+            assert_eq!(req["preset_ru_gov"].as_bool(), Some(false));
+            let id = req["id"].as_u64().expect("request carries an id");
+            let response = json!({
+                "id": id, "ok": true,
+                "data": {
+                    "state": "idle",
+                    "rules_direct": ["bank.example"],
+                    "rules_proxy": ["work.example"],
+                    "preset_ru_banking": true,
+                },
+            });
+            writeln!(server_writer, "{response}").expect("write response");
+        });
+
+        let backend = FixedSession(Arc::clone(&client));
+        let state = backend
+            .set_rules(
+                vec!["bank.example".into()],
+                vec!["work.example".into()],
+                true,
+                false,
+            )
+            .expect("a response");
+        assert_eq!(
+            state.rules_direct.as_deref(),
+            Some(&["bank.example".to_string()][..])
+        );
+        assert_eq!(
+            state.rules_proxy.as_deref(),
+            Some(&["work.example".to_string()][..])
+        );
+        assert_eq!(state.preset_ru_banking, Some(true));
+        assert_eq!(state.preset_ru_gov, None);
 
         server.join().expect("server thread");
         stop.store(true, Ordering::SeqCst); // unstick the reader
