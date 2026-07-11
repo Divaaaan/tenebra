@@ -215,6 +215,11 @@ export interface Strings {
     auto: string;
     /** Shown in place of the pickers when no subscription is present. */
     noProfile: string;
+    /**
+     * Escape hatch back to the full shell. Simple mode hides Settings — including
+     * its own toggle — so this quiet link is the only way out from here.
+     */
+    advanced: string;
   };
 
   /**
@@ -648,6 +653,7 @@ const en: Strings = {
     server: "Server",
     auto: "Automatic — fastest",
     noProfile: "Import a subscription to get started.",
+    advanced: "Advanced view",
   },
   deeplink: {
     connectTitle: "Connect request",
@@ -1031,6 +1037,7 @@ const ru: Strings = {
     server: "Сервер",
     auto: "Автоматически — быстрее всего",
     noProfile: "Импортируйте подписку, чтобы начать.",
+    advanced: "Расширенный режим",
   },
   deeplink: {
     connectTitle: "Запрос на подключение",

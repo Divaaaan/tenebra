@@ -209,6 +209,26 @@ describe("App simple mode", () => {
     await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
     expect(mocks.connect.mock.calls[0][0]).toBe("p1");
   });
+
+  it("escapes back to the full shell from the advanced-view link", async () => {
+    localStorage.setItem(SIMPLE_KEY, "1");
+    const { container } = await mountReady();
+    expect(container.querySelector(".app--simple")).toBeInTheDocument();
+
+    // Simple mode hides Settings, so this link is the only exit. Clicking it must
+    // return the full shell without a reload.
+    fireEvent.click(screen.getByRole("button", { name: "Advanced view" }));
+
+    await waitFor(() =>
+      expect(container.querySelector(".app--simple")).not.toBeInTheDocument(),
+    );
+    // The advanced surfaces are back — the node search returns.
+    expect(
+      screen.getByPlaceholderText("search node · de-fra"),
+    ).toBeInTheDocument();
+    // And the flag is persisted off, so the escape survives a relaunch.
+    expect(localStorage.getItem(SIMPLE_KEY)).toBe("false");
+  });
 });
 
 describe("App Konami eclipse", () => {

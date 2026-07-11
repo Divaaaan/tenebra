@@ -195,3 +195,20 @@
   color: var(--text-dim);
   text-align: center;
 }
+
+/* ── escape hatch ──
+   A quiet way back to the full shell. Simple mode hides Settings, so this is the
+   only exit; kept deliberately understated so it never competes with the primary
+   control, yet stays reachable — and focus-visible for keyboard users. */
+.simple-advanced {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-cap);
+  text-transform: uppercase;
+  color: var(--text-dim-2);
+  padding: var(--sp-2) var(--sp-3);
+  transition: color var(--t-fast);
+}
+.simple-advanced:hover {
+  color: var(--text);
+}

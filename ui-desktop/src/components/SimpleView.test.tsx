@@ -106,4 +106,22 @@ describe("SimpleView", () => {
     fireEvent.change(picker, { target: { value: "p2" } });
     expect(props.onSelectProfile).toHaveBeenCalledWith("p2");
   });
+
+  it("exits simple mode from the advanced-view escape hatch", () => {
+    const dispatch = vi.spyOn(window, "dispatchEvent");
+    setup();
+
+    fireEvent.click(screen.getByRole("button", { name: "Advanced view" }));
+
+    // The shared flag is flipped off, in the encoding App/Settings agree on.
+    expect(localStorage.getItem("tenebra.simpleMode")).toBe("false");
+    // And the app shell is nudged both ways App listens: a `storage` event and
+    // the same-document custom event.
+    const types = dispatch.mock.calls.map(([e]) => (e as Event).type);
+    expect(types).toContain("storage");
+    expect(types).toContain("tenebra:simple-mode");
+
+    dispatch.mockRestore();
+    localStorage.clear();
+  });
 });

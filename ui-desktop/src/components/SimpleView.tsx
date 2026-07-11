@@ -43,6 +43,24 @@ export function SimpleView({
 }: SimpleViewProps) {
   const { t } = useI18n();
 
+  // The only way out of simple mode from here: it hides Settings (and its own
+  // toggle), so a stranded user would otherwise be stuck. Flip the shared
+  // `tenebra.simpleMode` flag off and nudge the app shell exactly the way the
+  // Settings toggle does — a `storage` event — plus the same-document custom
+  // event App also listens for. App re-reads the flag and restores the full
+  // shell. The key and "false" encoding are the contract with App/Settings;
+  // keep them verbatim.
+  function exitSimpleMode() {
+    localStorage.setItem("tenebra.simpleMode", "false");
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: "tenebra.simpleMode",
+        newValue: "false",
+      }),
+    );
+    window.dispatchEvent(new CustomEvent("tenebra:simple-mode"));
+  }
+
   const connected = phase === "connected";
   const pending = phase === "connecting";
   const hasProfile = profiles.length > 0;
@@ -136,6 +154,14 @@ export function SimpleView({
           <p className="simple-empty">{t.simple.noProfile}</p>
         )}
       </div>
+
+      <button
+        type="button"
+        className="simple-advanced"
+        onClick={exitSimpleMode}
+      >
+        {t.simple.advanced}
+      </button>
     </div>
   );
 }
