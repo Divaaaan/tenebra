@@ -11,8 +11,32 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-12
+
 ### Added
 
+- **TLS handshake fragmentation.** A *Bypass* toggle in Settings fragments the TLS
+  ClientHello (sing-box's native `fragment`), splitting the handshake across
+  packets so a filter keying on the SNI within a single segment cannot match it.
+  The adaptive transport cascade also escalates to a fragmenting strategy on a
+  censored handshake before abandoning a node. Applies to any TLS-bearing node; a
+  no-op on QUIC transports.
+- **Health auto-failover.** While connected, a watchdog probes the active node
+  through the tunnel; after repeated failures it automatically reconnects through
+  a different healthy node from the subscription, excluding the degraded one. On
+  by default, with a *Reliability* toggle. The connection panel shows a distinct
+  reconnecting state during recovery.
+- **Network diagnostics.** A *Diagnostics* section runs an on-demand UDP/STUN
+  check (UDP reachability, NAT type, external address) and an in-tunnel speed test
+  (throughput over the active connection). The speed test is available only while
+  connected.
+- **Simple mode.** An optional one-button interface for non-technical users — a
+  single connect control, the current status, and a minimal server picker, with
+  everything advanced hidden. Toggled in Settings; an *Advanced view* link inside
+  it returns to the full interface.
+- **Tray quick-connect.** The system-tray menu can connect to any node in the
+  current profile directly, without opening the window, alongside a quick
+  connect/disconnect entry.
 - **Adaptive transport escalation.** When a node's entry accepts a TCP connection
   but its handshake then makes no progress and draws no reset — the signature of
   destination-level interference, as distinct from a dead server — the connect
