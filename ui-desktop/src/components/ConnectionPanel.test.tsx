@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { ConnectionPanel } from "./ConnectionPanel";
+import { ConnectionPanel, shouldShowFallback } from "./ConnectionPanel";
 import { renderWithProviders } from "../test/renderWithProviders";
-import type { ConnectionState } from "../api";
+import type { AttemptsEvent, ConnectionState } from "../api";
 
 // Shared baseline props; each test overrides phase and the few fields that vary.
 function baseProps(overrides: Partial<Parameters<typeof ConnectionPanel>[0]> = {}) {
@@ -133,5 +133,164 @@ describe("ConnectionPanel", () => {
       await user.click(screen.getByRole("button", { name: /change/ }));
       expect(onChange).toHaveBeenCalledTimes(1);
     });
+
+    it("broadcasts a focus-search intent when the change affordance is clicked", async () => {
+      const user = userEvent.setup();
+      const onFocusSearch = vi.fn();
+      window.addEventListener("tenebra:focus-search", onFocusSearch);
+      try {
+        renderWithProviders(
+          <ConnectionPanel {...baseProps({ phase: "idle" })} />,
+        );
+        await user.click(screen.getByRole("button", { name: /change/ }));
+        expect(onFocusSearch).toHaveBeenCalledTimes(1);
+      } finally {
+        window.removeEventListener("tenebra:focus-search", onFocusSearch);
+      }
+    });
+  });
+
+  describe("premium chrome", () => {
+    it("shows the active route in the eyebrow when a mode is given", () => {
+      renderWithProviders(
+        <ConnectionPanel {...baseProps({ phase: "connected", routing: "smart" })} />,
+      );
+      expect(screen.getByText("Routing · Smart")).toBeInTheDocument();
+    });
+
+    it("omits the route when no routing mode is given", () => {
+      renderWithProviders(<ConnectionPanel {...baseProps({ phase: "idle" })} />);
+      expect(screen.queryByText(/Routing ·/)).not.toBeInTheDocument();
+    });
+
+    it("renders the space keycap hint beside the CTA", () => {
+      renderWithProviders(<ConnectionPanel {...baseProps({ phase: "idle" })} />);
+      expect(screen.getByText("space")).toBeInTheDocument();
+    });
+
+    it("marks an auto-picked exit with the AUTO chip", () => {
+      renderWithProviders(
+        <ConnectionPanel
+          {...baseProps({ phase: "connected", auto: true, exitServer: "203.0.113.7" })}
+        />,
+      );
+      expect(screen.getByText("auto")).toBeInTheDocument();
+    });
+
+    it("omits the AUTO chip for a hand-picked node", () => {
+      renderWithProviders(
+        <ConnectionPanel
+          {...baseProps({ phase: "connected", auto: false, exitServer: "203.0.113.7" })}
+        />,
+      );
+      expect(screen.queryByText("auto")).not.toBeInTheDocument();
+    });
+
+    it("shows the ping meter when a latency is known and hides it otherwise", () => {
+      const { container, rerender } = renderWithProviders(
+        <ConnectionPanel {...baseProps({ phase: "connected", ping: "27" })} />,
+      );
+      expect(container.querySelector(".ping-scale")).toBeInTheDocument();
+
+      rerender(<ConnectionPanel {...baseProps({ phase: "idle", ping: "—" })} />);
+      expect(container.querySelector(".ping-scale")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("fallback swap", () => {
+    const walk: AttemptsEvent = {
+      outcome: "",
+      items: [
+        { seq: 1, protocol: "vless", node: "n1", status: "trying", last_good: false },
+      ],
+    };
+
+    it("replaces the node card with the fallback walk while connecting", () => {
+      renderWithProviders(
+        <ConnectionPanel {...baseProps({ phase: "connecting", attempts: walk })} />,
+      );
+      expect(screen.getByText("Protocol fallback")).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /change/ }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("keeps the walk visible after an exhausted outcome", () => {
+      const dead: AttemptsEvent = {
+        outcome: "exhausted",
+        items: [
+          { seq: 1, protocol: "vless", node: "n1", status: "blocked", last_good: false },
+        ],
+      };
+      renderWithProviders(
+        <ConnectionPanel
+          {...baseProps({
+            phase: "error",
+            errorMsg: "every protocol was blocked",
+            attempts: dead,
+          })}
+        />,
+      );
+      expect(screen.getByText("Protocol fallback")).toBeInTheDocument();
+      // The header's terse "all blocked" status, distinct from the error sub-line.
+      expect(screen.getByText("all blocked")).toBeInTheDocument();
+    });
+
+    it("lingers on success, then restores the node card after the window", () => {
+      vi.useFakeTimers();
+      try {
+        const ok: AttemptsEvent = {
+          outcome: "ok",
+          items: [
+            { seq: 1, protocol: "hysteria2", node: "n1", status: "ok", last_good: false },
+          ],
+        };
+        renderWithProviders(
+          <ConnectionPanel {...baseProps({ phase: "connected", attempts: ok })} />,
+        );
+        expect(screen.getByText("Protocol fallback")).toBeInTheDocument();
+        expect(
+          screen.queryByRole("button", { name: /change/ }),
+        ).not.toBeInTheDocument();
+
+        act(() => {
+          vi.advanceTimersByTime(2200);
+        });
+
+        expect(screen.queryByText("Protocol fallback")).not.toBeInTheDocument();
+        expect(
+          screen.getByRole("button", { name: /change/ }),
+        ).toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+});
+
+describe("shouldShowFallback", () => {
+  const items: AttemptsEvent["items"] = [];
+
+  it("is hidden without a snapshot", () => {
+    expect(shouldShowFallback(null, "connecting", false)).toBe(false);
+    expect(shouldShowFallback(undefined, "connecting", false)).toBe(false);
+  });
+
+  it("shows an in-flight walk only while connecting", () => {
+    const walk: AttemptsEvent = { outcome: "", items };
+    expect(shouldShowFallback(walk, "connecting", false)).toBe(true);
+    expect(shouldShowFallback(walk, "connected", false)).toBe(false);
+  });
+
+  it("shows a settled 'ok' walk only during the linger window", () => {
+    const ok: AttemptsEvent = { outcome: "ok", items };
+    expect(shouldShowFallback(ok, "connected", true)).toBe(true);
+    expect(shouldShowFallback(ok, "connected", false)).toBe(false);
+  });
+
+  it("shows an exhausted walk only while the error state persists", () => {
+    const dead: AttemptsEvent = { outcome: "exhausted", items };
+    expect(shouldShowFallback(dead, "error", false)).toBe(true);
+    expect(shouldShowFallback(dead, "idle", false)).toBe(false);
   });
 });

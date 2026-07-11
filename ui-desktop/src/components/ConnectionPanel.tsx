@@ -1,7 +1,12 @@
-import type { ConnectionState } from "../api";
+import { useEffect, useState } from "react";
+
+import type { AttemptsEvent, ConnectionState, RoutingMode } from "../api";
 import { useI18n } from "../i18n/I18nContext";
 import { formatBytes } from "../lib/format";
+import { useScrambledText } from "../lib/useScrambledText";
 import type { TrafficHistory } from "../lib/useTrafficHistory";
+import { FallbackPanel } from "./FallbackPanel";
+import { PingScale } from "./PingScale";
 import { TrafficChart } from "./TrafficChart";
 
 interface ConnectionPanelProps {
@@ -29,10 +34,65 @@ interface ConnectionPanelProps {
    * transport notice (e.g. reconnecting to the service) while connecting.
    */
   errorMsg?: string;
+  /** Active routing mode, mirrored in the eyebrow; hides the route when absent. */
+  routing?: RoutingMode;
+  /** True when the exit is auto-picked rather than chosen by hand. */
+  auto?: boolean;
+  /**
+   * The latest anti-DPI fallback-walk snapshot. When a walk is in flight (or just
+   * settled) the panel replaces the node card with a live view of it.
+   */
+  attempts?: AttemptsEvent | null;
+  /** Resolve a fallback candidate's node id to a display name. */
+  resolveNodeName?: (nodeId: string) => string;
   /** Connect / disconnect / abort, depending on phase. */
   onPrimary: () => void;
   /** Focus the node search (the "change" affordance). */
   onChange: () => void;
+}
+
+// How long the fallback panel lingers after a walk comes up, before the node card
+// takes back its place. A settle window, not an animation, so reduced-motion does
+// not shorten it.
+const OK_LINGER_MS = 2200;
+
+/**
+ * Whether the fallback panel should stand in for the node card: while a walk runs
+ * (during connecting), briefly after it comes up (`okHold`), and for as long as an
+ * exhausted walk keeps the panel in the error state. Pure, so the swap is testable
+ * without timers.
+ */
+export function shouldShowFallback(
+  attempts: AttemptsEvent | null | undefined,
+  phase: ConnectionState,
+  okHold: boolean,
+): boolean {
+  if (!attempts) {
+    return false;
+  }
+  if (attempts.outcome === "") {
+    return phase === "connecting";
+  }
+  if (attempts.outcome === "ok") {
+    return okHold;
+  }
+  return phase === "error"; // exhausted — held until the next connect/disconnect
+}
+
+// Holds `true` for a short window after a walk settles "ok", so the success view
+// lingers before the node card returns. Keyed on snapshot identity, so a fresh
+// walk restarts it and any other outcome clears it at once.
+function useOkHold(attempts: AttemptsEvent | null | undefined): boolean {
+  const [hold, setHold] = useState(false);
+  useEffect(() => {
+    if (attempts?.outcome === "ok") {
+      setHold(true);
+      const id = setTimeout(() => setHold(false), OK_LINGER_MS);
+      return () => clearTimeout(id);
+    }
+    setHold(false);
+  }, [attempts]);
+  return hold;
 }
 
 export function ConnectionPanel({
@@ -48,6 +108,10 @@ export function ConnectionPanel({
   cumulativeDown,
   cumulativeUp,
   errorMsg,
+  routing,
+  auto,
+  attempts,
+  resolveNodeName,
   onPrimary,
   onChange,
 }: ConnectionPanelProps) {
@@ -56,11 +120,34 @@ export function ConnectionPanel({
   const pending = phase === "connecting";
 
   const word = t.state[phase];
+  const displayWord = useScrambledText(word);
   const buttonLabel = connected
     ? `▢ ${t.home.disconnect}`
     : pending
       ? `· · · ${t.conn.abort}`
       : `▶ ${t.home.connect}`;
+
+  const routeName =
+    routing === "global"
+      ? t.settings.routingGlobal
+      : routing === "direct"
+        ? t.settings.routingDirect
+        : t.settings.routingSmart;
+
+  // A bare integer ping feeds the strength meter; "—" (no probe) shows neither
+  // the meter nor a value — honest over decorative.
+  const pingValue = /^\d+$/.test(ping) ? Number(ping) : null;
+
+  const okHold = useOkHold(attempts);
+  const showFallback = shouldShowFallback(attempts, phase, okHold);
+
+  // The "change" affordance broadcasts a focus-search intent the server-list pane
+  // listens for, so the two panes stay decoupled; the onChange callback is kept
+  // for any host that still wires the search focus directly.
+  const handleChange = () => {
+    window.dispatchEvent(new CustomEvent("tenebra:focus-search"));
+    onChange();
+  };
 
   const subLine = connected ? (
     <span>
@@ -86,32 +173,80 @@ export function ConnectionPanel({
     <div className="pane conn">
       <div className="conn-inner">
         <div className="conn-status">
-          <div className="conn-eyebrow">{t.conn.eyebrow}</div>
-          <div className={`conn-word ${phase}`} aria-live="polite">
-            <span className="ind" aria-hidden="true" />
-            {word}
+          <div className="conn-eyebrow">
+            <span className="conn-eyebrow-label">{t.conn.eyebrow}</span>
+            {routing && (
+              <span className="conn-route">
+                {t.bottom.routing} · {routeName}
+              </span>
+            )}
           </div>
+          <div className={`conn-word ${phase}`}>
+            <span className="ind" aria-hidden="true" />
+            <span className="conn-word-text" aria-live="polite">
+              {displayWord}
+            </span>
+          </div>
+          {pending && (
+            <div className="conn-rail" aria-hidden="true">
+              <span className="conn-rail-run" />
+            </div>
+          )}
           <div className="conn-sub">{subLine}</div>
         </div>
 
-        <button
-          type="button"
-          className={`connect-btn${connected ? " on" : ""}`}
-          onClick={onPrimary}
-        >
-          {buttonLabel}
-        </button>
-
-        <div className="cur-server">
-          <div className="node">{nodeCode || "—"}</div>
-          <div className="ip selectable">
-            {connected && exitServer ? exitServer : t.conn.exitIp}
-          </div>
-          {nodeCity && <div className="city">{nodeCity}</div>}
-          <button type="button" className="swap" onClick={onChange}>
-            ▶ {t.conn.change}
+        <div className="connect-row">
+          <button
+            type="button"
+            className={`connect-btn${connected ? " on" : ""}${pending ? " pending" : ""}`}
+            onClick={onPrimary}
+          >
+            {buttonLabel}
           </button>
+          <span className="key-hint" aria-hidden="true">
+            space
+          </span>
         </div>
+
+        {showFallback && attempts ? (
+          <FallbackPanel attempts={attempts} resolveNodeName={resolveNodeName} />
+        ) : (
+          <div className="cur-server">
+            <span className="tick tl" aria-hidden="true">
+              +
+            </span>
+            <span className="tick tr" aria-hidden="true">
+              +
+            </span>
+            <span className="tick bl" aria-hidden="true">
+              +
+            </span>
+            <span className="tick br" aria-hidden="true">
+              +
+            </span>
+            <div className="cur-head">
+              <span className="node">{nodeCode || "—"}</span>
+              {auto && <span className="auto-chip">{t.conn.autoTag}</span>}
+            </div>
+            <div className="ip selectable">
+              {connected && exitServer ? exitServer : t.conn.exitIp}
+            </div>
+            <div className="cur-meta">
+              {nodeCity && <span className="city">{nodeCity}</span>}
+              {pingValue !== null && (
+                <>
+                  <PingScale rttMs={pingValue} />
+                  <span className="cur-rtt">
+                    {ping} {t.units.ms}
+                  </span>
+                </>
+              )}
+            </div>
+            <button type="button" className="swap" onClick={handleChange}>
+              ▶ {t.conn.change}
+            </button>
+          </div>
+        )}
 
         <div className="conn-stats">
           <div className="stat">
