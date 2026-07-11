@@ -378,11 +378,6 @@ func (t *attemptTracker) escalating(a fallback.Attempt, strat fallback.Strategy)
 	t.publish(AttemptOutcomePending)
 }
 
-// blocked marks a candidate failed with no interference verdict (an ordinary
-// dead/unknown outcome), leaving its reason annotation empty — the pre-adaptation
-// shape.
-func (t *attemptTracker) blocked(a fallback.Attempt) { t.blockedWithReason(a, "") }
-
 // blockedWithReason marks a candidate failed and, when reason is non-empty,
 // records why the walk gave up on it (e.g. "censored" once its transport
 // strategies were exhausted). The walk stays in progress; a later candidate may
