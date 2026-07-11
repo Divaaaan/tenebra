@@ -85,6 +85,21 @@ export interface Strings {
     down: string;
     addSub: string;
     noNodes: string;
+    /** Pinned auto-select row heading, above the node list. */
+    auto: string;
+    /**
+     * Auto-row subtitle naming the current lowest-ping node; "{node}" is
+     * interpolated with that node's (lowercased) name.
+     */
+    autoSub: string;
+    /** Auto-row subtitle before any node has a ping — no best node to name yet. */
+    autoSubIdle: string;
+    /** Dashed tag on the auto row (kept latin in both languages). */
+    autoTag: string;
+    /** CTA under the "no nodes match" empty state: clears region + query. */
+    resetFilter: string;
+    /** CTA under the "no subscription" empty state: opens the import flow. */
+    importSub: string;
     /** Compact badge on a node whose TLS certificate is not verified. */
     insecureBadge: string;
     /** Full tooltip / screen-reader label for the insecure badge. */
@@ -454,6 +469,12 @@ const en: Strings = {
     down: "down",
     addSub: "+ add",
     noNodes: "this subscription has no nodes",
+    auto: "AUTO",
+    autoSub: "lowest ping · now {node}",
+    autoSubIdle: "lowest ping",
+    autoTag: "AUTO",
+    resetFilter: "reset filter",
+    importSub: "import subscription",
     insecureBadge: "no-cert",
     insecureTitle: "TLS verification off — on-path interception possible",
     insecureSummary:
@@ -773,6 +794,12 @@ const ru: Strings = {
     down: "недост.",
     addSub: "+ добавить",
     noNodes: "в этой подписке нет узлов",
+    auto: "АВТО",
+    autoSub: "минимальный пинг · сейчас {node}",
+    autoSubIdle: "минимальный пинг",
+    autoTag: "AUTO",
+    resetFilter: "сбросить фильтр",
+    importSub: "импортировать подписку",
     insecureBadge: "без серт.",
     insecureTitle: "Проверка TLS отключена — возможен перехват трафика",
     insecureSummary:
