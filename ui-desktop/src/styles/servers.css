@@ -115,7 +115,8 @@
   white-space: nowrap;
   transition:
     color var(--t-fast),
-    border-color var(--t-fast);
+    border-color var(--t-fast),
+    background var(--t-fast);
 }
 .chip::before {
   content: "[ ";
@@ -129,9 +130,12 @@
   color: var(--text);
   border-color: var(--text-dim);
 }
+/* Active chip: the accent colour + border it always had, now with the faint
+   accent wash behind it so the selected filter / profile tab reads as filled. */
 .chip.on {
   color: var(--signal);
   border-color: var(--signal);
+  background: var(--signal-faint);
 }
 .chip.on::before,
 .chip.on::after {
@@ -147,6 +151,11 @@
   padding: 6px 11px;
   font-size: var(--fs-meta);
   letter-spacing: var(--track-body);
+  transition: border-color var(--t-base);
+}
+/* The border lights to the accent while the input owns the keyboard. */
+.srv-search:focus-within {
+  border-color: var(--signal);
 }
 .srv-search .prompt {
   color: var(--signal);
@@ -161,6 +170,16 @@
 .srv-search input::placeholder {
   color: var(--text-dim-2);
 }
+/* The "/" hotkey hint, mirroring the connect button's `space` chip. */
+.srv-search-hint {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: 0.08em;
+  color: var(--text-dim-2);
+  border: var(--bw) solid var(--line);
+  padding: 1px 6px;
+}
 
 /* list + rows */
 .srv-list {
@@ -174,8 +193,35 @@
   color: var(--text-dim);
   font-size: var(--fs-meta);
   letter-spacing: 0.06em;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
 }
-.srv-row {
+/* Escape-hatch button under an empty state: clear the filter, or import a
+   subscription. Bordered accent that fills on hover — a live affordance, never a
+   dead-end message. */
+.srv-empty-cta {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--signal);
+  border: var(--bw) solid var(--signal);
+  padding: 4px 10px;
+  transition:
+    color var(--t-base),
+    background var(--t-base);
+}
+.srv-empty-cta:hover {
+  background: var(--signal);
+  color: var(--on-signal);
+}
+
+/* Pinned AUTO row: sits above the node list, lets the core pick the lowest-ping
+   node. Same geometry as a node row but its own three-column grid (name · best
+   ping · dashed AUTO tag). Carries the active state whenever no node is pinned. */
+.srv-auto {
   display: grid;
   grid-template-columns: 1fr auto auto;
   align-items: center;
@@ -183,19 +229,108 @@
   padding: 13px 22px;
   border-bottom: var(--bw) solid var(--line);
   cursor: pointer;
-  transition: background var(--t-fast);
+  transition:
+    background var(--t-fast),
+    box-shadow var(--t-fast);
+  animation: srv-row-in var(--t-enter) both;
+}
+.srv-auto:hover {
+  background: var(--surface);
+  box-shadow: inset 2px 0 0 var(--signal);
+}
+.srv-auto.on {
+  background: var(--surface-2);
+  box-shadow: inset 2px 0 0 var(--signal);
+}
+.srv-auto-name {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.srv-auto-code {
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  letter-spacing: var(--track-body);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text);
+}
+.srv-auto.on .srv-auto-code {
+  color: var(--signal);
+}
+.srv-auto-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--signal);
+  display: inline-block;
+  flex: none;
+}
+.srv-auto-sub {
+  font-size: var(--fs-label);
+  color: var(--text-dim);
+  letter-spacing: var(--track-body);
+  text-transform: lowercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.srv-auto-rtt {
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  text-align: right;
+  min-width: 52px;
+}
+/* Dashed sibling of the proto tag — reads as a mode label, not a live value. */
+.srv-auto-tag {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: 0.08em;
+  color: var(--text-dim-2);
+  border: var(--bw) dashed var(--line);
+  padding: 2px 6px;
+  min-width: 54px;
+  text-align: center;
+}
+
+.srv-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 22px;
+  border-bottom: var(--bw) solid var(--line);
+  cursor: pointer;
+  transition:
+    background var(--t-fast),
+    box-shadow var(--t-fast);
+  /* Rows cascade in on appearance; the per-row stagger delay is set inline (it's
+     a dynamic index). Neutralised under reduced-motion below. */
+  animation: srv-row-in var(--t-enter) both;
 }
 .srv-row:hover {
   background: var(--surface);
+  box-shadow: inset 2px 0 0 var(--signal);
 }
 .srv-row.active {
   background: var(--surface-2);
+  box-shadow: inset 2px 0 0 var(--signal);
 }
 .srv-row.active .srv-node {
   color: var(--signal);
 }
+/* A dead node dims whole and stops responding to hover — nothing to select. */
 .srv-row.is-dead {
   cursor: default;
+  opacity: 0.55;
+}
+.srv-row.is-dead:hover {
+  background: transparent;
+  box-shadow: none;
 }
 .srv-name {
   display: flex;
@@ -275,4 +410,24 @@
   padding: 2px 6px;
   min-width: 54px;
   text-align: center;
+}
+
+/* Row-entrance cascade (fade + a short lift). The global reduced-motion rule
+   only zeroes duration, which would leave the inline stagger delay flashing rows
+   in one by one — so the motion budget here is dropped outright instead. */
+@keyframes srv-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .srv-row,
+  .srv-auto {
+    animation: none;
+  }
 }
