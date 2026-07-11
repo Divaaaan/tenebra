@@ -123,6 +123,18 @@ export interface Profile {
   trafficUsed?: number;
   /** Bytes included, from the subscription user-info header. */
   trafficTotal?: number;
+  /**
+   * Whether the core recognised this as a managed subscription — one served by
+   * the operator's own infrastructure (host + path shape). Presentation only (it
+   * drives a badge), never a capability. Omitted (treated as false) when it isn't.
+   */
+  managed?: boolean;
+  /**
+   * Entitlement tier the core resolved for a managed subscription. Omitted when
+   * unknown or not applicable. UX only — it drives a badge; any real premium
+   * capability is derived from server data, not this label.
+   */
+  tier?: "premium" | "free";
 }
 
 export interface PingResult {

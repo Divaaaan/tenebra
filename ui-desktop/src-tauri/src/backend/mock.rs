@@ -182,6 +182,8 @@ impl Backend for MockBackend {
             expires_at: Some(in_days(30)),
             traffic_used: Some(7 * GIB),
             traffic_total: Some(100 * GIB),
+            managed: false,
+            tier: String::new(),
         };
         self.shared
             .inner
@@ -222,6 +224,8 @@ impl Backend for MockBackend {
             expires_at: None,
             traffic_used: None,
             traffic_total: None,
+            managed: false,
+            tier: String::new(),
         };
         self.shared
             .inner
@@ -265,6 +269,8 @@ impl Backend for MockBackend {
             expires_at: None,
             traffic_used: None,
             traffic_total: None,
+            managed: false,
+            tier: String::new(),
         };
         self.shared
             .inner
@@ -671,6 +677,10 @@ fn demo_profiles() -> Vec<Profile> {
             expires_at: Some(in_days(21)),
             traffic_used: Some(12 * GIB),
             traffic_total: Some(200 * GIB),
+            // A managed, premium demo subscription so the badge is visible when the
+            // GUI runs on the mock backend (no core attached).
+            managed: true,
+            tier: "premium".into(),
         },
         Profile {
             id: "demo-manual".into(),
@@ -688,6 +698,8 @@ fn demo_profiles() -> Vec<Profile> {
             expires_at: None,
             traffic_used: None,
             traffic_total: None,
+            managed: false,
+            tier: String::new(),
         },
     ]
 }
