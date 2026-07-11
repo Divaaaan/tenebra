@@ -1,0 +1,67 @@
+/* ── credits card (wordmark easter egg) ──
+   A quiet thank-you, revealed by tapping the wordmark seven times. Centred low,
+   above the toast host; self-dismisses, or click / Escape to close. Understated by
+   design: a mono crown in the accent, a dim line of gratitude, one hairline
+   border — no scrim, nothing that blocks the app behind it. */
+
+.credits {
+  position: absolute;
+  left: 50%;
+  bottom: 64px;
+  transform: translateX(-50%);
+  z-index: 60; /* above the toast host (50) */
+  display: flex;
+  justify-content: center;
+}
+
+/* The card is a <button> so the whole surface dismisses on click; global.css
+   resets button chrome, so the look is defined here from scratch. */
+.credits-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-5) var(--sp-6);
+  background: var(--bg);
+  border: var(--bw) solid var(--line-2);
+  text-align: center;
+  animation: credits-in 260ms ease-out both;
+}
+
+/* A <span> rather than a <pre> so it stays valid phrasing content inside the
+   button; white-space: pre keeps the crown's columns and line breaks. */
+.credits-crown {
+  display: block;
+  white-space: pre;
+  margin: 0 0 var(--sp-1);
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  line-height: 1.15;
+  color: var(--signal);
+}
+
+.credits-line {
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.credits-sub {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+@keyframes credits-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

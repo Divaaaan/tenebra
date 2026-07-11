@@ -1,0 +1,141 @@
+import type { ConnectionState, Node, Profile } from "../api";
+import { useI18n } from "../i18n/I18nContext";
+
+interface SimpleViewProps {
+  phase: ConnectionState;
+  /** True while a primary action is mid-flight; disables the button. */
+  busy: boolean;
+  /** Connect / disconnect / abort, decided by phase — the same handler the shell uses. */
+  onPrimary: () => void;
+  /** Display name of the active (connected) or target node; "" when none. */
+  nodeName: string;
+  profiles: Profile[];
+  selectedProfileId: string | null;
+  onSelectProfile: (id: string) => void;
+  /** Nodes of the selected profile. */
+  nodes: Node[];
+  /** Pinned node id, or "" for automatic (let the core pick the fastest). */
+  selectedNodeId: string;
+  onSelectNode: (id: string) => void;
+  onSelectAuto: () => void;
+}
+
+/**
+ * The stripped-down connection screen for people who want one button, not a
+ * control panel. A single large connect / disconnect control, the current status
+ * in plain words, and a minimal server picker — everything advanced (routing,
+ * kill switch, diagnostics, the node table, logs) is left to the full shell.
+ * Reads the same connection state and calls the same actions as the shell, so the
+ * two views never disagree.
+ */
+export function SimpleView({
+  phase,
+  busy,
+  onPrimary,
+  nodeName,
+  profiles,
+  selectedProfileId,
+  onSelectProfile,
+  nodes,
+  selectedNodeId,
+  onSelectNode,
+  onSelectAuto,
+}: SimpleViewProps) {
+  const { t } = useI18n();
+
+  const connected = phase === "connected";
+  const pending = phase === "connecting";
+  const hasProfile = profiles.length > 0;
+
+  const buttonLabel = connected
+    ? t.home.disconnect
+    : pending
+      ? t.conn.abort
+      : t.home.connect;
+
+  // Calm, plain-language status line. Connecting / reconnecting say nothing extra —
+  // the status word already carries it.
+  const reassurance =
+    phase === "connected"
+      ? nodeName
+        ? `${t.simple.statusOn} · ${nodeName}`
+        : t.simple.statusOn
+      : phase === "idle" || phase === "error"
+        ? t.simple.statusOff
+        : "";
+
+  return (
+    <div className="simple">
+      <div className="simple-brand" aria-hidden="true">
+        <span className="bracket">[</span>
+        <span className="mark">Tenebra</span>
+        <span className="bracket">]</span>
+      </div>
+
+      <div className="simple-core">
+        <div className={`simple-word ${phase}`}>
+          <span className="simple-ind" aria-hidden="true" />
+          <span className="simple-word-text" aria-live="polite">
+            {t.state[phase]}
+          </span>
+        </div>
+        {reassurance && <p className="simple-sub">{reassurance}</p>}
+
+        <button
+          type="button"
+          className={`simple-btn${connected ? " on" : ""}${pending ? " pending" : ""}`}
+          onClick={onPrimary}
+          disabled={busy || (!connected && !pending && !hasProfile)}
+        >
+          {buttonLabel}
+        </button>
+      </div>
+
+      <div className="simple-pick">
+        {hasProfile ? (
+          <>
+            {profiles.length > 1 && (
+              <label className="simple-field">
+                <span className="simple-field-lab">{t.home.activeProfile}</span>
+                <select
+                  className="simple-select"
+                  value={selectedProfileId ?? ""}
+                  onChange={(e) => onSelectProfile(e.target.value)}
+                >
+                  {profiles.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            <label className="simple-field">
+              <span className="simple-field-lab">{t.simple.server}</span>
+              <select
+                className="simple-select"
+                value={selectedNodeId}
+                onChange={(e) =>
+                  e.target.value
+                    ? onSelectNode(e.target.value)
+                    : onSelectAuto()
+                }
+                disabled={nodes.length === 0}
+              >
+                <option value="">{t.simple.auto}</option>
+                {nodes.map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        ) : (
+          <p className="simple-empty">{t.simple.noProfile}</p>
+        )}
+      </div>
+    </div>
+  );
+}

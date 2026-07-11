@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 
 import { TopBar } from "./TopBar";
 import { renderWithProviders } from "../test/renderWithProviders";
@@ -98,5 +98,42 @@ describe("TopBar", () => {
       expect(container.querySelector(".acct-badge")).not.toBeInTheDocument();
       unmount();
     }
+  });
+
+  it("hides the Latin motto on the version badge for hover discovery", () => {
+    // A quiet flavour string, surfaced only as the version's tooltip — never in
+    // the visible chrome.
+    renderWithProviders(<TopBar activeProfile={null} />);
+    const ver = screen.getByText(`v${__APP_VERSION__}`);
+    expect(ver).toHaveAttribute("title", "In tenebris lux");
+  });
+
+  it("reveals the credits card after seven wordmark taps", () => {
+    const { container } = renderWithProviders(<TopBar activeProfile={null} />);
+    const mark = screen.getByText("Tenebra");
+
+    // Six taps are not enough — the reward is deliberately hard to hit by accident.
+    for (let i = 0; i < 6; i += 1) {
+      fireEvent.click(mark);
+    }
+    expect(container.querySelector(".credits")).not.toBeInTheDocument();
+
+    // The seventh crosses the threshold.
+    fireEvent.click(mark);
+    expect(container.querySelector(".credits")).toBeInTheDocument();
+    expect(screen.getByText("made in the dark")).toBeInTheDocument();
+  });
+
+  it("dismisses the credits card on click", () => {
+    const { container } = renderWithProviders(<TopBar activeProfile={null} />);
+    const mark = screen.getByText("Tenebra");
+    for (let i = 0; i < 7; i += 1) {
+      fireEvent.click(mark);
+    }
+    const card = container.querySelector(".credits-card");
+    expect(card).toBeInTheDocument();
+
+    fireEvent.click(card as Element);
+    expect(container.querySelector(".credits")).not.toBeInTheDocument();
   });
 });

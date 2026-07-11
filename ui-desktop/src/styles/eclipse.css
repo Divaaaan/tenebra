@@ -1,0 +1,89 @@
+/* ── eclipse (Konami reward) ──
+   A brief full-window totality: darkness sweeps the canvas, an orange corona
+   flares to a ring, holds, then everything fades. Decorative and inert
+   (pointer-events: none, aria-hidden) — it never intercepts input and removes
+   itself. The eclipse is darkness by definition, so its veil and disc are fixed
+   near-black and the ring is the canonical #ff3d00 in BOTH themes; it does not
+   invert on light. Motion is neutralised under reduced-motion (block at the foot),
+   which keeps the ring resting and visible for its lifetime instead of on the
+   fade's final, invisible frame. */
+
+:root {
+  --eclipse-dur: 2600ms;
+}
+
+.eclipse {
+  position: absolute;
+  inset: 0;
+  z-index: 100; /* above the overlay host (20) and the toast host (50) */
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(
+    circle at center,
+    rgba(14, 14, 14, 0.72) 0%,
+    rgba(14, 14, 14, 0.95) 62%
+  );
+  animation: eclipse-veil var(--eclipse-dur) ease-in-out both;
+}
+
+.eclipse-corona {
+  width: 210px;
+  height: 210px;
+  max-width: 42vw;
+  max-height: 42vw;
+  border-radius: 50%;
+  background: #0e0e0e; /* the occluding disc — the "new moon" */
+  box-shadow:
+    0 0 0 2px #ff3d00,
+    0 0 34px 6px rgba(255, 61, 0, 0.72),
+    0 0 130px 34px rgba(255, 61, 0, 0.3);
+  animation: eclipse-corona var(--eclipse-dur) ease-in-out both;
+}
+
+@keyframes eclipse-veil {
+  0% {
+    opacity: 0;
+  }
+  14% {
+    opacity: 1;
+  }
+  72% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes eclipse-corona {
+  0% {
+    transform: scale(0.55);
+    opacity: 0;
+  }
+  16% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  72% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.12);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .eclipse {
+    animation: none;
+    opacity: 1;
+  }
+  .eclipse-corona {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
