@@ -13,6 +13,7 @@ import { DeepLinkConfirm } from "./components/DeepLinkConfirm";
 import { ProfilesScreen } from "./screens/ProfilesScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { LogsScreen } from "./screens/LogsScreen";
+import { ToastHost } from "./components/ToastHost";
 import { useTenebra } from "./state/useTenebra";
 import { useI18n } from "./i18n/I18nContext";
 import type { RoutingMode } from "./api";
@@ -30,6 +31,7 @@ import { useSessionClock, formatUptime } from "./lib/useSessionClock";
 import { useTrafficHistory } from "./lib/useTrafficHistory";
 import { useUpdateCheck } from "./lib/useUpdateCheck";
 import { useCrashReport } from "./lib/useCrashReport";
+import { useActionToasts } from "./lib/useActionToasts";
 import { formatMbps } from "./lib/format";
 import { getAutoFastest, migrateLegacyAutoconnect } from "./lib/settings";
 
@@ -173,6 +175,17 @@ export function App() {
   const liveNodeId = connected ? state.node : targetNodeId;
   const livePing = liveNodeId ? pings.results.get(liveNodeId)?.rttMs : undefined;
 
+  // Confirm the App-level actions the user takes (reaching connected, arming the
+  // kill switch, changing routing) with a toast. The initial status load is
+  // silent; only genuine transitions speak.
+  useActionToasts(
+    { ready: tenebra.ready, phase, killSwitch, routing: state.routing },
+    connected && displayedNode
+      ? { name: displayedNode.name, protocol: displayedNode.protocol }
+      : null,
+    t,
+  );
+
   const handlePrimary = useCallback(() => {
     if (busy) return;
     setBusy(true);
@@ -239,6 +252,51 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [overlay]);
+
+  // Global shortcuts layered on Esc: Space is the primary connect / disconnect /
+  // abort, and "/" jumps to node search. Both stand down while a field owns the
+  // keyboard or a modal / overlay is up (Esc owns those layers) — the same reach
+  // as the Esc handler above.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== " " && e.key !== "/") return;
+
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      const typing =
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        el?.isContentEditable === true;
+      if (typing || overlay || connectRequest || viewingReport) return;
+
+      if (e.key === "/") {
+        e.preventDefault();
+        // Focus the node search. The listener lives in the ServerList zone; this
+        // fires the agreed cross-zone event ("tenebra:focus-search") so the
+        // shortcut and the input stay decoupled.
+        window.dispatchEvent(new CustomEvent("tenebra:focus-search"));
+        return;
+      }
+
+      // Space = connect / disconnect / abort. Defer to a focused control that
+      // activates on Space itself (buttons, links, the role="button" node rows),
+      // so the key is never handled twice.
+      const role = el?.getAttribute("role");
+      if (
+        tag === "BUTTON" ||
+        tag === "A" ||
+        role === "button" ||
+        role === "link"
+      ) {
+        return;
+      }
+      e.preventDefault();
+      handlePrimary();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [overlay, connectRequest, viewingReport, handlePrimary]);
 
   // Tray → front end. "Connect" runs the selected-profile flow; "Show" closes
   // any overlay so the main panel is in view.
@@ -461,6 +519,8 @@ export function App() {
           onClose={() => setViewingReport(false)}
         />
       )}
+
+      <ToastHost />
     </div>
   );
 }
