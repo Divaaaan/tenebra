@@ -7,7 +7,7 @@ want to weigh in, open a thread in
 
 ## Shipped
 
-Working today on the Windows desktop client:
+Working today on the Windows and macOS desktop clients:
 
 - All sing-box protocols — VLESS/REALITY, Hysteria2, AmneziaWG, Shadowsocks,
   Trojan, VMess.
@@ -31,9 +31,8 @@ Working today on the Windows desktop client:
 - **Custom routing rules in the UI** — build and edit rules without hand-writing
   config.
 - **Connection diagnostics** — UDP / STUN reachability and a speed test.
-- **More platforms** — macOS and Linux next, then Android and iOS. The core is
-  already platform-agnostic; the desktop UI and native tunnel adapters are the
-  work.
+- **More platforms** — Linux next, then Android and iOS. The core is already
+  platform-agnostic; the desktop UI and native tunnel adapters are the work.
 - **Opt-in crash reporting** — privacy-first, off by default.
 
 ## Exploring
