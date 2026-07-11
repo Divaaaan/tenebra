@@ -174,6 +174,19 @@ type Daemon struct {
 	httpGet    func(ctx context.Context, url string) ([]byte, error)
 	ipEchoes   []ipEcho
 	dnsEchoURL string
+
+	// entitlement resolves a managed subscription's entitlement for one key,
+	// against the subscription's own origin. Injectable so the import/refresh
+	// paths can be unit-tested offline; production uses subscription.FetchEntitlement.
+	entitlement func(ctx context.Context, origin, key string) (subscription.Entitlement, error)
+	// entCtx bounds every background entitlement lookup's lifetime and entCancel
+	// cuts them short on Close, so a slow endpoint can't block shutdown. entWG
+	// tracks the in-flight lookups so Close waits for them to unwind. The lookups
+	// only ever read the store and re-emit the profile list, never touch the
+	// tunnel, so they are kept off d.wg (whose Wait a disconnect blocks on).
+	entCtx    context.Context
+	entCancel context.CancelFunc
+	entWG     sync.WaitGroup
 }
 
 // NewDaemon builds a Daemon over a profile store and runner. Routing defaults to
@@ -206,6 +219,8 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 		ipEchoes:   defaultIPEchoes,
 		dnsEchoURL: dnsEchoURL,
 
+		entitlement: subscription.FetchEntitlement,
+
 		probeWarmup:  defaultProbeWarmup,
 		probeRetry:   defaultProbeRetry,
 		probeTimeout: defaultProbeTimeout,
@@ -219,6 +234,9 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 	// local tun rather than the real server. Binding the socket to the physical NIC
 	// steers each probe past the tun so the RTT readout stays meaningful mid-session.
 	d.dial = newPingDialer().DialContext
+	// Background entitlement lookups run under this context so Close can cancel a
+	// slow one instead of blocking shutdown on it.
+	d.entCtx, d.entCancel = context.WithCancel(context.Background())
 	return d
 }
 
@@ -469,6 +487,10 @@ type redactedProfile struct {
 	ExpiresAt    *time.Time     `json:"expiresAt,omitempty"`
 	TrafficUsed  int64          `json:"trafficUsed,omitempty"`
 	TrafficTotal int64          `json:"trafficTotal,omitempty"`
+	// Managed and Tier are safe to surface: neither is a secret (unlike the URL,
+	// which is dropped), and the UI needs both to draw the managed/premium badge.
+	Managed bool   `json:"managed,omitempty"`
+	Tier    string `json:"tier,omitempty"`
 }
 
 // redactProfile projects one stored profile onto its wire-safe view, copying
@@ -496,6 +518,8 @@ func redactProfile(p profile.Profile) redactedProfile {
 		ExpiresAt:    p.ExpiresAt,
 		TrafficUsed:  p.TrafficUsed,
 		TrafficTotal: p.TrafficTotal,
+		Managed:      p.Managed,
+		Tier:         p.Tier,
 	}
 }
 
@@ -551,10 +575,18 @@ func (d *Daemon) handleImportSubscription(ctx context.Context, req Request) Resp
 		return newError(req.ID, err.Error())
 	}
 	applyUserInfo(&p, header.Get("Subscription-Userinfo"))
+	// Recognise a managed subscription (operator-served) so the UI can badge it
+	// immediately; the tier itself is resolved off the import path below.
+	p.Managed = subscription.DetectManaged(req.URL)
 
 	if err := d.store.Add(p); err != nil {
 		return newError(req.ID, err.Error())
 	}
+	// A managed subscription's entitlement is fetched in the background so it
+	// never delays or fails the import: the profile is already stored and
+	// returned; the tier lands on it (and the UI is signalled) if and when the
+	// lookup confirms premium.
+	d.startEntitlementLookup(p.ID, req.URL, p.Managed)
 	return d.profileResult(req.ID, p)
 }
 
@@ -722,6 +754,14 @@ func (d *Daemon) refreshProfile(ctx context.Context, p profile.Profile) (profile
 		p.TrafficTotal = 0
 		applyUserInfo(&p, ui)
 	}
+	// Re-recognise the managed shape (idempotent for a stable URL) and re-validate
+	// the tier inline: a refresh is already a background or user-initiated sweep,
+	// so a synchronous lookup is fine. It is fail-closed — a transient failure
+	// re-validates to free rather than aborting the refresh — so an entitlement
+	// that lapsed (or an endpoint that is momentarily unreachable) drops the badge
+	// until the next refresh restores it.
+	p.Managed = subscription.DetectManaged(p.URL)
+	p.Tier = d.lookupTier(ctx, p.URL, p.Managed)
 
 	if err := d.store.Update(p); err != nil {
 		return profile.Profile{}, false, err
@@ -753,6 +793,65 @@ func (d *Daemon) refreshAllSubscriptions(ctx context.Context) bool {
 	return changedAny
 }
 
+// entitlementTimeout bounds a single background entitlement lookup so a stalled
+// endpoint neither leaks a goroutine nor delays Close beyond it.
+const entitlementTimeout = 15 * time.Second
+
+// lookupTier resolves a managed subscription's effective entitlement tier,
+// folding every failure into the free tier (fail-closed). A non-managed
+// subscription has no tier ("" — unknown/not applicable); a managed one whose
+// target cannot be derived, whose endpoint errors, or whose answer is not an
+// active premium entitlement resolves to "free". Premium is only ever returned
+// on a positive, authenticated answer, so the badge cannot be conjured by a
+// failure path.
+func (d *Daemon) lookupTier(ctx context.Context, subURL string, managed bool) string {
+	if !managed {
+		return ""
+	}
+	origin, key, ok := subscription.EntitlementTarget(subURL)
+	if !ok {
+		return subscription.TierFree
+	}
+	ent, err := d.entitlement(ctx, origin, key)
+	if err != nil {
+		return subscription.TierFree
+	}
+	return ent.NormalizedTier()
+}
+
+// startEntitlementLookup resolves a freshly imported managed subscription's tier
+// off the import path. It only ever surfaces an upgrade: the profile was just
+// stored with no tier, so a free/failed lookup leaves it unchanged (and emits
+// nothing), while a confirmed premium answer is written back and the UI is
+// signalled to reload. A non-managed import is a no-op.
+func (d *Daemon) startEntitlementLookup(id, subURL string, managed bool) {
+	if !managed {
+		return
+	}
+	base := d.entCtx
+	if base == nil {
+		base = context.Background()
+	}
+	d.entWG.Add(1)
+	go func() {
+		defer d.entWG.Done()
+		ctx, cancel := context.WithTimeout(base, entitlementTimeout)
+		defer cancel()
+		if d.lookupTier(ctx, subURL, true) != subscription.TierPremium {
+			return
+		}
+		cur, ok := d.store.Get(id)
+		if !ok || cur.Tier == subscription.TierPremium {
+			return
+		}
+		cur.Tier = subscription.TierPremium
+		if err := d.store.Update(cur); err != nil {
+			return
+		}
+		d.emitProfiles()
+	}()
+}
+
 // profileChanged reports whether a refresh produced a profile materially
 // different from the one before it, ignoring the UpdatedAt timestamp (which a
 // refresh always bumps). It drives whether the UI is told to reload: an
@@ -760,6 +859,10 @@ func (d *Daemon) refreshAllSubscriptions(ctx context.Context) bool {
 func profileChanged(before, after profile.Profile) bool {
 	if before.TrafficUsed != after.TrafficUsed ||
 		before.TrafficTotal != after.TrafficTotal {
+		return true
+	}
+	// A managed/tier flip changes the badge, so the UI must reload for it.
+	if before.Managed != after.Managed || before.Tier != after.Tier {
 		return true
 	}
 	if (before.ExpiresAt == nil) != (after.ExpiresAt == nil) {
