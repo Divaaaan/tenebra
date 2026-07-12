@@ -76,6 +76,36 @@
   }
 }
 
+/* The Latin motto surfaces inside the totality — the "light" of in tenebris lux —
+   a mono line low on the disc, fading in after the corona lands and out with it. */
+.eclipse-motto {
+  position: absolute;
+  bottom: 24%;
+  margin: 0;
+  font-family: var(--font-mono, "JetBrains Mono", monospace);
+  font-size: 0.78rem;
+  letter-spacing: 0.2em;
+  color: #ff3d00;
+  opacity: 0;
+  animation: eclipse-motto var(--eclipse-dur) ease-in-out both;
+}
+
+@keyframes eclipse-motto {
+  0%,
+  26% {
+    opacity: 0;
+  }
+  46% {
+    opacity: 0.9;
+  }
+  72% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .eclipse {
     animation: none;
@@ -85,5 +115,9 @@
     animation: none;
     opacity: 1;
     transform: none;
+  }
+  .eclipse-motto {
+    animation: none;
+    opacity: 1;
   }
 }

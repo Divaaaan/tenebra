@@ -97,25 +97,6 @@ async function mountReady() {
   return utils;
 }
 
-const KONAMI = [
-  "ArrowUp",
-  "ArrowUp",
-  "ArrowDown",
-  "ArrowDown",
-  "ArrowLeft",
-  "ArrowRight",
-  "ArrowLeft",
-  "ArrowRight",
-  "b",
-  "a",
-];
-
-function typeSequence(keys: string[]) {
-  for (const key of keys) {
-    fireEvent.keyDown(document.body, { key });
-  }
-}
-
 describe("App simple mode", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -231,50 +212,5 @@ describe("App simple mode", () => {
   });
 });
 
-describe("App Konami eclipse", () => {
-  beforeEach(() => {
-    localStorage.clear();
-    armEvents();
-    mocks.status.mockResolvedValue({ state: "idle" } as State);
-    mocks.listProfiles.mockResolvedValue([profile]);
-    mocks.connect.mockResolvedValue({ state: "connecting" } as State);
-    mocks.disconnect.mockResolvedValue({ state: "idle" } as State);
-    mocks.ping.mockResolvedValue([]);
-    mocks.leakCheck.mockResolvedValue({
-      connected: false,
-      ip_verdict: "neutral",
-      ip_message: "",
-      dns: { status: "unavailable", message: "" },
-    });
-  });
-
-  it("triggers the eclipse overlay on the full code", async () => {
-    const info = vi.spyOn(console, "info").mockImplementation(() => {});
-    const { container } = await mountReady();
-    expect(container.querySelector(".eclipse")).not.toBeInTheDocument();
-
-    typeSequence(KONAMI);
-
-    expect(container.querySelector(".eclipse")).toBeInTheDocument();
-    // The quiet console line rides along.
-    expect(info).toHaveBeenCalled();
-    info.mockRestore();
-  });
-
-  it("does not trigger on a broken sequence", async () => {
-    const { container } = await mountReady();
-    typeSequence(["ArrowUp", "ArrowUp", "ArrowDown", "x", "b", "a"]);
-    expect(container.querySelector(".eclipse")).not.toBeInTheDocument();
-  });
-
-  it("stands down while a text field owns the keyboard", async () => {
-    await mountReady();
-    const search = screen.getByPlaceholderText("search node · de-fra");
-    // Fire the whole code into the search input — a hidden shortcut must not spend
-    // the sequence while someone is typing.
-    for (const key of KONAMI) {
-      fireEvent.keyDown(search, { key });
-    }
-    expect(document.querySelector(".eclipse")).not.toBeInTheDocument();
-  });
-});
+// The eclipse egg moved from the Konami code to three wordmark taps; it is now
+// covered by TopBar.test.tsx, so App only owns the simple-mode swap above.

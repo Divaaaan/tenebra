@@ -1,26 +1,29 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, screen } from "@testing-library/react";
 
 import { TopBar } from "./TopBar";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { makeProfile } from "../test/fixtures";
 
+// A no-op eclipse handler for the tests that don't exercise the egg.
+const noEclipse = () => {};
+
 describe("TopBar", () => {
   it("renders the Tenebra wordmark", () => {
-    renderWithProviders(<TopBar activeProfile={null} />);
+    renderWithProviders(<TopBar activeProfile={null} onEclipse={noEclipse} />);
     expect(screen.getByText("Tenebra")).toBeInTheDocument();
   });
 
   it("shows the package version, not a stale literal", () => {
     // __APP_VERSION__ is injected from package.json by the vite/vitest define,
     // so a release bump can never leave the UI badge behind again.
-    renderWithProviders(<TopBar activeProfile={null} />);
+    renderWithProviders(<TopBar activeProfile={null} onEclipse={noEclipse} />);
     expect(screen.getByText(`v${__APP_VERSION__}`)).toBeInTheDocument();
     expect(__APP_VERSION__).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
   it("shows the no-subscription string when there is no active profile", () => {
-    renderWithProviders(<TopBar activeProfile={null} />);
+    renderWithProviders(<TopBar activeProfile={null} onEclipse={noEclipse} />);
     expect(screen.getByText("no subscription")).toBeInTheDocument();
   });
 
@@ -38,7 +41,7 @@ describe("TopBar", () => {
       trafficTotal: 50 * 1024 ** 3,
       expiresAt: inFiveDays.toISOString(),
     });
-    renderWithProviders(<TopBar activeProfile={profile} />);
+    renderWithProviders(<TopBar activeProfile={profile} onEclipse={noEclipse} />);
 
     expect(screen.getByText("Acme VPN")).toBeInTheDocument();
     expect(screen.getByText("1.0 GB / 50.0 GB")).toBeInTheDocument();
@@ -53,7 +56,7 @@ describe("TopBar", () => {
       trafficTotal: 100 * 1024 ** 3,
     });
     const { container } = renderWithProviders(
-      <TopBar activeProfile={profile} />,
+      <TopBar activeProfile={profile} onEclipse={noEclipse} />,
     );
     const bar = container.querySelector("svg.usage-bar");
     expect(bar).toBeInTheDocument();
@@ -69,7 +72,7 @@ describe("TopBar", () => {
       trafficTotal: 0,
     });
     const { container } = renderWithProviders(
-      <TopBar activeProfile={profile} />,
+      <TopBar activeProfile={profile} onEclipse={noEclipse} />,
     );
     expect(container.querySelector("svg.usage-bar")).not.toBeInTheDocument();
   });
@@ -77,7 +80,7 @@ describe("TopBar", () => {
   it("shows the premium badge when the active profile's tier is premium", () => {
     const profile = makeProfile({ name: "Acme VPN", managed: true, tier: "premium" });
     const { container } = renderWithProviders(
-      <TopBar activeProfile={profile} />,
+      <TopBar activeProfile={profile} onEclipse={noEclipse} />,
     );
     const badge = container.querySelector(".acct-badge--premium");
     expect(badge).toBeInTheDocument();
@@ -93,42 +96,53 @@ describe("TopBar", () => {
       { managed: true, tier: "free" as const },
     ]) {
       const { container, unmount } = renderWithProviders(
-        <TopBar activeProfile={makeProfile(overrides)} />,
+        <TopBar activeProfile={makeProfile(overrides)} onEclipse={noEclipse} />,
       );
       expect(container.querySelector(".acct-badge")).not.toBeInTheDocument();
       unmount();
     }
   });
 
-  it("hides the Latin motto on the version badge for hover discovery", () => {
-    // A quiet flavour string, surfaced only as the version's tooltip — never in
-    // the visible chrome.
-    renderWithProviders(<TopBar activeProfile={null} />);
-    const ver = screen.getByText(`v${__APP_VERSION__}`);
-    expect(ver).toHaveAttribute("title", "In tenebris lux");
-  });
-
-  it("reveals the credits card after seven wordmark taps", () => {
-    const { container } = renderWithProviders(<TopBar activeProfile={null} />);
+  it("plays the eclipse after three wordmark taps", () => {
+    // The eclipse egg: three taps on the wordmark within the window fire onEclipse
+    // (the host plays the overlay). Two taps must not — the reward stays hidden
+    // until the third.
+    const onEclipse = vi.fn();
+    renderWithProviders(<TopBar activeProfile={null} onEclipse={onEclipse} />);
     const mark = screen.getByText("Tenebra");
 
-    // Six taps are not enough — the reward is deliberately hard to hit by accident.
-    for (let i = 0; i < 6; i += 1) {
-      fireEvent.click(mark);
-    }
+    fireEvent.click(mark);
+    fireEvent.click(mark);
+    expect(onEclipse).not.toHaveBeenCalled();
+
+    fireEvent.click(mark);
+    expect(onEclipse).toHaveBeenCalledTimes(1);
+  });
+
+  it("reveals the credits card after three version taps", () => {
+    const { container } = renderWithProviders(
+      <TopBar activeProfile={null} onEclipse={noEclipse} />,
+    );
+    const ver = screen.getByText(`v${__APP_VERSION__}`);
+
+    // Two taps are not enough.
+    fireEvent.click(ver);
+    fireEvent.click(ver);
     expect(container.querySelector(".credits")).not.toBeInTheDocument();
 
-    // The seventh crosses the threshold.
-    fireEvent.click(mark);
+    // The third crosses the threshold.
+    fireEvent.click(ver);
     expect(container.querySelector(".credits")).toBeInTheDocument();
     expect(screen.getByText("made in the dark")).toBeInTheDocument();
   });
 
   it("dismisses the credits card on click", () => {
-    const { container } = renderWithProviders(<TopBar activeProfile={null} />);
-    const mark = screen.getByText("Tenebra");
-    for (let i = 0; i < 7; i += 1) {
-      fireEvent.click(mark);
+    const { container } = renderWithProviders(
+      <TopBar activeProfile={null} onEclipse={noEclipse} />,
+    );
+    const ver = screen.getByText(`v${__APP_VERSION__}`);
+    for (let i = 0; i < 3; i += 1) {
+      fireEvent.click(ver);
     }
     const card = container.querySelector(".credits-card");
     expect(card).toBeInTheDocument();

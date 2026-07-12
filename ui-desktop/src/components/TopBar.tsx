@@ -13,18 +13,19 @@ import { CreditsToast } from "./CreditsToast";
 // scripts/set-version.mjs keeps in lockstep with the rest of the release.
 const VERSION = `v${__APP_VERSION__}`;
 
-// The Latin motto — "in the dark, light" — hidden on the version badge for anyone
-// who hovers. Quiet flavour, never surfaced in chrome.
-const MOTTO = "In tenebris lux";
-
-// Tapping the wordmark this many times, within the window below, reveals the
-// credits card. A hidden reward; the counter resets if the taps stall.
-const CROWN_CLICKS = 7;
-const CROWN_WINDOW_MS = 2000;
+// Two quiet rewards, each a short run of taps within the window below. Three taps
+// on the wordmark play the eclipse; three on the version badge reveal the credits.
+// Distinct targets, so neither run ever spends the other. A plain click is
+// discoverable by accident where a key chord never was.
+const ECLIPSE_TAPS = 3;
+const CREDITS_TAPS = 3;
+const TAP_WINDOW_MS = 1200;
 
 interface TopBarProps {
   /** The connected (or otherwise selected) subscription, for the meta line. */
   activeProfile: Profile | null;
+  /** Fired when the wordmark is tapped {@link ECLIPSE_TAPS} times — plays the eclipse. */
+  onEclipse: () => void;
 }
 
 /**
@@ -33,38 +34,62 @@ interface TopBarProps {
  * user-info (Tenebra has no account/plan/device model, so the meta reflects the
  * subscription itself). Falls back to a quiet "no subscription".
  */
-export function TopBar({ activeProfile }: TopBarProps) {
+export function TopBar({ activeProfile, onEclipse }: TopBarProps) {
   const { t, lang } = useI18n();
 
-  // Hidden wordmark-tap counter → credits card. The count and its reset timer ride
-  // refs (no re-render per tap); only the reveal flips state.
-  const clicks = useRef(0);
-  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Two hidden tap counters, one per egg. Count and reset timer ride refs (no
+  // re-render per tap); only the credits reveal flips state.
+  const eclipseTaps = useRef(0);
+  const eclipseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const creditTaps = useRef(0);
+  const creditTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [credits, setCredits] = useState(false);
 
   useEffect(
     () => () => {
-      if (resetTimer.current) {
-        clearTimeout(resetTimer.current);
+      if (eclipseTimer.current) {
+        clearTimeout(eclipseTimer.current);
+      }
+      if (creditTimer.current) {
+        clearTimeout(creditTimer.current);
       }
     },
     [],
   );
 
-  const handleCrownClick = () => {
-    if (resetTimer.current) {
-      clearTimeout(resetTimer.current);
-      resetTimer.current = null;
+  // Three taps on the wordmark, within the window, play the eclipse; a stalled
+  // run resets.
+  const handleWordmarkClick = () => {
+    if (eclipseTimer.current) {
+      clearTimeout(eclipseTimer.current);
+      eclipseTimer.current = null;
     }
-    clicks.current += 1;
-    if (clicks.current >= CROWN_CLICKS) {
-      clicks.current = 0;
+    eclipseTaps.current += 1;
+    if (eclipseTaps.current >= ECLIPSE_TAPS) {
+      eclipseTaps.current = 0;
+      onEclipse();
+      return;
+    }
+    eclipseTimer.current = setTimeout(() => {
+      eclipseTaps.current = 0;
+    }, TAP_WINDOW_MS);
+  };
+
+  // Three taps on the version badge reveal the credits card.
+  const handleVersionClick = () => {
+    if (creditTimer.current) {
+      clearTimeout(creditTimer.current);
+      creditTimer.current = null;
+    }
+    creditTaps.current += 1;
+    if (creditTaps.current >= CREDITS_TAPS) {
+      creditTaps.current = 0;
       setCredits(true);
       return;
     }
-    resetTimer.current = setTimeout(() => {
-      clicks.current = 0;
-    }, CROWN_WINDOW_MS);
+    creditTimer.current = setTimeout(() => {
+      creditTaps.current = 0;
+    }, TAP_WINDOW_MS);
   };
 
   const usage = activeProfile
@@ -89,11 +114,11 @@ export function TopBar({ activeProfile }: TopBarProps) {
       <div className="app-top">
         <div className="brand">
           <span className="bracket">[</span>
-          <span className="mark" onClick={handleCrownClick}>
+          <span className="mark" onClick={handleWordmarkClick}>
             Tenebra
           </span>
           <span className="bracket">]</span>
-          <span className="ver" title={MOTTO}>
+          <span className="ver" onClick={handleVersionClick}>
             {VERSION}
           </span>
         </div>
