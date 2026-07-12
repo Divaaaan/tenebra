@@ -11,6 +11,8 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-12
+
 ### Added
 
 - **System-proxy mode.** A connection mode that needs no tun driver, service, or
