@@ -20,8 +20,10 @@ interface EclipseOverlayProps {
  * A brief full-window eclipse: darkness sweeps the canvas, an orange corona ring
  * flares to totality, holds, then everything fades. Purely decorative and inert
  * (`pointer-events: none`, `aria-hidden`) — it never intercepts input and is gone
- * on its own after {@link ECLIPSE_MS}. Triggered by the Konami code from the main
- * screen; a quiet reward for the curious, nothing the UI depends on.
+ * on its own after {@link ECLIPSE_MS}. Triggered by three taps on the wordmark; a
+ * quiet reward for the curious, nothing the UI depends on. The Latin motto — "in
+ * the dark, light" — surfaces inside the totality: the light the eclipse is named
+ * for.
  */
 export function EclipseOverlay({ active, onDone }: EclipseOverlayProps) {
   useEffect(() => {
@@ -39,6 +41,7 @@ export function EclipseOverlay({ active, onDone }: EclipseOverlayProps) {
   return (
     <div className="eclipse" aria-hidden="true">
       <div className="eclipse-corona" />
+      <p className="eclipse-motto">In tenebris lux</p>
     </div>
   );
 }

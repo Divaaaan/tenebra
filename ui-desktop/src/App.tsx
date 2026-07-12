@@ -16,7 +16,6 @@ import { LogsScreen } from "./screens/LogsScreen";
 import { ToastHost } from "./components/ToastHost";
 import { SimpleView } from "./components/SimpleView";
 import { EclipseOverlay } from "./components/EclipseOverlay";
-import { useKonami } from "./hooks/useKonami";
 import { useTenebra } from "./state/useTenebra";
 import { useI18n } from "./i18n/I18nContext";
 import type { RoutingMode } from "./api";
@@ -84,18 +83,17 @@ export function App() {
     };
   }, []);
 
-  // Konami code → a brief "eclipse" over the main screen. Purely cosmetic; the
-  // overlay is inert and clears itself. A stable ender keeps the overlay's timer
-  // from restarting on unrelated re-renders (traffic ticks, etc.).
+  // A brief "eclipse" over the main screen, played by three taps on the wordmark
+  // (see TopBar). Purely cosmetic; the overlay is inert and clears itself. A
+  // stable ender keeps the overlay's timer from restarting on unrelated
+  // re-renders (traffic ticks, etc.).
   const [eclipse, setEclipse] = useState(false);
   const endEclipse = useCallback(() => setEclipse(false), []);
-  useKonami(
-    useCallback(() => {
-      setEclipse(true);
-      // A quiet line for anyone with the console open.
-      console.info("%c◐ eclipse · in tenebris lux", "color:#ff3d00");
-    }, []),
-  );
+  const playEclipse = useCallback(() => {
+    setEclipse(true);
+    // A quiet line for anyone with the console open.
+    console.info("%c◐ eclipse · in tenebris lux", "color:#ff3d00");
+  }, []);
 
   // Deep-link (tenebra://) intents. `importPreset` carries a subscription URL to
   // pre-fill the import flow with; `pendingConnect` names a profile to connect
@@ -503,7 +501,7 @@ export function App() {
 
   return (
     <div className="app" data-conn={phase}>
-      <TopBar activeProfile={metaProfile} />
+      <TopBar activeProfile={metaProfile} onEclipse={playEclipse} />
 
       {connected && killSwitch && (
         <div className="kill-banner" role="status">
