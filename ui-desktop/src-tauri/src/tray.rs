@@ -402,6 +402,7 @@ mod tests {
             split_apps: None,
             kill_switch: None,
             tls_fragment: None,
+            multihop: None,
             tun_stack: None,
             autoconnect: None,
             auto_failover: None,

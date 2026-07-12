@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use super::{
     Backend, ConnectionState, DnsResult, DnsStatus, EventSink, ExitMatch, ImportLinksResult,
-    LeakCheck, NatType, Node, PingResult, Profile, Protocol, RoutingMode, Source, SpeedTest,
-    SplitMode, State, StunCheck, TunStack, Verdict,
+    LeakCheck, Multihop, NatType, Node, PingResult, Profile, Protocol, RoutingMode, Source,
+    SpeedTest, SplitMode, State, StunCheck, TunStack, Verdict,
 };
 
 /// How long the fake "dial" takes before flipping to connected.
@@ -64,6 +64,8 @@ impl MockBackend {
                 kill_switch: None,
                 // Fragmentation is an opt-in override, off until armed.
                 tls_fragment: None,
+                // No two-hop chain until the user picks one.
+                multihop: None,
                 // The core always names the stack once normalized; mirror that.
                 tun_stack: Some(TunStack::System),
                 autoconnect: None,
@@ -474,6 +476,43 @@ impl Backend for MockBackend {
                 "TLS fragmentation forced on"
             } else {
                 "TLS fragmentation off"
+            },
+        );
+        Ok(snapshot)
+    }
+
+    fn set_multihop(
+        &self,
+        _profile: String,
+        enabled: bool,
+        entry_id: String,
+        exit_id: String,
+    ) -> Result<State, String> {
+        // Mirror the core: record and report. The mock skips the core's profile
+        // existence check (it has no real IDs to validate against) and simply keeps
+        // the selection, dropping the whole object only when nothing is set at all
+        // (disabled with no endpoints), so a live UI can round-trip the toggle and
+        // its two selectors. A live "tunnel" would hot-swap, abbreviated here to the
+        // state change.
+        let mut inner = self.shared.inner.lock().unwrap();
+        inner.state.multihop = if !enabled && entry_id.is_empty() && exit_id.is_empty() {
+            None
+        } else {
+            Some(Multihop {
+                enabled,
+                entry_id,
+                exit_id,
+            })
+        };
+        let snapshot = inner.state.clone();
+        drop(inner);
+        self.shared.emit_state(&snapshot);
+        self.shared.sink.log(
+            "info",
+            if enabled {
+                "Multihop chain on"
+            } else {
+                "Multihop chain off"
             },
         );
         Ok(snapshot)
@@ -1156,6 +1195,36 @@ mod tests {
         // Disarming drops the field entirely (off is reported as absent).
         let s = b.set_tls_fragment(false).unwrap();
         assert_eq!(s.tls_fragment, None);
+    }
+
+    #[test]
+    fn set_multihop_records_and_clears_the_selection() {
+        let (b, sink) = backend();
+        // No chain on a fresh state.
+        assert!(b.status().unwrap().multihop.is_none());
+
+        let s = b
+            .set_multihop("demo-sub".into(), true, "entry".into(), "exit".into())
+            .unwrap();
+        let mh = s.multihop.clone().expect("multihop recorded");
+        assert!(mh.enabled);
+        assert_eq!(mh.entry_id, "entry");
+        assert_eq!(mh.exit_id, "exit");
+        assert_eq!(sink.last_state().unwrap().multihop, Some(mh));
+
+        // Disabling but keeping the endpoints leaves them recorded, off.
+        let s = b
+            .set_multihop("demo-sub".into(), false, "entry".into(), "exit".into())
+            .unwrap();
+        let mh = s.multihop.expect("selection still remembered");
+        assert!(!mh.enabled);
+        assert_eq!(mh.entry_id, "entry");
+
+        // Disabling with no endpoints drops the object entirely.
+        let s = b
+            .set_multihop("demo-sub".into(), false, String::new(), String::new())
+            .unwrap();
+        assert!(s.multihop.is_none());
     }
 
     #[test]

@@ -424,6 +424,24 @@ impl<T: WireSession> Backend for T {
             .request_into("set_tls_fragment", obj([("on", json!(on))]))
     }
 
+    fn set_multihop(
+        &self,
+        profile: String,
+        enabled: bool,
+        entry_id: String,
+        exit_id: String,
+    ) -> Result<State, String> {
+        self.session()?.request_into(
+            "set_multihop",
+            obj([
+                ("profile", json!(profile)),
+                ("enabled", json!(enabled)),
+                ("entry_id", json!(entry_id)),
+                ("exit_id", json!(exit_id)),
+            ]),
+        )
+    }
+
     fn set_tun(&self, stack: TunStack) -> Result<State, String> {
         let stack = match stack {
             TunStack::System => "system",
@@ -535,7 +553,7 @@ mod tests {
     //! tests in `pipe.rs`.
 
     use super::super::testutil::{duplex, Rec};
-    use super::super::{ConnectionState, NatType};
+    use super::super::{ConnectionState, Multihop, NatType};
     use super::*;
     use std::sync::atomic::AtomicBool;
     use std::thread;
@@ -996,6 +1014,59 @@ mod tests {
         let state = backend.set_tls_fragment(true).expect("a response");
         assert_eq!(state.state, ConnectionState::Connecting);
         assert_eq!(state.tls_fragment, Some(true));
+
+        server.join().expect("server thread");
+        stop.store(true, Ordering::SeqCst); // unstick the reader
+        reader.join().expect("reader thread");
+    }
+
+    #[test]
+    fn set_multihop_maps_to_the_protocol_command() {
+        // Drive Backend::set_multihop through the blanket impl and assert the exact
+        // wire line (profile + toggle + both endpoint IDs), plus that the core's
+        // echoed multihop object round-trips into the typed State.
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ours, theirs) = duplex(&stop);
+
+        let client = WireClient::new(ours.writer);
+        let sink: Arc<dyn EventSink> = Arc::new(Rec::default());
+        let reader_client = Arc::clone(&client);
+        let reader = thread::spawn(move || read_loop(ours.reader, reader_client, sink));
+
+        let mut server_writer = theirs.writer;
+        let server = thread::spawn(move || {
+            let mut lines = BufReader::new(theirs.reader).lines();
+            let line = lines.next().expect("a request line").expect("readable");
+            let req: Value = serde_json::from_str(&line).expect("request is JSON");
+            assert_eq!(req["cmd"].as_str(), Some("set_multihop"));
+            assert_eq!(req["profile"].as_str(), Some("demo-sub"));
+            assert_eq!(req["enabled"].as_bool(), Some(true));
+            assert_eq!(req["entry_id"].as_str(), Some("entry-id"));
+            assert_eq!(req["exit_id"].as_str(), Some("exit-id"));
+            let id = req["id"].as_u64().expect("request carries an id");
+            let response = json!({
+                "id": id, "ok": true,
+                "data": {
+                    "state": "connecting",
+                    "multihop": { "enabled": true, "entry_id": "entry-id", "exit_id": "exit-id" },
+                },
+            });
+            writeln!(server_writer, "{response}").expect("write response");
+        });
+
+        let backend = FixedSession(Arc::clone(&client));
+        let state = backend
+            .set_multihop("demo-sub".into(), true, "entry-id".into(), "exit-id".into())
+            .expect("a response");
+        assert_eq!(state.state, ConnectionState::Connecting);
+        assert_eq!(
+            state.multihop,
+            Some(Multihop {
+                enabled: true,
+                entry_id: "entry-id".into(),
+                exit_id: "exit-id".into(),
+            })
+        );
 
         server.join().expect("server thread");
         stop.store(true, Ordering::SeqCst); // unstick the reader
