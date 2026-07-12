@@ -77,6 +77,33 @@ type Obfs struct {
 	Password string `json:"password,omitempty"`
 }
 
+// Multihop configures a two-hop proxy chain: traffic egresses through the entry
+// node first and then the exit node, so the exit sees the entry's address rather
+// than the user's. EntryID and ExitID are stable profile server identifiers (see
+// profile.Server.ID); the control layer resolves them to sing-box outbound tags
+// before the config is generated, because the builder itself works only in tags.
+// The zero value (disabled, no selection) is inert.
+type Multihop struct {
+	Enabled bool   `json:"enabled"`
+	EntryID string `json:"entry_id,omitempty"`
+	ExitID  string `json:"exit_id,omitempty"`
+}
+
+// Valid reports whether the selection can form a chain: enabled, both endpoints
+// chosen, and distinct. It deliberately does not check that the IDs exist in any
+// profile — resolving them against the live profile is the control/builder layer's
+// job at apply time, where an unresolvable pair degrades to a normal single hop.
+func (m Multihop) Valid() bool {
+	return m.Enabled && m.EntryID != "" && m.ExitID != "" && m.EntryID != m.ExitID
+}
+
+// IsZero reports whether no multihop selection is set at all (disabled and both
+// endpoints empty), so a caller can omit it from a wire/state payload entirely
+// rather than emit an empty object.
+func (m Multihop) IsZero() bool {
+	return !m.Enabled && m.EntryID == "" && m.ExitID == ""
+}
+
 // WireGuard carries (Amnezia)WG key material and the AmneziaWG obfuscation
 // knobs. Jc/Jmin/Jmax/S1/S2/H1-H4 are zero for plain WireGuard.
 type WireGuard struct {

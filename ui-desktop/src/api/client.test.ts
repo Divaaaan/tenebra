@@ -176,6 +176,21 @@ describe("api command wrappers", () => {
     expect(mockInvoke).toHaveBeenCalledWith("set_tls_fragment", { on: true });
   });
 
+  it("setMultihop maps the camelCase args to snake_case wire keys", async () => {
+    const armed: State = {
+      state: "connected",
+      multihop: { enabled: true, entry_id: "e1", exit_id: "e2" },
+    };
+    mockInvoke.mockResolvedValueOnce(armed);
+    await expect(api.setMultihop("sub", true, "e1", "e2")).resolves.toEqual(armed);
+    expect(mockInvoke).toHaveBeenCalledWith("set_multihop", {
+      profile: "sub",
+      enabled: true,
+      entry_id: "e1",
+      exit_id: "e2",
+    });
+  });
+
   it("setTun forwards the stack and returns the State", async () => {
     const swapped: State = { state: "idle", tun_stack: "gvisor" };
     mockInvoke.mockResolvedValueOnce(swapped);

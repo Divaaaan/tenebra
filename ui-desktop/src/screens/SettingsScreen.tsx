@@ -38,6 +38,7 @@ const NAV_SECTIONS = [
   "tunnel",
   "dns",
   "bypass",
+  "multihop",
   "reliability",
   "diagnostics",
   "appearance",
@@ -329,6 +330,42 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
 
   function toggleTlsFragment() {
     void tenebra.setTlsFragment(!tlsFragment).catch(() => {});
+  }
+
+  // Multihop two-hop chain. Core-owned like the other toggles: off with no
+  // selection until the user picks an entry and an exit node. The choices are
+  // drawn from the active profile (the connected one, else the first stored) and
+  // sent by stable id; the core resolves them at connect time and falls back to a
+  // single hop for a pair that no longer fits the profile.
+  const multihopProfileId = tenebra.state.profile || tenebra.profiles[0]?.id || "";
+  const multihopNodes =
+    tenebra.profiles.find((p) => p.id === multihopProfileId)?.nodes ?? [];
+  const multihopEnabled = tenebra.state.multihop?.enabled ?? false;
+  const multihopEntry = tenebra.state.multihop?.entry_id ?? "";
+  const multihopExit = tenebra.state.multihop?.exit_id ?? "";
+  // The chain can only be armed once both ends are chosen and distinct — the same
+  // rule the core enforces — so the toggle is inert until then (it can always turn
+  // off). The selectors stay usable while off so a pick can be made first.
+  const multihopArmable =
+    multihopEntry !== "" && multihopExit !== "" && multihopEntry !== multihopExit;
+
+  function toggleMultihop() {
+    if (!multihopEnabled && !multihopArmable) {
+      return;
+    }
+    void tenebra
+      .setMultihop(multihopProfileId, !multihopEnabled, multihopEntry, multihopExit)
+      .catch(() => {});
+  }
+  function selectMultihopEntry(entryId: string) {
+    void tenebra
+      .setMultihop(multihopProfileId, multihopEnabled, entryId, multihopExit)
+      .catch(() => {});
+  }
+  function selectMultihopExit(exitId: string) {
+    void tenebra
+      .setMultihop(multihopProfileId, multihopEnabled, multihopEntry, exitId)
+      .catch(() => {});
   }
 
   // Health-failover watchdog. On by default in the core, which projects the
@@ -1139,6 +1176,79 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
               </span>
               {tlsFragment ? "ON" : "OFF"}
             </button>
+          </div>
+        </section>
+
+        <section
+          className="set-section"
+          id="set-sec-multihop"
+          ref={setSectionRef("multihop")}
+        >
+          <div className="set-section-head">
+            <h2 className="set-eyebrow">{t.settings.multihop}</h2>
+            <p className="set-sub">{t.settings.multihopHint}</p>
+          </div>
+
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.multihopEnable}</span>
+              <span className="set-row-hint">{t.settings.multihopEnableHint}</span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={multihopEnabled}
+              disabled={!multihopEnabled && !multihopArmable}
+              className={`set-switch${multihopEnabled ? " is-on" : ""}`}
+              onClick={toggleMultihop}
+            >
+              <span className="set-switch-box" aria-hidden="true">
+                {multihopEnabled ? "▣" : "▢"}
+              </span>
+              {multihopEnabled ? "ON" : "OFF"}
+            </button>
+          </div>
+
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.multihopEntry}</span>
+              <span className="set-row-hint">{t.settings.multihopEntryHint}</span>
+            </span>
+            <select
+              className="simple-select"
+              aria-label={t.settings.multihopEntry}
+              value={multihopEntry}
+              disabled={multihopNodes.length === 0}
+              onChange={(e) => selectMultihopEntry(e.target.value)}
+            >
+              <option value="">{t.settings.multihopUnset}</option>
+              {multihopNodes.map((n) => (
+                <option key={n.id} value={n.id}>
+                  {n.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.multihopExit}</span>
+              <span className="set-row-hint">{t.settings.multihopExitHint}</span>
+            </span>
+            <select
+              className="simple-select"
+              aria-label={t.settings.multihopExit}
+              value={multihopExit}
+              disabled={multihopNodes.length === 0}
+              onChange={(e) => selectMultihopExit(e.target.value)}
+            >
+              <option value="">{t.settings.multihopUnset}</option>
+              {multihopNodes.map((n) => (
+                <option key={n.id} value={n.id}>
+                  {n.name}
+                </option>
+              ))}
+            </select>
           </div>
         </section>
 

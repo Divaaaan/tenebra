@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/Divaaaan/tenebra/core/model"
 	"github.com/Divaaaan/tenebra/core/routing"
 	"github.com/Divaaaan/tenebra/core/singbox"
 )
@@ -118,7 +119,7 @@ func TestApplySettingsToState(t *testing.T) {
 	tun := singbox.TunOptions{Stack: singbox.StackSystem}
 
 	var s State
-	applySettingsToState(&s, routing.Options{SplitMode: routing.SplitInclude, SplitApps: []string{"a.exe"}}.Normalize(), tun, false, false, nil)
+	applySettingsToState(&s, routing.Options{SplitMode: routing.SplitInclude, SplitApps: []string{"a.exe"}}.Normalize(), tun, false, false, nil, model.Multihop{})
 	if s.Split != "include" || !reflect.DeepEqual(s.SplitApps, []string{"a.exe"}) {
 		t.Errorf("apply include = %q %v", s.Split, s.SplitApps)
 	}
@@ -126,13 +127,13 @@ func TestApplySettingsToState(t *testing.T) {
 		t.Errorf("tun stack = %q, want system", s.TunStack)
 	}
 	// Off clears prior values.
-	applySettingsToState(&s, routing.Options{SplitMode: routing.SplitOff}.Normalize(), tun, false, false, nil)
+	applySettingsToState(&s, routing.Options{SplitMode: routing.SplitOff}.Normalize(), tun, false, false, nil, model.Multihop{})
 	if s.Split != "" || s.SplitApps != nil {
 		t.Errorf("apply off should clear, got %q %v", s.Split, s.SplitApps)
 	}
 	// The stored slice must not alias the routing options.
 	ro := routing.Options{SplitMode: routing.SplitExclude, SplitApps: []string{"x.exe", "y.exe"}}.Normalize()
-	applySettingsToState(&s, ro, tun, false, false, nil)
+	applySettingsToState(&s, ro, tun, false, false, nil, model.Multihop{})
 	ro.SplitApps[0] = "MUTATED"
 	if s.SplitApps[0] == "MUTATED" {
 		t.Error("State.SplitApps aliases the routing options slice")
@@ -140,7 +141,7 @@ func TestApplySettingsToState(t *testing.T) {
 	// The kill switch, a non-default stack, autoconnect, and auto-failover project
 	// through as-is.
 	ro.KillSwitch = true
-	applySettingsToState(&s, ro, singbox.TunOptions{Stack: singbox.StackGvisor}, true, true, nil)
+	applySettingsToState(&s, ro, singbox.TunOptions{Stack: singbox.StackGvisor}, true, true, nil, model.Multihop{})
 	if !s.KillSwitch || s.TunStack != "gvisor" {
 		t.Errorf("kill_switch/tun_stack = %v %q, want true gvisor", s.KillSwitch, s.TunStack)
 	}
@@ -150,7 +151,7 @@ func TestApplySettingsToState(t *testing.T) {
 	if !s.AutoFailover {
 		t.Error("auto_failover did not project into the state")
 	}
-	applySettingsToState(&s, ro, tun, false, false, nil)
+	applySettingsToState(&s, ro, tun, false, false, nil, model.Multihop{})
 	if s.Autoconnect {
 		t.Error("autoconnect off must clear the state field")
 	}
@@ -164,7 +165,7 @@ func TestApplySettingsToState(t *testing.T) {
 		t.Errorf("nil crash consent must clear both fields, got %v asked=%v", s.CrashReports, s.CrashReportsAsked)
 	}
 	declined := false
-	applySettingsToState(&s, ro, tun, false, false, &declined)
+	applySettingsToState(&s, ro, tun, false, false, &declined, model.Multihop{})
 	if s.CrashReports == nil || *s.CrashReports || !s.CrashReportsAsked {
 		t.Errorf("declined consent should project as (false, asked), got %v asked=%v", s.CrashReports, s.CrashReportsAsked)
 	}

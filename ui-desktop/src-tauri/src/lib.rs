@@ -403,6 +403,23 @@ async fn set_tls_fragment(state: TauriState<'_, AppState>, on: bool) -> Result<S
     off_thread(Arc::clone(&state.backend), move |b| b.set_tls_fragment(on)).await
 }
 
+// rename_all keeps the JS-side argument keys snake_case (entry_id, exit_id),
+// matching this file's multi-word command convention (see set_dns) — Tauri v2
+// would otherwise expect camelCase.
+#[tauri::command(rename_all = "snake_case")]
+async fn set_multihop(
+    state: TauriState<'_, AppState>,
+    profile: String,
+    enabled: bool,
+    entry_id: String,
+    exit_id: String,
+) -> Result<State, String> {
+    off_thread(Arc::clone(&state.backend), move |b| {
+        b.set_multihop(profile, enabled, entry_id, exit_id)
+    })
+    .await
+}
+
 #[tauri::command]
 async fn set_tun(state: TauriState<'_, AppState>, stack: TunStack) -> Result<State, String> {
     off_thread(Arc::clone(&state.backend), move |b| b.set_tun(stack)).await
@@ -579,6 +596,7 @@ pub fn run() {
             set_split,
             set_kill_switch,
             set_tls_fragment,
+            set_multihop,
             set_tun,
             set_autoconnect,
             set_auto_failover,
@@ -770,6 +788,7 @@ mod tests {
             split_apps: None,
             kill_switch: None,
             tls_fragment: None,
+            multihop: None,
             tun_stack: None,
             autoconnect: None,
             auto_failover: None,

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 
 import { SettingsScreen, pickActiveSection } from "./SettingsScreen";
 import { renderWithProviders } from "../test/renderWithProviders";
-import { makeTenebra } from "../test/fixtures";
+import { makeProfile, makeTenebra } from "../test/fixtures";
 import type { State } from "../api";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getVersion } from "@tauri-apps/api/app";
@@ -775,6 +775,103 @@ describe("SettingsScreen", () => {
     });
   });
 
+  describe("multihop", () => {
+    function multihopToggle(): HTMLElement {
+      const row = screen.getByText("Route through two nodes").closest(".set-row");
+      if (!row) {
+        throw new Error("multihop row not found");
+      }
+      const toggle = row.querySelector('[role="switch"]');
+      if (!toggle) {
+        throw new Error("multihop switch not found");
+      }
+      return toggle as HTMLElement;
+    }
+
+    it("lists the active profile's nodes in both selectors", () => {
+      const tenebra = makeTenebra({
+        state: { state: "idle" } as State,
+        profiles: [makeProfile()],
+      });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      const entry = screen.getByLabelText("Entry node");
+      expect(
+        within(entry).getByRole("option", { name: "Amsterdam" }),
+      ).toBeInTheDocument();
+      expect(
+        within(entry).getByRole("option", { name: "Frankfurt" }),
+      ).toBeInTheDocument();
+    });
+
+    it("reflects the armed chain the core reports", () => {
+      const tenebra = makeTenebra({
+        state: {
+          state: "connected",
+          profile: "profile-1",
+          multihop: { enabled: true, entry_id: "node-1", exit_id: "node-2" },
+        } as State,
+        profiles: [makeProfile()],
+      });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(multihopToggle()).toHaveAttribute("aria-checked", "true");
+      expect(screen.getByLabelText("Entry node")).toHaveValue("node-1");
+      expect(screen.getByLabelText("Exit node")).toHaveValue("node-2");
+    });
+
+    it("records an entry pick through the core, kept off until armed", async () => {
+      const tenebra = makeTenebra({
+        state: { state: "idle" } as State,
+        profiles: [makeProfile()],
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.selectOptions(screen.getByLabelText("Entry node"), "node-1");
+      expect(tenebra.setMultihop).toHaveBeenCalledWith(
+        "profile-1",
+        false,
+        "node-1",
+        "",
+      );
+    });
+
+    it("arms the chain through the core from a chosen pair", async () => {
+      const tenebra = makeTenebra({
+        state: {
+          state: "idle",
+          profile: "profile-1",
+          multihop: { enabled: false, entry_id: "node-1", exit_id: "node-2" },
+        } as State,
+        profiles: [makeProfile()],
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(multihopToggle());
+      expect(tenebra.setMultihop).toHaveBeenCalledWith(
+        "profile-1",
+        true,
+        "node-1",
+        "node-2",
+      );
+    });
+
+    it("keeps the toggle inert until both ends are chosen", async () => {
+      const tenebra = makeTenebra({
+        state: { state: "idle" } as State,
+        profiles: [makeProfile()],
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(multihopToggle()).toBeDisabled();
+      await user.click(multihopToggle());
+      expect(tenebra.setMultihop).not.toHaveBeenCalled();
+    });
+  });
+
   describe("diagnostics", () => {
     it("gates the speed test on a live connection", () => {
       const tenebra = makeTenebra({ state: { state: "idle" } as State });
@@ -1175,14 +1272,15 @@ describe("SettingsScreen", () => {
 
       const rail = screen.getByRole("navigation", { name: "Settings sections" });
       const links = within(rail).getAllByRole("button");
-      // routing, split, rules, tunnel, dns, bypass, reliability, diagnostics,
-      // appearance, startup, updates.
-      expect(links).toHaveLength(11);
+      // routing, split, rules, tunnel, dns, bypass, multihop, reliability,
+      // diagnostics, appearance, startup, updates.
+      expect(links).toHaveLength(12);
       expect(links[0]).toHaveTextContent("Routing");
       expect(links[2]).toHaveTextContent("Custom rules");
       expect(links[5]).toHaveTextContent("Censorship bypass");
-      expect(links[7]).toHaveTextContent("Diagnostics");
-      expect(links[10]).toHaveTextContent("Updates");
+      expect(links[6]).toHaveTextContent("Multihop");
+      expect(links[8]).toHaveTextContent("Diagnostics");
+      expect(links[11]).toHaveTextContent("Updates");
     });
 
     it("scrolls to a section and highlights its link on click", async () => {
@@ -1246,6 +1344,7 @@ describe("SettingsScreen", () => {
         "Tunnel",
         "DNS",
         "Censorship bypass",
+        "Multihop",
         "Reliability",
         "Diagnostics",
         "Appearance",

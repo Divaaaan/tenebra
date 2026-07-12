@@ -138,6 +138,20 @@ type Options struct {
 	PresetRuBanking bool
 	PresetRuGov     bool
 
+	// Multihop, when true, chains the proxy through two of the profile's nodes:
+	// the exit outbound carries detour=<MultihopEntry> so traffic leaves via the
+	// entry node first and then the exit node, and the selector/route final point
+	// at the exit. MultihopEntry and MultihopExit are the builder outbound tags
+	// (what singbox.sanitizeTag assigns) of the two chosen nodes, already resolved
+	// from the user's stable server-ID selection by the control layer — the builder
+	// works only in tags. Multihop is inert unless both tags are set, distinct, and
+	// resolve to regular built outbounds; the builder then falls back to the normal
+	// selector, so a stale or unresolvable selection degrades to a single hop rather
+	// than a broken config.
+	Multihop      bool
+	MultihopEntry string
+	MultihopExit  string
+
 	// RuleSetDir is the absolute directory holding the bundled RU rule-set
 	// binaries (geoip-ru.srs / geosite-ru.srs). When set, smart mode references
 	// them as local rule-sets loaded from disk, so sing-box starts instantly and

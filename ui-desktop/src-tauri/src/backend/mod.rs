@@ -107,6 +107,20 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 
+/// The two-hop chain selection mirrored from the core: whether it is enabled and
+/// which entry/exit servers (by stable ID) it chains through. `entry_id`/`exit_id`
+/// are omitted until the user picks them, matching the core's `model.Multihop`
+/// JSON — `enabled` is always present, the IDs drop when empty.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Multihop {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub entry_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub exit_id: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct State {
     pub state: ConnectionState,
@@ -129,6 +143,11 @@ pub struct State {
     /// override); absent (treated as off) when it isn't.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tls_fragment: Option<bool>,
+    /// The two-hop chain selection (entry/exit servers plus the enabled flag);
+    /// absent until the user has picked a pair, carried even when disabled so the
+    /// UI can prefill its selectors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multihop: Option<Multihop>,
     /// The tun network stack the current or next tunnel uses.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tun_stack: Option<TunStack>,
@@ -490,6 +509,20 @@ pub trait Backend: Send + Sync + 'static {
     /// the core persists the choice and hot-swaps sing-box on the same node when a
     /// tunnel is live; when idle the choice applies on the next connect.
     fn set_tls_fragment(&self, on: bool) -> Result<State, String>;
+    /// Record the multihop chain selection: the two-hop toggle plus the entry and
+    /// exit server IDs it runs through (entry first), within the named profile. The
+    /// core validates the pair when enabling — both present, distinct, and stored in
+    /// that profile — persists it, and re-applies it to a live tunnel in place by
+    /// hot-swapping sing-box on the same node (a brief connecting→connected dip).
+    /// Disabling ignores the IDs but keeps them recorded so the last pick can be
+    /// re-enabled. An empty id is "unset".
+    fn set_multihop(
+        &self,
+        profile: String,
+        enabled: bool,
+        entry_id: String,
+        exit_id: String,
+    ) -> Result<State, String>;
     /// Switch the tun network stack. Same live re-apply semantics as the kill
     /// switch; when idle the choice simply applies on the next connect.
     fn set_tun(&self, stack: TunStack) -> Result<State, String>;
@@ -729,6 +762,11 @@ mod tests {
             split_apps: Some(vec!["chrome.exe".into(), "steam.exe".into()]),
             kill_switch: Some(true),
             tls_fragment: Some(true),
+            multihop: Some(Multihop {
+                enabled: true,
+                entry_id: "entry-id".into(),
+                exit_id: "exit-id".into(),
+            }),
             tun_stack: Some(TunStack::Gvisor),
             autoconnect: Some(true),
             auto_failover: Some(true),
@@ -760,6 +798,7 @@ mod tests {
             split_apps: None,
             kill_switch: None,
             tls_fragment: None,
+            multihop: None,
             tun_stack: None,
             autoconnect: None,
             auto_failover: None,
@@ -787,6 +826,7 @@ mod tests {
             "split_apps",
             "kill_switch",
             "tls_fragment",
+            "multihop",
             "tun_stack",
             "autoconnect",
             "auto_failover",

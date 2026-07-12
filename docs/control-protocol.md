@@ -127,6 +127,7 @@ surface.
 | `set_split`            | `mode` (`off`/`exclude`/`include`), `apps?` | `State`            |
 | `set_kill_switch`      | `on` (boolean)                     | `State`                     |
 | `set_tls_fragment`     | `on` (boolean)                     | `State`                     |
+| `set_multihop`         | `profile`, `enabled` (boolean), `entry_id`, `exit_id` | `State`  |
 | `set_tun`              | `stack` (`system`/`gvisor`/`mixed`) | `State`                    |
 | `set_autoconnect`      | `on` (boolean)                     | `State`                     |
 | `set_auto_failover`    | `on` (boolean)                     | `State`                     |
@@ -199,9 +200,9 @@ response: {"id":7,"ok":true,"data":{"profile":{ /* …two servers… */ },"impor
 new split takes effect on the **next connect** (live retuning would require
 restarting sing-box). The returned `State` reflects the stored choice.
 
-`set_kill_switch`, `set_tls_fragment` and `set_tun` go further: all are recorded
-and persisted the same way, but when a tunnel is **live** the core also re-applies
-them in place — see below.
+`set_kill_switch`, `set_tls_fragment`, `set_multihop` and `set_tun` go further:
+all are recorded and persisted the same way, but when a tunnel is **live** the
+core also re-applies them in place — see below.
 
 `set_autoconnect` is recorded and persisted the same way but changes nothing
 about a live tunnel; it takes effect when the daemon itself next starts (see
@@ -250,6 +251,23 @@ arming does not wait for a reconnect. It is independent of the adaptive walk,
 which already reaches fragmentation per-node when a node's handshake looks
 censored (the last rung of the transport-strategy cascade); this toggle is the
 user's unconditional override for a network that blocks the SNI outright.
+
+### Multihop (`set_multihop`)
+
+`enabled: true` chains the proxy through **two** of the profile's nodes: traffic
+egresses via the `entry_id` node first and then the `exit_id` node, so the exit
+server sees the entry's address rather than the user's. `entry_id` and `exit_id`
+are stable server ids (the same identifiers `connect`'s `node` takes) within
+`profile`; enabling requires both, distinct, and present in that profile, or the
+command is rejected whole. `enabled: false` turns the chain off but keeps the ids
+recorded so the last pick can be re-armed.
+
+Under the hood the core resolves the two ids to sing-box outbound tags and emits
+the exit outbound with `detour` set to the entry tag, pointing the route's final
+at the exit; a selection that no longer resolves (a vanished node, or one the
+builder cannot render) degrades to an ordinary single hop rather than a broken
+config. Like the kill switch it re-applies to a **live** tunnel in place by
+hot-swapping sing-box on the current node, and is persisted in `settings.json`.
 
 ### Tun stack (`set_tun`)
 
@@ -606,6 +624,11 @@ type State = {
   split_apps?: string[];          // normalized executable names; omitted when off
   kill_switch?: boolean;          // omitted when off
   tls_fragment?: boolean;         // forced TLS ClientHello fragmentation; omitted when off
+  multihop?: {                    // two-hop chain selection; omitted until a pair is picked
+    enabled: boolean;
+    entry_id?: string;            // entry server id (first hop); omitted when unset
+    exit_id?: string;             // exit server id (last hop); omitted when unset
+  };
   tun_stack?: "system" | "gvisor" | "mixed";
   autoconnect?: boolean;          // reconnect at daemon start; omitted when off
   auto_failover?: boolean;        // health watchdog: reconnect to another node when the active one degrades; on by default, omitted when off

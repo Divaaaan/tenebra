@@ -407,6 +407,19 @@ export interface Strings {
     tlsFragment: string;
     tlsFragmentHint: string;
     /**
+     * Multihop section: the optional two-hop chain that routes through an entry
+     * node and then an exit node, so the exit never sees the user's address.
+     */
+    multihop: string;
+    multihopHint: string;
+    multihopEnable: string;
+    multihopEnableHint: string;
+    multihopEntry: string;
+    multihopEntryHint: string;
+    multihopExit: string;
+    multihopExitHint: string;
+    multihopUnset: string;
+    /**
      * Reliability section: the health-failover watchdog that reconnects to
      * another node on its own when the active one degrades. Armed by default.
      */
@@ -822,6 +835,17 @@ const en: Strings = {
     tlsFragment: "DPI bypass — TLS fragmentation",
     tlsFragmentHint:
       "Split the TLS ClientHello across packets so filters can't match it whole. Applies to every TLS-bearing outbound; connects get a touch slower.",
+    multihop: "Multihop",
+    multihopHint:
+      "Route through two of your nodes in a chain, so the exit server never sees your real address.",
+    multihopEnable: "Route through two nodes",
+    multihopEnableHint:
+      "Send traffic out via the entry node first, then the exit. Pick both nodes below to arm it.",
+    multihopEntry: "Entry node",
+    multihopEntryHint: "The first hop — where your traffic enters the chain.",
+    multihopExit: "Exit node",
+    multihopExitHint: "The last hop — where your traffic reaches the internet.",
+    multihopUnset: "Select a node…",
     reliability: "Reliability",
     reliabilityHint:
       "How Tenebra behaves when the active node stops carrying traffic.",
@@ -1206,6 +1230,17 @@ const ru: Strings = {
     tlsFragment: "Обход DPI — фрагментация TLS",
     tlsFragmentHint:
       "Режет TLS-рукопожатие (ClientHello) на пакеты, чтобы фильтры не могли распознать его целиком. Применяется ко всем TLS-соединениям; коннект чуть медленнее.",
+    multihop: "Multihop",
+    multihopHint:
+      "Пропустить трафик через две ваши ноды цепочкой, чтобы выходной сервер не видел ваш настоящий адрес.",
+    multihopEnable: "Маршрут через две ноды",
+    multihopEnableHint:
+      "Трафик выходит сначала через входную ноду, затем через выходную. Выберите обе ноды ниже, чтобы включить.",
+    multihopEntry: "Входная нода",
+    multihopEntryHint: "Первый узел — куда трафик входит в цепочку.",
+    multihopExit: "Выходная нода",
+    multihopExitHint: "Последний узел — откуда трафик выходит в интернет.",
+    multihopUnset: "Выберите ноду…",
     reliability: "Надёжность",
     reliabilityHint:
       "Как Tenebra ведёт себя, когда активный узел перестаёт пропускать трафик.",
