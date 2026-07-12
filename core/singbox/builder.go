@@ -33,7 +33,39 @@ const (
 	proxyTag  = "proxy"
 	directTag = "direct"
 	blockTag  = "block"
+
+	// System-proxy mode replaces the tun inbound with a single mixed inbound
+	// (HTTP + SOCKS on one port) bound to loopback; the client then points the OS
+	// at that address. mixedListen is loopback-only on purpose — the inbound must
+	// never be reachable off the machine, or any host on the LAN could relay
+	// through the user's tunnel. The port is configurable (TunOptions.MixedPort)
+	// and defaults to defaultMixedPort, chosen away from the clash API's 9090.
+	mixedTag         = "mixed-in"
+	mixedListen      = "127.0.0.1"
+	defaultMixedPort = 2080
 )
+
+// Connection modes. ModeTun carries all traffic through a tun device with
+// auto_route (the default, needs the tun driver). ModeSystemProxy skips the tun
+// entirely and exposes a loopback mixed inbound the client wires up as the OS
+// proxy — the path for locked-down machines where installing or running a tun is
+// not permitted.
+const (
+	ModeTun         = "tun"
+	ModeSystemProxy = "system-proxy"
+	defaultConnMode = ModeTun
+)
+
+// ValidMode reports whether s names a connection mode Build accepts. The empty
+// string is not valid here — callers that mean "default" should leave the option
+// unset and let normalize fill it, mirroring ValidStack.
+func ValidMode(s string) bool {
+	switch s {
+	case ModeTun, ModeSystemProxy:
+		return true
+	}
+	return false
+}
 
 // The tun stacks sing-box implements. system uses the kernel's own TCP/IP
 // (fastest, needs the tun driver to behave); gvisor runs a userspace stack
@@ -59,6 +91,16 @@ func ValidStack(s string) bool {
 // TunOptions configures the single tun inbound and the clash API. The zero
 // value is filled with defaults by Build.
 type TunOptions struct {
+	// Mode selects the inbound family: ModeTun (default) emits the tun inbound
+	// below; ModeSystemProxy emits a loopback mixed inbound instead and none of the
+	// tun/auto_route fields. It is named on TunOptions because the inbound is the
+	// one thing the two modes swap; the rest of this struct (MTU/Stack/interface)
+	// is read only in tun mode.
+	Mode string
+	// MixedPort is the loopback port the mixed inbound listens on in
+	// ModeSystemProxy. Zero is filled with defaultMixedPort by normalize; it is
+	// inert in tun mode.
+	MixedPort     int
 	InterfaceName string
 	MTU           int
 	Stack         string // system, gvisor, or mixed
@@ -73,6 +115,12 @@ type TunOptions struct {
 }
 
 func (t TunOptions) normalize() TunOptions {
+	if t.Mode == "" {
+		t.Mode = defaultConnMode
+	}
+	if t.MixedPort == 0 {
+		t.MixedPort = defaultMixedPort
+	}
 	if t.InterfaceName == "" {
 		// Empty stays empty on macOS (platformTUNName == ""), which tells sing-box
 		// to claim the next free utun — the only names its kernel allows. Off
@@ -183,7 +231,7 @@ func Build(nodes []model.Node, selectedTag string, ro routing.Options, tun TunOp
 			"timestamp": true,
 		},
 		"dns":       ro.DNS(),
-		"inbounds":  []map[string]any{tunInbound(tun, ro.KillSwitch)},
+		"inbounds":  []map[string]any{inbound(tun, ro.KillSwitch)},
 		"outbounds": outbounds,
 		"route":     routeBlock(ro),
 		"experimental": map[string]any{
@@ -376,6 +424,35 @@ func validateNode(n model.Node) error {
 // wrong exit.
 func ValidateNode(n model.Node) bool {
 	return validateNode(n) == nil
+}
+
+// inbound renders the single inbound the config carries, dispatching on the
+// connection mode. ModeSystemProxy yields a loopback mixed inbound (no tun, no
+// auto_route, so nothing needs the tun driver or a route claim); every other
+// mode — including the normalized default — yields the tun inbound. strictRoute
+// is meaningful only to the tun path (it is the kill switch); the mixed inbound
+// ignores it, since a kill switch is a tun/auto_route firewall concept with no
+// equivalent when the OS merely points at a local proxy.
+func inbound(t TunOptions, strictRoute bool) map[string]any {
+	if t.Mode == ModeSystemProxy {
+		return mixedInbound(t.MixedPort)
+	}
+	return tunInbound(t, strictRoute)
+}
+
+// mixedInbound renders the loopback mixed (HTTP + SOCKS) inbound used in
+// ModeSystemProxy. It binds to 127.0.0.1 only so the proxy is never reachable
+// off the machine, and carries no sniff/domain_strategy fields — sing-box 1.12+
+// moved those onto route rule actions, and the builder's route block already
+// owns routing — so this stays the minimal listener the OS proxy points at.
+// Verified against the bundled sing-box 1.13 schema with `sing-box check`.
+func mixedInbound(port int) map[string]any {
+	return map[string]any{
+		"type":        "mixed",
+		"tag":         mixedTag,
+		"listen":      mixedListen,
+		"listen_port": port,
+	}
 }
 
 // tunInbound renders the single tun inbound. auto_route always routes traffic
