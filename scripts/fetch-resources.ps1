@@ -30,7 +30,7 @@ $singboxSha256 = "aea1fa983134a2e2d0600581d1178e98bd6bb93ae12ad8c333eaacae68a169
 $wintunSha256 = "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51"
 $geoipRuSha256 = "8bc18433e5d5b0644ba2a9ff74cd03428ba4f4e388b3c409f182de930e3c3170"
 $geositeRuSha256 = "3fb41849eefac86a4e65a86da3b868ecd40512e4d3f097ee325474f4cd401f76"
-$geositeAdsSha256 = "0e8e5a818e516c7fdffb585d3066129bbbc7759fe80f414055694ce8392e83c8"
+$geositeAdsSha256 = "ca44c97fce76f4f889e08bbc28e80d497a43239328e09f760129844057a2780a"
 
 # Verify-Sha256 aborts the build unless $Path hashes to the pinned $Expected
 # digest. A mismatch means the fetched artifact is not the one these pins were cut
@@ -67,11 +67,15 @@ Copy-Item $dll.FullName (Join-Path $dest "wintun.dll") -Force
 # RU geo rule-sets, shipped locally so smart routing loads them from disk instead
 # of downloading them from GitHub at startup (the download blocks sing-box for
 # ~10s when raw.githubusercontent.com is throttled). These are the official
-# SagerNet rule-set releases, pinned to the branch the routing layer references.
-$geoipUrl = "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ru.srs"
+# SagerNet rule-sets, pinned to an immutable commit rather than the rolling
+# `rule-set` branch — the branch is regenerated daily, so a branch URL would drift
+# out from under the SHA-256 pins below and break the build on the next upstream
+# rebuild (which is exactly what happened to geosite-ads). Bump the commit + SHA
+# together to update a rule-set on purpose.
+$geoipUrl = "https://raw.githubusercontent.com/SagerNet/sing-geoip/a508a0a09d30111e0ab5a0d9a3de1aff832d72b4/geoip-ru.srs"
 curl.exe -L --retry 12 --retry-all-errors --retry-delay 2 -o (Join-Path $dest "geoip-ru.srs") $geoipUrl
 Verify-Sha256 (Join-Path $dest "geoip-ru.srs") $geoipRuSha256
-$geositeUrl = "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ru.srs"
+$geositeUrl = "https://raw.githubusercontent.com/SagerNet/sing-geosite/02b7bc85184c7fa94ccdfe9a35b7f4a169b28b4d/geosite-category-ru.srs"
 curl.exe -L --retry 12 --retry-all-errors --retry-delay 2 -o (Join-Path $dest "geosite-ru.srs") $geositeUrl
 Verify-Sha256 (Join-Path $dest "geosite-ru.srs") $geositeRuSha256
 
@@ -79,7 +83,7 @@ Verify-Sha256 (Join-Path $dest "geosite-ru.srs") $geositeRuSha256
 # license as the RU geosite set (compiled from the v2fly community domain list).
 # It is bundled and loaded strictly as a LOCAL rule-set — never fetched at
 # runtime — so it can never reintroduce the startup freeze a remote rule-set caused.
-$geositeAdsUrl = "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs"
+$geositeAdsUrl = "https://raw.githubusercontent.com/SagerNet/sing-geosite/02b7bc85184c7fa94ccdfe9a35b7f4a169b28b4d/geosite-category-ads-all.srs"
 curl.exe -L --retry 12 --retry-all-errors --retry-delay 2 -o (Join-Path $dest "geosite-ads.srs") $geositeAdsUrl
 Verify-Sha256 (Join-Path $dest "geosite-ads.srs") $geositeAdsSha256
 

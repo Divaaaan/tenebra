@@ -36,7 +36,7 @@ singbox_sha256_darwin_arm64="4ac414d4ede9ec21bc79d8ccf40b4679429203b9e06ad96d2d8
 singbox_sha256_darwin_amd64="477afd64ad7751214f01338ba244265ecc223966ddb58214963f526dca7f424e"
 geoip_ru_sha256="8bc18433e5d5b0644ba2a9ff74cd03428ba4f4e388b3c409f182de930e3c3170"
 geosite_ru_sha256="3fb41849eefac86a4e65a86da3b868ecd40512e4d3f097ee325474f4cd401f76"
-geosite_ads_sha256="0e8e5a818e516c7fdffb585d3066129bbbc7759fe80f414055694ce8392e83c8"
+geosite_ads_sha256="ca44c97fce76f4f889e08bbc28e80d497a43239328e09f760129844057a2780a"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(dirname "$script_dir")"
@@ -121,18 +121,19 @@ fi
 # RU geo rule-sets, shipped locally so smart routing loads them from disk instead
 # of downloading them from GitHub at startup (the download blocks sing-box for
 # ~10s when raw.githubusercontent.com is throttled). These are the official
-# SagerNet rule-set releases, pinned to the branch the routing layer references.
-# Identical to the URLs fetch-resources.ps1 pulls.
-fetch "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ru.srs" "$dest/geoip-ru.srs"
+# SagerNet rule-sets, pinned to immutable commits rather than the rolling
+# `rule-set` branch (which regenerates daily and drifts out from under the SHA
+# pins). Identical to the URLs fetch-resources.ps1 pulls; bump commit + SHA together.
+fetch "https://raw.githubusercontent.com/SagerNet/sing-geoip/a508a0a09d30111e0ab5a0d9a3de1aff832d72b4/geoip-ru.srs" "$dest/geoip-ru.srs"
 verify_sha256 "$dest/geoip-ru.srs" "$geoip_ru_sha256"
-fetch "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ru.srs" "$dest/geosite-ru.srs"
+fetch "https://raw.githubusercontent.com/SagerNet/sing-geosite/02b7bc85184c7fa94ccdfe9a35b7f4a169b28b4d/geosite-category-ru.srs" "$dest/geosite-ru.srs"
 verify_sha256 "$dest/geosite-ru.srs" "$geosite_ru_sha256"
 
 # Ad/tracker blocklist for the opt-in DNS ad-blocker. Same SagerNet source and
 # license as the RU geosite set (compiled from the v2fly community domain list).
 # It is bundled and loaded strictly as a LOCAL rule-set — never fetched at
 # runtime — so it can never reintroduce the startup freeze a remote rule-set caused.
-fetch "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs" "$dest/geosite-ads.srs"
+fetch "https://raw.githubusercontent.com/SagerNet/sing-geosite/02b7bc85184c7fa94ccdfe9a35b7f4a169b28b4d/geosite-category-ads-all.srs" "$dest/geosite-ads.srs"
 verify_sha256 "$dest/geosite-ads.srs" "$geosite_ads_sha256"
 
 echo "Fetched sing-box $singbox_version and RU + ads rule-sets into $dest"
