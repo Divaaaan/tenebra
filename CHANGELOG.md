@@ -11,6 +11,14 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Multihop (two-hop chains).** Route traffic through two of your own nodes in
+  sequence (entry → exit) using sing-box's native outbound `detour`, so the exit
+  never sees your entry address. Pick an entry and exit node in
+  Settings → Multihop; an unresolvable pair degrades to a single hop rather than a
+  broken configuration.
+
 ## [0.4.0] - 2026-07-12
 
 ### Added
