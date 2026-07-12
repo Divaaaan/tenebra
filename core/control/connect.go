@@ -129,11 +129,17 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 	d.mu.Lock()
 	ro := d.routing
 	tun := d.tun
+	mh := d.multihop
 	d.mu.Unlock()
 
 	nodes := profileNodes(p)
 	nodeIDs := serverIDs(p)
 	tags := serverTags(p)
+	// Resolve the multihop selection (server IDs) into the builder-facing outbound
+	// tags now that the profile's tag map is in hand, so every per-candidate config
+	// this loop builds carries the same chain. An unresolvable pair (a node that
+	// vanished, or one the builder won't render) leaves ro untouched — a single hop.
+	ro = resolveMultihop(ro, mh, tags)
 
 	// Tear down any existing connection (and any in-flight loop) before starting a
 	// new one so we never run two sing-box processes at once.
@@ -972,10 +978,16 @@ func (d *Daemon) reconcileConnectingOptions(loop fallbackLoop, nodeID string) {
 	d.mu.Lock()
 	curRo := d.routing
 	curTun := d.tun
+	curMh := d.multihop
 	d.mu.Unlock()
+	// Resolve the current multihop selection against this profile's tags, the same
+	// way the loop resolved its own snapshot, so a multihop toggle landing mid-connect
+	// is compared like for like and, when it differs, hot-swapped in.
+	curRo = resolveMultihop(curRo, curMh, loop.tags)
 	if loop.ro.KillSwitch == curRo.KillSwitch &&
 		loop.ro.TLSFragment == curRo.TLSFragment &&
-		loop.tun.Stack == curTun.Stack {
+		loop.tun.Stack == curTun.Stack &&
+		multihopResolved(loop.ro, curRo) {
 		return // nothing that applies live changed during the connecting window
 	}
 	p, ok := d.store.Get(loop.profileID)
@@ -1072,7 +1084,7 @@ func (d *Daemon) setState(s State) {
 	// rather than whatever the transient State value carried. This keeps status
 	// reporting them correctly across connect/disconnect transitions without
 	// every call site restating them.
-	applySettingsToState(&s, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports)
+	applySettingsToState(&s, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
 	d.state = s
 	emit := d.emit
 	d.mu.Unlock()

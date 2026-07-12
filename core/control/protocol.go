@@ -19,6 +19,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+
+	"github.com/Divaaaan/tenebra/core/model"
 )
 
 // Command names. These are the cmd values a Request may carry.
@@ -37,6 +39,7 @@ const (
 	CmdSetSplit           = "set_split"
 	CmdSetKillSwitch      = "set_kill_switch"
 	CmdSetTLSFragment     = "set_tls_fragment"
+	CmdSetMultihop        = "set_multihop"
 	CmdSetTun             = "set_tun"
 	CmdSetAutoconnect     = "set_autoconnect"
 	CmdSetAutoFailover    = "set_auto_failover"
@@ -171,6 +174,14 @@ type Request struct {
 	// false — the safe "off" reading for an opt-in preset.
 	PresetRuBanking bool `json:"preset_ru_banking,omitempty"`
 	PresetRuGov     bool `json:"preset_ru_gov,omitempty"`
+	// Enabled, EntryID and ExitID configure set_multihop: the two-hop toggle and the
+	// stable server IDs (see profile.Server.ID) of the entry and exit nodes the chain
+	// runs through, entry first. Enabling requires both IDs, distinct, and present in
+	// the profile named by Profile; disabling ignores them. A dedicated Enabled field
+	// (not the shared On) keeps the wire form {enabled,entry_id,exit_id} unambiguous.
+	Enabled bool   `json:"enabled,omitempty"`
+	EntryID string `json:"entry_id,omitempty"`
+	ExitID  string `json:"exit_id,omitempty"`
 }
 
 // Response is a core -> UI reply to a Request, correlated by ID. Exactly one of
@@ -213,6 +224,13 @@ type State struct {
 	// kill switch. The adaptive walk still reaches fragmentation per-node on a
 	// censored handshake regardless of this global override.
 	TLSFragment bool `json:"tls_fragment,omitempty"`
+	// Multihop reports the two-hop chain selection: whether it is enabled and which
+	// entry/exit servers (by stable ID) it chains through. A pointer so the whole
+	// object is omitted while no selection has ever been made, and carried (even when
+	// disabled) once the user has picked endpoints, so the UI can prefill its
+	// selectors. The IDs are resolved against the live profile only at connect time;
+	// a pair that no longer resolves degrades to a single hop without clearing here.
+	Multihop *model.Multihop `json:"multihop,omitempty"`
 	// TunStack is the tun network stack (system/gvisor/mixed) the current or
 	// next tunnel uses. Always present once the daemon has normalized it.
 	TunStack string `json:"tun_stack,omitempty"`

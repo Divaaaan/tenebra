@@ -78,6 +78,14 @@ type persistedSettings struct {
 	// off, matching the pre-preset behaviour.
 	PresetRuBanking bool `json:"preset_ru_banking,omitempty"`
 	PresetRuGov     bool `json:"preset_ru_gov,omitempty"`
+	// Multihop, MultihopEntryID and MultihopExitID remember the two-hop chain
+	// selection: the toggle and the stable server IDs of the entry and exit nodes.
+	// Absent in files written before the field existed reads back as off with no
+	// selection, matching the pre-multihop behaviour. The IDs are stored even when
+	// the toggle is off so re-enabling restores the last pick.
+	Multihop        bool   `json:"multihop,omitempty"`
+	MultihopEntryID string `json:"multihop_entry_id,omitempty"`
+	MultihopExitID  string `json:"multihop_exit_id,omitempty"`
 	// CrashReports remembers the crash-report consent. A *bool so the three
 	// states stay distinct across a restart: absent (nil) means the user has not
 	// been asked, so the GUI still shows the first-run prompt; a stored true/false

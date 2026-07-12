@@ -126,12 +126,35 @@ func Build(nodes []model.Node, selectedTag string, ro routing.Options, tun TunOp
 	if def == "" || !contains(tags, def) {
 		def = tags[0]
 	}
+	selOutbounds := tags
 
-	// Shared outbounds: the selector over all nodes, plus direct/block.
+	// Multihop rewires the topology into a two-hop chain: the exit outbound gets a
+	// detour through the entry outbound, and the selector collapses to the exit so
+	// the route final (still proxyTag) egresses via exit -> entry -> internet. It
+	// engages only when both endpoints resolve to distinct regular outbounds this
+	// config actually built — an AmneziaWG endpoint or a dropped/invalid node leaves
+	// its tag out of outs — so a stale or unsupported selection degrades to the
+	// normal selector rather than emitting a dangling detour, which sing-box accepts
+	// at check time and then silently misroutes. sing-box's detour is a plain
+	// top-level outbound field naming the tag to dial through (verified against the
+	// bundled 1.13 schema).
+	if ro.Multihop && ro.MultihopEntry != "" && ro.MultihopExit != "" && ro.MultihopEntry != ro.MultihopExit {
+		_, entryOK := outboundByTag(outs, ro.MultihopEntry)
+		exitObj, exitOK := outboundByTag(outs, ro.MultihopExit)
+		if entryOK && exitOK {
+			// The entry outbound needs no change: it is dialed as an ordinary
+			// outbound and only referenced by the exit's detour.
+			exitObj["detour"] = ro.MultihopEntry
+			selOutbounds = []string{ro.MultihopExit}
+			def = ro.MultihopExit
+		}
+	}
+
+	// Shared outbounds: the selector over the eligible nodes, plus direct/block.
 	selector := map[string]any{
 		"type":      "selector",
 		"tag":       proxyTag,
-		"outbounds": tags,
+		"outbounds": selOutbounds,
 		"default":   def,
 	}
 	outbounds := make([]map[string]any, 0, len(outs)+3)
@@ -405,4 +428,18 @@ func contains(s []string, v string) bool {
 		}
 	}
 	return false
+}
+
+// outboundByTag returns the first outbound object in outs whose tag matches, and
+// whether one was found. It locates the multihop exit outbound so its detour can
+// be set, and confirms the entry is a regular outbound: AmneziaWG endpoints live
+// in the separate endpoints array, not outs, so they can neither carry a detour
+// nor be one here, and a lookup miss is what keeps multihop off for such a pick.
+func outboundByTag(outs []map[string]any, tag string) (map[string]any, bool) {
+	for _, o := range outs {
+		if t, _ := o["tag"].(string); t == tag {
+			return o, true
+		}
+	}
+	return nil, false
 }

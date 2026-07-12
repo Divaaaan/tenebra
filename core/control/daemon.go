@@ -100,6 +100,12 @@ type Daemon struct {
 	// takes effect without a reconnect. Persisted with the other preferences.
 	// Guarded by mu.
 	autoFailover bool
+	// multihop remembers the two-hop chain selection (enabled plus the entry/exit
+	// server IDs). It is held here rather than on d.routing because the routing
+	// options the builder consumes carry resolved outbound tags, not server IDs; the
+	// IDs are resolved against the connecting profile via resolveMultihop at connect
+	// time. Persisted with the other preferences. Guarded by mu.
+	multihop model.Multihop
 	// crashReports remembers the crash-report consent (see State.CrashReports):
 	// nil when the user has not been asked, else a pointer to their explicit
 	// choice. It governs only whether the GUI offers to surface a crash report on
@@ -351,13 +357,18 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	// the toggle existed) keeps the watchdog armed; only an explicit stored false
 	// disarms it.
 	d.autoFailover = ps.AutoFailover == nil || *ps.AutoFailover
+	d.multihop = model.Multihop{
+		Enabled: ps.Multihop,
+		EntryID: ps.MultihopEntryID,
+		ExitID:  ps.MultihopExitID,
+	}
 	// The loaded struct is a fresh local, so holding its pointer is safe; later
 	// writes always replace the pointer (never mutate through it), so no snapshot
 	// ever races a change.
 	d.crashReports = ps.CrashReports
 	d.lastProfile = ps.LastProfile
 	d.lastNode = ps.LastNode
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
 	d.mu.Unlock()
 }
 
@@ -418,6 +429,9 @@ func (d *Daemon) settingsLocked() persistedSettings {
 		RulesProxy:      d.routing.RulesProxy,
 		PresetRuBanking: d.routing.PresetRuBanking,
 		PresetRuGov:     d.routing.PresetRuGov,
+		Multihop:        d.multihop.Enabled,
+		MultihopEntryID: d.multihop.EntryID,
+		MultihopExitID:  d.multihop.ExitID,
 		LastProfile:     d.lastProfile,
 		LastNode:        d.lastNode,
 	}
@@ -457,6 +471,8 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleSetKillSwitch(req)
 	case CmdSetTLSFragment:
 		return d.handleSetTLSFragment(req)
+	case CmdSetMultihop:
+		return d.handleSetMultihop(req)
 	case CmdSetTun:
 		return d.handleSetTun(req)
 	case CmdSetAutoconnect:
@@ -1003,7 +1019,7 @@ func (d *Daemon) handleSetSplit(req Request) Response {
 	d.routing.SplitMode = mode
 	d.routing.SplitApps = req.Apps
 	d.routing = d.routing.Normalize()
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
 	cur := d.state
 	d.mu.Unlock()
 
@@ -1027,7 +1043,7 @@ func (d *Daemon) handleSetKillSwitch(req Request) Response {
 	d.mu.Lock()
 	changed := d.routing.KillSwitch != req.On
 	d.routing.KillSwitch = req.On
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
 	d.mu.Unlock()
 
 	d.persistSettings()
@@ -1054,7 +1070,7 @@ func (d *Daemon) handleSetTLSFragment(req Request) Response {
 	d.mu.Lock()
 	changed := d.routing.TLSFragment != req.On
 	d.routing.TLSFragment = req.On
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
 	d.mu.Unlock()
 
 	d.persistSettings()
@@ -1069,6 +1085,96 @@ func (d *Daemon) handleSetTLSFragment(req Request) Response {
 	return resp
 }
 
+// handleSetMultihop arms or disarms the two-hop chain and records which entry and
+// exit nodes it runs through. Like the kill switch the choice is recorded,
+// persisted, and applied to a live tunnel in place via reapplyLive, so arming
+// doesn't wait for a reconnect. Enabling validates the selection up front — both
+// nodes must be named, distinct, and present in the profile the request targets —
+// so a bad pick is rejected whole rather than half-applied; disabling ignores the
+// IDs but keeps them recorded so the UI can re-enable the last pick. The IDs are
+// resolved to outbound tags against the connecting profile later (resolveMultihop),
+// so a selection that no longer resolves simply degrades to a single hop.
+func (d *Daemon) handleSetMultihop(req Request) Response {
+	mh := model.Multihop{Enabled: req.Enabled, EntryID: req.EntryID, ExitID: req.ExitID}
+	if mh.Enabled {
+		if mh.EntryID == "" || mh.ExitID == "" {
+			return newError(req.ID, "set_multihop: entry and exit nodes are required")
+		}
+		if mh.EntryID == mh.ExitID {
+			return newError(req.ID, "set_multihop: entry and exit nodes must differ")
+		}
+		p, ok := d.store.Get(req.Profile)
+		if !ok {
+			return newError(req.ID, "set_multihop: profile not found")
+		}
+		if !hasServer(p, mh.EntryID) {
+			return newError(req.ID, "set_multihop: entry node not in profile")
+		}
+		if !hasServer(p, mh.ExitID) {
+			return newError(req.ID, "set_multihop: exit node not in profile")
+		}
+	}
+
+	d.mu.Lock()
+	changed := d.multihop != mh
+	d.multihop = mh
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
+	d.mu.Unlock()
+
+	d.persistSettings()
+	if changed {
+		d.reapplyLive()
+	}
+
+	resp, err := newResult(req.ID, d.snapshotState())
+	if err != nil {
+		return newError(req.ID, err.Error())
+	}
+	return resp
+}
+
+// hasServer reports whether the profile contains a server with the given stable
+// ID. It backs set_multihop's existence check on the entry/exit selection.
+func hasServer(p profile.Profile, id string) bool {
+	for _, s := range p.Servers {
+		if s.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveMultihop folds a stored multihop selection (server IDs) into the routing
+// options the builder consumes (outbound tags), using the tag map the connecting
+// profile produces (serverTags). It engages only for a valid, distinct pair whose
+// IDs both resolve to a tag the builder will actually emit; anything else leaves
+// the options untouched so the build degrades to a normal single hop rather than
+// carrying a dangling detour. tags maps a server ID to its outbound tag.
+func resolveMultihop(ro routing.Options, mh model.Multihop, tags map[string]string) routing.Options {
+	if !mh.Valid() {
+		return ro
+	}
+	entryTag := tags[mh.EntryID]
+	exitTag := tags[mh.ExitID]
+	if entryTag == "" || exitTag == "" || entryTag == exitTag {
+		return ro
+	}
+	ro.Multihop = true
+	ro.MultihopEntry = entryTag
+	ro.MultihopExit = exitTag
+	return ro
+}
+
+// multihopResolved reports whether two routing snapshots carry the same resolved
+// multihop chain (the builder-facing tag fields). It gates the connecting-window
+// reconcile so a multihop toggle that lands mid-connect triggers a hot-swap just
+// as the kill switch or TLS fragmentation would.
+func multihopResolved(a, b routing.Options) bool {
+	return a.Multihop == b.Multihop &&
+		a.MultihopEntry == b.MultihopEntry &&
+		a.MultihopExit == b.MultihopExit
+}
+
 // handleSetTun switches the tun network stack (system/gvisor/mixed). Recorded,
 // persisted, and applied to a live tunnel in place via reapplyLive — the stack
 // is a startup option of the tun inbound, so the swap restarts sing-box on the
@@ -1081,7 +1187,7 @@ func (d *Daemon) handleSetTun(req Request) Response {
 	d.mu.Lock()
 	changed := d.tun.Stack != req.Stack
 	d.tun.Stack = req.Stack
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
 	d.mu.Unlock()
 
 	d.persistSettings()
@@ -1104,7 +1210,7 @@ func (d *Daemon) handleSetTun(req Request) Response {
 func (d *Daemon) handleSetAutoconnect(req Request) Response {
 	d.mu.Lock()
 	d.autoconnect = req.On
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
 	d.mu.Unlock()
 
 	d.persistSettings()
@@ -1124,7 +1230,7 @@ func (d *Daemon) handleSetAutoconnect(req Request) Response {
 func (d *Daemon) handleSetAutoFailover(req Request) Response {
 	d.mu.Lock()
 	d.autoFailover = req.On
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
 	d.mu.Unlock()
 
 	d.persistSettings()
@@ -1146,7 +1252,7 @@ func (d *Daemon) handleSetCrashReports(req Request) Response {
 	d.mu.Lock()
 	v := req.On
 	d.crashReports = &v
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
 	d.mu.Unlock()
 
 	d.persistSettings()
@@ -1188,7 +1294,7 @@ func (d *Daemon) handleSetDNS(req Request) Response {
 	// already-default field to "" compares equal below and is correctly a no-op.
 	d.routing = d.routing.Normalize()
 	changed := dnsPrefsDiffer(before, d.routing)
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
 	d.mu.Unlock()
 
 	d.persistSettings()
@@ -1240,7 +1346,7 @@ func (d *Daemon) handleSetRules(req Request) Response {
 	d.routing.PresetRuGov = req.PresetRuGov
 	d.routing = d.routing.Normalize()
 	changed := rulesPrefsDiffer(before, d.routing)
-	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports)
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
 	d.mu.Unlock()
 
 	d.persistSettings()
@@ -1275,7 +1381,7 @@ func rulesPrefsDiffer(a, b routing.Options) bool {
 // invisible to the UI; the app slice is copied so the State never aliases the
 // daemon's live routing options. The resolvers are always the normalized
 // (effective) values, so the UI can prefill its custom-DNS inputs.
-func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, autoconnect, autoFailover bool, crashReports *bool) {
+func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, autoconnect, autoFailover bool, crashReports *bool, multihop model.Multihop) {
 	if ro.SplitMode == routing.SplitOff || len(ro.SplitApps) == 0 {
 		s.Split = ""
 		s.SplitApps = nil
@@ -1310,6 +1416,16 @@ func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, 
 	s.RulesProxy = append([]string(nil), ro.RulesProxy...)
 	s.PresetRuBanking = ro.PresetRuBanking
 	s.PresetRuGov = ro.PresetRuGov
+	// Copy the multihop selection by value into a fresh pointer so the State never
+	// aliases the daemon's live field: nil while nothing has been selected (so the
+	// wire form omits it), else the current enabled/entry/exit, carried even when
+	// disabled so the UI can prefill its node selectors.
+	if multihop.IsZero() {
+		s.Multihop = nil
+	} else {
+		mh := multihop
+		s.Multihop = &mh
+	}
 }
 
 // handlePing measures dial latency to every server in a profile and returns the
