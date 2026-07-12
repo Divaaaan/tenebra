@@ -3,7 +3,7 @@ import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getVersion } from "@tauri-apps/api/app";
 import type { Update } from "@tauri-apps/plugin-updater";
 
-import type { RoutingMode, SplitMode, TunStack } from "../api";
+import type { ConnectionMode, RoutingMode, SplitMode, TunStack } from "../api";
 import type { Tenebra } from "../state/useTenebra";
 import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import { useI18n } from "../i18n/I18nContext";
@@ -35,6 +35,7 @@ const NAV_SECTIONS = [
   "routing",
   "split",
   "rules",
+  "mode",
   "tunnel",
   "dns",
   "bypass",
@@ -611,6 +612,42 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     }
   }
 
+  // The connection mode (tun vs system proxy). Core-owned like the tun stack: the
+  // daemon validates, persists, and — when a tunnel is live — re-applies it in
+  // place (arming or clearing the OS proxy in step), so the UI just reflects
+  // tenebra.state and requests changes.
+  const proxyMode = tenebra.state.proxy_mode ?? "tun";
+
+  const modeOptions: { mode: ConnectionMode; label: string; hint: string }[] = [
+    { mode: "tun", label: t.settings.modeTun, hint: t.settings.modeTunHint },
+    {
+      mode: "system-proxy",
+      label: t.settings.modeSystemProxy,
+      hint: t.settings.modeSystemProxyHint,
+    },
+  ];
+
+  function chooseMode(mode: ConnectionMode) {
+    if (mode === proxyMode) {
+      return;
+    }
+    void tenebra.setProxyMode(mode);
+  }
+
+  // See routingRefs: arrow keys move focus along with the selection here too.
+  const modeRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  function onModeKey(e: KeyboardEvent, index: number) {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") {
+      return;
+    }
+    e.preventDefault();
+    const delta = e.key === "ArrowDown" ? 1 : -1;
+    const nextIndex = (index + delta + modeOptions.length) % modeOptions.length;
+    chooseMode(modeOptions[nextIndex].mode);
+    modeRefs.current[nextIndex]?.focus();
+  }
+
   // The tun network stack. Core-owned like routing: the daemon validates,
   // persists, and — when a tunnel is live — re-applies it in place, so the UI
   // just reflects tenebra.state and requests changes.
@@ -1001,6 +1038,43 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
               )
             }
           />
+        </section>
+
+        <section
+          className="set-section"
+          id="set-sec-mode"
+          ref={setSectionRef("mode")}
+        >
+          <div className="set-section-head">
+            <h2 className="set-eyebrow">{t.settings.mode}</h2>
+            <p className="set-sub">{t.settings.modeHint}</p>
+          </div>
+          <div className="set-options" role="radiogroup" aria-label={t.settings.mode}>
+            {modeOptions.map((opt, index) => {
+              const checked = proxyMode === opt.mode;
+              return (
+                <button
+                  key={opt.mode}
+                  ref={(el) => {
+                    modeRefs.current[index] = el;
+                  }}
+                  type="button"
+                  role="radio"
+                  aria-checked={checked}
+                  tabIndex={checked ? 0 : -1}
+                  className={`set-option${checked ? " is-checked" : ""}`}
+                  onClick={() => chooseMode(opt.mode)}
+                  onKeyDown={(e) => onModeKey(e, index)}
+                >
+                  <span className="set-mark" aria-hidden="true">{checked ? "▣" : "▢"}</span>
+                  <span className="set-option-text">
+                    <span className="set-option-label">{opt.label}</span>
+                    <span className="set-option-hint">{opt.hint}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </section>
 
         <section

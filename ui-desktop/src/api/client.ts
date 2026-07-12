@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AttemptsEvent,
   BatchImportResult,
+  ConnectionMode,
   CrashReport,
   LogEvent,
   PingResult,
@@ -137,6 +138,15 @@ export const api = {
   // switch; when idle the choice applies on the next connect.
   setTun(stack: TunStack): Promise<State> {
     return invoke<State>("set_tun", { stack });
+  },
+
+  // Switch the connection mode between "tun" and "system-proxy". Same live
+  // re-apply semantics as the kill switch (a brief connecting→connected dip while
+  // sing-box hot-swaps on the same node); when idle it applies on the next
+  // connect. Switching to system-proxy points the OS proxy at the loopback mixed
+  // inbound once connected; switching to tun clears it.
+  setProxyMode(mode: ConnectionMode): Promise<State> {
+    return invoke<State>("set_proxy_mode", { mode });
   },
 
   // Arm/disarm connect-on-start. The core persists the choice and, when armed,

@@ -26,6 +26,14 @@ export type SplitMode = "off" | "exclude" | "include";
  */
 export type TunStack = "system" | "gvisor" | "mixed";
 
+/**
+ * The connection mode the core runs: "tun" carries all traffic through a tun
+ * device with auto_route (the default, needs the tun driver), or "system-proxy"
+ * skips the tun and exposes a loopback mixed inbound the client points the OS
+ * proxy at (for machines without the rights to install or run a tun).
+ */
+export type ConnectionMode = "tun" | "system-proxy";
+
 export type NodeProtocol =
   | "vless"
   | "hysteria2"
@@ -58,6 +66,17 @@ export interface State {
   multihop?: Multihop;
   /** The tun network stack the current or next tunnel uses. */
   tun_stack?: TunStack;
+  /**
+   * The connection mode the current or next tunnel uses ("tun" / "system-proxy").
+   * Present once the core has normalized it, so the mode selector can render from a
+   * status alone.
+   */
+  proxy_mode?: ConnectionMode;
+  /**
+   * The loopback port the mixed inbound binds in system-proxy mode (inert in tun
+   * mode). Present alongside proxy_mode so a future port control can prefill it.
+   */
+  proxy_port?: number;
   /**
    * Whether the core reconnects the last profile when the daemon starts
    * (service mode: at boot). Omitted (treated as off) when it doesn't.
