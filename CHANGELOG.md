@@ -26,6 +26,13 @@ All notable changes to Tenebra are documented here. The format follows
   Settings → Multihop; an unresolvable pair degrades to a single hop rather than a
   broken configuration.
 
+### Fixed
+
+- **The speed test tolerates a blocked download endpoint.** It now tries several
+  neutral endpoints in order and the first that streams data wins, so a CDN that
+  challenges or refuses a datacenter IP (a VPN exit is one) no longer fails the
+  whole test while the tunnel is healthy.
+
 ## [0.4.0] - 2026-07-12
 
 ### Added
