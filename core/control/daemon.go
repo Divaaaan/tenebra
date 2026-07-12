@@ -218,14 +218,14 @@ type Daemon struct {
 
 	// stunProbe runs the UDP/STUN reachability + NAT probe for run_stun_check, and
 	// stunServers are the endpoints it queries. speedStream opens the download for
-	// run_speed_test, speedURL is that download's endpoint, and speedSampleBytes
+	// run_speed_test, speedURLs are those endpoints (tried in order), and speedSampleBytes
 	// caps how much of it the sample reads. All are injectable so the STUN parsing,
 	// NAT classification and throughput math can be unit-tested offline; production
 	// uses realStunProbe / defaultStunServers and defaultSpeedStream.
 	stunProbe        stunProbeFunc
 	stunServers      []string
 	speedStream      func(ctx context.Context, url string) (io.ReadCloser, error)
-	speedURL         string
+	speedURLs        []string
 	speedSampleBytes int64
 
 	// entitlement resolves a managed subscription's entitlement for one key,
@@ -288,7 +288,7 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 		stunProbe:        realStunProbe,
 		stunServers:      defaultStunServers,
 		speedStream:      defaultSpeedStream,
-		speedURL:         fmt.Sprintf(speedDownloadURLFmt, defaultSpeedSampleBytes),
+		speedURLs:        defaultSpeedURLs,
 		speedSampleBytes: defaultSpeedSampleBytes,
 
 		entitlement: subscription.FetchEntitlement,
