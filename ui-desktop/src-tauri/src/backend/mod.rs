@@ -83,6 +83,19 @@ pub enum TunStack {
     Mixed,
 }
 
+/// The connection mode the core runs. `Tun` carries all traffic through a tun
+/// device with auto_route (the default, needs the tun driver); `SystemProxy`
+/// skips the tun and exposes a loopback mixed inbound the client points the OS
+/// proxy at, for machines without the rights to install or run a tun. Mirrors the
+/// core's mode tokens; the `kebab-case` rename turns `SystemProxy` into the wire
+/// value `"system-proxy"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConnectionMode {
+    Tun,
+    SystemProxy,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Protocol {
@@ -151,6 +164,15 @@ pub struct State {
     /// The tun network stack the current or next tunnel uses.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tun_stack: Option<TunStack>,
+    /// The connection mode the current or next tunnel uses ("tun" / "system-proxy").
+    /// Present once the core has normalized it, so the UI can render the mode
+    /// selector from a status alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_mode: Option<ConnectionMode>,
+    /// The loopback port the mixed inbound binds in system-proxy mode (inert in tun
+    /// mode). Present alongside `proxy_mode` so a future port control can prefill it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_port: Option<u16>,
     /// Whether the core reconnects the last profile when the daemon starts;
     /// absent (treated as off) when it doesn't.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -526,6 +548,12 @@ pub trait Backend: Send + Sync + 'static {
     /// Switch the tun network stack. Same live re-apply semantics as the kill
     /// switch; when idle the choice simply applies on the next connect.
     fn set_tun(&self, stack: TunStack) -> Result<State, String>;
+    /// Switch the connection mode between tun and system-proxy. Same live re-apply
+    /// semantics as the kill switch — the core persists the choice and hot-swaps
+    /// sing-box on the same node when a tunnel is live; when idle it applies on the
+    /// next connect. Switching to system-proxy points the OS proxy at the loopback
+    /// mixed inbound once connected; switching to tun clears it.
+    fn set_proxy_mode(&self, mode: ConnectionMode) -> Result<State, String>;
     /// Arm or disarm connect-on-start. The core persists the choice and, when
     /// armed, reconnects the last profile the next time the daemon itself
     /// starts (service mode: at boot); nothing about a live tunnel changes.
@@ -768,6 +796,8 @@ mod tests {
                 exit_id: "exit-id".into(),
             }),
             tun_stack: Some(TunStack::Gvisor),
+            proxy_mode: Some(ConnectionMode::SystemProxy),
+            proxy_port: Some(8890),
             autoconnect: Some(true),
             auto_failover: Some(true),
             ad_block: Some(true),
@@ -800,6 +830,8 @@ mod tests {
             tls_fragment: None,
             multihop: None,
             tun_stack: None,
+            proxy_mode: None,
+            proxy_port: None,
             autoconnect: None,
             auto_failover: None,
             ad_block: None,
@@ -828,6 +860,8 @@ mod tests {
             "tls_fragment",
             "multihop",
             "tun_stack",
+            "proxy_mode",
+            "proxy_port",
             "autoconnect",
             "auto_failover",
             "ad_block",

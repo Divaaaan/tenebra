@@ -198,6 +198,19 @@ describe("api command wrappers", () => {
     expect(mockInvoke).toHaveBeenCalledWith("set_tun", { stack: "gvisor" });
   });
 
+  it("setProxyMode forwards the mode and returns the State", async () => {
+    const swapped: State = {
+      state: "idle",
+      proxy_mode: "system-proxy",
+      proxy_port: 2080,
+    };
+    mockInvoke.mockResolvedValueOnce(swapped);
+    await expect(api.setProxyMode("system-proxy")).resolves.toEqual(swapped);
+    expect(mockInvoke).toHaveBeenCalledWith("set_proxy_mode", {
+      mode: "system-proxy",
+    });
+  });
+
   it("setAutoconnect forwards the flag and returns the State", async () => {
     const armed: State = { state: "idle", autoconnect: true };
     mockInvoke.mockResolvedValueOnce(armed);

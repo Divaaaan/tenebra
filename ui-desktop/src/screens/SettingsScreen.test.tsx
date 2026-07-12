@@ -209,16 +209,74 @@ describe("SettingsScreen", () => {
     });
   });
 
+  describe("connection mode", () => {
+    const modeGroup = () =>
+      within(screen.getByRole("radiogroup", { name: "Connection mode" }));
+
+    it("marks the reported mode as checked, defaulting to tun", () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(modeGroup().getByRole("radio", { name: /^TUN/ })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+      expect(
+        modeGroup().getByRole("radio", { name: /^System proxy/ }),
+      ).toHaveAttribute("aria-checked", "false");
+    });
+
+    it("reflects system-proxy from the core state", () => {
+      const tenebra = makeTenebra({
+        state: { state: "idle", proxy_mode: "system-proxy" } as State,
+      });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(
+        modeGroup().getByRole("radio", { name: /^System proxy/ }),
+      ).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("requests the new mode on click and skips a no-op", async () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(modeGroup().getByRole("radio", { name: /^System proxy/ }));
+      expect(tenebra.setProxyMode).toHaveBeenCalledWith("system-proxy");
+
+      // Clicking the already-active mode must not re-apply (a live tunnel would be
+      // pointlessly hot-swapped).
+      await user.click(modeGroup().getByRole("radio", { name: /^TUN/ }));
+      expect(tenebra.setProxyMode).toHaveBeenCalledTimes(1);
+    });
+
+    it("moves to the next mode on ArrowDown", () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      fireEvent.keyDown(modeGroup().getByRole("radio", { name: /^TUN/ }), {
+        key: "ArrowDown",
+      });
+      expect(tenebra.setProxyMode).toHaveBeenCalledWith("system-proxy");
+    });
+  });
+
   describe("tunnel stack", () => {
+    // The "System proxy" connection-mode radio shares the "System" prefix with the
+    // "System" stack radio, so scope stack lookups to the Tunnel group to keep the
+    // matcher unambiguous.
+    const stackGroup = () => within(screen.getByRole("radiogroup", { name: "Tunnel" }));
+
     it("marks the reported stack as checked, defaulting to system", () => {
       const tenebra = makeTenebra({ state: { state: "idle" } as State });
       renderWithProviders(<SettingsScreen tenebra={tenebra} />);
 
-      expect(screen.getByRole("radio", { name: /^System/ })).toHaveAttribute(
+      expect(stackGroup().getByRole("radio", { name: /^System/ })).toHaveAttribute(
         "aria-checked",
         "true",
       );
-      expect(screen.getByRole("radio", { name: /^gVisor/ })).toHaveAttribute(
+      expect(stackGroup().getByRole("radio", { name: /^gVisor/ })).toHaveAttribute(
         "aria-checked",
         "false",
       );
@@ -241,12 +299,12 @@ describe("SettingsScreen", () => {
       const user = userEvent.setup();
       renderWithProviders(<SettingsScreen tenebra={tenebra} />);
 
-      await user.click(screen.getByRole("radio", { name: /^gVisor/ }));
+      await user.click(stackGroup().getByRole("radio", { name: /^gVisor/ }));
       expect(tenebra.setTun).toHaveBeenCalledWith("gvisor");
 
       // Clicking the already-active stack must not re-apply (a live tunnel
       // would be pointlessly hot-swapped).
-      await user.click(screen.getByRole("radio", { name: /^System/ }));
+      await user.click(stackGroup().getByRole("radio", { name: /^System/ }));
       expect(tenebra.setTun).toHaveBeenCalledTimes(1);
     });
 
@@ -254,7 +312,7 @@ describe("SettingsScreen", () => {
       const tenebra = makeTenebra({ state: { state: "idle" } as State });
       renderWithProviders(<SettingsScreen tenebra={tenebra} />);
 
-      fireEvent.keyDown(screen.getByRole("radio", { name: /^System/ }), {
+      fireEvent.keyDown(stackGroup().getByRole("radio", { name: /^System/ }), {
         key: "ArrowDown",
       });
       expect(tenebra.setTun).toHaveBeenCalledWith("gvisor");
@@ -265,9 +323,9 @@ describe("SettingsScreen", () => {
       const user = userEvent.setup();
       renderWithProviders(<SettingsScreen tenebra={tenebra} />);
 
-      const system = screen.getByRole("radio", { name: /^System/ });
-      const gvisor = screen.getByRole("radio", { name: /^gVisor/ });
-      const mixed = screen.getByRole("radio", { name: /^Mixed/ });
+      const system = stackGroup().getByRole("radio", { name: /^System/ });
+      const gvisor = stackGroup().getByRole("radio", { name: /^gVisor/ });
+      const mixed = stackGroup().getByRole("radio", { name: /^Mixed/ });
 
       // system is index 0 (the default stack).
       system.focus();
@@ -1272,15 +1330,16 @@ describe("SettingsScreen", () => {
 
       const rail = screen.getByRole("navigation", { name: "Settings sections" });
       const links = within(rail).getAllByRole("button");
-      // routing, split, rules, tunnel, dns, bypass, multihop, reliability,
+      // routing, split, rules, mode, tunnel, dns, bypass, multihop, reliability,
       // diagnostics, appearance, startup, updates.
-      expect(links).toHaveLength(12);
+      expect(links).toHaveLength(13);
       expect(links[0]).toHaveTextContent("Routing");
       expect(links[2]).toHaveTextContent("Custom rules");
-      expect(links[5]).toHaveTextContent("Censorship bypass");
-      expect(links[6]).toHaveTextContent("Multihop");
-      expect(links[8]).toHaveTextContent("Diagnostics");
-      expect(links[11]).toHaveTextContent("Updates");
+      expect(links[3]).toHaveTextContent("Connection mode");
+      expect(links[6]).toHaveTextContent("Censorship bypass");
+      expect(links[7]).toHaveTextContent("Multihop");
+      expect(links[9]).toHaveTextContent("Diagnostics");
+      expect(links[12]).toHaveTextContent("Updates");
     });
 
     it("scrolls to a section and highlights its link on click", async () => {
@@ -1341,6 +1400,7 @@ describe("SettingsScreen", () => {
         "Routing",
         "Split tunneling",
         "Custom rules",
+        "Connection mode",
         "Tunnel",
         "DNS",
         "Censorship bypass",

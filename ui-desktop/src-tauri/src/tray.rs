@@ -404,6 +404,8 @@ mod tests {
             tls_fragment: None,
             multihop: None,
             tun_stack: None,
+            proxy_mode: None,
+            proxy_port: None,
             autoconnect: None,
             auto_failover: None,
             ad_block: None,

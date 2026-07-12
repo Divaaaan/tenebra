@@ -316,6 +316,12 @@ export interface Strings {
     splitAddPlaceholder: string;
     splitAdd: string;
     splitRemove: string;
+    mode: string;
+    modeHint: string;
+    modeTun: string;
+    modeTunHint: string;
+    modeSystemProxy: string;
+    modeSystemProxyHint: string;
     tunnel: string;
     tunnelHint: string;
     stackSystem: string;
@@ -746,6 +752,15 @@ const en: Strings = {
     splitAddPlaceholder: "chrome.exe",
     splitAdd: "Add",
     splitRemove: "Remove",
+    mode: "Connection mode",
+    modeHint:
+      "How traffic reaches the tunnel. Changing it while connected re-applies in place (a brief reconnect on the same node).",
+    modeTun: "TUN",
+    modeTunHint:
+      "Routes all traffic through a TUN device. The default; needs the TUN driver.",
+    modeSystemProxy: "System proxy",
+    modeSystemProxyHint:
+      "Runs a local proxy and points the OS at it — no TUN driver. For machines where a TUN is not permitted.",
     tunnel: "Tunnel",
     tunnelHint:
       "Which network stack drives the TUN device. Changing it while connected re-applies the tunnel in place (a brief reconnect on the same node).",
@@ -1141,6 +1156,15 @@ const ru: Strings = {
     splitAddPlaceholder: "chrome.exe",
     splitAdd: "Добавить",
     splitRemove: "Удалить",
+    mode: "Режим подключения",
+    modeHint:
+      "Как трафик попадает в туннель. Смена при живом туннеле применяется на месте (короткий реконнект на тот же узел).",
+    modeTun: "TUN",
+    modeTunHint:
+      "Весь трафик через TUN-устройство. По умолчанию; нужен TUN-драйвер.",
+    modeSystemProxy: "Системный прокси",
+    modeSystemProxyHint:
+      "Поднимает локальный прокси и указывает на него ОС — без TUN-драйвера. Для машин, где TUN недоступен.",
     tunnel: "Туннель",
     tunnelHint:
       "Какой сетевой стек обслуживает TUN-устройство. Смена при живом туннеле применяется на месте (короткий реконнект на тот же узел).",

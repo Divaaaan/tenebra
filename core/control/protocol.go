@@ -40,6 +40,7 @@ const (
 	CmdSetKillSwitch      = "set_kill_switch"
 	CmdSetTLSFragment     = "set_tls_fragment"
 	CmdSetMultihop        = "set_multihop"
+	CmdSetProxyMode       = "set_proxy_mode"
 	CmdSetTun             = "set_tun"
 	CmdSetAutoconnect     = "set_autoconnect"
 	CmdSetAutoFailover    = "set_auto_failover"
@@ -147,6 +148,14 @@ type Request struct {
 	On bool `json:"on,omitempty"`
 	// Stack is the tun network stack for set_tun (system/gvisor/mixed).
 	Stack string `json:"stack,omitempty"`
+	// ProxyMode is the connection mode for set_proxy_mode: "tun" (the default,
+	// traffic through the tun device) or "system-proxy" (a loopback mixed inbound
+	// the client points the OS proxy at, for machines without tun rights). An
+	// unknown value is rejected. ProxyPort optionally overrides the mixed inbound's
+	// loopback port; 0 keeps the current/default port, so a plain mode switch need
+	// not restate it.
+	ProxyMode string `json:"proxy_mode,omitempty"`
+	ProxyPort int    `json:"proxy_port,omitempty"`
 	// AdBlock arms (true) or disarms (false) DNS ad/tracker blocking for set_dns.
 	// Like On, an omitted field decodes to false — the safe "off" reading for an
 	// opt-in feature.
@@ -234,6 +243,13 @@ type State struct {
 	// TunStack is the tun network stack (system/gvisor/mixed) the current or
 	// next tunnel uses. Always present once the daemon has normalized it.
 	TunStack string `json:"tun_stack,omitempty"`
+	// ProxyMode is the connection mode the current or next tunnel uses: "tun" or
+	// "system-proxy". Always present once the daemon has normalized it, so the UI
+	// can render the mode selector from a status alone. ProxyPort is the loopback
+	// port the mixed inbound binds in system-proxy mode (inert in tun mode), also
+	// always present so a future port control can prefill it.
+	ProxyMode string `json:"proxy_mode,omitempty"`
+	ProxyPort int    `json:"proxy_port,omitempty"`
 	// Autoconnect reports whether the daemon reconnects the last profile when it
 	// starts (see AutoconnectOnStart). Omitted when off, like the kill switch.
 	Autoconnect bool `json:"autoconnect,omitempty"`

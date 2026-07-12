@@ -20,8 +20,8 @@ use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_notification::NotificationExt;
 
 use backend::{
-    AttemptsSnapshot, Backend, ConnectionState, EventSink, ImportLinksResult, LeakCheck,
-    PingResult, Profile, RoutingMode, SpeedTest, SplitMode, State, StunCheck, TunStack,
+    AttemptsSnapshot, Backend, ConnectionMode, ConnectionState, EventSink, ImportLinksResult,
+    LeakCheck, PingResult, Profile, RoutingMode, SpeedTest, SplitMode, State, StunCheck, TunStack,
     EVENT_ATTEMPTS, EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
@@ -426,6 +426,14 @@ async fn set_tun(state: TauriState<'_, AppState>, stack: TunStack) -> Result<Sta
 }
 
 #[tauri::command]
+async fn set_proxy_mode(
+    state: TauriState<'_, AppState>,
+    mode: ConnectionMode,
+) -> Result<State, String> {
+    off_thread(Arc::clone(&state.backend), move |b| b.set_proxy_mode(mode)).await
+}
+
+#[tauri::command]
 async fn set_autoconnect(state: TauriState<'_, AppState>, on: bool) -> Result<State, String> {
     off_thread(Arc::clone(&state.backend), move |b| b.set_autoconnect(on)).await
 }
@@ -598,6 +606,7 @@ pub fn run() {
             set_tls_fragment,
             set_multihop,
             set_tun,
+            set_proxy_mode,
             set_autoconnect,
             set_auto_failover,
             set_dns,
@@ -790,6 +799,8 @@ mod tests {
             tls_fragment: None,
             multihop: None,
             tun_stack: None,
+            proxy_mode: None,
+            proxy_port: None,
             autoconnect: None,
             auto_failover: None,
             ad_block: None,

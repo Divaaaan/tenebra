@@ -24,9 +24,9 @@ use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
 use super::{
-    AttemptsSnapshot, Backend, EventSink, ImportLinksResult, LeakCheck, PingResult, Profile,
-    RoutingMode, SpeedTest, SplitMode, State, StunCheck, TunStack, EVENT_ATTEMPTS, EVENT_LOG,
-    EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
+    AttemptsSnapshot, Backend, ConnectionMode, EventSink, ImportLinksResult, LeakCheck, PingResult,
+    Profile, RoutingMode, SpeedTest, SplitMode, State, StunCheck, TunStack, EVENT_ATTEMPTS,
+    EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
 /// How long a request waits for its correlated response before giving up. The
@@ -452,6 +452,15 @@ impl<T: WireSession> Backend for T {
             .request_into("set_tun", obj([("stack", json!(stack))]))
     }
 
+    fn set_proxy_mode(&self, mode: ConnectionMode) -> Result<State, String> {
+        let mode = match mode {
+            ConnectionMode::Tun => "tun",
+            ConnectionMode::SystemProxy => "system-proxy",
+        };
+        self.session()?
+            .request_into("set_proxy_mode", obj([("proxy_mode", json!(mode))]))
+    }
+
     fn set_autoconnect(&self, on: bool) -> Result<State, String> {
         self.session()?
             .request_into("set_autoconnect", obj([("on", json!(on))]))
@@ -553,7 +562,7 @@ mod tests {
     //! tests in `pipe.rs`.
 
     use super::super::testutil::{duplex, Rec};
-    use super::super::{ConnectionState, Multihop, NatType};
+    use super::super::{ConnectionMode, ConnectionState, Multihop, NatType};
     use super::*;
     use std::sync::atomic::AtomicBool;
     use std::thread;
@@ -1067,6 +1076,47 @@ mod tests {
                 exit_id: "exit-id".into(),
             })
         );
+
+        server.join().expect("server thread");
+        stop.store(true, Ordering::SeqCst); // unstick the reader
+        reader.join().expect("reader thread");
+    }
+
+    #[test]
+    fn set_proxy_mode_maps_to_the_protocol_command() {
+        // Drive Backend::set_proxy_mode through the blanket impl and assert the exact
+        // wire line (the kebab-case token, not the variant name), plus that the
+        // core's echoed proxy_mode/proxy_port round-trip into the typed State.
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ours, theirs) = duplex(&stop);
+
+        let client = WireClient::new(ours.writer);
+        let sink: Arc<dyn EventSink> = Arc::new(Rec::default());
+        let reader_client = Arc::clone(&client);
+        let reader = thread::spawn(move || read_loop(ours.reader, reader_client, sink));
+
+        let mut server_writer = theirs.writer;
+        let server = thread::spawn(move || {
+            let mut lines = BufReader::new(theirs.reader).lines();
+            let line = lines.next().expect("a request line").expect("readable");
+            let req: Value = serde_json::from_str(&line).expect("request is JSON");
+            assert_eq!(req["cmd"].as_str(), Some("set_proxy_mode"));
+            assert_eq!(req["proxy_mode"].as_str(), Some("system-proxy"));
+            let id = req["id"].as_u64().expect("request carries an id");
+            let response = json!({
+                "id": id, "ok": true,
+                "data": { "state": "connecting", "proxy_mode": "system-proxy", "proxy_port": 2080 },
+            });
+            writeln!(server_writer, "{response}").expect("write response");
+        });
+
+        let backend = FixedSession(Arc::clone(&client));
+        let state = backend
+            .set_proxy_mode(ConnectionMode::SystemProxy)
+            .expect("a response");
+        assert_eq!(state.state, ConnectionState::Connecting);
+        assert_eq!(state.proxy_mode, Some(ConnectionMode::SystemProxy));
+        assert_eq!(state.proxy_port, Some(2080));
 
         server.join().expect("server thread");
         stop.store(true, Ordering::SeqCst); // unstick the reader

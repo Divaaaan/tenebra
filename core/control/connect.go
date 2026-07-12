@@ -300,6 +300,15 @@ func (d *Daemon) teardown(newState ConnState, profileID, nodeID string) {
 	_ = d.runner.Stop()
 	d.wg.Wait()
 
+	// Clear the OS system proxy AFTER the goroutines have drained — this is the
+	// guard's single busiest chokepoint (every disconnect, hot-swap, connect
+	// supersession, and shutdown funnels through teardown). Doing it here, not
+	// before wg.Wait, closes a race: a superseded connect's recordSuccess can still
+	// be arming the proxy as it unwinds, and a disarm that ran earlier would leave
+	// that late arm standing. It is idempotent and a no-op unless we armed it, so
+	// tun-mode teardowns and the pre-start teardown of a fresh connect pay nothing.
+	d.disarmSystemProxy()
+
 	switch newState {
 	case StateIdle:
 		d.setState(State{State: StateIdle, Routing: d.snapshotState().Routing})
@@ -636,6 +645,17 @@ func (d *Daemon) recordSuccess(ctx context.Context, loop fallbackLoop, attempt f
 	// Capture the connected instant before publishing it, so the uptime the
 	// relaunch budget reads later is measured from a fixed point.
 	connectedAt := d.now()
+	// In system-proxy mode, point the OS at the loopback mixed inbound before we
+	// announce "connected", so the state never claims the tunnel is up while system
+	// traffic still egresses direct. The probe already confirmed the inbound carries
+	// traffic. The guard clears it again on any teardown (disconnect, hot-swap,
+	// shutdown) and on a tunnel-process death, so the OS is never left pointing at a
+	// proxy that is no longer listening. The address comes from loop.tun — the
+	// snapshot this connect built its config from — so a mid-connect mode change
+	// can't point the OS at the wrong port.
+	if loop.tun.IsSystemProxy() {
+		d.armSystemProxy(loop.tun.MixedHostPort())
+	}
 	d.setState(State{State: StateConnected, Profile: loop.profileID,
 		Node: attempt.NodeID, Routing: d.snapshotState().Routing})
 	// Hand the live connection off to the watcher/poller.
@@ -772,6 +792,12 @@ func (d *Daemon) watchProcess(ctx context.Context, gen uint64, profileID, nodeID
 				msg = err.Error()
 			}
 			d.emitLog(LogError, "tunnel process exited: "+msg)
+			// The mixed inbound died with the process, so an armed system proxy now
+			// points at nothing — clear it immediately to restore direct connectivity.
+			// A kill-switch relaunch below re-arms it once the tunnel is back
+			// (recordSuccess); the plain error path leaves it cleared, which is the
+			// honest outcome (proxy mode has no strict_route to fail closed on).
+			d.disarmSystemProxy()
 			if d.killSwitchRelaunch(gen, profileID, nodeID, d.now().Sub(connectedAt)) {
 				return // the relaunch owns the state from here
 			}
@@ -1151,6 +1177,10 @@ func (d *Daemon) Close() error {
 	d.connMu.Lock()
 	d.teardown(StateIdle, "", "")
 	d.connMu.Unlock()
+	// teardown already disarmed the system proxy; clear it once more defensively so
+	// process shutdown never leaves the OS pointing at a dead proxy even if some
+	// path armed it after the teardown. Idempotent — a no-op when already clear.
+	d.disarmSystemProxy()
 	// The teardown above bumped the generation, so any kill-switch relaunch or
 	// connecting-window reconcile still in flight will observe it and abort instead
 	// of starting a tunnel. Wait for those goroutines to unwind (after releasing

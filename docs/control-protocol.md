@@ -129,6 +129,7 @@ surface.
 | `set_tls_fragment`     | `on` (boolean)                     | `State`                     |
 | `set_multihop`         | `profile`, `enabled` (boolean), `entry_id`, `exit_id` | `State`  |
 | `set_tun`              | `stack` (`system`/`gvisor`/`mixed`) | `State`                    |
+| `set_proxy_mode`       | `proxy_mode` (`tun`/`system-proxy`), `proxy_port?` (int) | `State` |
 | `set_autoconnect`      | `on` (boolean)                     | `State`                     |
 | `set_auto_failover`    | `on` (boolean)                     | `State`                     |
 | `set_dns`              | `ad_block` (boolean), `dns_remote`, `dns_direct`, `ipv4_only` (boolean) | `State` |
@@ -200,9 +201,9 @@ response: {"id":7,"ok":true,"data":{"profile":{ /* …two servers… */ },"impor
 new split takes effect on the **next connect** (live retuning would require
 restarting sing-box). The returned `State` reflects the stored choice.
 
-`set_kill_switch`, `set_tls_fragment`, `set_multihop` and `set_tun` go further:
-all are recorded and persisted the same way, but when a tunnel is **live** the
-core also re-applies them in place — see below.
+`set_kill_switch`, `set_tls_fragment`, `set_multihop`, `set_tun` and
+`set_proxy_mode` go further: all are recorded and persisted the same way, but when
+a tunnel is **live** the core also re-applies them in place — see below.
 
 `set_autoconnect` is recorded and persisted the same way but changes nothing
 about a live tunnel; it takes effect when the daemon itself next starts (see
@@ -276,6 +277,34 @@ fastest, the default), `gvisor` (a userspace stack — slower, but immune to tun
 driver quirks), or `mixed` (TCP on system, UDP on gvisor). An unknown value is
 an error and nothing is recorded.
 
+### System-proxy mode (`set_proxy_mode`)
+
+`proxy_mode` selects how the tunnel captures traffic: `tun` (the default — a tun
+device with `auto_route`, which needs the tun driver) or `system-proxy`. In
+`system-proxy` mode the core builds **no** tun inbound at all; instead sing-box
+exposes a single loopback **mixed** inbound (HTTP + SOCKS on `127.0.0.1:<port>`)
+and the client points the OS at it as the system proxy. That path needs no tun
+driver, service, or elevation — the mode for locked-down/corporate machines where
+a tun is not permitted. `proxy_port` optionally overrides the loopback port
+(default `2080`); `0`/omitted keeps the current port. An unknown mode or an
+out-of-range port is an error and nothing is recorded.
+
+The OS proxy is set the moment the tunnel comes up (the state does not report
+`connected` until the proxy is armed) and is **cleared on every teardown** — an
+explicit disconnect, a switch back to `tun`, a tunnel-process death, and daemon
+shutdown — so the OS is never left pointing at a mixed inbound that is no longer
+listening. Because that pointer is written into the OS (not owned by sing-box, the
+way `strict_route` is), a hard kill of the core could still strand it; the core
+therefore also **reconciles at startup**, clearing a proxy a previous run left at
+exactly its own loopback address (never a remote/corporate proxy, and never one on
+a different port). The kill switch has no effect in this mode — there is no
+`strict_route` on a mixed inbound — so, like the process-down window above, traffic
+is not held closed if the tunnel drops; the guard's job is to restore direct
+connectivity, not to fail closed.
+
+The mode and port are **persisted** in `settings.json` and load back into the
+reported `State` (`proxy_mode`, `proxy_port`) on launch.
+
 ### Live re-apply
 
 Both options are startup parameters of the tun inbound — sing-box cannot change
@@ -301,6 +330,8 @@ request:  {"id":9,"cmd":"set_kill_switch","on":true}
 response: {"id":9,"ok":true,"data":{"state":"connecting","profile":"p1","kill_switch":true,"tun_stack":"system"}}
 request:  {"id":10,"cmd":"set_tun","stack":"gvisor"}
 response: {"id":10,"ok":true,"data":{"state":"idle","tun_stack":"gvisor"}}
+request:  {"id":11,"cmd":"set_proxy_mode","proxy_mode":"system-proxy"}
+response: {"id":11,"ok":true,"data":{"state":"idle","proxy_mode":"system-proxy","proxy_port":2080}}
 ```
 
 ### Autoconnect (`set_autoconnect`)
@@ -630,6 +661,8 @@ type State = {
     exit_id?: string;             // exit server id (last hop); omitted when unset
   };
   tun_stack?: "system" | "gvisor" | "mixed";
+  proxy_mode?: "tun" | "system-proxy";  // connection mode; tun by default
+  proxy_port?: number;            // loopback mixed-inbound port in system-proxy mode (default 2080)
   autoconnect?: boolean;          // reconnect at daemon start; omitted when off
   auto_failover?: boolean;        // health watchdog: reconnect to another node when the active one degrades; on by default, omitted when off
   ad_block?: boolean;             // DNS ad/tracker blocking; omitted when off

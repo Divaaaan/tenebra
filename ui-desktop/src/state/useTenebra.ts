@@ -11,6 +11,7 @@ import {
   type AttemptsEvent,
   type LogEvent,
   type LogLevel,
+  type ConnectionMode,
   type Profile,
   type RoutingMode,
   type SplitMode,
@@ -67,6 +68,7 @@ export interface Tenebra {
     exitId: string,
   ) => Promise<void>;
   setTun: (stack: TunStack) => Promise<void>;
+  setProxyMode: (mode: ConnectionMode) => Promise<void>;
   setAutoconnect: (on: boolean) => Promise<void>;
   setAutoFailover: (on: boolean) => Promise<void>;
   setCrashReports: (on: boolean) => Promise<void>;
@@ -237,6 +239,11 @@ export function useTenebra(): Tenebra {
     setState(next);
   }, []);
 
+  const setProxyMode = useCallback(async (mode: ConnectionMode) => {
+    const next = await api.setProxyMode(mode);
+    setState(next);
+  }, []);
+
   const setAutoconnect = useCallback(async (on: boolean) => {
     const next = await api.setAutoconnect(on);
     setState(next);
@@ -300,6 +307,7 @@ export function useTenebra(): Tenebra {
     setTlsFragment,
     setMultihop,
     setTun,
+    setProxyMode,
     setAutoconnect,
     setAutoFailover,
     setCrashReports,
