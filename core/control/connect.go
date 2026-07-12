@@ -290,14 +290,6 @@ func (d *Daemon) teardown(newState ConnState, profileID, nodeID string) {
 	d.attempts = nil
 	d.mu.Unlock()
 
-	// Clear the OS system proxy first so direct connectivity is restored the moment
-	// a system-proxy connection goes down — before the sing-box process is even
-	// stopped. It is idempotent and a no-op unless we armed it, so tun-mode
-	// teardowns and the pre-start teardown of a fresh connect pay nothing. This is
-	// the guard's single busiest chokepoint: every disconnect, hot-swap, connect
-	// supersession, and shutdown funnels through teardown.
-	d.disarmSystemProxy()
-
 	if cancel != nil {
 		cancel()
 	}
@@ -307,6 +299,15 @@ func (d *Daemon) teardown(newState ConnState, profileID, nodeID string) {
 	// itself on cancel; Stop is idempotent.
 	_ = d.runner.Stop()
 	d.wg.Wait()
+
+	// Clear the OS system proxy AFTER the goroutines have drained — this is the
+	// guard's single busiest chokepoint (every disconnect, hot-swap, connect
+	// supersession, and shutdown funnels through teardown). Doing it here, not
+	// before wg.Wait, closes a race: a superseded connect's recordSuccess can still
+	// be arming the proxy as it unwinds, and a disarm that ran earlier would leave
+	// that late arm standing. It is idempotent and a no-op unless we armed it, so
+	// tun-mode teardowns and the pre-start teardown of a fresh connect pay nothing.
+	d.disarmSystemProxy()
 
 	switch newState {
 	case StateIdle:
