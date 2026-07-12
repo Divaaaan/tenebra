@@ -9,9 +9,9 @@ use std::thread;
 use std::time::Duration;
 
 use super::{
-    Backend, ConnectionState, DnsResult, DnsStatus, EventSink, ExitMatch, ImportLinksResult,
-    LeakCheck, Multihop, NatType, Node, PingResult, Profile, Protocol, RoutingMode, Source,
-    SpeedTest, SplitMode, State, StunCheck, TunStack, Verdict,
+    Backend, ConnectionMode, ConnectionState, DnsResult, DnsStatus, EventSink, ExitMatch,
+    ImportLinksResult, LeakCheck, Multihop, NatType, Node, PingResult, Profile, Protocol,
+    RoutingMode, Source, SpeedTest, SplitMode, State, StunCheck, TunStack, Verdict,
 };
 
 /// How long the fake "dial" takes before flipping to connected.
@@ -68,6 +68,10 @@ impl MockBackend {
                 multihop: None,
                 // The core always names the stack once normalized; mirror that.
                 tun_stack: Some(TunStack::System),
+                // The core always names the connection mode and mixed port once
+                // normalized; mirror that with the tun default.
+                proxy_mode: Some(ConnectionMode::Tun),
+                proxy_port: Some(2080),
                 autoconnect: None,
                 // The health-failover watchdog is on by default in the core, so
                 // mirror that: a fresh state reports it armed.
@@ -524,6 +528,25 @@ impl Backend for MockBackend {
         let snapshot = inner.state.clone();
         drop(inner);
         self.shared.emit_state(&snapshot);
+        Ok(snapshot)
+    }
+
+    fn set_proxy_mode(&self, mode: ConnectionMode) -> Result<State, String> {
+        // Mirror the core: record and report the mode. A live "tunnel" would
+        // hot-swap sing-box (and arm/clear the OS proxy); the mock abbreviates that
+        // to the state change, keeping the mixed port at its default.
+        let mut inner = self.shared.inner.lock().unwrap();
+        inner.state.proxy_mode = Some(mode);
+        let snapshot = inner.state.clone();
+        drop(inner);
+        self.shared.emit_state(&snapshot);
+        self.shared.sink.log(
+            "info",
+            match mode {
+                ConnectionMode::Tun => "Connection mode: TUN",
+                ConnectionMode::SystemProxy => "Connection mode: system proxy",
+            },
+        );
         Ok(snapshot)
     }
 
@@ -1281,6 +1304,23 @@ mod tests {
         let s = b.set_tun(TunStack::Gvisor).unwrap();
         assert_eq!(s.tun_stack, Some(TunStack::Gvisor));
         assert_eq!(sink.last_state().unwrap().tun_stack, Some(TunStack::Gvisor));
+    }
+
+    #[test]
+    fn set_proxy_mode_updates_the_mode_and_emits() {
+        let (b, sink) = backend();
+        // The mock starts in tun mode, like the core reports it once normalized.
+        assert_eq!(b.status().unwrap().proxy_mode, Some(ConnectionMode::Tun));
+
+        let s = b.set_proxy_mode(ConnectionMode::SystemProxy).unwrap();
+        assert_eq!(s.proxy_mode, Some(ConnectionMode::SystemProxy));
+        assert_eq!(
+            sink.last_state().unwrap().proxy_mode,
+            Some(ConnectionMode::SystemProxy)
+        );
+        // Switching back to tun round-trips.
+        let s = b.set_proxy_mode(ConnectionMode::Tun).unwrap();
+        assert_eq!(s.proxy_mode, Some(ConnectionMode::Tun));
     }
 
     #[test]
