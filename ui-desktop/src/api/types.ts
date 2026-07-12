@@ -50,6 +50,12 @@ export interface State {
    * override); omitted (treated as off) when it isn't.
    */
   tls_fragment?: boolean;
+  /**
+   * The two-hop chain selection: whether it is enabled and which entry/exit
+   * servers (by stable id) it chains through. Omitted until the user has picked a
+   * pair; carried even when disabled so the UI can prefill its selectors.
+   */
+  multihop?: Multihop;
   /** The tun network stack the current or next tunnel uses. */
   tun_stack?: TunStack;
   /**
@@ -104,6 +110,17 @@ export interface State {
    */
   crash_reports_asked?: boolean;
   error?: string;
+}
+
+/**
+ * The two-hop chain selection mirrored from the core: whether it is enabled and
+ * the stable ids of the entry and exit servers it chains through (entry first).
+ * `entry_id`/`exit_id` are omitted until the user picks them.
+ */
+export interface Multihop {
+  enabled: boolean;
+  entry_id?: string;
+  exit_id?: string;
 }
 
 /**

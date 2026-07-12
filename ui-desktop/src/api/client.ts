@@ -112,6 +112,27 @@ export const api = {
     return invoke<State>("set_tls_fragment", { on });
   },
 
+  // Set the multihop chain: enable/disable the two-hop route and name the entry
+  // and exit servers (by stable id, within `profile`) it runs through — entry
+  // first. The core validates the pair when enabling and, when a tunnel is live,
+  // re-applies it in place (a brief connecting→connected dip on the same node).
+  // Disabling ignores the ids but keeps them recorded so the pick can be
+  // re-enabled. The snake_case keys match the command's rename_all="snake_case"
+  // on the Rust side (see the header note).
+  setMultihop(
+    profile: string,
+    enabled: boolean,
+    entryId: string,
+    exitId: string,
+  ): Promise<State> {
+    return invoke<State>("set_multihop", {
+      profile,
+      enabled,
+      entry_id: entryId,
+      exit_id: exitId,
+    });
+  },
+
   // Switch the tun network stack. Same live re-apply semantics as the kill
   // switch; when idle the choice applies on the next connect.
   setTun(stack: TunStack): Promise<State> {

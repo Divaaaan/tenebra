@@ -60,6 +60,12 @@ export interface Tenebra {
   setSplit: (mode: SplitMode, apps: string[]) => Promise<void>;
   setKillSwitch: (on: boolean) => Promise<void>;
   setTlsFragment: (on: boolean) => Promise<void>;
+  setMultihop: (
+    profile: string,
+    enabled: boolean,
+    entryId: string,
+    exitId: string,
+  ) => Promise<void>;
   setTun: (stack: TunStack) => Promise<void>;
   setAutoconnect: (on: boolean) => Promise<void>;
   setAutoFailover: (on: boolean) => Promise<void>;
@@ -218,6 +224,14 @@ export function useTenebra(): Tenebra {
     setState(next);
   }, []);
 
+  const setMultihop = useCallback(
+    async (profile: string, enabled: boolean, entryId: string, exitId: string) => {
+      const next = await api.setMultihop(profile, enabled, entryId, exitId);
+      setState(next);
+    },
+    [],
+  );
+
   const setTun = useCallback(async (stack: TunStack) => {
     const next = await api.setTun(stack);
     setState(next);
@@ -284,6 +298,7 @@ export function useTenebra(): Tenebra {
     setSplit,
     setKillSwitch,
     setTlsFragment,
+    setMultihop,
     setTun,
     setAutoconnect,
     setAutoFailover,
