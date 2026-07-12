@@ -374,11 +374,26 @@ type SpeedTest struct {
 // enough for a stable rate on a fast link yet quick on a slow one.
 const defaultSpeedSampleBytes int64 = 10 << 20
 
-// speedDownloadURLFmt is a neutral third-party endpoint that streams exactly the
-// requested number of bytes, so the sample size is controlled by the URL. It is
-// a public CDN speed endpoint (no project infrastructure), consistent with the
-// leak check's use of neutral echo services.
+// speedDownloadURLFmt streams exactly the requested number of bytes, so the
+// sample size is controlled by the URL. Kept as the last-resort endpoint below.
 const speedDownloadURLFmt = "https://speed.cloudflare.com/__down?bytes=%d"
+
+// defaultSpeedURLs are neutral third-party download endpoints, tried in order —
+// the first that streams any data wins. Several providers are needed because a
+// single CDN can challenge or refuse a datacenter IP (a VPN exit is one), which
+// fails the sample even though the tunnel itself is healthy — the exact failure
+// a user sees as "speed test errors" while everything else works. The speedtest
+// mirrors (Hetzner, OVH) serve datacenter clients without a challenge and lead;
+// the Cloudflare byte-stream (which does challenge some exits) is the fallback.
+// io.LimitReader caps every read at speedSampleBytes regardless of the file's own
+// size, so a fixed-size mirror and the sized Cloudflare stream are interchangeable.
+// All are public infrastructure (no project endpoints), like the leak check's
+// neutral echo services.
+var defaultSpeedURLs = []string{
+	"https://ash-speed.hetzner.com/100MB.bin",
+	"https://proof.ovh.net/files/100Mb.dat",
+	fmt.Sprintf(speedDownloadURLFmt, defaultSpeedSampleBytes),
+}
 
 // speedTimeout bounds the whole download, so a slow or stalled link fails the
 // sample instead of hanging the command.
@@ -428,14 +443,35 @@ func (d *Daemon) handleRunSpeedTest(ctx context.Context, req Request) Response {
 	return resp
 }
 
-// runSpeedTest downloads up to speedSampleBytes from the speed endpoint, timing
-// the read, and computes the throughput in megabits per second. It reports the
-// bytes actually read, so a body shorter than the target still yields a rate
-// from what arrived.
+// runSpeedTest samples download throughput, trying each endpoint in turn until
+// one streams data. The first success wins; if every endpoint fails it returns
+// the last error, so a blocked-CDN failure surfaces its cause rather than a bare
+// "no data". A single endpoint that challenges the exit no longer sinks the whole
+// test — the reason a working tunnel could still show a speed-test error.
 func (d *Daemon) runSpeedTest(ctx context.Context) (SpeedTest, error) {
-	rc, err := d.speedStream(ctx, d.speedURL)
+	var lastErr error
+	for _, url := range d.speedURLs {
+		st, err := d.speedSample(ctx, url)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return st, nil
+	}
+	if lastErr != nil {
+		return SpeedTest{}, fmt.Errorf("speed test: %w", lastErr)
+	}
+	return SpeedTest{}, errors.New("speed test: no endpoints configured")
+}
+
+// speedSample downloads up to speedSampleBytes from one endpoint, timing the
+// read, and computes the throughput in megabits per second. It reports the bytes
+// actually read, so a body shorter than the target still yields a rate from what
+// arrived.
+func (d *Daemon) speedSample(ctx context.Context, url string) (SpeedTest, error) {
+	rc, err := d.speedStream(ctx, url)
 	if err != nil {
-		return SpeedTest{}, fmt.Errorf("speed test: %w", err)
+		return SpeedTest{}, err
 	}
 	defer rc.Close()
 
@@ -444,14 +480,14 @@ func (d *Daemon) runSpeedTest(ctx context.Context) (SpeedTest, error) {
 	elapsed := d.now().Sub(start)
 	if n == 0 {
 		if err != nil {
-			return SpeedTest{}, fmt.Errorf("speed test: read: %w", err)
+			return SpeedTest{}, fmt.Errorf("read: %w", err)
 		}
-		return SpeedTest{}, errors.New("speed test: downloaded no data")
+		return SpeedTest{}, errors.New("downloaded no data")
 	}
 
 	secs := elapsed.Seconds()
 	if secs <= 0 {
-		return SpeedTest{}, errors.New("speed test: non-positive sample duration")
+		return SpeedTest{}, errors.New("non-positive sample duration")
 	}
 	return SpeedTest{
 		Mbps:        float64(n*8) / secs / 1e6,

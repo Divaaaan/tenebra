@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"testing"
@@ -385,6 +386,49 @@ func TestRunSpeedTestShortBody(t *testing.T) {
 	}
 	if res.Mbps != 4.0 {
 		t.Errorf("Mbps = %v, want 4", res.Mbps)
+	}
+}
+
+// TestRunSpeedTestFallsBackPastBlockedEndpoint verifies the multi-endpoint retry:
+// the first endpoint errors (the shape of a CDN challenging a datacenter exit),
+// so the sample falls through to the next and succeeds — the fix for a healthy
+// tunnel showing a speed-test error because one endpoint refused it.
+func TestRunSpeedTestFallsBackPastBlockedEndpoint(t *testing.T) {
+	d := newBareDaemon(t)
+	d.speedSampleBytes = 1_000_000
+	d.speedURLs = []string{"https://blocked.example/f", "https://ok.example/f"}
+	var tried []string
+	d.speedStream = func(_ context.Context, url string) (io.ReadCloser, error) {
+		tried = append(tried, url)
+		if url == "https://blocked.example/f" {
+			return nil, errors.New("403 challenge")
+		}
+		return io.NopCloser(infiniteReader{}), nil
+	}
+	d.now = stepClock(time.Unix(0, 0), time.Second)
+
+	res, err := d.runSpeedTest(context.Background())
+	if err != nil {
+		t.Fatalf("runSpeedTest: %v", err)
+	}
+	if res.SampleBytes != 1_000_000 {
+		t.Errorf("SampleBytes = %d, want 1000000", res.SampleBytes)
+	}
+	if len(tried) != 2 || tried[0] != "https://blocked.example/f" || tried[1] != "https://ok.example/f" {
+		t.Errorf("tried = %v, want [blocked, ok] in order", tried)
+	}
+}
+
+// TestRunSpeedTestAllEndpointsFail surfaces the last endpoint's error when every
+// one refuses, rather than a bare "no data".
+func TestRunSpeedTestAllEndpointsFail(t *testing.T) {
+	d := newBareDaemon(t)
+	d.speedURLs = []string{"a", "b"}
+	d.speedStream = func(context.Context, string) (io.ReadCloser, error) {
+		return nil, errors.New("challenged")
+	}
+	if _, err := d.runSpeedTest(context.Background()); err == nil {
+		t.Fatal("want an error when all endpoints fail")
 	}
 }
 
