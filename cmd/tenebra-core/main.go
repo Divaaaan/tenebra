@@ -79,6 +79,11 @@ func run(usePipe, useSocket bool) error {
 	if err != nil {
 		return err
 	}
+	// Belt-and-suspenders for the system-proxy guard: Serve already calls
+	// daemon.Close() (which clears any armed OS proxy) on a clean or signalled exit,
+	// but a defer here also covers the --pipe/--socket paths and any early return,
+	// so no exit path leaves the OS pointed at a dead proxy. Close is idempotent.
+	defer func() { _ = daemon.Close() }()
 
 	// Cancel on Ctrl-C / SIGTERM so the tunnel is torn down cleanly; serving
 	// also ends on a clean stdin EOF (the UI closing the pipe).
@@ -142,6 +147,16 @@ func buildDaemon() (*control.Daemon, error) {
 		daemon.SetRuleSetDir(rsDir)
 	} else {
 		log.Printf("tenebra-core: bundled RU rule-sets not found; falling back to remote download")
+	}
+	// System-proxy backstop: clear any OS proxy a previous run left pointing at our
+	// loopback mixed inbound (a hard kill can't run the in-process cleanup). It only
+	// clears a proxy matching our exact loopback address, never a corporate one, and
+	// runs before autoconnect so a stale pointer is gone before a fresh tunnel may
+	// re-arm it.
+	if cleared, err := daemon.ReconcileSystemProxyAtStartup(); err != nil {
+		log.Printf("tenebra-core: system-proxy startup check: %v", err)
+	} else if cleared {
+		log.Printf("tenebra-core: cleared a stale system proxy left by a previous run")
 	}
 	// Autoconnect: if the preference is armed and a last connect is recorded,
 	// re-issue it now. This is the daemon's own start — shared by the sidecar,

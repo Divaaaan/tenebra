@@ -29,8 +29,8 @@ func TestSystemProxyInboundReplacesTun(t *testing.T) {
 	if in["listen"] != mixedListen {
 		t.Errorf("mixed must bind loopback, listen = %v, want %v", in["listen"], mixedListen)
 	}
-	if in["listen_port"] != defaultMixedPort {
-		t.Errorf("mixed listen_port = %v, want default %d", in["listen_port"], defaultMixedPort)
+	if in["listen_port"] != DefaultMixedPort {
+		t.Errorf("mixed listen_port = %v, want default %d", in["listen_port"], DefaultMixedPort)
 	}
 	// None of the tun/auto_route knobs may leak into a mixed inbound.
 	for _, k := range []string{"auto_route", "strict_route", "address", "interface_name", "mtu", "stack"} {

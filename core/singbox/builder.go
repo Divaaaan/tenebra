@@ -8,7 +8,9 @@ package singbox
 import (
 	"crypto/rand"
 	"fmt"
+	"net"
 	"path/filepath"
+	"strconv"
 
 	"github.com/Divaaaan/tenebra/core/model"
 	"github.com/Divaaaan/tenebra/core/routing"
@@ -39,11 +41,16 @@ const (
 	// at that address. mixedListen is loopback-only on purpose — the inbound must
 	// never be reachable off the machine, or any host on the LAN could relay
 	// through the user's tunnel. The port is configurable (TunOptions.MixedPort)
-	// and defaults to defaultMixedPort, chosen away from the clash API's 9090.
-	mixedTag         = "mixed-in"
-	mixedListen      = "127.0.0.1"
-	defaultMixedPort = 2080
+	// and defaults to DefaultMixedPort, chosen away from the clash API's 9090.
+	mixedTag    = "mixed-in"
+	mixedListen = "127.0.0.1"
 )
+
+// DefaultMixedPort is the loopback port the mixed inbound listens on in
+// ModeSystemProxy when none is configured. It is exported so the control layer
+// can report and point the OS proxy at the same effective address the builder
+// emits. Chosen away from the clash API's 9090.
+const DefaultMixedPort = 2080
 
 // Connection modes. ModeTun carries all traffic through a tun device with
 // auto_route (the default, needs the tun driver). ModeSystemProxy skips the tun
@@ -65,6 +72,24 @@ func ValidMode(s string) bool {
 		return true
 	}
 	return false
+}
+
+// IsSystemProxy reports whether these options select the system-proxy inbound
+// (a loopback mixed listener) rather than the tun. It reads the raw Mode, so an
+// unset Mode is tun — the same default normalize applies — letting the control
+// layer decide whether to arm the OS proxy from an un-normalized snapshot.
+func (t TunOptions) IsSystemProxy() bool { return t.Mode == ModeSystemProxy }
+
+// MixedHostPort returns the loopback host:port the mixed inbound listens on,
+// applying DefaultMixedPort when none is set. It is the exact address the client
+// points the OS proxy at, kept here so the port default lives next to the
+// inbound that binds it and the two can never drift.
+func (t TunOptions) MixedHostPort() string {
+	port := t.MixedPort
+	if port == 0 {
+		port = DefaultMixedPort
+	}
+	return net.JoinHostPort(mixedListen, strconv.Itoa(port))
 }
 
 // The tun stacks sing-box implements. system uses the kernel's own TCP/IP
@@ -98,7 +123,7 @@ type TunOptions struct {
 	// is read only in tun mode.
 	Mode string
 	// MixedPort is the loopback port the mixed inbound listens on in
-	// ModeSystemProxy. Zero is filled with defaultMixedPort by normalize; it is
+	// ModeSystemProxy. Zero is filled with DefaultMixedPort by normalize; it is
 	// inert in tun mode.
 	MixedPort     int
 	InterfaceName string
@@ -119,7 +144,7 @@ func (t TunOptions) normalize() TunOptions {
 		t.Mode = defaultConnMode
 	}
 	if t.MixedPort == 0 {
-		t.MixedPort = defaultMixedPort
+		t.MixedPort = DefaultMixedPort
 	}
 	if t.InterfaceName == "" {
 		// Empty stays empty on macOS (platformTUNName == ""), which tells sing-box

@@ -42,6 +42,14 @@ type persistedSettings struct {
 	// Absent or unrecognized keeps the default; SetSettings validates it.
 	TunStack string `json:"tun_stack,omitempty"`
 
+	// ProxyMode remembers the connection mode ("tun"/"system-proxy"), and ProxyPort
+	// the mixed inbound's loopback port. Absent in files written before the fields
+	// existed reads back as "" / 0, which SetSettings turns into the tun default and
+	// the default port — matching the pre-system-proxy behaviour. An unrecognized
+	// mode keeps the default, like TunStack.
+	ProxyMode string `json:"proxy_mode,omitempty"`
+	ProxyPort int    `json:"proxy_port,omitempty"`
+
 	// Autoconnect remembers whether the daemon reconnects the last profile when
 	// it starts (see AutoconnectOnStart). Absent reads back as false — off,
 	// matching the pre-autoconnect behaviour.

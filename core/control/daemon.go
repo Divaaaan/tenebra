@@ -65,10 +65,20 @@ type Daemon struct {
 	store  *profile.Store
 	runner Runner
 
+	// proxy applies and clears the OS-wide system proxy for ModeSystemProxy. It is
+	// set once at construction (realSystemProxy in production, a fake in tests) and
+	// then only read, so it needs no lock; the armed bit it toggles (proxyArmed) is
+	// guarded by mu.
+	proxy systemProxyController
+
 	mu      sync.Mutex
 	routing routing.Options
 	state   State
 	tun     singbox.TunOptions
+	// proxyArmed records whether the daemon currently has the OS system proxy
+	// pointed at our mixed inbound, so disarmSystemProxy clears it exactly once and
+	// never touches a proxy we didn't set. Guarded by mu.
+	proxyArmed bool
 
 	// emit is set by the server via SetEmitter before serving; the daemon calls
 	// it to publish state/traffic/log events. Guarded by mu.
@@ -239,15 +249,24 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 	d := &Daemon{
 		store:   store,
 		runner:  runner,
+		proxy:   realSystemProxy{},
 		routing: routing.Options{Mode: routing.ModeSmart}.Normalize(),
 		// CacheDir pins sing-box's cache file to the writable store directory so
 		// the root launchd daemon (cwd "/", read-only) doesn't abort at startup;
-		// see singbox.TunOptions.CacheDir.
-		tun: singbox.TunOptions{Stack: singbox.StackSystem, CacheDir: store.Dir()},
+		// see singbox.TunOptions.CacheDir. Mode/MixedPort are seeded concrete (tun,
+		// default port) so every snapshot reports a definite connection mode.
+		tun: singbox.TunOptions{
+			Mode:      singbox.ModeTun,
+			MixedPort: singbox.DefaultMixedPort,
+			Stack:     singbox.StackSystem,
+			CacheDir:  store.Dir(),
+		},
 		state: State{
-			State:    StateIdle,
-			Routing:  string(routing.ModeSmart),
-			TunStack: singbox.StackSystem,
+			State:     StateIdle,
+			Routing:   string(routing.ModeSmart),
+			TunStack:  singbox.StackSystem,
+			ProxyMode: singbox.ModeTun,
+			ProxyPort: singbox.DefaultMixedPort,
 			// Report the effective resolvers from the moment the daemon exists, so a
 			// status before SetSettings still lets the UI prefill the custom-DNS
 			// inputs. These match the normalized routing defaults above.
@@ -352,6 +371,15 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	if singbox.ValidStack(ps.TunStack) {
 		d.tun.Stack = ps.TunStack
 	}
+	// The connection mode is likewise validated: an unknown value keeps the tun
+	// default seeded in NewDaemon. A stored port replaces the default only when it
+	// is a valid port; anything else keeps the default.
+	if singbox.ValidMode(ps.ProxyMode) {
+		d.tun.Mode = ps.ProxyMode
+	}
+	if ps.ProxyPort >= 1 && ps.ProxyPort <= 65535 {
+		d.tun.MixedPort = ps.ProxyPort
+	}
 	d.autoconnect = ps.Autoconnect
 	// AutoFailover defaults on: an absent field (an old file, or one written before
 	// the toggle existed) keeps the watchdog armed; only an explicit stored false
@@ -418,6 +446,8 @@ func (d *Daemon) settingsLocked() persistedSettings {
 		KillSwitch:      d.routing.KillSwitch,
 		TLSFragment:     d.routing.TLSFragment,
 		TunStack:        d.tun.Stack,
+		ProxyMode:       d.tun.Mode,
+		ProxyPort:       d.tun.MixedPort,
 		Autoconnect:     d.autoconnect,
 		AutoFailover:    &autoFailover,
 		CrashReports:    d.crashReports,
@@ -473,6 +503,8 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleSetTLSFragment(req)
 	case CmdSetMultihop:
 		return d.handleSetMultihop(req)
+	case CmdSetProxyMode:
+		return d.handleSetProxyMode(req)
 	case CmdSetTun:
 		return d.handleSetTun(req)
 	case CmdSetAutoconnect:
@@ -510,6 +542,15 @@ func (d *Daemon) snapshotRouting() routing.Options {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.routing
+}
+
+// snapshotTun returns a copy of the live tun/inbound options under lock. The
+// system-proxy guard reads it to learn the effective mixed address; it is a value
+// type with no shared slices, so the copy is safe to use after the lock drops.
+func (d *Daemon) snapshotTun() singbox.TunOptions {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.tun
 }
 
 // handleStatus answers a status command with the current connection snapshot.
@@ -1175,6 +1216,45 @@ func multihopResolved(a, b routing.Options) bool {
 		a.MultihopExit == b.MultihopExit
 }
 
+// handleSetProxyMode switches the connection mode between "tun" and
+// "system-proxy". Like the kill switch it is recorded, persisted, and applied to
+// a live tunnel in place via reapplyLive — the inbound family is a startup option
+// of sing-box, so the swap restarts the process on the same node rather than
+// walking the fallback order again. Switching a live tunnel to tun clears the OS
+// proxy (teardown disarms it); switching to system-proxy re-arms it once the
+// swapped tunnel comes up (recordSuccess). An unknown mode is rejected whole. An
+// explicit ProxyPort overrides the mixed inbound's loopback port; 0 leaves it.
+func (d *Daemon) handleSetProxyMode(req Request) Response {
+	if !singbox.ValidMode(req.ProxyMode) {
+		return newError(req.ID, fmt.Sprintf("set_proxy_mode: unknown mode %q (want %q or %q)",
+			req.ProxyMode, singbox.ModeTun, singbox.ModeSystemProxy))
+	}
+	if req.ProxyPort != 0 && (req.ProxyPort < 1 || req.ProxyPort > 65535) {
+		return newError(req.ID, fmt.Sprintf("set_proxy_mode: port %d out of range 1..65535", req.ProxyPort))
+	}
+
+	d.mu.Lock()
+	changed := d.tun.Mode != req.ProxyMode
+	d.tun.Mode = req.ProxyMode
+	if req.ProxyPort != 0 && d.tun.MixedPort != req.ProxyPort {
+		d.tun.MixedPort = req.ProxyPort
+		changed = true
+	}
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
+	d.mu.Unlock()
+
+	d.persistSettings()
+	if changed {
+		d.reapplyLive()
+	}
+
+	resp, err := newResult(req.ID, d.snapshotState())
+	if err != nil {
+		return newError(req.ID, err.Error())
+	}
+	return resp
+}
+
 // handleSetTun switches the tun network stack (system/gvisor/mixed). Recorded,
 // persisted, and applied to a live tunnel in place via reapplyLive — the stack
 // is a startup option of the tun inbound, so the swap restarts sing-box on the
@@ -1392,6 +1472,19 @@ func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, 
 	s.KillSwitch = ro.KillSwitch
 	s.TLSFragment = ro.TLSFragment
 	s.TunStack = tun.Stack
+	// Report the effective connection mode and mixed port. The daemon seeds both
+	// concrete at construction and SetSettings/handleSetProxyMode keep them so, but
+	// fall back to the builder defaults here to stay robust against a zero value.
+	if tun.Mode != "" {
+		s.ProxyMode = tun.Mode
+	} else {
+		s.ProxyMode = singbox.ModeTun
+	}
+	if tun.MixedPort != 0 {
+		s.ProxyPort = tun.MixedPort
+	} else {
+		s.ProxyPort = singbox.DefaultMixedPort
+	}
 	s.Autoconnect = autoconnect
 	s.AutoFailover = autoFailover
 	// Copy the crash-report consent by value so the State never aliases the
