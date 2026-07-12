@@ -13,6 +13,13 @@ All notable changes to Tenebra are documented here. The format follows
 
 ### Added
 
+- **System-proxy mode.** A connection mode that needs no tun driver, service, or
+  elevation — for locked-down or corporate machines. Instead of a tun device,
+  sing-box exposes a loopback mixed inbound (HTTP + SOCKS) and the client points
+  the OS system proxy at it. Switch it in Settings → Connection mode. The OS proxy
+  is cleared on every disconnect, on a tunnel-process death, and on shutdown, and a
+  proxy left behind by a hard kill is reconciled at the next launch, so the machine
+  is never stranded pointing at a dead local proxy.
 - **Multihop (two-hop chains).** Route traffic through two of your own nodes in
   sequence (entry → exit) using sing-box's native outbound `detour`, so the exit
   never sees your entry address. Pick an entry and exit node in
