@@ -1469,13 +1469,16 @@ func rulesPrefsDiffer(a, b routing.Options) bool {
 // daemon's live routing options. The resolvers are always the normalized
 // (effective) values, so the UI can prefill its custom-DNS inputs.
 func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, autoconnect, autoFailover bool, crashReports *bool, multihop model.Multihop) {
-	if ro.SplitMode == routing.SplitOff || len(ro.SplitApps) == 0 {
+	// Report the mode exactly as chosen (an empty app list no longer collapses
+	// it to off — the UI needs the mode active to show the app editor at all),
+	// and always carry the app list so toggling the mode off and back on does
+	// not lose the user's set.
+	if ro.SplitMode == routing.SplitOff {
 		s.Split = ""
-		s.SplitApps = nil
 	} else {
 		s.Split = string(ro.SplitMode)
-		s.SplitApps = append([]string(nil), ro.SplitApps...)
 	}
+	s.SplitApps = append([]string(nil), ro.SplitApps...)
 	s.KillSwitch = ro.KillSwitch
 	s.TLSFragment = ro.TLSFragment
 	s.TunStack = tun.Stack

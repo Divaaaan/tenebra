@@ -183,11 +183,11 @@ func (o Options) Normalize() Options {
 		n.SplitMode = SplitOff
 	}
 	n.SplitApps = normalizeApps(n.SplitApps)
-	// An empty app list makes split tunnelling a no-op; collapse it to off so
-	// the rest of the pipeline (and the reported state) stays unambiguous.
-	if len(n.SplitApps) == 0 {
-		n.SplitMode = SplitOff
-	}
+	// An empty app list is kept as the user's mode choice rather than collapsed
+	// to off: the config emitters (route/dns) already no-op on an empty list, and
+	// collapsing here made the Settings UI dead — the mode snapped back to off
+	// before the user could add the first app (the app editor only shows for an
+	// active mode).
 	// Normalize the custom rule suffixes the same way, so the reported state and
 	// the emitted config stay stable regardless of input order or casing.
 	n.RulesDirect = normalizeSuffixes(n.RulesDirect)
