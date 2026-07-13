@@ -11,6 +11,20 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Split tunnelling can actually be enabled now.** Picking "exclude" or
+  "include" used to snap straight back to "off" whenever the app list was still
+  empty — and the app editor only appears for an active mode, so the feature was
+  a dead end. The chosen mode now sticks (an empty list is simply a no-op until
+  the first app is added), and the app list survives toggling the mode off and
+  back on.
+- **The last Settings rail item highlights on the first click.** Clicking
+  "Updates" (or any final short section) scrolled the pane to its bottom but the
+  highlight snapped back to the previous section, so the click looked ignored
+  until a second press. The rail now locks onto the last section when the pane
+  is scrolled to its bottom.
+
 ## [0.4.2] - 2026-07-13
 
 ### Added

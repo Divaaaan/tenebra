@@ -75,15 +75,42 @@ func TestSetSplitOffClearsState(t *testing.T) {
 	}
 }
 
-// TestSetSplitEmptyListCollapsesToOff: an exclude with no usable apps is a no-op
-// and reports as off, matching routing.Normalize.
-func TestSetSplitEmptyListCollapsesToOff(t *testing.T) {
+// TestSetSplitEmptyListKeepsMode: choosing a mode before adding the first app
+// must stick — the UI's app editor only shows for an active mode, so a
+// collapse-to-off here made split tunnelling impossible to enable at all.
+func TestSetSplitEmptyListKeepsMode(t *testing.T) {
 	h := newHarness(t)
 	h.send(Request{ID: 1, Cmd: CmdSetSplit, Mode: "include", Apps: []string{"   ", ""}})
 	var st State
 	h.dataInto(h.await(), &st)
-	if st.Split != "" || st.SplitApps != nil {
-		t.Errorf("empty include list split = %q %v, want empty (off)", st.Split, st.SplitApps)
+	if st.Split != "include" {
+		t.Errorf("empty include list split = %q, want %q (mode choice kept)", st.Split, "include")
+	}
+	if len(st.SplitApps) != 0 {
+		t.Errorf("empty include list apps = %v, want empty", st.SplitApps)
+	}
+}
+
+// TestSetSplitToggleOffKeepsApps: switching the mode off and back on must not
+// lose the app set — the state carries the list through the off phase so the
+// UI round-trips it.
+func TestSetSplitToggleOffKeepsApps(t *testing.T) {
+	h := newHarness(t)
+	h.send(Request{ID: 1, Cmd: CmdSetSplit, Mode: "exclude", Apps: []string{"chrome.exe"}})
+	h.await()
+	h.send(Request{ID: 2, Cmd: CmdSetSplit, Mode: "off", Apps: []string{"chrome.exe"}})
+	var st State
+	h.dataInto(h.await(), &st)
+	if st.Split != "" {
+		t.Errorf("off split reports %q, want empty", st.Split)
+	}
+	if len(st.SplitApps) != 1 || st.SplitApps[0] != "chrome.exe" {
+		t.Errorf("apps after toggle off = %v, want [chrome.exe]", st.SplitApps)
+	}
+	h.send(Request{ID: 3, Cmd: CmdSetSplit, Mode: "exclude", Apps: st.SplitApps})
+	h.dataInto(h.await(), &st)
+	if st.Split != "exclude" || len(st.SplitApps) != 1 {
+		t.Errorf("re-enable = %q %v, want exclude [chrome.exe]", st.Split, st.SplitApps)
 	}
 }
 

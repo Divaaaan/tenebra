@@ -1324,6 +1324,20 @@ describe("SettingsScreen", () => {
       expect(pickActiveSection(1_000_000, tops)).toBe(7); // past the end → last
     });
 
+    it("locks onto the last section when the container is scrolled to its bottom", () => {
+      // A short final section cannot reach the container top: with the scroll
+      // pinned at the bottom (scrollTop 2300 + viewport 700 = scrollHeight 3000)
+      // the raw threshold pick would stay on the previous section and a click on
+      // the last rail item would visibly snap back. The viewport-aware pick must
+      // return the last section instead.
+      const tops = [0, 300, 620, 900, 1250, 1600, 1850, 2680];
+      const viewport = { clientHeight: 700, scrollHeight: 3000 };
+      expect(pickActiveSection(2300, tops, undefined, viewport)).toBe(7);
+      // Away from the bottom the threshold logic is untouched.
+      expect(pickActiveSection(2300, tops)).toBe(6);
+      expect(pickActiveSection(560, tops, undefined, viewport)).toBe(2);
+    });
+
     it("lists one rail link per section in order", () => {
       const tenebra = makeTenebra({ state: { state: "idle" } as State });
       renderWithProviders(<SettingsScreen tenebra={tenebra} />);

@@ -52,13 +52,28 @@ func TestSplitNormalizeLowercasesDedupesSorts(t *testing.T) {
 	}
 }
 
-func TestSplitEmptyListCollapsesToOff(t *testing.T) {
+func TestSplitEmptyListKeepsChosenMode(t *testing.T) {
+	// The user's mode choice survives an empty app list: collapsing it to off
+	// made the Settings UI a dead end (the app editor only shows for an active
+	// mode, so the mode could never be turned on to add the first app). The
+	// config emitters no-op on an empty list, so keeping the mode is safe.
 	got := Options{SplitMode: SplitInclude, SplitApps: []string{"   ", ""}}.Normalize()
-	if got.SplitMode != SplitOff {
-		t.Errorf("empty include list split mode = %q, want %q", got.SplitMode, SplitOff)
+	if got.SplitMode != SplitInclude {
+		t.Errorf("empty include list split mode = %q, want %q", got.SplitMode, SplitInclude)
 	}
 	if got.SplitApps != nil {
 		t.Errorf("empty include list apps = %v, want nil", got.SplitApps)
+	}
+}
+
+func TestSplitEmptyListEmitsNoRules(t *testing.T) {
+	// The kept-but-empty mode must stay a config no-op: no process_name rule in
+	// either the route or dns layers.
+	o := Options{SplitMode: SplitInclude}.Normalize()
+	for _, rule := range o.RouteRules() {
+		if _, has := rule["process_name"]; has {
+			t.Fatalf("empty split emitted a route process_name rule: %v", rule)
+		}
 	}
 }
 

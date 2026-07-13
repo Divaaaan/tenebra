@@ -58,7 +58,19 @@ export function pickActiveSection(
   scrollTop: number,
   sectionTops: number[],
   threshold = 60,
+  viewport?: { clientHeight: number; scrollHeight: number },
 ): number {
+  // A short final section can never reach the top of the scroll container, so
+  // scrollTop alone would keep the previous rail item active and a click on the
+  // last item would visibly "not take" (it snapped back once the smooth scroll
+  // settled). When the container is scrolled to its bottom, the last section is
+  // what the user is looking at — lock onto it.
+  if (
+    viewport &&
+    scrollTop + viewport.clientHeight >= viewport.scrollHeight - 2
+  ) {
+    return sectionTops.length - 1;
+  }
   let active = 0;
   for (let i = 0; i < sectionTops.length; i += 1) {
     if (scrollTop >= sectionTops[i] - threshold) {
@@ -211,7 +223,14 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
       const tops = NAV_SECTIONS.map(
         (key) => sectionRefs.current.get(key)?.offsetTop ?? Number.POSITIVE_INFINITY,
       );
-      setActiveSection(NAV_SECTIONS[pickActiveSection(main.scrollTop, tops)]);
+      setActiveSection(
+        NAV_SECTIONS[
+          pickActiveSection(main.scrollTop, tops, undefined, {
+            clientHeight: main.clientHeight,
+            scrollHeight: main.scrollHeight,
+          })
+        ],
+      );
     };
     let frame = 0;
     const onScroll = () => {
