@@ -11,6 +11,13 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Failed connections explain themselves.** When every protocol has been tried
+  and blocked, the log now includes the tail of sing-box's own output, so a
+  config sing-box rejected or a binary that would not start is diagnosable from
+  the UI instead of showing only "all protocols failed".
+
 ### Changed
 
 - **AmneziaWG's obfuscation limit is now documented.** An AmneziaWG node imports
