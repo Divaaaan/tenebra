@@ -116,32 +116,6 @@
   /* Grain over the canvas — a touch of texture so flat panels don't read as
      dead space. Off on light. */
   --grain-opacity: 0.04;
-
-  /* Legacy colour aliases. */
-  --bg-elevated: var(--surface);
-  --bg-inset: var(--surface);
-  --surface-hover: var(--surface);
-  --border: var(--line);
-  --border-strong: var(--line-2);
-  --text-muted: var(--text-dim);
-  --text-faint: var(--text-dim-2);
-  --accent: var(--signal);
-  --accent-strong: var(--signal);
-  --accent-soft: var(--signal);
-  --accent-contrast: var(--on-signal);
-  --accent-bg: var(--signal-faint);
-  --aurora: var(--good);
-  --aurora-strong: var(--good);
-  --violet: var(--signal);
-  --ember: var(--signal);
-  --ok: var(--good);
-  --warn: var(--warn-soft);
-  --danger: var(--signal);
-  --ok-bg: var(--signal-faint);
-  --warn-bg: var(--signal-faint);
-  --danger-bg: var(--signal-faint);
-  --accent-bg: var(--signal-faint);
-  --aurora-bg: var(--signal-faint);
 }
 
 /* ---- LIGHT · inverted spec-sheet on paper ----------------------------- */

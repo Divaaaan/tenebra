@@ -41,6 +41,10 @@ type fakeRunner struct {
 	up, down int64
 	statsErr error
 
+	// logs is the sing-box output tail Logs returns. Tests seed it to exercise the
+	// diagnostic tail the daemon emits when a connect exhausts; empty by default.
+	logs []string
+
 	// done is the channel for the current "process". It is recreated on each
 	// Start. Before any Start it is the never-firing channel so Done blocks.
 	done chan error
@@ -128,10 +132,27 @@ func (f *fakeRunner) Probe(ctx context.Context, tag string) (int, error) {
 	return delay, nil
 }
 
+// Logs returns a copy of the seeded sing-box output tail, satisfying the
+// control.Runner contract (safe any time, newest last, empty when unset).
+func (f *fakeRunner) Logs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.logs))
+	copy(out, f.logs)
+	return out
+}
+
 // setStats updates the cumulative counters the next Stats call returns.
 func (f *fakeRunner) setStats(up, down int64) {
 	f.mu.Lock()
 	f.up, f.down = up, down
+	f.mu.Unlock()
+}
+
+// setLogs seeds the sing-box output tail Logs returns.
+func (f *fakeRunner) setLogs(lines ...string) {
+	f.mu.Lock()
+	f.logs = append([]string(nil), lines...)
 	f.mu.Unlock()
 }
 

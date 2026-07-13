@@ -307,19 +307,52 @@ pub trait WireSession: Send + Sync + 'static {
     fn session(&self) -> Result<Arc<WireClient>, String>;
 }
 
+// Control-protocol command names, centralized so the wire vocabulary lives in
+// one place on the Rust side rather than as literals scattered through the
+// Backend impl below.
+//
+// TODO: these names are duplicated three ways across the codebase — here, the Go
+// core's command dispatch, and the TS mock backend. Folding them into one shared
+// source is out of scope for this pass; until then keep the three in sync by hand.
+const CMD_STATUS: &str = "status";
+const CMD_LIST_PROFILES: &str = "list_profiles";
+const CMD_IMPORT_SUBSCRIPTION: &str = "import_subscription";
+const CMD_IMPORT_LINK: &str = "import_link";
+const CMD_IMPORT_LINKS: &str = "import_links";
+const CMD_REMOVE_PROFILE: &str = "remove_profile";
+const CMD_REFRESH_SUBSCRIPTION: &str = "refresh_subscription";
+const CMD_CONNECT: &str = "connect";
+const CMD_DISCONNECT: &str = "disconnect";
+const CMD_PING: &str = "ping";
+const CMD_SET_ROUTING: &str = "set_routing";
+const CMD_SET_SPLIT: &str = "set_split";
+const CMD_SET_KILL_SWITCH: &str = "set_kill_switch";
+const CMD_SET_TLS_FRAGMENT: &str = "set_tls_fragment";
+const CMD_SET_MULTIHOP: &str = "set_multihop";
+const CMD_SET_TUN: &str = "set_tun";
+const CMD_SET_PROXY_MODE: &str = "set_proxy_mode";
+const CMD_SET_AUTOCONNECT: &str = "set_autoconnect";
+const CMD_SET_AUTO_FAILOVER: &str = "set_auto_failover";
+const CMD_SET_CRASH_REPORTS: &str = "set_crash_reports";
+const CMD_SET_DNS: &str = "set_dns";
+const CMD_SET_RULES: &str = "set_rules";
+const CMD_LEAK_CHECK: &str = "leak_check";
+const CMD_RUN_STUN_CHECK: &str = "run_stun_check";
+const CMD_RUN_SPEED_TEST: &str = "run_speed_test";
+
 impl<T: WireSession> Backend for T {
     fn status(&self) -> Result<State, String> {
-        self.session()?.request_into("status", obj([]))
+        self.session()?.request_into(CMD_STATUS, obj([]))
     }
 
     fn list_profiles(&self) -> Result<Vec<Profile>, String> {
-        let wrap: ProfileList = self.session()?.request_into("list_profiles", obj([]))?;
+        let wrap: ProfileList = self.session()?.request_into(CMD_LIST_PROFILES, obj([]))?;
         Ok(wrap.profiles)
     }
 
     fn import_subscription(&self, url: String, name: String) -> Result<Profile, String> {
         let wrap: ProfileWrap = self.session()?.request_into(
-            "import_subscription",
+            CMD_IMPORT_SUBSCRIPTION,
             obj([("url", json!(url)), ("name", json!(name))]),
         )?;
         Ok(wrap.profile)
@@ -327,7 +360,7 @@ impl<T: WireSession> Backend for T {
 
     fn import_link(&self, link: String, name: Option<String>) -> Result<Profile, String> {
         let wrap: ProfileWrap = self.session()?.request_into(
-            "import_link",
+            CMD_IMPORT_LINK,
             obj([
                 ("link", json!(link)),
                 ("name", name.map(Value::from).unwrap_or(Value::Null)),
@@ -345,7 +378,7 @@ impl<T: WireSession> Backend for T {
         // `profile` envelope like the single-import paths), so deserialize the
         // whole data payload into the result.
         self.session()?.request_into(
-            "import_links",
+            CMD_IMPORT_LINKS,
             obj([
                 ("links", json!(links)),
                 ("name", name.map(Value::from).unwrap_or(Value::Null)),
@@ -355,14 +388,14 @@ impl<T: WireSession> Backend for T {
 
     fn remove_profile(&self, profile: String) -> Result<(), String> {
         self.session()?
-            .request("remove_profile", obj([("profile", json!(profile))]))?;
+            .request(CMD_REMOVE_PROFILE, obj([("profile", json!(profile))]))?;
         Ok(())
     }
 
     fn refresh_subscription(&self, profile: String) -> Result<Profile, String> {
         let wrap: ProfileWrap = self
             .session()?
-            .request_into("refresh_subscription", obj([("profile", json!(profile))]))?;
+            .request_into(CMD_REFRESH_SUBSCRIPTION, obj([("profile", json!(profile))]))?;
         Ok(wrap.profile)
     }
 
@@ -372,7 +405,7 @@ impl<T: WireSession> Backend for T {
         // original protocol-fallback behaviour. With an explicit node the core
         // ignores it, so there is no need to special-case that here.
         self.session()?.request_into(
-            "connect",
+            CMD_CONNECT,
             obj([
                 ("profile", json!(profile)),
                 ("node", node.map(Value::from).unwrap_or(Value::Null)),
@@ -382,13 +415,13 @@ impl<T: WireSession> Backend for T {
     }
 
     fn disconnect(&self) -> Result<State, String> {
-        self.session()?.request_into("disconnect", obj([]))
+        self.session()?.request_into(CMD_DISCONNECT, obj([]))
     }
 
     fn ping(&self, profile: String) -> Result<Vec<PingResult>, String> {
         let wrap: PingList = self
             .session()?
-            .request_into("ping", obj([("profile", json!(profile))]))?;
+            .request_into(CMD_PING, obj([("profile", json!(profile))]))?;
         Ok(wrap.results)
     }
 
@@ -399,7 +432,7 @@ impl<T: WireSession> Backend for T {
             RoutingMode::Direct => "direct",
         };
         self.session()?
-            .request_into("set_routing", obj([("mode", json!(mode))]))
+            .request_into(CMD_SET_ROUTING, obj([("mode", json!(mode))]))
     }
 
     fn set_split(&self, mode: SplitMode, apps: Vec<String>) -> Result<State, String> {
@@ -409,19 +442,19 @@ impl<T: WireSession> Backend for T {
             SplitMode::Include => "include",
         };
         self.session()?.request_into(
-            "set_split",
+            CMD_SET_SPLIT,
             obj([("mode", json!(mode)), ("apps", json!(apps))]),
         )
     }
 
     fn set_kill_switch(&self, on: bool) -> Result<State, String> {
         self.session()?
-            .request_into("set_kill_switch", obj([("on", json!(on))]))
+            .request_into(CMD_SET_KILL_SWITCH, obj([("on", json!(on))]))
     }
 
     fn set_tls_fragment(&self, on: bool) -> Result<State, String> {
         self.session()?
-            .request_into("set_tls_fragment", obj([("on", json!(on))]))
+            .request_into(CMD_SET_TLS_FRAGMENT, obj([("on", json!(on))]))
     }
 
     fn set_multihop(
@@ -432,7 +465,7 @@ impl<T: WireSession> Backend for T {
         exit_id: String,
     ) -> Result<State, String> {
         self.session()?.request_into(
-            "set_multihop",
+            CMD_SET_MULTIHOP,
             obj([
                 ("profile", json!(profile)),
                 ("enabled", json!(enabled)),
@@ -449,7 +482,7 @@ impl<T: WireSession> Backend for T {
             TunStack::Mixed => "mixed",
         };
         self.session()?
-            .request_into("set_tun", obj([("stack", json!(stack))]))
+            .request_into(CMD_SET_TUN, obj([("stack", json!(stack))]))
     }
 
     fn set_proxy_mode(&self, mode: ConnectionMode) -> Result<State, String> {
@@ -458,22 +491,22 @@ impl<T: WireSession> Backend for T {
             ConnectionMode::SystemProxy => "system-proxy",
         };
         self.session()?
-            .request_into("set_proxy_mode", obj([("proxy_mode", json!(mode))]))
+            .request_into(CMD_SET_PROXY_MODE, obj([("proxy_mode", json!(mode))]))
     }
 
     fn set_autoconnect(&self, on: bool) -> Result<State, String> {
         self.session()?
-            .request_into("set_autoconnect", obj([("on", json!(on))]))
+            .request_into(CMD_SET_AUTOCONNECT, obj([("on", json!(on))]))
     }
 
     fn set_auto_failover(&self, on: bool) -> Result<State, String> {
         self.session()?
-            .request_into("set_auto_failover", obj([("on", json!(on))]))
+            .request_into(CMD_SET_AUTO_FAILOVER, obj([("on", json!(on))]))
     }
 
     fn set_crash_reports(&self, on: bool) -> Result<State, String> {
         self.session()?
-            .request_into("set_crash_reports", obj([("on", json!(on))]))
+            .request_into(CMD_SET_CRASH_REPORTS, obj([("on", json!(on))]))
     }
 
     fn set_dns(
@@ -484,7 +517,7 @@ impl<T: WireSession> Backend for T {
         ipv4_only: bool,
     ) -> Result<State, String> {
         self.session()?.request_into(
-            "set_dns",
+            CMD_SET_DNS,
             obj([
                 ("ad_block", json!(ad_block)),
                 ("dns_remote", json!(dns_remote)),
@@ -502,7 +535,7 @@ impl<T: WireSession> Backend for T {
         preset_ru_gov: bool,
     ) -> Result<State, String> {
         self.session()?.request_into(
-            "set_rules",
+            CMD_SET_RULES,
             obj([
                 ("rules_direct", json!(rules_direct)),
                 ("rules_proxy", json!(rules_proxy)),
@@ -517,21 +550,21 @@ impl<T: WireSession> Backend for T {
         // verdict; we just deserialize it. It can touch the network, but the core
         // bounds each echo request, so the generous request timeout above is
         // ample.
-        self.session()?.request_into("leak_check", obj([]))
+        self.session()?.request_into(CMD_LEAK_CHECK, obj([]))
     }
 
     fn run_stun_check(&self) -> Result<StunCheck, String> {
         // The core sends the STUN Binding Requests and classifies the mapping;
         // we just deserialize the verdict. Like the leak check it touches the
         // network but bounds itself, well within the request timeout.
-        self.session()?.request_into("run_stun_check", obj([]))
+        self.session()?.request_into(CMD_RUN_STUN_CHECK, obj([]))
     }
 
     fn run_speed_test(&self) -> Result<SpeedTest, String> {
         // The core streams the sample through the tunnel and times it. It errors
         // when idle (a reading off the tunnel is meaningless), which surfaces here
         // as the protocol error the caller sees.
-        self.session()?.request_into("run_speed_test", obj([]))
+        self.session()?.request_into(CMD_RUN_SPEED_TEST, obj([]))
     }
 }
 

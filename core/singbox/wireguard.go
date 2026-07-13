@@ -20,8 +20,8 @@ import (
 // field" fatal, which would sink the whole config. We therefore emit a plain
 // WireGuard endpoint and never serialize those knobs; an AmneziaWG node degrades
 // to plain WireGuard rather than poisoning the config. Real AmneziaWG support
-// would require a fork (e.g. amnezia-box) and a build that links it — see
-// applyAmnezia, kept as a no-op marker for that future.
+// would require a fork (e.g. amnezia-box) and a build that links it, which is on
+// the roadmap.
 func wireguardEndpoint(n model.Node, tag string) (map[string]any, error) {
 	wg := n.WireGuard
 	if wg == nil {

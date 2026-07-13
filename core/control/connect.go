@@ -501,6 +501,7 @@ func (d *Daemon) runFallback(ctx context.Context, loop fallbackLoop) {
 			if d.isCurrent(loop.gen) {
 				tracker.exhausted()
 				d.emitLog(LogError, "connect: all protocols failed")
+				d.emitSingboxTail() // surface why sing-box could not carry any node
 				d.setState(State{State: StateError, Profile: loop.profileID,
 					Error: "all protocols failed", Routing: d.snapshotState().Routing})
 			}
@@ -1151,6 +1152,32 @@ func (d *Daemon) emitLog(level, msg string) {
 	d.mu.Unlock()
 	if emit != nil {
 		emit(EventLog, LogEvent{Level: level, Msg: msg})
+	}
+}
+
+// singboxTailLines is how many trailing sing-box log lines emitSingboxTail
+// surfaces — enough to show why a start or handshake failed without flooding the
+// UI log.
+const singboxTailLines = 20
+
+// emitSingboxTail pushes the tail of the runner's sing-box log ring into the
+// daemon log channel. That ring is otherwise unreachable in production — the
+// control protocol exposes no "fetch logs" command — so a sing-box that failed to
+// start or was rejected at config decode would leave the user only a bare "all
+// protocols failed". Called on the terminal exhausted path only, never on a
+// healthy connect, so it does not spam the log; a runner with no captured output
+// emits nothing.
+func (d *Daemon) emitSingboxTail() {
+	lines := d.runner.Logs()
+	if len(lines) > singboxTailLines {
+		lines = lines[len(lines)-singboxTailLines:]
+	}
+	if len(lines) == 0 {
+		return
+	}
+	d.emitLog(LogInfo, fmt.Sprintf("sing-box output (last %d lines):", len(lines)))
+	for _, ln := range lines {
+		d.emitLog(LogInfo, "  sing-box: "+ln)
 	}
 }
 

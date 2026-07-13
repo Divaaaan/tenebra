@@ -84,7 +84,7 @@
   overflow: auto;
   padding: var(--sp-3);
   border: var(--bw) solid var(--line);
-  background: var(--bg-inset);
+  background: var(--surface);
   font-family: var(--mono);
   font-size: var(--fs-meta);
   line-height: 1.5;

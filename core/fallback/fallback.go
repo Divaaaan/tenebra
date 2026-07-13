@@ -17,15 +17,10 @@
 package fallback
 
 import (
-	"errors"
 	"sort"
 
 	"github.com/Divaaaan/tenebra/core/model"
 )
-
-// ErrExhausted is returned by Next once every candidate has been handed out and
-// failed. The caller surfaces it as "all protocols blocked".
-var ErrExhausted = errors.New("fallback: all candidates exhausted")
 
 // DefaultOrder is the protocol preference the brief specifies: VLESS+REALITY,
 // then Hysteria2, then AmneziaWG. VLESS here stands for the REALITY variant —
@@ -284,9 +279,11 @@ func (m *Machine) Failure(Attempt) {
 // discarding what last worked. It does not clear last-good.
 func (m *Machine) Reset() { m.rebuild() }
 
-// Exhausted reports whether every candidate has been handed out and failed.
-// When true, Next returns ok=false and the caller should surface ErrExhausted.
-// A machine with no candidates is exhausted from the start.
+// Exhausted reports whether every candidate has been handed out and failed —
+// equivalently, whether Next now returns ok=false. It is a convenience query for
+// callers that track a walk's progress; the connect loop instead keys off Next's
+// ok result directly and, once exhausted, reports the terminal "all protocols
+// failed". A machine with no candidates is exhausted from the start.
 func (m *Machine) Exhausted() bool { return m.cursor >= len(m.order) }
 
 // Order returns the resolved attempt sequence for the current walk, index 0

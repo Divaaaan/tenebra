@@ -11,6 +11,20 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Failed connections explain themselves.** When every protocol has been tried
+  and blocked, the log now includes the tail of sing-box's own output, so a
+  config sing-box rejected or a binary that would not start is diagnosable from
+  the UI instead of showing only "all protocols failed".
+
+### Changed
+
+- **AmneziaWG's obfuscation limit is now documented.** An AmneziaWG node imports
+  and connects, but the bundled stock sing-box applies none of the AWG
+  obfuscation parameters, so the tunnel runs as plain WireGuard. The README now
+  states this plainly; full AmneziaWG obfuscation remains on the roadmap.
+
 ## [0.4.1] - 2026-07-12
 
 ### Added
@@ -448,7 +462,7 @@ Initial tagged release.
   first run. Updates delivered in-app are minisign-verified against the bundled
   key; only the initial download is unsigned.
 
-[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.3.7...HEAD
+[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.4.1...HEAD
 [0.3.7]: https://github.com/Divaaaan/tenebra/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/Divaaaan/tenebra/compare/v0.3.4...v0.3.6
 [0.3.4]: https://github.com/Divaaaan/tenebra/compare/v0.3.3...v0.3.4
