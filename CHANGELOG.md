@@ -11,6 +11,13 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **AmneziaWG's obfuscation limit is now documented.** An AmneziaWG node imports
+  and connects, but the bundled stock sing-box applies none of the AWG
+  obfuscation parameters, so the tunnel runs as plain WireGuard. The README now
+  states this plainly; full AmneziaWG obfuscation remains on the roadmap.
+
 ## [0.4.1] - 2026-07-12
 
 ### Added

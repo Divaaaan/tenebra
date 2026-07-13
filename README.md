@@ -39,7 +39,10 @@ Everything below is implemented in this repo today (the UI features are desktop)
 
 - **Many protocols, one model.** Import VLESS (incl. REALITY), Hysteria2,
   AmneziaWG, Shadowsocks, Trojan and VMess. A single normalized node model feeds
-  a from-scratch sing-box config generator.
+  a from-scratch sing-box config generator. *(AmneziaWG links import and connect,
+  but the bundled stock sing-box applies none of the AWG obfuscation parameters —
+  the tunnel runs as plain WireGuard; full AmneziaWG obfuscation is on the
+  [roadmap](ROADMAP.md).)*
 - **Import the way you have it.** Subscription URL, a raw share link, a `.txt`
   file of links, clipboard paste, or a QR code (image file or pasted image).
   Subscription bodies handle a Clash/Mihomo YAML config, base64, or plaintext
