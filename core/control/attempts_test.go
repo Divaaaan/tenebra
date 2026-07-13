@@ -186,6 +186,28 @@ func TestAttemptsExhaustedWalkSnapshot(t *testing.T) {
 	h.awaitState(StateError)
 }
 
+// TestExhaustedConnectEmitsSingboxTail: when a connect exhausts every candidate,
+// the daemon surfaces the tail of the runner's sing-box log ring on the log
+// channel, so a sing-box that failed to start or was rejected at config decode is
+// diagnosable in the UI rather than hidden behind a bare "all protocols failed".
+func TestExhaustedConnectEmitsSingboxTail(t *testing.T) {
+	h := newHarness(t)
+	h.runner.probeErr = errors.New("blocked") // every probe fails -> exhaustion
+	h.runner.setLogs(
+		"INFO[0000] sing-box started",
+		`FATAL[0000] decode config: unknown field "jc"`,
+	)
+	p := seedMultiProto(t, h)
+
+	h.send(Request{ID: 1, Cmd: CmdConnect, Profile: p.ID})
+	h.await()
+
+	// The distinctive FATAL line from the seeded ring must reach the log channel,
+	// and it must precede the terminal error state (the tail is emitted before it).
+	h.awaitLogContaining("unknown field")
+	h.awaitState(StateError)
+}
+
 // TestAttemptsFlagsLastGoodLead: the profile's last-good node leads the walk and
 // is the only item flagged last_good.
 func TestAttemptsFlagsLastGoodLead(t *testing.T) {

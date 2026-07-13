@@ -177,6 +177,27 @@ func (h *harness) awaitEvent(name string) map[string]any {
 	}
 }
 
+// awaitLogContaining waits for a log event whose msg contains sub, draining
+// intervening events, and fails on timeout.
+func (h *harness) awaitLogContaining(sub string) map[string]any {
+	h.t.Helper()
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case ev := <-h.events:
+			if ev["event"] != EventLog {
+				continue
+			}
+			if msg, _ := ev["msg"].(string); strings.Contains(msg, sub) {
+				return ev
+			}
+		case <-deadline:
+			h.t.Fatalf("timed out waiting for a log event containing %q", sub)
+			return nil
+		}
+	}
+}
+
 // waitStarts blocks until the fake runner has been started at least n times,
 // failing on timeout. connect now starts sing-box from a background loop, so a
 // test that needs the process to exist must wait for the Start rather than assume

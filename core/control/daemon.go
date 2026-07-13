@@ -47,6 +47,13 @@ type Runner interface {
 	// Done delivers the process's exit: it sends the exit error (nil on a clean
 	// exit) once and is closed afterwards. Before any Start it must block.
 	Done() <-chan error
+	// Logs returns a copy of the most recent sing-box output lines (newest last) —
+	// the in-memory tail each runner keeps for diagnostics. It is safe to call at
+	// any time (before a Start, after a Stop, or while a process runs) and returns
+	// an empty slice when nothing has been captured. The daemon surfaces this tail
+	// when a connect gives up, so a sing-box failure is visible in the UI log
+	// rather than swallowed.
+	Logs() []string
 }
 
 // pingDialTimeout bounds each per-node TCP latency probe.
