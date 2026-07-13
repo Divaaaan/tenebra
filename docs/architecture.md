@@ -43,7 +43,7 @@ The system tunnel cannot be cross-platform; each OS exposes its own:
 | Android | `VpnService`      |
 | iOS     | Network Extension |
 
-### UI — `ui-desktop/`, `ui-android/`, `ui-ios/`
+### UI — `ui-desktop/`, `ui-ios/`
 
 Native per platform. Desktop is Tauri 2 (Rust shell, React + TypeScript front
 end). Android will be Jetpack Compose and iOS SwiftUI — all over the same core.
