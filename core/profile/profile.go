@@ -21,9 +21,11 @@ const (
 	SourceManual       = "manual"
 )
 
-// Server is a proxy node with a stable identifier. model.Node is embedded so
-// the JSON flattens to {id, protocol, name, server, port, ...}; the control
-// protocol's Node type sees exactly those fields.
+// Server is a proxy node with a stable identifier. model.Node is embedded so the
+// JSON flattens to {id, protocol, name, server, port, ...} — credentials and all.
+// That full form is the on-disk persistence shape only; it never travels over the
+// control socket. The wire-facing view is the redacted projection in the control
+// package (redactedNode), which strips every secret before the UI sees it.
 type Server struct {
 	ID string `json:"id"`
 	model.Node
