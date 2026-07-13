@@ -205,8 +205,12 @@ func ruleSetDir() string {
 // per-user config location; if that can't be determined we fall back to the
 // working directory so the core still starts rather than refusing to run.
 func configDir() string {
-	// An explicit override (used by tests, and by the desktop app when it wants
-	// the store in a specific place) wins over the per-user default.
+	// An explicit override wins over the per-user default. It is set by tests, by
+	// the Windows service path (which pins a machine-scoped store, see
+	// configureServicePaths), and by an operator who wants the store elsewhere.
+	// The desktop shell does NOT set it — the sidecar is handed only
+	// TENEBRA_SINGBOX — so a normal desktop run falls through to the per-user
+	// location below.
 	if dir := os.Getenv("TENEBRA_CONFIG_DIR"); dir != "" {
 		log.Printf("tenebra-core: store at %s (TENEBRA_CONFIG_DIR)", dir)
 		return dir
