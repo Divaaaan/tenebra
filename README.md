@@ -10,6 +10,8 @@
 **A cross-platform VPN client built on [sing-box](https://github.com/SagerNet/sing-box).**<br>
 Desktop first — Windows is user-ready; macOS ships but is for advanced users (see below). A shared Go core is meant to extend to Linux, Android and iOS.
 
+<img src="docs/assets/eclipse.svg" alt="A total eclipse: intercepted noise enters the dark, one clean signal leaves it. In tenebris lux." width="100%">
+
 </div>
 
 > **Project status — early development.** The desktop client is the current
