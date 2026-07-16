@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Divaaaan/tenebra/core/buildinfo"
 	"github.com/Divaaaan/tenebra/core/model"
 	"github.com/Divaaaan/tenebra/core/profile"
 )
@@ -125,6 +126,31 @@ func TestListProfilesRedactsSecrets(t *testing.T) {
 	}
 	if _, ok := out.Profiles[0]["url"]; ok {
 		t.Errorf("redacted profile still carries a url field: %s", resp.Data)
+	}
+}
+
+// TestStatusReportsDaemonVersion locks the version handshake: every status
+// (and thus every State snapshot) names the build the daemon came from, so a
+// GUI updated ahead of a hand-installed daemon (the macOS case — the in-app
+// updater refreshes only the .app, never the root LaunchDaemon) can surface
+// the skew instead of letting the toggles of newer commands die silently.
+func TestStatusReportsDaemonVersion(t *testing.T) {
+	if buildinfo.Version == "" {
+		t.Fatal("buildinfo.Version is empty")
+	}
+
+	d, _ := daemonWithSecretProfile(t)
+
+	resp := d.handleStatus(Request{ID: 1, Cmd: CmdStatus})
+	if !resp.Ok {
+		t.Fatalf("status failed: %s", resp.Error)
+	}
+	var st State
+	if err := json.Unmarshal(resp.Data, &st); err != nil {
+		t.Fatalf("unmarshal state: %v", err)
+	}
+	if st.DaemonVersion != buildinfo.Version {
+		t.Errorf("status daemon_version = %q, want %q", st.DaemonVersion, buildinfo.Version)
 	}
 }
 

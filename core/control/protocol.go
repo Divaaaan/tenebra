@@ -219,6 +219,14 @@ type State struct {
 	Node    string    `json:"node,omitempty"`
 	Profile string    `json:"profile,omitempty"`
 	Routing string    `json:"routing,omitempty"`
+	// DaemonVersion is the release version of the daemon build (buildinfo.Version),
+	// carried in every snapshot so a GUI can detect a version skew against its own.
+	// The skew is real on macOS: the in-app updater refreshes only the .app, while
+	// the root LaunchDaemon keeps the binaries install-daemon.sh last laid down, so
+	// commands added since then fail as unknown while their toggles look dead.
+	// Absent from daemons predating the field, which a client must read as "older
+	// than 0.4.4", not "current".
+	DaemonVersion string `json:"daemon_version,omitempty"`
 	// Split is the per-app split mode (off/exclude/include) and SplitApps the
 	// executable names it applies to. Both reflect the config that the next
 	// connect will use; an empty/off split omits them.

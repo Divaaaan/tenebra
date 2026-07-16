@@ -221,6 +221,9 @@ fn reconnecting_state() -> State {
         node: None,
         profile: None,
         routing: None,
+        // Unknown while the service is away; the UI's staleness detection only
+        // trusts idle/connected snapshots, so this None cannot read as "old".
+        daemon_version: None,
         split: None,
         split_apps: None,
         kill_switch: None,
@@ -256,6 +259,8 @@ fn lost_state() -> State {
         node: None,
         profile: None,
         routing: None,
+        // Unknown while the service is away (see reconnecting_state).
+        daemon_version: None,
         split: None,
         split_apps: None,
         kill_switch: None,

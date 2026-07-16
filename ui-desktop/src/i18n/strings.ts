@@ -160,6 +160,25 @@ export interface Strings {
   };
 
   /**
+   * Daemon-skew banner: the privileged daemon provably comes from a different
+   * build than this UI (macOS: the in-app updater refreshes only the .app, the
+   * hand-installed LaunchDaemon keeps its install-time binaries), so toggles of
+   * newer commands silently do nothing until it is reinstalled.
+   */
+  daemon: {
+    /** "{daemon}" and "{app}" interpolated by the caller. */
+    stale: string;
+    /** The pre-0.4.4 case: the daemon is too old to even report a version. */
+    staleUnknown: string;
+    /** macOS action: copy the reinstall command to run in the repo checkout. */
+    copyCommand: string;
+    copied: string;
+    /** Windows fallback hint — the installer refreshes the service. */
+    reinstallHint: string;
+    dismiss: string;
+  };
+
+  /**
    * Crash reporting (opt-in, local-only). The first-run consent banner, the
    * "crashed last time" banner and its report overlay, and the ErrorBoundary
    * fallback shown if the UI itself throws. Nothing is ever sent automatically.
@@ -636,6 +655,16 @@ const en: Strings = {
     later: "Later",
     downloading: "Downloading update…",
   },
+  daemon: {
+    stale:
+      "The background service is v{daemon} but the app is v{app} — newer settings won't take effect until the service is updated",
+    staleUnknown:
+      "The background service predates v{app} — newer settings won't take effect until the service is updated",
+    copyCommand: "Copy update command",
+    copied: "Copied",
+    reinstallHint: "Reinstall the app to update it",
+    dismiss: "Dismiss",
+  },
   crash: {
     consentText:
       "Help improve Tenebra: after a crash, offer to review and send a report. Nothing is ever sent automatically.",
@@ -1039,6 +1068,16 @@ const ru: Strings = {
     install: "Обновить",
     later: "Позже",
     downloading: "Загрузка обновления…",
+  },
+  daemon: {
+    stale:
+      "Фоновая служба v{daemon}, а приложение v{app} — новые настройки не применятся, пока служба не обновлена",
+    staleUnknown:
+      "Фоновая служба старше v{app} — новые настройки не применятся, пока служба не обновлена",
+    copyCommand: "Скопировать команду обновления",
+    copied: "Скопировано",
+    reinstallHint: "Переустановите приложение, чтобы обновить её",
+    dismiss: "Скрыть",
   },
   crash: {
     consentText:

@@ -113,7 +113,9 @@ Applications" will **not** give you a working tunnel:
 - **The build is unsigned and un-notarized.** First launch needs
   **System Settings → Privacy & Security → Open Anyway**, and updates to the
   daemon are a manual step (the in-app updater refreshes only the app, not the
-  root daemon).
+  root daemon). Since 0.4.4 the app warns with a banner when the daemon has
+  fallen behind it; re-run the install script from your checkout to update:
+  `sudo bash scripts/macos/install-daemon.sh --from-app /Applications/Tenebra.app --allow-unsigned`.
 
 The click-to-run macOS path — a signed, notarized build with an `SMAppService`
 daemon bundled inside the app (so it installs and updates like the Windows

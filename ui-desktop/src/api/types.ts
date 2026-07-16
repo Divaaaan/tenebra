@@ -47,6 +47,15 @@ export interface State {
   node?: string;
   profile?: string;
   routing?: RoutingMode;
+  /**
+   * The daemon build's release version, stamped into every core snapshot.
+   * Omitted by daemons predating the field (≤0.4.3) — read that as "older than
+   * the app", not "current": the hand-installed macOS LaunchDaemon is never
+   * refreshed by the in-app updater, so it skews behind until reinstalled.
+   * Also omitted from the synthetic reconnecting/lost states the Rust backend
+   * pushes while the daemon is away, so only trust it on stable snapshots.
+   */
+  daemon_version?: string;
   /** Per-app split mode; omitted (treated as "off") when no split is active. */
   split?: SplitMode;
   /** Normalized executable names the split applies to; omitted when off. */

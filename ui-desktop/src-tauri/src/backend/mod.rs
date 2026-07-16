@@ -143,6 +143,12 @@ pub struct State {
     pub profile: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub routing: Option<RoutingMode>,
+    /// The daemon build's release version, stamped into every core snapshot.
+    /// Absent from daemons predating the field (≤0.4.3), which the UI reads as
+    /// "older than the app" — the hand-installed macOS LaunchDaemon is never
+    /// refreshed by the in-app updater, so it skews behind until reinstalled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daemon_version: Option<String>,
     /// Per-app split mode; absent (treated as off) when no split is active.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub split: Option<SplitMode>,
@@ -786,6 +792,7 @@ mod tests {
             node: Some("demo-nl".into()),
             profile: Some("demo-sub".into()),
             routing: Some(RoutingMode::Smart),
+            daemon_version: Some("0.4.4".into()),
             split: Some(SplitMode::Exclude),
             split_apps: Some(vec!["chrome.exe".into(), "steam.exe".into()]),
             kill_switch: Some(true),
@@ -824,6 +831,7 @@ mod tests {
             node: None,
             profile: None,
             routing: None,
+            daemon_version: None,
             split: None,
             split_apps: None,
             kill_switch: None,

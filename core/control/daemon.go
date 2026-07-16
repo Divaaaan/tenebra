@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Divaaaan/tenebra/core/buildinfo"
 	"github.com/Divaaaan/tenebra/core/fallback"
 	"github.com/Divaaaan/tenebra/core/model"
 	"github.com/Divaaaan/tenebra/core/profile"
@@ -269,11 +270,14 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 			CacheDir:  store.Dir(),
 		},
 		state: State{
-			State:     StateIdle,
-			Routing:   string(routing.ModeSmart),
-			TunStack:  singbox.StackSystem,
-			ProxyMode: singbox.ModeTun,
-			ProxyPort: singbox.DefaultMixedPort,
+			State: StateIdle,
+			// Stamped from construction so a status that races the first setState
+			// still carries the daemon's build version (see applySettingsToState).
+			DaemonVersion: buildinfo.Version,
+			Routing:       string(routing.ModeSmart),
+			TunStack:      singbox.StackSystem,
+			ProxyMode:     singbox.ModeTun,
+			ProxyPort:     singbox.DefaultMixedPort,
 			// Report the effective resolvers from the moment the daemon exists, so a
 			// status before SetSettings still lets the UI prefill the custom-DNS
 			// inputs. These match the normalized routing defaults above.
@@ -1469,6 +1473,10 @@ func rulesPrefsDiffer(a, b routing.Options) bool {
 // daemon's live routing options. The resolvers are always the normalized
 // (effective) values, so the UI can prefill its custom-DNS inputs.
 func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, autoconnect, autoFailover bool, crashReports *bool, multihop model.Multihop) {
+	// The build version is a daemon-wide constant like the preferences below:
+	// stamping it here keeps it on every snapshot no matter which State literal
+	// a call site handed in, so a GUI can always compare it against its own.
+	s.DaemonVersion = buildinfo.Version
 	// Report the mode exactly as chosen (an empty app list no longer collapses
 	// it to off — the UI needs the mode active to show the app editor at all),
 	// and always carry the app list so toggling the mode off and back on does

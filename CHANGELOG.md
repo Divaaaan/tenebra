@@ -11,6 +11,18 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **The app warns when the background service is older than it.** The daemon
+  now reports its build version in every state snapshot, and the app shows a
+  banner when the two builds differ — with the reinstall command ready to copy
+  on macOS. Until now an out-of-date daemon made the toggles of newer settings
+  (IPv4-only DNS, DPI fragmentation, auto-failover, multihop and friends) look
+  simply dead: the click went through, the old daemon ignored or rejected the
+  unknown command, and nothing on screen said why. This is the macOS reality
+  today — the in-app updater refreshes only the .app, never the hand-installed
+  LaunchDaemon — so the skew is now said out loud instead of silently eaten.
+
 ## [0.4.3] - 2026-07-13
 
 ### Fixed

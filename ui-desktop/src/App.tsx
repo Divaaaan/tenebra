@@ -6,6 +6,7 @@ import { ConnectionPanel } from "./components/ConnectionPanel";
 import { ServerList, type ServerRow } from "./components/ServerList";
 import { BottomBar } from "./components/BottomBar";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { DaemonSkewBanner } from "./components/DaemonSkewBanner";
 import { CrashConsentBanner } from "./components/CrashConsentBanner";
 import { CrashReportBanner } from "./components/CrashReportBanner";
 import { CrashReportModal } from "./components/CrashReportModal";
@@ -32,6 +33,7 @@ import { useNodePings } from "./lib/useNodePings";
 import { useSessionClock, formatUptime } from "./lib/useSessionClock";
 import { useTrafficHistory } from "./lib/useTrafficHistory";
 import { useUpdateCheck } from "./lib/useUpdateCheck";
+import { useDaemonSkew } from "./lib/useDaemonSkew";
 import { useCrashReport } from "./lib/useCrashReport";
 import { useActionToasts } from "./lib/useActionToasts";
 import { formatMbps } from "./lib/format";
@@ -125,6 +127,14 @@ export function App() {
   // Launch update check: offers a found release in the banner strip, or — when
   // the auto-install preference is on — installs it silently and relaunches.
   const update = useUpdateCheck();
+
+  // Daemon build vs app build, latched from state snapshots. A skew means the
+  // privileged daemon predates this UI (the macOS LaunchDaemon is never touched
+  // by the in-app updater), so toggles of newer commands silently do nothing —
+  // surface it instead. Dismissal is session-only: the degradation is real, so
+  // it may re-prompt on the next launch.
+  const daemonSkew = useDaemonSkew(state, __APP_VERSION__);
+  const [skewDismissed, setSkewDismissed] = useState(false);
 
   // Crash reporting is core-owned and opt-in. `crashAsked` gates the one-time
   // consent banner; `crashConsent` (true only when explicitly enabled) gates
@@ -516,6 +526,14 @@ export function App() {
           progress={update.progress}
           onInstall={update.install}
           onDismiss={update.dismiss}
+        />
+      )}
+
+      {daemonSkew.stale && !skewDismissed && (
+        <DaemonSkewBanner
+          daemonVersion={daemonSkew.daemonVersion}
+          appVersion={__APP_VERSION__}
+          onDismiss={() => setSkewDismissed(true)}
         />
       )}
 

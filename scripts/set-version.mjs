@@ -33,6 +33,9 @@ const targets = [
     file: "ui-desktop/src-tauri/Cargo.lock",
     re: /(name = "tenebra-desktop"\r?\nversion = ")([^"]+)(")/,
   },
+  // The Go core's own copy: the daemon reports it in every State snapshot so a
+  // GUI can spot a stale hand-installed daemon (the macOS LaunchDaemon path).
+  { file: "core/buildinfo/buildinfo.go", re: /(^const Version = ")([^"]+)(")/m },
 ];
 
 const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;

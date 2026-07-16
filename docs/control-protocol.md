@@ -651,6 +651,7 @@ type State = {
   node?: string;
   profile?: string;
   routing?: "smart" | "global" | "direct";
+  daemon_version?: string;        // the daemon build's release version; omitted by daemons predating 0.4.4 — read that as "older", not "current"
   split?: "exclude" | "include";  // omitted when off
   split_apps?: string[];          // normalized executable names; omitted when off
   kill_switch?: boolean;          // omitted when off

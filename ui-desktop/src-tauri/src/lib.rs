@@ -793,6 +793,7 @@ mod tests {
             node: None,
             profile: None,
             routing: None,
+            daemon_version: None,
             split: None,
             split_apps: None,
             kill_switch: None,
