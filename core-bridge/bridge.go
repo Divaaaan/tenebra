@@ -1,46 +1,50 @@
-//go:build ios
+//go:build ios || android
 
-// Package tenebracore is the gomobile bridge that exposes Tenebra's config
-// generator to the iOS client. It is the iOS analog of the desktop sidecar's
-// job of turning a stored profile into a sing-box configuration — except on iOS
-// there is no sidecar process, so the generator is compiled into an
-// `.xcframework` with gomobile and called in-process from the host app (see
-// docs/porting/ios.md).
+// Package tenebracore is the shared gomobile binding that exposes Tenebra's
+// config generator to the mobile clients. One package, two artifacts: gomobile
+// targets GOOS=ios to produce a `.xcframework` and GOOS=android to produce an
+// `.aar`. Either way the generator is compiled in-process — there is no
+// desktop-style sidecar process on mobile — and called from the host app (Swift
+// on iOS, Kotlin on Android; see docs/porting/ios.md).
 //
-// SCAFFOLD STATUS — this file is portable Go and cross-compiles for iOS, but the
-// gomobile *bind* that turns it into a framework runs only on macOS + Xcode and
-// has NOT been exercised on the host this was written on. See ui-ios/README.md
+// SCAFFOLD STATUS — this file is portable Go and cross-compiles for both mobile
+// targets, but the gomobile *bind* that turns it into a mobile artifact has NOT
+// been exercised on the host this was written on: the iOS `.xcframework` bind
+// needs macOS + Xcode, the Android `.aar` bind needs the NDK. See ui-ios/README.md
 // and scripts/build-libbox.sh. The Go here is real and tested for compilation
-// (`GOOS=darwin GOARCH=arm64 go build -tags ios ./ui-ios/core-bridge`); the
-// framework it becomes is not.
+// (`GOOS=android GOARCH=arm64 go build ./core-bridge`, plus the darwin/ios
+// equivalent); the frameworks it becomes are not.
 //
 // # Why a separate module boundary
 //
 // This bridge deliberately stays a *pure config generator* with no sing-box
 // import, exactly like the desktop core. It is gomobile-bound into its own small
-// framework (`TenebraCore.xcframework`), while sing-box's engine ships as a
-// separate, unmodified `Libbox.xcframework`. The two meet only at a JSON string:
-// the app calls GenerateConfig here, then hands the result to libbox's
-// `CommandServer.StartOrReloadService(json)`. Keeping them apart preserves the
-// generator-vs-engine split the whole project is built on. Do not add a sing-box
-// dependency to this package.
+// artifact (`TenebraCore.xcframework` on iOS, the equivalent `.aar` on Android),
+// while sing-box's engine ships as a separate, unmodified libbox artifact. The
+// two meet only at a JSON string: the app calls GenerateConfig here, then hands
+// the result to libbox's `CommandServer.StartOrReloadService(json)`. Keeping them
+// apart preserves the generator-vs-engine split the whole project is built on. Do
+// not add a sing-box dependency to this package.
 //
 // # The build tag
 //
-// The `ios` build constraint keeps this file out of every desktop and CI build
-// (`go build ./...` on windows/linux/darwin excludes it), so it can never break
-// the main build. gomobile targets GOOS=ios, which sets the tag; to compile-check
-// it on any host without the Apple toolchain, force the tag on a darwin
-// cross-build: `GOOS=darwin GOARCH=arm64 go build -tags ios ./ui-ios/core-bridge`.
+// The `ios || android` constraint keeps this file out of every desktop and CI
+// build (`go build ./...` on windows/linux/darwin sets neither tag, so the file is
+// excluded), which is what lets it never break the main build. gomobile sets the
+// tag automatically: GOOS=ios for the Apple bind (tag `ios`), GOOS=android for the
+// Android bind (tag `android`). To compile-check on a host without a mobile
+// toolchain, cross-build for either target — `GOOS=android GOARCH=arm64 go build
+// ./core-bridge`, or `GOOS=darwin GOARCH=arm64 go build -tags ios ./core-bridge`.
 //
 // # gomobile surface
 //
 // Only gomobile-representable signatures are exported (string/error in and out).
 // gomobile renders package-level functions as free functions prefixed with the
 // capitalized package name, so `GenerateConfig` is called from Swift roughly as
-// `TenebracoreGenerateConfig(requestJSON, &error)` and `Version` as
-// `TenebracoreVersion()`. The exact spelling depends on the gomobile fork/version
-// and the `-o` framework name; confirm against the generated headers on the Mac.
+// `TenebracoreGenerateConfig(requestJSON, &error)` and from Kotlin as
+// `Tenebracore.generateConfig(requestJSON)`. The exact spelling depends on the
+// gomobile fork/version and the `-o` artifact name; confirm against the generated
+// headers/bindings.
 package tenebracore
 
 import (

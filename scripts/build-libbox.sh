@@ -2,7 +2,7 @@
 # Builds the two gomobile xcframeworks the iOS client links (see
 # docs/porting/ios.md and ui-ios/README.md):
 #
-#   1. TenebraCore.xcframework  — Tenebra's own config generator (ui-ios/core-bridge),
+#   1. TenebraCore.xcframework  — Tenebra's own config generator (core-bridge),
 #                                 exposing GenerateConfig(requestJSON) -> configJSON.
 #   2. Libbox.xcframework       — sing-box's experimental/libbox engine, built from
 #                                 the pinned sing-box tag, used UNMODIFIED.
@@ -63,10 +63,11 @@ install_gomobile() {
   gomobile init
 }
 
-# build_tenebra_core binds ui-ios/core-bridge into TenebraCore.xcframework. The
-# bridge carries the `ios` build tag; gomobile targets GOOS=ios, which activates
-# it automatically. Our core imports NO sing-box, so it needs none of libbox's
-# build tags — it is a pure stdlib generator.
+# build_tenebra_core binds core-bridge into TenebraCore.xcframework. The bridge
+# carries the `ios || android` build tag (it is the shared mobile binding — the
+# same package binds to an Android .aar); gomobile targets GOOS=ios here, which
+# activates the `ios` side of it automatically. Our core imports NO sing-box, so it
+# needs none of libbox's build tags — it is a pure stdlib generator.
 build_tenebra_core() {
   echo ">> building TenebraCore.xcframework"
   ( cd "$root"
@@ -75,7 +76,7 @@ build_tenebra_core() {
       -iosversion "$ios_min" \
       -trimpath \
       -o "$frameworks_dir/TenebraCore.xcframework" \
-      ./ui-ios/core-bridge
+      ./core-bridge
   )
 }
 

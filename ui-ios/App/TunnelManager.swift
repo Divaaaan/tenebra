@@ -156,7 +156,7 @@ final class TunnelManager: ObservableObject {
     }
 
     // Call into Tenebra's core to turn the current profile + selection into a
-    // sing-box config JSON string. This is the gomobile bridge in ui-ios/core-bridge.
+    // sing-box config JSON string. This is the shared gomobile bridge in core-bridge.
     private func generateConfigJSON() throws -> String {
         // Build the request envelope the bridge expects (see bridge.go:generateRequest).
         // TODO: assemble a real profile JSON from stored state; placeholder here.
