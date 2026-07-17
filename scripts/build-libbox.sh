@@ -30,10 +30,12 @@ set -euo pipefail
 # The desktop sidecar and the iOS libbox must be the same engine version so one
 # config generator targets one schema.
 singbox_version="1.13.13"
-# SagerNet's fork of gomobile — NOT upstream golang.org/x/mobile, which repeatedly
-# breaks on new Xcode releases. The tag is whatever the pinned sing-box Makefile
-# installs; v0.1.13 at the time of writing.
-gomobile_version="v0.1.13"
+# The gomobile version is NOT hardcoded here. sing-box's Makefile at the pinned
+# tag installs a specific SagerNet gomobile fork (NOT upstream golang.org/x/mobile,
+# which repeatedly breaks on new Xcode releases), and that same fork has to build
+# both frameworks this script produces — so the version is read straight from the
+# tag's Makefile (see singbox_gomobile_version) rather than pinned a second time
+# here, where it could drift from what `make lib_install` installs for libbox below.
 
 # iOS deployment floor — must match project.yml (NE gets the 50 MB cap on iOS 15+).
 ios_min="15.0"
@@ -52,12 +54,36 @@ require_macos() {
   fi
   command -v go >/dev/null    || { echo "error: Go >= 1.24.7 not found" >&2; exit 1; }
   command -v xcodebuild >/dev/null || { echo "error: Xcode not found" >&2; exit 1; }
+  command -v curl >/dev/null  || { echo "error: curl not found (needed to resolve the gomobile version from sing-box's Makefile)" >&2; exit 1; }
 }
 
-# install_gomobile installs the SagerNet gomobile fork + gobind at the pinned tag
-# and initializes it. This is what sing-box's `make lib_install` does.
+# singbox_gomobile_version reads the SagerNet gomobile fork version the pinned
+# sing-box tag installs in its `lib_install` target, straight from that tag's
+# Makefile, so this script never carries a second gomobile pin that could drift
+# from the one the libbox build (make lib_install, below) actually uses. The tag
+# is immutable, so this resolves to a fixed version per pinned singbox_version.
+singbox_gomobile_version() {
+  local makefile version
+  makefile="$(curl -fsSL "https://raw.githubusercontent.com/SagerNet/sing-box/v$singbox_version/Makefile")" \
+    || { echo "error: could not fetch sing-box v$singbox_version Makefile to resolve the gomobile version" >&2; exit 1; }
+  version="$(printf '%s\n' "$makefile" \
+    | sed -n 's|.*sagernet/gomobile/cmd/gomobile@\(v[0-9][0-9.]*\).*|\1|p' | head -n1)"
+  if [ -z "$version" ]; then
+    echo "error: could not parse the gomobile version from sing-box v$singbox_version Makefile" >&2
+    exit 1
+  fi
+  printf '%s\n' "$version"
+}
+
+# install_gomobile installs the SagerNet gomobile fork + gobind at whatever version
+# the pinned sing-box tag installs, and initializes it — the same thing sing-box's
+# `make lib_install` does, but resolved from the tag's Makefile rather than a
+# hardcoded copy. Binding TenebraCore with this exact gomobile keeps it on the same
+# binder the libbox build (make lib_install) uses a few steps later.
 install_gomobile() {
-  echo ">> installing sagernet/gomobile $gomobile_version"
+  local gomobile_version
+  gomobile_version="$(singbox_gomobile_version)"
+  echo ">> installing sagernet/gomobile $gomobile_version (from sing-box v$singbox_version Makefile)"
   go install "github.com/sagernet/gomobile/cmd/gomobile@$gomobile_version"
   go install "github.com/sagernet/gomobile/cmd/gobind@$gomobile_version"
   gomobile init
