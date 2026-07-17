@@ -4,10 +4,12 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 
 import { useUpdateCheck } from "./useUpdateCheck";
 import { checkForUpdate, installUpdate } from "./updates";
+import type { ConnectionState } from "../api";
 import type { Update } from "@tauri-apps/plugin-updater";
 
 // The hook drives the whole launch flow through these two calls; stub the
 // module so no test touches the updater plugin or performs a real download.
+// tunnelBusy is left real (from ./tunnel) — the gate logic is what we exercise.
 vi.mock("./updates", () => ({
   checkForUpdate: vi.fn(),
   installUpdate: vi.fn(),
@@ -28,7 +30,7 @@ describe("useUpdateCheck", () => {
   it("surfaces the found version for the banner", async () => {
     vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
 
-    const { result } = renderHook(() => useUpdateCheck());
+    const { result } = renderHook(() => useUpdateCheck("idle"));
 
     await waitFor(() => expect(result.current.available).toBe("9.9.9"));
     // Auto-install is off by default, so nothing may install on its own.
@@ -38,7 +40,7 @@ describe("useUpdateCheck", () => {
   it("shows nothing when already on the latest version", async () => {
     vi.mocked(checkForUpdate).mockResolvedValue(null);
 
-    const { result } = renderHook(() => useUpdateCheck());
+    const { result } = renderHook(() => useUpdateCheck("idle"));
 
     await waitFor(() => expect(checkForUpdate).toHaveBeenCalled());
     expect(result.current.available).toBeNull();
@@ -47,7 +49,7 @@ describe("useUpdateCheck", () => {
   it("swallows a failed check so an offline launch stays silent", async () => {
     vi.mocked(checkForUpdate).mockRejectedValue(new Error("offline"));
 
-    const { result } = renderHook(() => useUpdateCheck());
+    const { result } = renderHook(() => useUpdateCheck("idle"));
 
     await waitFor(() => expect(checkForUpdate).toHaveBeenCalled());
     expect(result.current.available).toBeNull();
@@ -60,7 +62,7 @@ describe("useUpdateCheck", () => {
     // StrictMode replays the mount effect (setup → cleanup → setup); the hook
     // must not fire a second check — with auto-install on that would race two
     // installs of the same release.
-    const { result, rerender } = renderHook(() => useUpdateCheck(), {
+    const { result, rerender } = renderHook(() => useUpdateCheck("idle"), {
       wrapper: StrictMode,
     });
 
@@ -72,7 +74,7 @@ describe("useUpdateCheck", () => {
   it("hides the banner on dismiss without persisting anything", async () => {
     vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
 
-    const { result } = renderHook(() => useUpdateCheck());
+    const { result } = renderHook(() => useUpdateCheck("idle"));
     await waitFor(() => expect(result.current.available).toBe("9.9.9"));
 
     act(() => result.current.dismiss());
@@ -94,7 +96,7 @@ describe("useUpdateCheck", () => {
       return new Promise<void>(() => {});
     });
 
-    const { result } = renderHook(() => useUpdateCheck());
+    const { result } = renderHook(() => useUpdateCheck("idle"));
     await waitFor(() => expect(result.current.available).toBe("9.9.9"));
 
     act(() => result.current.install());
@@ -110,7 +112,7 @@ describe("useUpdateCheck", () => {
     vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
     vi.mocked(installUpdate).mockRejectedValue(new Error("disk full"));
 
-    const { result } = renderHook(() => useUpdateCheck());
+    const { result } = renderHook(() => useUpdateCheck("idle"));
     await waitFor(() => expect(result.current.available).toBe("9.9.9"));
 
     act(() => result.current.install());
@@ -126,7 +128,7 @@ describe("useUpdateCheck", () => {
     vi.mocked(checkForUpdate).mockResolvedValue(update);
     vi.mocked(installUpdate).mockResolvedValue();
 
-    const { result } = renderHook(() => useUpdateCheck());
+    const { result } = renderHook(() => useUpdateCheck("idle"));
 
     // The silent path passes no progress callback — there is no banner to feed.
     await waitFor(() => expect(installUpdate).toHaveBeenCalledWith(update));
@@ -138,9 +140,115 @@ describe("useUpdateCheck", () => {
     vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
     vi.mocked(installUpdate).mockRejectedValue(new Error("network down"));
 
-    const { result } = renderHook(() => useUpdateCheck());
+    const { result } = renderHook(() => useUpdateCheck("idle"));
 
     // A failed silent install must leave the update discoverable by hand.
     await waitFor(() => expect(result.current.available).toBe("9.9.9"));
+  });
+
+  // The tunnel gate: an install relaunches the app (and on Windows stops the
+  // service), which would drop a live VPN. So it never fires while the tunnel is
+  // up — auto-install waits for it to drop, and a manual install asks first.
+  describe("tunnel gate", () => {
+    it("holds the auto-install while a tunnel is up and shows the deferred banner", async () => {
+      localStorage.setItem("tenebra.autoInstallUpdates", "1");
+      vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
+      vi.mocked(installUpdate).mockResolvedValue();
+
+      const { result } = renderHook(() => useUpdateCheck("connected"));
+
+      // The banner surfaces in its deferred state instead of installing.
+      await waitFor(() => expect(result.current.deferred).toBe(true));
+      expect(result.current.available).toBe("9.9.9");
+      expect(installUpdate).not.toHaveBeenCalled();
+    });
+
+    it("runs the deferred auto-install once the tunnel goes down", async () => {
+      localStorage.setItem("tenebra.autoInstallUpdates", "1");
+      vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
+      vi.mocked(installUpdate).mockResolvedValue();
+
+      const { result, rerender } = renderHook(
+        ({ phase }: { phase: ConnectionState }) => useUpdateCheck(phase),
+        { initialProps: { phase: "connected" as ConnectionState } },
+      );
+
+      await waitFor(() => expect(result.current.deferred).toBe(true));
+      expect(installUpdate).not.toHaveBeenCalled();
+
+      // The user disconnects: the held install applies on its own.
+      rerender({ phase: "idle" });
+      await waitFor(() => expect(installUpdate).toHaveBeenCalledTimes(1));
+    });
+
+    it("does not fire the deferred install on a mid-connect transition", async () => {
+      localStorage.setItem("tenebra.autoInstallUpdates", "1");
+      vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
+      vi.mocked(installUpdate).mockResolvedValue();
+
+      const { result, rerender } = renderHook(
+        ({ phase }: { phase: ConnectionState }) => useUpdateCheck(phase),
+        { initialProps: { phase: "connected" as ConnectionState } },
+      );
+
+      await waitFor(() => expect(result.current.deferred).toBe(true));
+
+      // connecting and health_reconnecting are still "busy" — the tunnel is not
+      // safely down, so the install must keep waiting.
+      rerender({ phase: "connecting" });
+      rerender({ phase: "health_reconnecting" });
+      expect(installUpdate).not.toHaveBeenCalled();
+    });
+
+    it("asks before a manual install while a tunnel is up", async () => {
+      vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
+      vi.mocked(installUpdate).mockResolvedValue();
+
+      const { result } = renderHook(() => useUpdateCheck("connected"));
+      await waitFor(() => expect(result.current.available).toBe("9.9.9"));
+
+      // The banner action opens the confirm rather than cutting the tunnel.
+      act(() => result.current.install());
+      expect(result.current.confirming).toBe(true);
+      expect(installUpdate).not.toHaveBeenCalled();
+
+      // Approving it goes ahead and installs.
+      act(() => result.current.confirmInstall());
+      expect(result.current.confirming).toBe(false);
+      await waitFor(() => expect(installUpdate).toHaveBeenCalledTimes(1));
+    });
+
+    it("drops the confirm without installing on cancel", async () => {
+      vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
+      vi.mocked(installUpdate).mockResolvedValue();
+
+      const { result } = renderHook(() => useUpdateCheck("connected"));
+      await waitFor(() => expect(result.current.available).toBe("9.9.9"));
+
+      act(() => result.current.install());
+      expect(result.current.confirming).toBe(true);
+
+      act(() => result.current.cancelInstall());
+      expect(result.current.confirming).toBe(false);
+      expect(installUpdate).not.toHaveBeenCalled();
+      // The release stays on offer for later.
+      expect(result.current.available).toBe("9.9.9");
+    });
+
+    it("installs a manual update straight away when the tunnel is down", async () => {
+      const update = fakeUpdate();
+      vi.mocked(checkForUpdate).mockResolvedValue(update);
+      vi.mocked(installUpdate).mockResolvedValue();
+
+      const { result } = renderHook(() => useUpdateCheck("idle"));
+      await waitFor(() => expect(result.current.available).toBe("9.9.9"));
+
+      act(() => result.current.install());
+      // No tunnel to protect, so no confirm — it installs directly.
+      expect(result.current.confirming).toBe(false);
+      await waitFor(() =>
+        expect(installUpdate).toHaveBeenCalledWith(update, expect.any(Function)),
+      );
+    });
   });
 });

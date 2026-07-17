@@ -14,6 +14,7 @@ describe("UpdateBanner", () => {
       <UpdateBanner
         version="9.9.9"
         installing={false}
+        deferred={false}
         progress={null}
         onInstall={onInstall}
         onDismiss={onDismiss}
@@ -30,11 +31,33 @@ describe("UpdateBanner", () => {
     expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 
+  it("reads as deferred while a live tunnel holds the install back", () => {
+    renderWithProviders(
+      <UpdateBanner
+        version="9.9.9"
+        installing={false}
+        deferred
+        progress={null}
+        onInstall={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Update ready — installs after you disconnect",
+    );
+    // The action now reads "install now" — using it drops the tunnel by hand.
+    expect(
+      screen.getByRole("button", { name: /Install now/ }),
+    ).toBeInTheDocument();
+  });
+
   it("shows indeterminate progress and locks the actions while installing", () => {
     renderWithProviders(
       <UpdateBanner
         version="9.9.9"
         installing
+        deferred={false}
         progress={null}
         onInstall={vi.fn()}
         onDismiss={vi.fn()}
@@ -54,6 +77,7 @@ describe("UpdateBanner", () => {
       <UpdateBanner
         version="9.9.9"
         installing
+        deferred={false}
         progress={42}
         onInstall={vi.fn()}
         onDismiss={vi.fn()}
@@ -70,6 +94,7 @@ describe("UpdateBanner", () => {
       <UpdateBanner
         version="9.9.9"
         installing={false}
+        deferred={false}
         progress={null}
         onInstall={vi.fn()}
         onDismiss={vi.fn()}
