@@ -23,7 +23,8 @@ import (
 // and native IPv6 traffic on a dual-stack host would egress around the tunnel —
 // a silent leak. The ULA is inert on a single-stack host (no IPv6 = nothing to
 // claim), so it is safe to include unconditionally. auto_route/strict_route are
-// forced on by Build.
+// forced on by Build for a sing-box-owned tun, and suppressed when the platform
+// owns the tun and its routing (TunOptions.ExternalTun, the mobile case).
 const (
 	defaultMTU          = 9000
 	defaultStack        = StackSystem
@@ -129,7 +130,17 @@ type TunOptions struct {
 	InterfaceName string
 	MTU           int
 	Stack         string // system, gvisor, or mixed
-	ClashAPIPort  int
+	// ExternalTun marks the tun device as owned by the host platform rather than
+	// opened and routed by sing-box. It is the mobile case: the VPN file descriptor
+	// is supplied by the OS (Android VpnService.Builder.establish, iOS
+	// NEPacketTunnelProvider.packetFlow) and the OS installs the routes
+	// (VpnService.Builder.addRoute, NEPacketTunnelNetworkSettings). sing-box must
+	// not then also claim a default route, so the builder omits
+	// auto_route/strict_route for this tun; MTU and Stack still apply, since they
+	// shape the tun sing-box drives over the supplied fd. Off by default, so the
+	// desktop path — where sing-box owns the tun and needs auto_route — is unchanged.
+	ExternalTun  bool
+	ClashAPIPort int
 	// CacheDir is the directory sing-box's cache_file is written to. When empty,
 	// the cache file is enabled without an explicit path and sing-box resolves it
 	// against the process working directory — correct for the GUI sidecar. The
@@ -491,13 +502,22 @@ func mixedInbound(port int) map[string]any {
 // kill-switch option is set.
 func tunInbound(t TunOptions, strictRoute bool) map[string]any {
 	in := map[string]any{
-		"type":         "tun",
-		"tag":          tunTag,
-		"address":      []string{tunAddr, tunAddr6},
-		"auto_route":   true,
-		"strict_route": strictRoute,
-		"mtu":          t.MTU,
-		"stack":        t.Stack,
+		"type":    "tun",
+		"tag":     tunTag,
+		"address": []string{tunAddr, tunAddr6},
+		"mtu":     t.MTU,
+		"stack":   t.Stack,
+	}
+	// Who owns the routes decides whether sing-box claims them. On desktop sing-box
+	// opens the tun itself and must install the system routes, so it emits
+	// auto_route (and strict_route when the kill switch is armed). When the tun is
+	// supplied and routed by the host platform (ExternalTun — the mobile
+	// VpnService / Network Extension case), the OS already holds the routing table,
+	// so emitting auto_route here would fight it; both are left off. sing-box emits
+	// no auto_redirect in either case.
+	if !t.ExternalTun {
+		in["auto_route"] = true
+		in["strict_route"] = strictRoute
 	}
 	// Only name the interface when there is a name to give. An empty name (the
 	// macOS default) must be omitted, not sent as "", so sing-box auto-assigns a
