@@ -43,11 +43,6 @@ import (
 	"github.com/Divaaaan/tenebra/core/singbox"
 )
 
-// bridgeVersion is the ABI version of this binding — the shape of the
-// request/response envelopes below, NOT the app or sing-box version. Bump it when
-// an envelope changes so the native side can detect a mismatch.
-const bridgeVersion = "0.2.0"
-
 // generateRequest is the JSON envelope generateConfig accepts. It mirrors the
 // inputs the desktop daemon feeds singbox.Build for one connect (a profile's
 // nodes plus routing and tun options), so the mobile config path stays a faithful

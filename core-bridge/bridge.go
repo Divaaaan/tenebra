@@ -38,6 +38,13 @@ func OrderNodes(requestJSON string) (string, error) {
 	return orderNodes(requestJSON)
 }
 
+// bridgeVersion is the ABI version of this binding — the shape of the
+// request/response envelopes, NOT the app or sing-box version. Bump it when an
+// envelope changes so the native side can detect a mismatch. It lives here, under
+// the mobile build tag, because only Version() reads it; keeping it in a tag-free
+// file would make it dead code on the desktop/CI build (staticcheck U1000).
+const bridgeVersion = "0.2.0"
+
 // Version returns the binding's ABI version — the shape of these calls'
 // request/response envelopes, distinct from the sing-box engine and app versions —
 // so a mismatched host and binding can be detected.
