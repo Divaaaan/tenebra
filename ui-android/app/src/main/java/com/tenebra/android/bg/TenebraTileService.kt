@@ -1,5 +1,7 @@
 // Scaffold: not compiled on the authoring host (no Android SDK). A Quick Settings
-// tile mirroring SFA's QSTileService, trimmed to connect/disconnect.
+// tile mirroring SFA's QSTileService (SagerNet/sing-box-for-android, GPL-3.0),
+// trimmed to connect/disconnect. Tenebra is GPL-3.0-compatible.
+// Upstream: https://github.com/SagerNet/sing-box-for-android
 package com.tenebra.android.bg
 
 import android.app.PendingIntent

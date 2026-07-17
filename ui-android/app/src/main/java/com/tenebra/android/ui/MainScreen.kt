@@ -105,7 +105,12 @@ fun MainScreen(
             if (nodes.isEmpty()) {
                 MessageText(text = androidx.compose.ui.res.stringResource(R.string.no_nodes), error = false)
             } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                LazyColumn(
+                    // weight so the list takes the remaining height and scrolls within
+                    // it, rather than being measured against the full column height.
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     items(nodes, key = { it.id }) { node ->
                         NodeRow(
                             node = node,
