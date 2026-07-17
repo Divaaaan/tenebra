@@ -6,6 +6,7 @@ import type { Update } from "@tauri-apps/plugin-updater";
 import type { ConnectionMode, RoutingMode, SplitMode, TunStack } from "../api";
 import type { Tenebra } from "../state/useTenebra";
 import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
+import { UpdateConfirm } from "../components/UpdateConfirm";
 import { useI18n } from "../i18n/I18nContext";
 import { useTheme } from "../theme/ThemeContext";
 import type { Language } from "../i18n/strings";
@@ -21,6 +22,7 @@ import {
 import { isValidDnsServer } from "../lib/dns";
 import { isValidDomainSuffix } from "../lib/rules";
 import { checkForUpdate, installUpdate, type UpdateStatus } from "../lib/updates";
+import { tunnelBusy } from "../lib/tunnel";
 import { useReducedMotion } from "../lib/useReducedMotion";
 
 interface SettingsScreenProps {
@@ -278,6 +280,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   const [channel, setChannelState] = useState<UpdateChannel>(getUpdateChannel);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ kind: "idle" });
   const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null);
+  // A manual install while a tunnel is up would be dropped by the relaunch, so it
+  // waits on a confirm; this holds that dialog open.
+  const [confirmingInstall, setConfirmingInstall] = useState(false);
   const [appVersion, setAppVersion] = useState("");
 
   useEffect(() => {
@@ -498,10 +503,13 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     }
   }
 
-  async function applyUpdate() {
+  // The download → install → relaunch itself. Shared by the direct (tunnel down)
+  // path and the confirmed one, so the gate below has one thing to call.
+  async function runUpdateInstall() {
     if (!pendingUpdate) {
       return;
     }
+    setConfirmingInstall(false);
     setUpdateStatus({ kind: "downloading", percent: null });
     try {
       await installUpdate(pendingUpdate, (percent) =>
@@ -513,6 +521,20 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     } catch (e) {
       setUpdateStatus({ kind: "error", message: String(e) });
     }
+  }
+
+  // The Install button. Installing relaunches the app (and on Windows stops the
+  // background service to swap it), which would drop a live tunnel — so when one
+  // is up, confirm first; when it's down, install straight away.
+  function applyUpdate() {
+    if (!pendingUpdate) {
+      return;
+    }
+    if (tunnelBusy(tenebra.state.state)) {
+      setConfirmingInstall(true);
+      return;
+    }
+    void runUpdateInstall();
   }
 
   const updateBusy =
@@ -1577,7 +1599,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
               <button
                 type="button"
                 className="set-btn"
-                onClick={() => void applyUpdate()}
+                onClick={applyUpdate}
               >
                 {t.settings.updatesInstall}
               </button>
@@ -1634,6 +1656,13 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
           </div>
         </section>
       </div>
+
+      {confirmingInstall && (
+        <UpdateConfirm
+          onConfirm={() => void runUpdateInstall()}
+          onCancel={() => setConfirmingInstall(false)}
+        />
+      )}
     </div>
   );
 }

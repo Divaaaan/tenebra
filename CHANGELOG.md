@@ -13,11 +13,22 @@ All notable changes to Tenebra are documented here. The format follows
 
 ### Added
 
+- **Updates never interrupt a live tunnel.** Applying an update relaunches the
+  app — and on Windows the installer stops the background service to swap it —
+  which could drop the VPN mid-session, worst of all when auto-install fired
+  moments after a connect. Auto-install now holds off until the tunnel is down;
+  while it is up the banner says the update is ready and will apply once you
+  disconnect. Installing by hand while connected asks first, in plain terms,
+  before it cuts the connection.
 - **The tray and system notifications now follow the app's language.** The tray
   menu, its tooltip and the desktop notifications were always English even with
   the interface set to Russian, because they live in the native shell rather
   than the webview. The shell now tracks the language the app is set to and
   localizes them to match, switching on the fly when the language changes.
+- **Importing a subscription over plain http:// warns you.** The daemon already
+  noted an unencrypted fetch in its log; the import dialog now says it inline —
+  an http:// subscription (token and all) can be read in transit. It is a
+  heads-up, not a wall: the import still goes through if you choose.
 - **The app warns when the background service is older than it.** The daemon
   now reports its build version in every state snapshot, and the app shows a
   banner when the two builds differ — with the reinstall command ready to copy

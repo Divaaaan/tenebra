@@ -92,6 +92,20 @@ describe("ProfilesScreen import dialog", () => {
         "Provider",
       );
     });
+
+    it("warns on a plain http:// URL without blocking the import", async () => {
+      const { user, dialog } = await openDialog();
+      const url = dialog.getByPlaceholderText("https://…");
+
+      // An https URL stays silent.
+      await user.type(url, "https://example.invalid/sub");
+      expect(dialog.queryByText(/Unencrypted http/i)).not.toBeInTheDocument();
+
+      // Plain http surfaces the inline caution — a heads-up, not a block.
+      await user.clear(url);
+      await user.type(url, "http://example.invalid/sub");
+      expect(dialog.getByText(/Unencrypted http/i)).toBeInTheDocument();
+    });
   });
 
   describe("link tab", () => {

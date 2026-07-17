@@ -1,5 +1,7 @@
 import { useEffect } from "react";
 
+import { useI18n } from "../i18n/I18nContext";
+
 /** How long the credits linger before self-dismissing, in ms. */
 export const CREDITS_MS = 6000;
 
@@ -18,6 +20,7 @@ interface CreditsToastProps {
  * went looking, not an announcement.
  */
 export function CreditsToast({ onDismiss }: CreditsToastProps) {
+  const { t } = useI18n();
   useEffect(() => {
     const id = setTimeout(onDismiss, CREDITS_MS);
     const onKey = (e: KeyboardEvent) => {
@@ -38,7 +41,7 @@ export function CreditsToast({ onDismiss }: CreditsToastProps) {
         type="button"
         className="credits-card"
         onClick={onDismiss}
-        aria-label="Dismiss"
+        aria-label={t.toast.dismiss}
       >
         <span className="credits-crown" aria-hidden="true">
           {CROWN}

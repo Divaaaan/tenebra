@@ -6,6 +6,7 @@ import { ConnectionPanel } from "./components/ConnectionPanel";
 import { ServerList, type ServerRow } from "./components/ServerList";
 import { BottomBar } from "./components/BottomBar";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { UpdateConfirm } from "./components/UpdateConfirm";
 import { DaemonSkewBanner } from "./components/DaemonSkewBanner";
 import { CrashConsentBanner } from "./components/CrashConsentBanner";
 import { CrashReportBanner } from "./components/CrashReportBanner";
@@ -126,7 +127,10 @@ export function App() {
 
   // Launch update check: offers a found release in the banner strip, or — when
   // the auto-install preference is on — installs it silently and relaunches.
-  const update = useUpdateCheck();
+  // Gated on the tunnel state (the live `phase`): a relaunch would drop an
+  // active VPN, so auto-install waits for the tunnel to go down and a manual
+  // install while it is up asks first.
+  const update = useUpdateCheck(phase);
 
   // Daemon build vs app build, latched from state snapshots. A skew means the
   // privileged daemon predates this UI (the macOS LaunchDaemon is never touched
@@ -523,6 +527,7 @@ export function App() {
         <UpdateBanner
           version={update.available}
           installing={update.installing}
+          deferred={update.deferred}
           progress={update.progress}
           onInstall={update.install}
           onDismiss={update.dismiss}
@@ -648,6 +653,13 @@ export function App() {
           }
           onConfirm={confirmConnectRequest}
           onCancel={cancelConnectRequest}
+        />
+      )}
+
+      {update.confirming && (
+        <UpdateConfirm
+          onConfirm={update.confirmInstall}
+          onCancel={update.cancelInstall}
         />
       )}
 

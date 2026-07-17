@@ -3,6 +3,12 @@ import { useI18n } from "../i18n/I18nContext";
 interface UpdateBannerProps {
   version: string;
   installing: boolean;
+  /**
+   * The install is armed but held back because a tunnel is up: it applies once
+   * the tunnel drops. The strip says so, and its action reads "install now"
+   * (dropping the tunnel) rather than a plain "update".
+   */
+  deferred: boolean;
   /** Integer download percent, or null while the size is unknown. */
   progress: number | null;
   onInstall: () => void;
@@ -17,6 +23,7 @@ interface UpdateBannerProps {
 export function UpdateBanner({
   version,
   installing,
+  deferred,
   progress,
   onInstall,
   onDismiss,
@@ -27,7 +34,9 @@ export function UpdateBanner({
     ? progress == null
       ? t.update.downloading
       : `${t.update.downloading} ${progress}%`
-    : t.update.available.replace("{version}", version);
+    : deferred
+      ? t.update.deferred
+      : t.update.available.replace("{version}", version);
 
   return (
     <div className="update-banner" role="status">
@@ -39,7 +48,7 @@ export function UpdateBanner({
           onClick={onInstall}
           disabled={installing}
         >
-          ▶ {t.update.install}
+          ▶ {deferred ? t.update.installNow : t.update.install}
         </button>
         {!installing && (
           <button type="button" onClick={onDismiss}>

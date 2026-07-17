@@ -148,6 +148,8 @@ export interface Strings {
     profileImported: string;
     /** Raised when the log console is cleared. */
     logsCleared: string;
+    /** Accessible label for a small self-dismissing card's close control. */
+    dismiss: string;
   };
 
   /** Update banner shown when the launch check finds a newer release. */
@@ -157,6 +159,17 @@ export interface Strings {
     install: string;
     later: string;
     downloading: string;
+    /**
+     * Shown in place of `available` when an auto-install is held back because a
+     * tunnel is up: it applies on its own once the tunnel goes down, so it never
+     * cuts a live connection out from under the user.
+     */
+    deferred: string;
+    /** Action that installs right now, tearing down any live tunnel. */
+    installNow: string;
+    /** Confirm dialog shown before a manual install drops a live tunnel. */
+    confirmTitle: string;
+    confirmBody: string;
   };
 
   /**
@@ -310,6 +323,12 @@ export interface Strings {
        * substituted in.
        */
       batchResult: string;
+      /**
+       * Inline caution shown when the subscription URL is plain http://. Not a
+       * block — the user decides — just a heads-up that the fetch (token and all)
+       * is not encrypted in transit.
+       */
+      httpWarning: string;
     };
   };
 
@@ -648,12 +667,17 @@ const en: Strings = {
     profileRemoved: "profile removed · {name}",
     profileImported: "profile imported · {name}",
     logsCleared: "log cleared",
+    dismiss: "Dismiss",
   },
   update: {
     available: "Version {version} is available",
     install: "Update",
     later: "Later",
     downloading: "Downloading update…",
+    deferred: "Update ready — installs after you disconnect",
+    installNow: "Install now",
+    confirmTitle: "Install update now?",
+    confirmBody: "This disconnects your VPN and restarts Tenebra. Continue?",
   },
   daemon: {
     stale:
@@ -757,6 +781,8 @@ const en: Strings = {
       submit: "Import",
       importing: "Importing…",
       batchResult: "Imported {imported}, skipped {skipped}.",
+      httpWarning:
+        "Unencrypted http:// subscription — the data could be intercepted.",
     },
   },
   settings: {
@@ -1062,12 +1088,17 @@ const ru: Strings = {
     profileRemoved: "профиль удалён · {name}",
     profileImported: "профиль импортирован · {name}",
     logsCleared: "журнал очищен",
+    dismiss: "Закрыть",
   },
   update: {
     available: "Доступна версия {version}",
     install: "Обновить",
     later: "Позже",
     downloading: "Загрузка обновления…",
+    deferred: "Обновление готово — установится после отключения",
+    installNow: "Установить сейчас",
+    confirmTitle: "Установить обновление сейчас?",
+    confirmBody: "Это разорвёт VPN-соединение и перезапустит Tenebra. Продолжить?",
   },
   daemon: {
     stale:
@@ -1171,6 +1202,8 @@ const ru: Strings = {
       submit: "Импортировать",
       importing: "Импортирую…",
       batchResult: "Импортировано: {imported}, пропущено: {skipped}.",
+      httpWarning:
+        "Подписка по незашифрованному http:// — данные могут быть перехвачены.",
     },
   },
   settings: {
