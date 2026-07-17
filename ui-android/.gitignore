@@ -1,0 +1,31 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.properties
+
+# The wrapper jar is a binary blob; CI restores it with `gradle wrapper` (or a
+# setup-gradle action) before building. Everything else in gradle/ is tracked.
+gradle/wrapper/gradle-wrapper.jar
+
+# Android / IDE local state
+local.properties
+.cxx/
+captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# gomobile artifacts — the engine and the core bridge — are built by CI and dropped
+# into app/libs (see README). They statically bundle the Go runtime and are tens of
+# MB, so they are never committed; only the directory placeholder is.
+app/libs/*.aar
+
+# Signing material must never be committed.
+*.jks
+*.keystore
+keystore.properties
+
+# IDE
+.idea/
+*.iml

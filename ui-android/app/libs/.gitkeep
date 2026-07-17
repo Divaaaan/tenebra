@@ -1,0 +1,8 @@
+# Placeholder so the libs/ directory is tracked while its .aar contents are not.
+#
+# CI drops two gomobile artifacts here (both git-ignored, see ../../.gitignore):
+#   libbox.aar        — unmodified sing-box engine (io.nekohasekai.libbox), from
+#                       `make lib_android` at the pinned sing-box tag.
+#   tenebra-core.aar  — our config generator, from
+#                       `gomobile bind -target android -androidapi 23 \
+#                        -javapkg com.tenebra.core -o ui-android/app/libs/tenebra-core.aar ./core-bridge`
