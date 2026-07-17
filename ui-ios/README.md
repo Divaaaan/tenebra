@@ -13,26 +13,26 @@ architecture and the reasoning; this README is the build/status companion to it.
 | Artifact | State | How it was checked |
 |---|---|---|
 | `project.yml` (XcodeGen) | Structurally valid YAML | Parsed; **not** run through `xcodegen generate` |
-| `core-bridge/` (repo root, shared) | Compiles for iOS **and** Android; unit-tested on host | `GOOS=android GOARCH=arm64 go build ./core-bridge` + `go test ./core-bridge/...` |
+| `core-bridge/` + `mobile/` (repo root) | Plain Go generator + gomobile wrapper; unit-tested on host | `go test ./core-bridge/...`; `cd mobile && GOOS=android GOARCH=arm64 go build ./...` |
 | `Support/*.plist`, `*.entitlements` | Valid property lists | Parsed with a plist reader |
 | `App/*.swift`, `Extension/*.swift` | **Unverified stubs** | Not compiled — no swiftc on the authoring host |
 | `scripts/build-libbox.sh` | **Unverified plan** | `bash -n` syntax only; needs macOS to run |
-| `Frameworks/*.xcframework` | **Do not exist yet** | Produced by `build-libbox.sh` on a Mac |
+| `Frameworks/Tenebra.xcframework` | **Does not exist yet** | Produced by `build-libbox.sh` on a Mac |
 
 Nothing here builds into an app until the steps below are done on a Mac. Every
 Swift file carries a `SCAFFOLD — NOT compiled or verified` header, and every
-libbox/TenebraCore call site is guarded with `#if canImport(...)` so the intent is
+libbox/core call site is guarded with `#if canImport(Tenebra)` so the intent is
 explicit rather than faked.
 
 ## Layout
 
 ```
-core-bridge/                shared gomobile binding at the repo root — one package,
-                            two artifacts: the iOS .xcframework AND an Android .aar
-  bridge.go                 gomobile surface (//go:build ios || android):
-                            GenerateConfig / ImportSubscription / OrderNodes / Version
-  generate.go import.go     build-tag-free logic behind that surface, so it is
-    order.go                host-testable with `go test ./core-bridge/...`
+core-bridge/                the pure config generator at the repo root (plain Go lib):
+  generate.go import.go     GenerateConfig / ImportSubscription / OrderNodes / Version
+    order.go                as ordinary exported funcs, host-testable with
+                            `go test ./core-bridge/...` — no build tag
+mobile/                     gomobile wrapper (package tenebracore): binds core-bridge
+                            + libbox into one Tenebra.xcframework (and the Android .aar)
 ui-ios/
   project.yml               XcodeGen manifest: host app + NE extension targets
   App/                      SwiftUI host app (thin client; never touches packets)
@@ -45,16 +45,18 @@ ui-ios/
   Support/
     App/                    host-app Info.plist + entitlements
     Extension/              extension Info.plist + entitlements
-  Frameworks/               gomobile xcframeworks (git-ignored; built on a Mac)
+  Frameworks/               Tenebra.xcframework (git-ignored; built on a Mac)
 scripts/
-  build-libbox.sh           builds TenebraCore.xcframework + Libbox.xcframework
+  build-libbox.sh           builds the fused Tenebra.xcframework
 ```
 
-The two Go modules stay separate on purpose (see
-[ios.md](../docs/porting/ios.md#architecture)): Tenebra's core is bound into its
-own small `TenebraCore.xcframework` (from the shared `core-bridge/` package, which
-also binds to an Android `.aar`), and sing-box's `Libbox.xcframework` is used
-unmodified. They meet only at a JSON string.
+The generator and the engine stay separate in SOURCE (see
+[ios.md](../docs/porting/ios.md#architecture)): Tenebra's `core-bridge` imports no
+sing-box and meets the engine only at a JSON string. But they are bound TOGETHER into
+one `Tenebra.xcframework` — the `mobile/` wrapper and sing-box's `libbox` in a single
+gomobile pass — because two standalone gomobile frameworks each carry their own Go
+runtime and gomobile `go` support package and cannot share a process (the Apple
+mirror of the fused `tenebra.aar` on Android).
 
 ## Bring-up order (do these on a Mac, in this order)
 
@@ -67,7 +69,7 @@ that depends on it.** This mirrors the staged plan in
    **inside the host app** as a local SOCKS proxy — no NE, no 50 MB cap — and
    drive real traffic while watching RSS. This is the single highest-risk unknown
    in the whole port (see the memory section below). It validates the gomobile
-   bind, the two-module split, and the `GenerateConfig → StartOrReloadService`
+   bind, the fused generator+engine framework, and the `GenerateConfig → StartOrReloadService`
    handoff, and gives the first honest read on whether the protocol mix fits under
    50 MB once the cap applies. **Do not build the NE until this passes.**
 2. **I2 — NE scaffold.** Wire the `NEPacketTunnelProvider` (`Extension/`), the App
@@ -83,19 +85,20 @@ that depends on it.** This mirrors the staged plan in
 
 ```
 # on macOS, with Xcode + Go >= 1.24.7
-./scripts/build-libbox.sh        # -> ui-ios/Frameworks/{TenebraCore,Libbox}.xcframework
+./scripts/build-libbox.sh        # -> ui-ios/Frameworks/Tenebra.xcframework
 cd ui-ios
 brew install xcodegen
 xcodegen generate                # -> Tenebra.xcodeproj (git-ignored)
 open Tenebra.xcodeproj
 ```
 
-`build-libbox.sh` uses SagerNet's **fork** of gomobile (`v0.1.13`), not upstream
-`golang.org/x/mobile` — upstream repeatedly breaks on new Xcode releases.
-`Libbox.xcframework` is built from sing-box's own `make lib_apple` at the pinned
-tag (`1.13.13`, kept in sync with the desktop sidecar) so the engine matches
-upstream exactly. `TenebraCore.xcframework` is our `core-bridge` package, which
-imports no sing-box and so needs none of libbox's build tags.
+`build-libbox.sh` uses SagerNet's **fork** of gomobile (`v0.1.12`, installed by
+sing-box's own `make lib_install`), not upstream `golang.org/x/mobile` — upstream
+repeatedly breaks on new Xcode releases. `Tenebra.xcframework` is a single
+`gomobile bind` over two packages — the `mobile/` wrapper and sing-box's `libbox` —
+built with libbox's own tags at the pinned tag (`1.13.13`, kept in sync with the
+desktop sidecar) so the engine matches upstream exactly. Our wrapper imports no
+sing-box, so it needs none of those tags; listing them is harmless to it.
 
 ## The 50 MB memory cap (the top risk)
 
@@ -150,9 +153,9 @@ Add it only once `build-libbox.sh` is proven on a Mac. When that time comes, the
 job should, on a `macos-14` (Apple Silicon) runner:
 
 1. Install Go >= 1.24.7 and `xcodegen` (`brew install xcodegen`).
-2. Run `scripts/build-libbox.sh` — or, better, restore the two xcframeworks from a
-   cache / Git LFS keyed on the sing-box tag, since the gomobile bind is slow and
-   its inputs only change on an engine bump.
+2. Run `scripts/build-libbox.sh` — or, better, cache the Go module + build caches
+   (as the Android job does) keyed on `go.sum` + `mobile/go.sum`, since the slow part
+   is compiling sing-box for the bind.
 3. `cd ui-ios && xcodegen generate`.
 4. `xcodebuild build -project Tenebra.xcodeproj -scheme Tenebra \
    -destination 'generic/platform=iOS Simulator'` — a **compile-only** check
@@ -160,10 +163,10 @@ job should, on a `macos-14` (Apple Silicon) runner:
    and TestFlight uploads need secrets and belong in the release workflow, not CI.
 
 Until then, the checkable slice of this scaffold on any host is: `project.yml`
-parses as YAML, and the shared Go bridge compiles for both mobile targets and
-passes its unit tests (`GOOS=android GOARCH=arm64 go build ./core-bridge`,
-`GOOS=darwin GOARCH=arm64 go build -tags ios ./core-bridge`, and
-`go test ./core-bridge/...`).
+parses as YAML, and the shared Go generator + wrapper compile and pass their unit
+tests (`go test ./core-bridge/...`, and from `mobile/`:
+`GOOS=android GOARCH=arm64 go build ./...`). `core-bridge` carries no build tag, so
+it builds on every host without a mobile toolchain.
 
 ## What this needs from a maintainer with a Mac + Apple account
 

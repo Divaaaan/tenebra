@@ -5,18 +5,18 @@
 // connection ownership. libbox (Go) invokes these; we implement them in Swift.
 //
 // The reference implementation is sing-box-for-apple's
-// Library/Network/ExtensionPlatformInterface.swift (~879 lines). The protocol
-// name and its exact method set are defined by the GENERATED Libbox headers and
-// vary by sing-box version — the methods below are the load-bearing ones sketched
-// from the 1.13 libbox surface, NOT a verified conformance. Read the real headers
-// on the Mac and complete the conformance there. The whole file is guarded on the
-// framework being present.
+// Library/Network/ExtensionPlatformInterface.swift (~879 lines). The protocol name
+// and its exact method set are defined by the generated headers (the Libbox* symbols
+// in the fused Tenebra framework) and vary by sing-box version — the methods below
+// are the load-bearing ones sketched from the 1.13 libbox surface, NOT a verified
+// conformance. Read the real headers on the Mac and complete the conformance there.
+// The whole file is guarded on the framework being present.
 
 import Foundation
 import NetworkExtension
 
-#if canImport(Libbox)
-import Libbox
+#if canImport(Tenebra)
+import Tenebra
 
 // The concrete protocol is `LibboxPlatformInterfaceProtocol` (gomobile names it
 // from the Go `PlatformInterface` interface). Declaring conformance is deferred to

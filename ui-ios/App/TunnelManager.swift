@@ -11,15 +11,15 @@ import Foundation
 import NetworkExtension
 import Combine
 
-// The gomobile frameworks only exist after scripts/build-libbox.sh runs on a Mac.
-// Guard the imports so the rest of this file is at least syntactically reviewable
-// without them, and so the "no framework yet" state is explicit rather than a
-// hard compile break the reader has to infer.
-#if canImport(TenebraCore)
-import TenebraCore
-#endif
-#if canImport(Libbox)
-import Libbox
+// The fused gomobile framework only exists after scripts/build-libbox.sh runs on a
+// Mac. It carries BOTH our core (Tenebracore* symbols) and the sing-box engine
+// (Libbox* symbols) in one module, Tenebra — the Apple mirror of the single
+// tenebra.aar on Android. Guard the import so the rest of this file stays
+// syntactically reviewable without it, and so the "no framework yet" state is
+// explicit rather than a hard compile break. VERIFY the module name (Tenebra) and
+// the Tenebracore*/Libbox* symbol spellings against the generated framework on a Mac.
+#if canImport(Tenebra)
+import Tenebra
 #endif
 
 // Shared identifiers. Keep in sync with project.yml and the entitlements.
@@ -158,20 +158,22 @@ final class TunnelManager: ObservableObject {
     // Call into Tenebra's core to turn the current profile + selection into a
     // sing-box config JSON string. This is the shared gomobile bridge in core-bridge.
     private func generateConfigJSON() throws -> String {
-        // Build the request envelope the bridge expects (see bridge.go:generateRequest).
-        // TODO: assemble a real profile JSON from stored state; placeholder here.
+        // Build the request envelope the bridge expects (see
+        // core-bridge/generate.go:generateRequest). TODO: assemble a real profile JSON
+        // from stored state; placeholder here.
         let requestJSON = "{\"profile\":{\"id\":\"\",\"name\":\"\",\"source\":\"manual\",\"nodes\":[]}}"
 
-        #if canImport(TenebraCore)
+        #if canImport(Tenebra)
         // gomobile surfaces the Go function roughly as below; confirm the exact
-        // symbol/signature against the generated TenebraCore headers on the Mac
-        // (gomobile prefixes with the capitalized package name and returns via an
-        // NSError out-param that Swift imports as `throws`).
+        // symbol/signature against the generated Tenebra framework on the Mac
+        // (gomobile prefixes with the capitalized package name — our wrapper package
+        // is tenebracore — and returns via an NSError out-param Swift imports as
+        // `throws`).
         return try TenebracoreGenerateConfig(requestJSON)
         #else
         // No framework built yet. Fail loudly rather than pretend.
         throw NSError(domain: "Tenebra", code: -1, userInfo: [
-            NSLocalizedDescriptionKey: "TenebraCore.xcframework not built — run scripts/build-libbox.sh on a Mac"
+            NSLocalizedDescriptionKey: "Tenebra.xcframework not built — run scripts/build-libbox.sh on a Mac"
         ])
         #endif
     }
