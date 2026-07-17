@@ -11,6 +11,7 @@ on:
     paths:
       - 'core-bridge/**'
       - 'core/**'
+      - 'mobile/**'
       - 'ui-android/**'
       - 'scripts/build-libbox-android.sh'
       - '.github/workflows/android.yml'
@@ -22,6 +23,7 @@ on:
     paths:
       - 'core-bridge/**'
       - 'core/**'
+      - 'mobile/**'
       - 'ui-android/**'
       - 'scripts/build-libbox-android.sh'
       - '.github/workflows/android.yml'
@@ -60,16 +62,23 @@ jobs:
         id: ndk
         with:
           ndk-version: r28
-      # Cache only the engine .aar: it is the slow artifact and its sole input is
-      # the sing-box version, so the key is the version. tenebra-core.aar is NOT
-      # cached — it is rebuilt every run so a core-bridge/ or core/ change always
-      # shows up. Bump this key whenever singbox_version in the script changes.
-      - name: Restore the libbox engine .aar
+      # Cache the Go module + build caches, NOT the .aar. The fused tenebra.aar is
+      # rebuilt every run so a core-bridge/, core/ or mobile/ change always shows up,
+      # but its slow part is compiling sing-box for the bind. Keying on the two go.sum
+      # files lets a run reuse the compiled engine from the module/build cache and
+      # skip the ~11-minute libbox compile whenever the dependency graph is unchanged.
+      # The singbox version in the key is a human-readable cache-buster (it is already
+      # pinned inside mobile/go.sum); restore-keys lets a stale cache seed a new one.
+      - name: Cache the Go module and build caches
         uses: actions/cache@v4
         with:
-          path: ui-android/app/libs/libbox.aar
-          key: libbox-aar-singbox-1.13.13
-      - name: Build the gomobile .aars (core always, libbox on cache miss)
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-bind-${{ runner.os }}-singbox-1.13.13-${{ hashFiles('go.sum', 'mobile/go.sum') }}
+          restore-keys: |
+            go-bind-${{ runner.os }}-singbox-1.13.13-
+      - name: Build the fused tenebra.aar (wrapper + libbox, one bind)
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
@@ -108,12 +117,16 @@ jobs:
         id: ndk
         with:
           ndk-version: r28
-      - name: Restore the libbox engine .aar
+      - name: Cache the Go module and build caches
         uses: actions/cache@v4
         with:
-          path: ui-android/app/libs/libbox.aar
-          key: libbox-aar-singbox-1.13.13
-      - name: Build the gomobile .aars
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-bind-${{ runner.os }}-singbox-1.13.13-${{ hashFiles('go.sum', 'mobile/go.sum') }}
+          restore-keys: |
+            go-bind-${{ runner.os }}-singbox-1.13.13-
+      - name: Build the fused tenebra.aar (wrapper + libbox, one bind)
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
