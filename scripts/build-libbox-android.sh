@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
-# Builds the two gomobile artifacts the Android client links — the mirror of the
-# iOS build in scripts/build-libbox.sh (see docs/porting/android.md; ui-android's
-# own README, once it lands, is the build/status companion):
+# Builds the single gomobile artifact the Android client links — the mirror of the
+# iOS build in scripts/build-libbox.sh (see docs/porting/android.md and
+# ui-android/README.md):
 #
-#   1. tenebra-core.aar — Tenebra's own config generator (the shared core-bridge
-#                         package), exposing GenerateConfig(requestJSON) -> configJSON
-#                         plus ImportSubscription / OrderNodes / Version.
-#   2. libbox.aar       — sing-box's experimental/libbox engine, built from the
-#                         pinned sing-box tag with the tag's OWN make targets and
-#                         used UNMODIFIED (package io.nekohasekai.libbox).
+#   tenebra.aar — ONE .aar carrying BOTH Tenebra's config generator (the ../mobile
+#                 wrapper over core-bridge) AND sing-box's experimental/libbox
+#                 engine, bound together in a single gomobile pass.
 #
-# Both land in ui-android/app/libs/ for Gradle to pick up.
+# Why one artifact and not two: a standalone core .aar and a standalone libbox.aar
+# each bundle their own Go runtime and their own copy of the gomobile support
+# package `go` (go.Seq, go.Universe). Linking both makes Android's D8 fail on
+# duplicate go/Seq + go/Universe classes and, even past that, loads two Go runtimes
+# in one process. Binding the wrapper and libbox in one pass yields one runtime and
+# one `go` package, with io.nekohasekai.tenebracore.Tenebracore and the
+# io.nekohasekai.libbox.* classes side by side. See ../mobile/tools.go.
+#
+# It lands in ui-android/app/libs/ for Gradle to pick up.
 #
 # ============================================================================
 #  Linux/WSL/macOS + Android NDK r28 + OpenJDK 17 + Go >= 1.24.7 REQUIRED.
@@ -24,28 +29,46 @@
 # Prerequisites:
 #   - Go >= 1.24.7 (what the pinned sing-box tag requires when libbox is linked).
 #   - Android NDK r28, discoverable via ANDROID_NDK_HOME (or ANDROID_NDK_ROOT, or
-#     $ANDROID_HOME/ndk/...). gomobile needs it even for the pure-Go core .aar,
-#     because the bind emits a JNI/C bridge the NDK's clang compiles.
-#   - OpenJDK 17 for the Gradle build that consumes these .aars (not this script).
+#     $ANDROID_HOME/ndk/...). gomobile needs it: the bind emits a JNI/C bridge and
+#     compiles libbox's cgo (gVisor, Cronet) with the NDK's clang.
+#   - OpenJDK 17 for the Gradle build that consumes this .aar (not this script).
 #   - make, git. This repo checked out; run from anywhere (paths resolve here).
 set -euo pipefail
 
 # --- Pinned versions -------------------------------------------------------
-# Keep sing-box in sync with scripts/fetch-resources.sh / .ps1 ($singbox_version)
-# and with scripts/build-libbox.sh: one engine version so one config generator
-# targets one schema.
+# Keep sing-box in sync with scripts/fetch-resources.sh / .ps1 ($singbox_version),
+# scripts/build-libbox.sh AND mobile/go.mod: one engine version so one config
+# generator targets one schema. The bind below compiles libbox from the module
+# graph (mobile/go.mod), so that pin is the one that actually decides the engine
+# version; this clone is only used to install the matching gomobile fork.
 singbox_version="1.13.13"
 
-# This script deliberately does NOT pin a gomobile version. sing-box's own
+# This script deliberately does NOT pin a gomobile version of its own. sing-box's
 # `make lib_install` installs the exact sagernet/gomobile fork the pinned tag
-# expects (v0.1.12 for 1.13.13), and BOTH artifacts are bound with that same
-# gomobile, so the engine and our core can never drift onto two different binders.
-# The version lives in sing-box's Makefile — the single source of truth — never
-# here. (scripts/build-libbox.sh derives the same version from that Makefile too.)
+# expects (v0.1.12 for 1.13.13), which is also what mobile/go.mod requires, so the
+# binder and the bind's support package can never drift apart. The version lives in
+# sing-box's Makefile — the single source of truth — never here.
 
-# minSdk for the bind. 23 matches libbox's own main-variant android API level
-# (sing-box's build_libbox uses -androidapi 23), so both .aars share a floor.
+# minSdk / -androidapi for the bind. 23 matches libbox's own main-variant android
+# API level (sing-box's build_libbox builds the API-23 "main" libbox.aar) and the
+# app's minSdk 23, so the fused artifact shares that floor.
 android_api="23"
+
+# libbox build tags — replicated EXACTLY from sing-box's own build entrypoint so the
+# fused engine is bit-for-bit what upstream ships. Source: cmd/internal/build_libbox/
+# main.go at tag v$singbox_version, the sharedTags slice (two append() calls) that
+# the API-23 "main" android variant is built with (buildAndroid(): mainTags =
+# sharedTags, no debug). A MISSING tag silently drops a protocol from the runtime,
+# so this list is not to be trimmed by hand. If singbox_version changes, re-read
+# that file and update this verbatim.
+libbox_tags="with_gvisor,with_quic,with_wireguard,with_utls,with_naive_outbound,with_clash_api,badlinkname,tfogo_checklinkname0,with_tailscale,ts_omit_logtail,ts_omit_ssh,ts_omit_drive,ts_omit_taildrop,ts_omit_webclient,ts_omit_doctor,ts_omit_capture,ts_omit_kube,ts_omit_aws,ts_omit_synology,ts_omit_bird"
+
+# Linker flags, also from that file's sharedFlags. -checklinkname=0 is load-bearing:
+# it pairs with the badlinkname / tfogo_checklinkname0 tags and lets sing-box and
+# tfo-go keep their //go:linkname hacks, which Go >= 1.23 would otherwise reject at
+# link time. The -X's set the version libbox reports and disable multipath TCP by
+# default, matching upstream.
+libbox_ldflags="-X github.com/sagernet/sing-box/constant.Version=v$singbox_version -X internal/godebug.defaultGODEBUG=multipathtcp=0 -s -w -buildid= -checklinkname=0"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(dirname "$script_dir")"
@@ -66,7 +89,7 @@ guard_host() {
   command -v go >/dev/null || { echo "error: Go >= 1.24.7 not found" >&2; exit 1; }
   command -v git >/dev/null || { echo "error: git not found" >&2; exit 1; }
   command -v make >/dev/null || {
-    echo "error: make not found — sing-box's lib_install / lib_android targets need it" >&2
+    echo "error: make not found — sing-box's lib_install target needs it" >&2
     exit 1
   }
   if [ -z "${ANDROID_NDK_HOME:-}${ANDROID_NDK_ROOT:-}${ANDROID_HOME:-}" ]; then
@@ -93,62 +116,48 @@ main() {
   work="$(mktemp -d)"
   trap 'rm -rf "${work:-}"' EXIT
 
-  # sing-box is needed for BOTH artifacts: its `make lib_install` provides the
-  # gomobile fork we also bind our core with, and its `make lib_android` builds
-  # libbox. Clone it once, shallow, at the pinned tag.
-  echo ">> cloning sing-box v$singbox_version"
+  # Clone sing-box ONLY to install the gomobile fork it pins — its `make lib_install`
+  # installs the exact sagernet/gomobile the tag expects, sourcing the version from
+  # its Makefile so this script never hardcodes it. The engine SOURCE that gets bound
+  # does NOT come from this clone: the bind runs in mobile/ and resolves
+  # experimental/libbox from mobile/go.mod (pinned to the same v$singbox_version).
+  echo ">> cloning sing-box v$singbox_version (for its gomobile fork only)"
   git clone --depth 1 --branch "v$singbox_version" \
     https://github.com/SagerNet/sing-box "$work/sing-box"
-  local singbox="$work/sing-box"
 
-  # Install the gomobile fork the tag pins — this is sing-box's own lib_install —
-  # then put it on PATH for the binds below. Done up front (not inside the libbox
-  # step) precisely because the core bind needs the same gomobile; sourcing the
-  # version from the Makefile here is what lets this script avoid a hardcoded pin.
-  # No `gomobile init`: modern gomobile binds on demand, and sing-box's proven
-  # path (lib_install -> lib_android) runs no init either. If a future toolchain
-  # needs it, add `gomobile init` right here.
   echo ">> installing the sagernet/gomobile fork via sing-box's lib_install"
-  (cd "$singbox" && make lib_install)
+  (cd "$work/sing-box" && make lib_install)
   PATH="$(gopath_bin):$PATH"
   export PATH
 
-  # --- Artifact 1: our config generator ------------------------------------
-  # Pure stdlib + core/, no sing-box import, so it needs none of libbox's build
-  # tags. gomobile sets GOOS=android, which activates the `android` side of the
-  # `//go:build ios || android` bridge in core-bridge automatically. Rebuilt every
-  # run (it is cheap) so a change under core-bridge/ or core/ is always reflected;
-  # CI does NOT cache this one, only the slow engine .aar below.
-  echo ">> binding tenebra-core.aar from ./core-bridge"
+  # --- The single combined bind --------------------------------------------
+  # One gomobile pass over TWO packages: our wrapper (".", package tenebracore) and
+  # sing-box's libbox. gomobile fuses them into one .aar with one Go runtime and one
+  # `go` support package. -javapkg io.nekohasekai keeps libbox at io.nekohasekai.
+  # libbox.* (so ui-android/bg's imports are unchanged) and puts our class at
+  # io.nekohasekai.tenebracore.Tenebracore. The tags/ldflags are sing-box's own (see
+  # above); our wrapper is pure Go and needs none of them, so listing them is safe.
+  #
+  # No -libname: upstream passes -libname=box, which on Android only affects an
+  # internal name and is redundant once -o names the artifact. The output name is
+  # ours (tenebra.aar); the bind is self-consistent either way.
+  echo ">> binding tenebra.aar (wrapper + libbox) — the slow one, compiles sing-box"
   (
-    cd "$root"
+    cd "$root/mobile"
     gomobile bind \
       -target android \
       -androidapi "$android_api" \
-      -javapkg com.tenebra.core \
+      -javapkg io.nekohasekai \
       -trimpath \
-      -o "$libs_dir/tenebra-core.aar" \
-      ./core-bridge
+      -buildvcs=false \
+      -ldflags "$libbox_ldflags" \
+      -tags "$libbox_tags" \
+      -o "$libs_dir/tenebra.aar" \
+      . github.com/sagernet/sing-box/experimental/libbox
   )
 
-  # --- Artifact 2: the sing-box engine -------------------------------------
-  # Built from the tag's OWN `make lib_android` (= go run ./cmd/internal/build_libbox
-  # -target android) so the engine is bit-for-bit upstream; every Tenebra protocol
-  # is a subset of what that build ships. It is the slow step — it compiles the Go
-  # runtime, gVisor and quic-go — and its only input is the sing-box version, so CI
-  # caches this .aar under an engine-version key and we skip the rebuild when it is
-  # already present (idempotent: a second local run reuses it too).
-  if [ -f "$libs_dir/libbox.aar" ]; then
-    echo ">> libbox.aar already present (cache hit / prior run); skipping the engine build"
-  else
-    echo ">> building libbox.aar from sing-box v$singbox_version (the slow one)"
-    (cd "$singbox" && make lib_android)
-    cp "$singbox/libbox.aar" "$libs_dir/libbox.aar"
-  fi
-
-  echo ">> done. Android .aars are in $libs_dir:"
-  echo "     tenebra-core.aar  (our config generator)"
-  echo "     libbox.aar        (sing-box engine, unmodified)"
+  echo ">> done. Android artifact is in $libs_dir:"
+  echo "     tenebra.aar  (our config generator + the sing-box engine, one bind)"
   echo "   next: ./gradlew :app:assembleDebug -p ui-android"
 }
 
