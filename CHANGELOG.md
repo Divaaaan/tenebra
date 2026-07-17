@@ -20,6 +20,10 @@ All notable changes to Tenebra are documented here. The format follows
   while it is up the banner says the update is ready and will apply once you
   disconnect. Installing by hand while connected asks first, in plain terms,
   before it cuts the connection.
+- **Importing a subscription over plain http:// warns you.** The daemon already
+  noted an unencrypted fetch in its log; the import dialog now says it inline —
+  an http:// subscription (token and all) can be read in transit. It is a
+  heads-up, not a wall: the import still goes through if you choose.
 - **The app warns when the background service is older than it.** The daemon
   now reports its build version in every state snapshot, and the app shows a
   banner when the two builds differ — with the reinstall command ready to copy

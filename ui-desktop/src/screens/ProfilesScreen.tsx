@@ -537,6 +537,11 @@ function ImportDialog({ tenebra, onClose, initialUrl }: ImportDialogProps) {
   // scanning, so the user isn't sent down a path the runtime can't follow.
   const qrSupported = useMemo(() => isQrDecodingSupported(), []);
 
+  // A plain-http subscription URL isn't blocked — the user may knowingly point at
+  // one — but the fetch (subscription token and all) travels unencrypted, so flag
+  // it inline. https and an empty field stay silent.
+  const httpSubscription = /^http:\/\//i.test(url.trim());
+
   useEffect(() => {
     firstFieldRef.current?.focus();
   }, []);
@@ -782,6 +787,11 @@ function ImportDialog({ tenebra, onClose, initialUrl }: ImportDialogProps) {
                   {t.profiles.import.paste}
                 </button>
               </div>
+              {httpSubscription && (
+                <p className="prof-field-warning" role="status">
+                  {t.profiles.import.httpWarning}
+                </p>
+              )}
             </label>
           )}
 
