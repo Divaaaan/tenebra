@@ -1,4 +1,4 @@
-﻿//! Tauri shell. It owns the backend, exposes the control protocol as Tauri
+//! Tauri shell. It owns the backend, exposes the control protocol as Tauri
 //! commands, and bridges backend events onto the webview event bus.
 //!
 //! The backend is hidden behind the [`Backend`](backend::Backend) trait; see
@@ -33,6 +33,48 @@ struct AppState {
     backend: Arc<dyn Backend>,
 }
 
+/// The app's active UI language. It mirrors the front end's own localization so
+/// the native surfaces the webview can't reach — the tray menu, its tooltip, and
+/// desktop notifications — speak the same language as the rest of the app. The
+/// front end pushes the current value on startup and on every change through the
+/// `set_language` command.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Lang {
+    /// English — the default until the front end reports otherwise.
+    #[default]
+    En,
+    /// Russian.
+    Ru,
+}
+
+impl Lang {
+    /// Map a front-end language code — the `"en"`/`"ru"` values persisted in
+    /// `localStorage["tenebra.lang"]` — to a `Lang`. Anything unrecognised falls
+    /// back to English, so a stray code never leaves a surface unlabelled.
+    fn from_code(code: &str) -> Lang {
+        match code {
+            "ru" => Lang::Ru,
+            _ => Lang::En,
+        }
+    }
+}
+
+/// Managed holder for the active [`Lang`], shared by the notification path and
+/// the tray. Defaults to English; the front end overwrites it at startup.
+#[derive(Default)]
+struct LangState {
+    lang: Mutex<Lang>,
+}
+
+/// The app's active language, read from managed state. `En` before the front end
+/// has reported one (or if the state isn't managed yet), so every surface always
+/// has a definite language to render in.
+fn current_lang(app: &AppHandle) -> Lang {
+    app.try_state::<LangState>()
+        .map(|s| *s.lang.lock().unwrap())
+        .unwrap_or_default()
+}
+
 /// Bridges backend events to the webview. The backend calls these; we forward
 /// each onto the matching event channel with the protocol's exact payload shape.
 struct TauriSink {
@@ -54,7 +96,7 @@ impl TauriSink {
             *last = Some(state.state);
             prev
         };
-        if let Some((title, body)) = transition_notice(prev, state) {
+        if let Some((title, body)) = transition_notice(current_lang(&self.app), prev, state) {
             // A missing notification (permission denied, headless test host) is
             // non-fatal; the state event still drives the UI.
             let _ = self
@@ -507,6 +549,20 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
+/// Set the app's active language from the front end. Called once at startup and
+/// again on every in-app language change, so the tray menu, its tooltip and
+/// desktop notifications track the webview's own localization. The tray is
+/// rebuilt right away so the switch shows without a restart; notifications simply
+/// read the new value on the next state transition. An unknown code is treated as
+/// English (see [`Lang::from_code`]).
+#[tauri::command]
+fn set_language(app: AppHandle, lang: String) {
+    if let Some(state) = app.try_state::<LangState>() {
+        *state.lang.lock().unwrap() = Lang::from_code(&lang);
+    }
+    tray::relabel(&app);
+}
+
 // Response envelopes for the commands the protocol wraps in an object.
 #[derive(serde::Serialize)]
 struct ProfileList {
@@ -566,6 +622,7 @@ pub fn run() {
             });
             let backend = make_backend(app.handle(), sink);
             app.manage(AppState { backend });
+            app.manage(LangState::default());
             app.manage(deeplink::DeepLinkState::default());
             tray::create(app.handle())?;
             setup_deep_link(app.handle());
@@ -616,6 +673,7 @@ pub fn run() {
             run_stun_check,
             run_speed_test,
             quit_app,
+            set_language,
             take_launch_deep_links,
             update_channel::check_update_for_channel,
             crash::check_crash_report,
@@ -727,28 +785,40 @@ fn list_profiles_blocking(app: &AppHandle) -> Result<Vec<Profile>, String> {
     state.backend.list_profiles()
 }
 
-/// The connection state the tray tooltip should reflect, as plain English.
+/// The connection state the tray tooltip should reflect, localized to `lang`.
 /// Pulled out so both the sink and the initial tray build agree on the wording.
-fn tooltip_for(state: ConnectionState) -> &'static str {
-    match state {
-        ConnectionState::Idle => "Tenebra вЂ” Disconnected",
-        ConnectionState::Connecting => "Tenebra вЂ” ConnectingвЂ¦",
-        // A one-shot auto-failover switch reads as reconnecting, like connecting.
-        ConnectionState::HealthReconnecting => "Tenebra вЂ” ReconnectingвЂ¦",
-        ConnectionState::Connected => "Tenebra вЂ” Connected",
-        ConnectionState::Error => "Tenebra вЂ” Error",
+fn tooltip_for(lang: Lang, state: ConnectionState) -> &'static str {
+    match lang {
+        Lang::En => match state {
+            ConnectionState::Idle => "Tenebra — Disconnected",
+            ConnectionState::Connecting => "Tenebra — Connecting…",
+            // A one-shot auto-failover switch reads as reconnecting, like connecting.
+            ConnectionState::HealthReconnecting => "Tenebra — Reconnecting…",
+            ConnectionState::Connected => "Tenebra — Connected",
+            ConnectionState::Error => "Tenebra — Error",
+        },
+        Lang::Ru => match state {
+            ConnectionState::Idle => "Tenebra — Отключено",
+            ConnectionState::Connecting => "Tenebra — Подключение…",
+            ConnectionState::HealthReconnecting => "Tenebra — Переподключение…",
+            ConnectionState::Connected => "Tenebra — Подключено",
+            ConnectionState::Error => "Tenebra — Ошибка",
+        },
     }
 }
 
 /// The desktop notification a state transition warrants, as `(title, body)`, or
 /// `None` when it isn't noteworthy: the first snapshot (`prev` is `None`, so the
 /// app just learned the current state rather than seeing it change), no change
-/// (`prev == new` вЂ” the debounce), or a transient `Connecting`. Pure so the
+/// (`prev == new` — the debounce), or a transient `Connecting`. Pure so the
 /// mapping is unit-tested without a Tauri app or a real toast.
 ///
-/// The wording is plain English (a system notification lives outside the
-/// localized webview, like the tray labels).
+/// The wording is localized to `lang`: a system notification lives outside the
+/// webview, so — like the tray labels — the shell must translate it itself. A
+/// backend-supplied error message (`state.error`) is passed through verbatim, as
+/// it is data rather than a UI string.
 fn transition_notice(
+    lang: Lang,
     prev: Option<ConnectionState>,
     state: &State,
 ) -> Option<(&'static str, String)> {
@@ -758,25 +828,38 @@ fn transition_notice(
         return None;
     }
     match now {
-        ConnectionState::Connected => Some(("Connected", "The secure tunnel is up.".to_string())),
+        ConnectionState::Connected => Some(match lang {
+            Lang::En => ("Connected", "The secure tunnel is up.".to_string()),
+            Lang::Ru => ("Подключено", "Защищённый туннель активен.".to_string()),
+        }),
         // A drop while the kill switch is armed is the kill switch doing its job:
         // traffic is now blocked. Call it out distinctly from a plain failure.
-        ConnectionState::Error if state.kill_switch.unwrap_or(false) => Some((
-            "Kill switch engaged",
-            "The tunnel dropped and traffic is blocked.".to_string(),
-        )),
-        ConnectionState::Error => Some((
-            "Connection failed",
-            state
-                .error
-                .clone()
-                .unwrap_or_else(|| "The tunnel could not be established.".to_string()),
-        )),
+        ConnectionState::Error if state.kill_switch.unwrap_or(false) => Some(match lang {
+            Lang::En => (
+                "Kill switch engaged",
+                "The tunnel dropped and traffic is blocked.".to_string(),
+            ),
+            Lang::Ru => (
+                "Сработал kill-switch",
+                "Туннель разорван, трафик заблокирован.".to_string(),
+            ),
+        }),
+        ConnectionState::Error => {
+            let (title, fallback) = match lang {
+                Lang::En => ("Connection failed", "The tunnel could not be established."),
+                Lang::Ru => ("Не удалось подключиться", "Не удалось установить туннель."),
+            };
+            Some((
+                title,
+                state.error.clone().unwrap_or_else(|| fallback.to_string()),
+            ))
+        }
         // Only a drop from a live tunnel is a "disconnect"; a return to idle from
         // connecting is an aborted/failed dial, not worth a toast.
-        ConnectionState::Idle if prev == ConnectionState::Connected => {
-            Some(("Disconnected", "The tunnel is down.".to_string()))
-        }
+        ConnectionState::Idle if prev == ConnectionState::Connected => Some(match lang {
+            Lang::En => ("Disconnected", "The tunnel is down.".to_string()),
+            Lang::Ru => ("Отключено", "Туннель выключен.".to_string()),
+        }),
         _ => None,
     }
 }
@@ -821,13 +904,13 @@ mod tests {
     #[test]
     fn first_snapshot_is_silent() {
         // No previous state: the app is just learning where it stands, not seeing
-        // a change, so nothing fires вЂ” even for connected.
+        // a change, so nothing fires — even for connected.
         assert_eq!(
-            transition_notice(None, &state_with(ConnectionState::Connected)),
+            transition_notice(Lang::En, None, &state_with(ConnectionState::Connected)),
             None
         );
         assert_eq!(
-            transition_notice(None, &state_with(ConnectionState::Idle)),
+            transition_notice(Lang::En, None, &state_with(ConnectionState::Idle)),
             None
         );
     }
@@ -843,7 +926,7 @@ mod tests {
             ConnectionState::Error,
         ] {
             assert_eq!(
-                transition_notice(Some(s), &state_with(s)),
+                transition_notice(Lang::En, Some(s), &state_with(s)),
                 None,
                 "prev == new should not notify for {s:?}"
             );
@@ -853,6 +936,7 @@ mod tests {
     #[test]
     fn connecting_to_connected_notifies() {
         let notice = transition_notice(
+            Lang::En,
             Some(ConnectionState::Connecting),
             &state_with(ConnectionState::Connected),
         );
@@ -862,6 +946,7 @@ mod tests {
     #[test]
     fn connected_to_idle_is_a_disconnect() {
         let notice = transition_notice(
+            Lang::En,
             Some(ConnectionState::Connected),
             &state_with(ConnectionState::Idle),
         );
@@ -874,6 +959,7 @@ mod tests {
         // that isn't a "disconnect".
         assert_eq!(
             transition_notice(
+                Lang::En,
                 Some(ConnectionState::Connecting),
                 &state_with(ConnectionState::Idle)
             ),
@@ -885,7 +971,7 @@ mod tests {
     fn error_without_kill_switch_reports_the_reason() {
         let mut s = state_with(ConnectionState::Error);
         s.error = Some("handshake timed out".to_string());
-        let notice = transition_notice(Some(ConnectionState::Connecting), &s);
+        let notice = transition_notice(Lang::En, Some(ConnectionState::Connecting), &s);
         assert_eq!(
             notice,
             Some(("Connection failed", "handshake timed out".to_string()))
@@ -896,7 +982,58 @@ mod tests {
     fn error_with_kill_switch_armed_calls_out_the_kill_switch() {
         let mut s = state_with(ConnectionState::Error);
         s.kill_switch = Some(true);
-        let notice = transition_notice(Some(ConnectionState::Connected), &s);
+        let notice = transition_notice(Lang::En, Some(ConnectionState::Connected), &s);
         assert_eq!(notice.map(|(t, _)| t), Some("Kill switch engaged"));
+    }
+
+    #[test]
+    fn language_code_maps_to_lang() {
+        assert_eq!(Lang::from_code("ru"), Lang::Ru);
+        assert_eq!(Lang::from_code("en"), Lang::En);
+        // An unknown or empty code is treated as English rather than left blank.
+        assert_eq!(Lang::from_code("fr"), Lang::En);
+        assert_eq!(Lang::from_code(""), Lang::En);
+    }
+
+    #[test]
+    fn tooltip_is_localized() {
+        assert_eq!(
+            tooltip_for(Lang::En, ConnectionState::Connected),
+            "Tenebra — Connected"
+        );
+        assert_eq!(
+            tooltip_for(Lang::Ru, ConnectionState::Connected),
+            "Tenebra — Подключено"
+        );
+    }
+
+    #[test]
+    fn notices_are_localized_to_russian() {
+        // The same transitions the English tests cover, asserted in Russian so a
+        // mojibake regression in the tables is caught here.
+        let connected = transition_notice(
+            Lang::Ru,
+            Some(ConnectionState::Connecting),
+            &state_with(ConnectionState::Connected),
+        );
+        assert_eq!(
+            connected,
+            Some(("Подключено", "Защищённый туннель активен.".to_string()))
+        );
+
+        let disconnected = transition_notice(
+            Lang::Ru,
+            Some(ConnectionState::Connected),
+            &state_with(ConnectionState::Idle),
+        );
+        assert_eq!(
+            disconnected,
+            Some(("Отключено", "Туннель выключен.".to_string()))
+        );
+
+        let mut armed = state_with(ConnectionState::Error);
+        armed.kill_switch = Some(true);
+        let killed = transition_notice(Lang::Ru, Some(ConnectionState::Connected), &armed);
+        assert_eq!(killed.map(|(t, _)| t), Some("Сработал kill-switch"));
     }
 }

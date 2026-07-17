@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import {
   createContext,
   useCallback,
@@ -39,6 +40,14 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     document.documentElement.lang = lang;
+  }, [lang]);
+
+  useEffect(() => {
+    // Mirror the active language into the native shell so the tray menu, its
+    // tooltip and the desktop notifications match the app. Runs on mount (the
+    // initial language) and on every change. Fire-and-forget: outside a Tauri
+    // window (browser preview, tests) the command isn't there, which is fine.
+    void invoke("set_language", { lang }).catch(() => {});
   }, [lang]);
 
   const value = useMemo<I18nValue>(

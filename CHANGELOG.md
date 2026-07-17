@@ -13,6 +13,11 @@ All notable changes to Tenebra are documented here. The format follows
 
 ### Added
 
+- **The tray and system notifications now follow the app's language.** The tray
+  menu, its tooltip and the desktop notifications were always English even with
+  the interface set to Russian, because they live in the native shell rather
+  than the webview. The shell now tracks the language the app is set to and
+  localizes them to match, switching on the fly when the language changes.
 - **The app warns when the background service is older than it.** The daemon
   now reports its build version in every state snapshot, and the app shows a
   banner when the two builds differ — with the reinstall command ready to copy

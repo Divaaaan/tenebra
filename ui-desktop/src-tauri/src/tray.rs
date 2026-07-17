@@ -30,7 +30,8 @@ use tauri::{
 
 use crate::backend::{ConnectionState, Profile, State, EVENT_LOG};
 use crate::{
-    connect_backend, disconnect_backend, focus_main_window, list_profiles_blocking, tooltip_for,
+    connect_backend, current_lang, disconnect_backend, focus_main_window, list_profiles_blocking,
+    tooltip_for, Lang,
 };
 
 // State icons, decoded at compile time from the bundled PNGs (path resolved from
@@ -92,18 +93,22 @@ struct TrayState {
 }
 
 /// Build the tray icon and install its initial menu and event handlers. Called
-/// once from `setup`. The labels are plain English; the webview owns localized
-/// UI, and a system tray menu is the one surface that lives outside it.
+/// once from `setup`. The labels are localized to the app's current language: a
+/// system tray menu lives outside the webview, so the shell translates it itself
+/// (see [`menu_labels`]). The front end pushes the active language via
+/// `set_language`, after which [`relabel`] rebuilds this menu; until then it
+/// comes up in the English default.
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     app.manage(TrayState::default());
 
+    let lang = current_lang(app);
     // The initial menu is built from an empty model: idle, no profiles yet. The
     // profile fetch below fills in the node submenu once it returns.
-    let menu = build_menu(app, &TrayModel::default(), ConnectionState::Idle)?;
+    let menu = build_menu(app, &TrayModel::default(), ConnectionState::Idle, lang)?;
 
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon_for(ConnectionState::Idle))
-        .tooltip(tooltip_for(ConnectionState::Idle))
+        .tooltip(tooltip_for(lang, ConnectionState::Idle))
         // We handle left-click ourselves to toggle the window; the menu opens on
         // a right-click, the platform-conventional behaviour on Windows.
         .show_menu_on_left_click(false)
@@ -150,6 +155,20 @@ pub fn sync_profiles(app: &AppHandle) {
     refresh_profiles(app);
 }
 
+/// Rebuild the tray menu, tooltip and icon in the app's current language, keeping
+/// the live model. Called from `set_language` so an in-app language switch lands
+/// on the tray at once, without waiting for the next state event.
+pub fn relabel(app: &AppHandle) {
+    let Some(tray_state) = app.try_state::<TrayState>() else {
+        return;
+    };
+    // Clone the model out from under the lock before rebuilding: the build
+    // marshals onto the main thread, which a menu handler may be holding this
+    // lock on — the same hazard `sync_state` guards against.
+    let model = { tray_state.model.lock().unwrap().clone() };
+    apply(app, &model);
+}
+
 /// Fetch the profile list on a worker thread, cache it, and rebuild the menu.
 /// Deliberately off-thread: `list_profiles` blocks on the backend, and the state
 /// event that commonly triggers a refresh is delivered on the backend's reader
@@ -190,10 +209,41 @@ fn apply(app: &AppHandle, model: &TrayModel) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
         return;
     };
-    let _ = tray.set_tooltip(Some(tooltip_for(conn)));
+    let lang = current_lang(app);
+    let _ = tray.set_tooltip(Some(tooltip_for(lang, conn)));
     let _ = tray.set_icon(Some(icon_for(conn)));
-    if let Ok(menu) = build_menu(app, model, conn) {
+    if let Ok(menu) = build_menu(app, model, conn, lang) {
         let _ = tray.set_menu(Some(menu));
+    }
+}
+
+/// The fixed tray menu labels for `lang`, grouped so the English and Russian
+/// wordings sit side by side and can't drift apart as items are added or reworded.
+/// Node names are excluded — they are data, shown verbatim whatever the language.
+struct MenuLabels {
+    show: &'static str,
+    quick_connect: &'static str,
+    connect_to: &'static str,
+    disconnect: &'static str,
+    quit: &'static str,
+}
+
+fn menu_labels(lang: Lang) -> MenuLabels {
+    match lang {
+        Lang::En => MenuLabels {
+            show: "Show Tenebra",
+            quick_connect: "Quick connect",
+            connect_to: "Connect to",
+            disconnect: "Disconnect",
+            quit: "Quit",
+        },
+        Lang::Ru => MenuLabels {
+            show: "Показать Tenebra",
+            quick_connect: "Быстрое подключение",
+            connect_to: "Подключиться к",
+            disconnect: "Отключиться",
+            quit: "Выход",
+        },
     }
 }
 
@@ -201,14 +251,17 @@ fn apply(app: &AppHandle, model: &TrayModel) {
 /// direct quick-connect and a per-node submenu for the target profile), then
 /// Disconnect and Quit. Rebuilt wholesale on every update — the profile and its
 /// nodes can change — so the node list and the enabled/checked state always match
-/// the live model.
+/// the live model. Fixed labels are localized to `lang`; node names are shown
+/// verbatim.
 fn build_menu(
     app: &AppHandle,
     model: &TrayModel,
     conn: ConnectionState,
+    lang: Lang,
 ) -> tauri::Result<Menu<Wry>> {
     let connected = conn == ConnectionState::Connected;
     let idle = conn == ConnectionState::Idle;
+    let labels = menu_labels(lang);
 
     // The profile whose nodes the submenu offers, and that the connect actions
     // target. `None` only when no profiles are loaded.
@@ -220,14 +273,14 @@ fn build_menu(
         model.state.as_ref().and_then(|s| s.node.as_deref())
     };
 
-    let show = MenuItem::with_id(app, MENU_SHOW, "Show Tenebra", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, MENU_SHOW, labels.show, true, None::<&str>)?;
 
     // Quick connect: dial the target profile's default node directly, no window.
     // Pointless once connected, and impossible with no profile to target.
     let quick = MenuItem::with_id(
         app,
         MENU_QUICK_CONNECT,
-        "Quick connect",
+        labels.quick_connect,
         !connected && target.is_some(),
         None::<&str>,
     )?;
@@ -259,10 +312,11 @@ fn build_menu(
         .collect();
     // A submenu with no nodes to offer is shown disabled rather than dropped, so
     // its absence never reads as a glitch.
-    let nodes = Submenu::with_items(app, "Connect to", !node_refs.is_empty(), &node_refs)?;
+    let nodes = Submenu::with_items(app, labels.connect_to, !node_refs.is_empty(), &node_refs)?;
 
-    let disconnect = MenuItem::with_id(app, MENU_DISCONNECT, "Disconnect", !idle, None::<&str>)?;
-    let quit = MenuItem::with_id(app, MENU_QUIT, "Quit", true, None::<&str>)?;
+    let disconnect =
+        MenuItem::with_id(app, MENU_DISCONNECT, labels.disconnect, !idle, None::<&str>)?;
+    let quit = MenuItem::with_id(app, MENU_QUIT, labels.quit, true, None::<&str>)?;
 
     let sep_actions = PredefinedMenuItem::separator(app)?;
     let sep_quit = PredefinedMenuItem::separator(app)?;
