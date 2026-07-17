@@ -197,12 +197,16 @@ func Build(nodes []model.Node, selectedTag string, ro routing.Options, tun TunOp
 		nodes = forceFragment(nodes)
 	}
 
-	outs, endpoints, tags, err := buildNodes(nodes)
+	outs, endpoints, sel, err := buildNodes(nodes)
 	if err != nil {
 		return nil, err
 	}
-	if len(tags) == 0 {
+	if len(sel) == 0 {
 		return nil, fmt.Errorf("singbox: no usable nodes")
+	}
+	tags := make([]string, len(sel))
+	for i, nt := range sel {
+		tags[i] = nt.Tag
 	}
 
 	// Resolve the selector default: honor selectedTag when present, else first.
@@ -323,15 +327,24 @@ func forceFragment(nodes []model.Node) []model.Node {
 	return out
 }
 
+// NodeTag pairs a node the builder emits into the selector with the tag Build
+// assigns its outbound and the node's position in the input slice. It is what
+// SelectorTags returns so a caller can map a selectable node back to both the
+// exact selector tag and the profile server it came from.
+type NodeTag struct {
+	Index int
+	Tag   string
+}
+
 // buildNodes converts nodes into outbounds and endpoints, assigning each a
 // unique tag. It returns the outbound objects, endpoint objects, and the
-// ordered list of node tags (outbounds then endpoints) for the selector.
-// Zero/unknown protocols and semantically-invalid nodes (see validateNode) are
-// skipped, freeing their tag, so one bad entry can't poison the shared config
-// the connect path builds from every profile node. The error return is reserved
-// for genuinely fatal conditions; today it is always nil and the caller turns an
-// empty tag list into the "no usable nodes" error.
-func buildNodes(nodes []model.Node) (outs, endpoints []map[string]any, tags []string, err error) {
+// selectable nodes in input order (each with its tag and input index) for the
+// selector. Zero/unknown protocols and semantically-invalid nodes (see
+// validateNode) are skipped, freeing their tag, so one bad entry can't poison the
+// shared config the connect path builds from every profile node. The error return
+// is reserved for genuinely fatal conditions; today it is always nil and the
+// caller turns an empty selection into the "no usable nodes" error.
+func buildNodes(nodes []model.Node) (outs, endpoints []map[string]any, sel []NodeTag, err error) {
 	seen := map[string]int{}
 	uniq := func(name string) string {
 		base := sanitizeTag(name)
@@ -350,7 +363,7 @@ func buildNodes(nodes []model.Node) (outs, endpoints []map[string]any, tags []st
 		}
 	}
 
-	for _, n := range nodes {
+	for i, n := range nodes {
 		if n.Protocol == "" {
 			continue // skip zero-protocol entries
 		}
@@ -377,7 +390,7 @@ func buildNodes(nodes []model.Node) (outs, endpoints []map[string]any, tags []st
 				continue
 			}
 			endpoints = append(endpoints, ep)
-			tags = append(tags, tag)
+			sel = append(sel, NodeTag{Index: i, Tag: tag})
 			continue
 		}
 
@@ -391,9 +404,23 @@ func buildNodes(nodes []model.Node) (outs, endpoints []map[string]any, tags []st
 			continue
 		}
 		outs = append(outs, obj)
-		tags = append(tags, tag)
+		sel = append(sel, NodeTag{Index: i, Tag: tag})
 	}
-	return outs, endpoints, tags, nil
+	return outs, endpoints, sel, nil
+}
+
+// SelectorTags returns, in selector order, the nodes Build emits as selectable
+// outbounds — each paired with the exact tag Build assigns it and its index in
+// nodes. Nodes Build drops (zero/unknown protocol, or one that fails the same
+// validation Build applies) are omitted, so the result is precisely the selector
+// membership of the config Build produces from the same nodes. It exposes the
+// builder's own tag assignment so a caller that must reason about the selector's
+// tags — the mobile connect loop ordering them for its fallback walk — derives
+// them from the single authority that mints them rather than re-deriving and
+// drifting.
+func SelectorTags(nodes []model.Node) []NodeTag {
+	_, _, sel, _ := buildNodes(nodes)
+	return sel
 }
 
 // validateNode reports whether a node carries the minimum fields sing-box needs

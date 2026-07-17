@@ -236,6 +236,49 @@ func TestExternalTunOmitsAutoRoute(t *testing.T) {
 	}
 }
 
+// TestSelectorTagsMatchesBuildSelector pins SelectorTags to the builder's own
+// selector membership: the tags it returns must equal, in order, the selector's
+// outbounds in the config Build produces from the same nodes, and a node Build
+// drops must not appear. This is the guarantee the mobile order path relies on to
+// speak the same tag vocabulary the generated config does.
+func TestSelectorTagsMatchesBuildSelector(t *testing.T) {
+	nodes := fakeNodes()
+	// A trailing invalid node (VLESS with no uuid) that Build must drop, proving
+	// SelectorTags omits exactly what Build omits and keeps indices aligned to input.
+	nodes = append(nodes, model.Node{Protocol: model.VLESS, Name: "broken", Server: "x.test", Port: 443})
+	badIdx := len(nodes) - 1
+
+	sel := SelectorTags(nodes)
+
+	cfg, err := Build(nodes, "", routing.Options{}, TunOptions{})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	selector := cfg["outbounds"].([]map[string]any)[0]
+	want, ok := selector["outbounds"].([]string)
+	if !ok {
+		t.Fatalf("selector outbounds type = %T, want []string", selector["outbounds"])
+	}
+
+	if len(sel) != len(want) {
+		t.Fatalf("SelectorTags len = %d, want %d (selector membership)", len(sel), len(want))
+	}
+	for i := range want {
+		if sel[i].Tag != want[i] {
+			t.Errorf("tag[%d] = %q, want %q", i, sel[i].Tag, want[i])
+		}
+		if sel[i].Index < 0 || sel[i].Index >= len(nodes) {
+			t.Fatalf("index[%d] = %d out of range", i, sel[i].Index)
+		}
+		if sel[i].Index == badIdx {
+			t.Errorf("dropped node (index %d) leaked into SelectorTags", badIdx)
+		}
+		if base := sanitizeTag(nodes[sel[i].Index].Name); !strings.HasPrefix(sel[i].Tag, base) {
+			t.Errorf("tag %q does not derive from node[%d] name %q", sel[i].Tag, sel[i].Index, nodes[sel[i].Index].Name)
+		}
+	}
+}
+
 func TestTunOptionsOverride(t *testing.T) {
 	cfg, err := Build(fakeNodes(), "", routing.Options{Mode: routing.ModeGlobal},
 		TunOptions{InterfaceName: "wg0", MTU: 1500, Stack: "gvisor", ClashAPIPort: 9999})
