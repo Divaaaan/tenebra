@@ -91,7 +91,7 @@ main() {
 
   local work
   work="$(mktemp -d)"
-  trap 'rm -rf "$work"' EXIT
+  trap 'rm -rf "${work:-}"' EXIT
 
   # sing-box is needed for BOTH artifacts: its `make lib_install` provides the
   # gomobile fork we also bind our core with, and its `make lib_android` builds
