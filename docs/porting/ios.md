@@ -164,8 +164,10 @@ still demands discipline. Mitigations, in rough order of leverage:
 The wrapper and `libbox` are built for Apple with **gomobile**, but not upstream
 gomobile — sing-box maintains a fork (`github.com/sagernet/gomobile`) because
 upstream repeatedly broke on new Xcode releases. Pin whatever version the target
-sing-box tag's `Makefile` installs (v0.1.12 for v1.13.13); `mobile/go.mod` requires
+sing-box tag's `Makefile` installs (v0.1.12 for v1.13.14); `mobile/go.mod` requires
 the same version, so the binder and the bind's `go` support package never drift.
+(The engine is pinned to v1.13.14, not the desktop's v1.13.13 — sing-box's v1.13.13
+module can't build libbox; see `scripts/build-libbox-android.sh` for why.)
 The bind runs from `mobile/`, lists both packages, and replicates sing-box's own
 Apple tag set verbatim (from its `cmd/internal/build_libbox`); `scripts/build-libbox.sh`
 is the source of truth. Its shape:
@@ -174,7 +176,7 @@ is the source of truth. Its shape:
 (cd mobile && gomobile bind \
   -target ios,iossimulator -iosversion 15.0 -tags-not-macos=with_low_memory \
   -trimpath -buildvcs=false \
-  -ldflags "-X github.com/sagernet/sing-box/constant.Version=v1.13.13 -X internal/godebug.defaultGODEBUG=multipathtcp=0 -s -w -buildid= -checklinkname=0" \
+  -ldflags "-X github.com/sagernet/sing-box/constant.Version=v1.13.14 -X internal/godebug.defaultGODEBUG=multipathtcp=0 -s -w -buildid= -checklinkname=0" \
   -tags "with_gvisor,with_quic,with_wireguard,with_utls,with_naive_outbound,with_clash_api,badlinkname,tfogo_checklinkname0,with_tailscale,ts_omit_logtail,ts_omit_ssh,ts_omit_drive,ts_omit_taildrop,ts_omit_webclient,ts_omit_doctor,ts_omit_capture,ts_omit_kube,ts_omit_aws,ts_omit_synology,ts_omit_bird,with_dhcp,grpcnotrace" \
   -o ui-ios/Frameworks/Tenebra.xcframework \
   . github.com/sagernet/sing-box/experimental/libbox)

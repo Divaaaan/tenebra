@@ -18,7 +18,7 @@
 // The `tools` tag is set by no normal build, so nothing here compiles into the
 // mobile runtime — it only shapes the module graph. Keep the gomobile version in
 // go.mod in sync with the fork sing-box's `make lib_install` installs (v0.1.12 for
-// sing-box v1.13.13); the wrapper and libbox must be bound with the same gomobile.
+// sing-box v1.13.14); the wrapper and libbox must be bound with the same gomobile.
 package tenebracore
 
 import (

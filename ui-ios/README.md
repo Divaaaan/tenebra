@@ -96,8 +96,9 @@ open Tenebra.xcodeproj
 sing-box's own `make lib_install`), not upstream `golang.org/x/mobile` — upstream
 repeatedly breaks on new Xcode releases. `Tenebra.xcframework` is a single
 `gomobile bind` over two packages — the `mobile/` wrapper and sing-box's `libbox` —
-built with libbox's own tags at the pinned tag (`1.13.13`, kept in sync with the
-desktop sidecar) so the engine matches upstream exactly. Our wrapper imports no
+built with libbox's own tags at the pinned tag (`1.13.14`, matching `mobile/go.mod`;
+one patch ahead of the desktop sidecar's `1.13.13` — see `scripts/build-libbox.sh`)
+so the engine matches upstream exactly. Our wrapper imports no
 sing-box, so it needs none of those tags; listing them is harmless to it.
 
 ## The 50 MB memory cap (the top risk)

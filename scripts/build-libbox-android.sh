@@ -36,16 +36,24 @@
 set -euo pipefail
 
 # --- Pinned versions -------------------------------------------------------
-# Keep sing-box in sync with scripts/fetch-resources.sh / .ps1 ($singbox_version),
-# scripts/build-libbox.sh AND mobile/go.mod: one engine version so one config
-# generator targets one schema. The bind below compiles libbox from the module
-# graph (mobile/go.mod), so that pin is the one that actually decides the engine
-# version; this clone is only used to install the matching gomobile fork.
-singbox_version="1.13.13"
+# The mobile engine is v1.13.14 — one patch AHEAD of the desktop sidecar
+# (scripts/fetch-resources.sh / .ps1), which stays on v1.13.13. This split is
+# upstream's doing, not a mistake: sing-box's v1.13.13 tag was force-moved after the
+# Go module proxy and sum database had already frozen the original tagged commit, and
+# that frozen commit's libbox no longer compiles against its own pinned sing-tun
+# (platformDefaultInterfaceMonitor is missing MyInterfaces()). This bind compiles
+# libbox from the module graph (mobile/go.mod), so `go` can only ever resolve that
+# broken frozen v1.13.13; v1.13.14 is the first release that builds. The desktop
+# bundles the prebuilt v1.13.13 release binary (built from source, unaffected) and
+# both speak the v1.13 config schema, so the shared config generator is fine. Keep
+# this equal to scripts/build-libbox.sh and mobile/go.mod (v1.13.14) — do NOT drop it
+# back to the desktop's v1.13.13, that restores the break. The clone below only
+# installs the matching gomobile fork; the bound engine source is mobile/go.mod's.
+singbox_version="1.13.14"
 
 # This script deliberately does NOT pin a gomobile version of its own. sing-box's
 # `make lib_install` installs the exact sagernet/gomobile fork the pinned tag
-# expects (v0.1.12 for 1.13.13), which is also what mobile/go.mod requires, so the
+# expects (v0.1.12 for 1.13.14), which is also what mobile/go.mod requires, so the
 # binder and the bind's support package can never drift apart. The version lives in
 # sing-box's Makefile — the single source of truth — never here.
 

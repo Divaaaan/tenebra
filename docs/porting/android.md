@@ -115,10 +115,17 @@ because upstream repeatedly breaks. The build is driven by
 [`scripts/build-libbox-android.sh`](../../scripts/build-libbox-android.sh), the
 mirror of the iOS `scripts/build-libbox.sh`, and produces **one** `.aar`:
 
-1. Clone sing-box at the pinned tag (`v1.13.13`, kept in sync with
-   `scripts/fetch-resources.*`, `mobile/go.mod`, and the desktop sidecar).
+1. Clone sing-box at the pinned tag (`v1.13.14`, matching `mobile/go.mod` and
+   `scripts/build-libbox.sh`). This is one patch **ahead** of the desktop sidecar
+   (`scripts/fetch-resources.*`, still `v1.13.13`): sing-box's `v1.13.13` **module**
+   cannot build libbox — the tag was force-moved after the Go proxy/sum database had
+   frozen a commit whose `platformDefaultInterfaceMonitor` is missing
+   `MyInterfaces()`, and this bind resolves libbox from the module graph — so the
+   mobile engine uses the first clean release. The desktop's prebuilt `v1.13.13`
+   release binary is unaffected and shares the `v1.13` config schema. Full rationale
+   in `scripts/build-libbox-android.sh`.
 2. `make lib_install` — installs the SagerNet gomobile fork **at the version the
-   tag's own Makefile pins** (`v0.1.12` for 1.13.13). The script does **not**
+   tag's own Makefile pins** (`v0.1.12` for 1.13.14). The script does **not**
    hardcode a gomobile version; the tag's Makefile is the single source of truth,
    and it is also the version `mobile/go.mod` requires, so the binder and the bind's
    `go` support package can never drift apart. (The iOS script reads the same version
@@ -131,7 +138,7 @@ mirror of the iOS `scripts/build-libbox.sh`, and produces **one** `.aar`:
    (cd mobile && gomobile bind \
      -target android -androidapi 23 -javapkg io.nekohasekai \
      -trimpath -buildvcs=false \
-     -ldflags "-X github.com/sagernet/sing-box/constant.Version=v1.13.13 -X internal/godebug.defaultGODEBUG=multipathtcp=0 -s -w -buildid= -checklinkname=0" \
+     -ldflags "-X github.com/sagernet/sing-box/constant.Version=v1.13.14 -X internal/godebug.defaultGODEBUG=multipathtcp=0 -s -w -buildid= -checklinkname=0" \
      -tags "<sing-box's own android tag set — see below>" \
      -o ui-android/app/libs/tenebra.aar \
      . github.com/sagernet/sing-box/experimental/libbox)
@@ -141,7 +148,7 @@ mirror of the iOS `scripts/build-libbox.sh`, and produces **one** `.aar`:
    gomobile `go` support package**. `-javapkg io.nekohasekai` keeps libbox at
    `io.nekohasekai.libbox.*` (so `ui-android/bg` is unchanged) and names our class
    `io.nekohasekai.tenebracore.Tenebracore`. libbox is resolved from `mobile/go.mod`
-   (pinned to the same `v1.13.13`), so the engine is bit-for-bit upstream and every
+   (pinned to the same `v1.13.14`), so the engine is bit-for-bit upstream and every
    protocol Tenebra uses is a subset of what it ships.
 
 Practical constraints:

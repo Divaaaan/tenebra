@@ -32,11 +32,15 @@
 set -euo pipefail
 
 # --- Pinned versions -------------------------------------------------------
-# Keep sing-box in sync with scripts/fetch-resources.sh / .ps1 ($singbox_version),
-# scripts/build-libbox-android.sh AND mobile/go.mod. The bind compiles libbox from
-# the module graph (mobile/go.mod), so that pin decides the engine version; this
-# value is used only to install the matching gomobile fork.
-singbox_version="1.13.13"
+# v1.13.14, matching scripts/build-libbox-android.sh and mobile/go.mod. This is one
+# patch AHEAD of the desktop sidecar (scripts/fetch-resources.sh / .ps1, still
+# v1.13.13), on purpose: sing-box's v1.13.13 module can't build libbox — the tag was
+# force-moved after the Go proxy/sum database froze a commit whose libbox is missing
+# MyInterfaces() — and this bind resolves libbox from the module graph, so it needs
+# the first clean release. See scripts/build-libbox-android.sh for the full rationale;
+# do NOT resync this down to the desktop's v1.13.13. The bind compiles libbox from
+# the module graph (mobile/go.mod), so this value only installs the gomobile fork.
+singbox_version="1.13.14"
 # The gomobile version is NOT hardcoded here. sing-box's Makefile at the pinned tag
 # installs a specific SagerNet gomobile fork (NOT upstream golang.org/x/mobile,
 # which repeatedly breaks on new Xcode releases), and that same fork — also required
