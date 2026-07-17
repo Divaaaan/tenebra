@@ -67,9 +67,12 @@ Two processes, the standard iOS VPN shape:
 **Two Go modules, kept separate.** The clean design mirrors the desktop split
 exactly:
 
-1. **Tenebra core** is gomobile-bound into its **own** small `.xcframework`
-   exposing essentially one call — `GenerateConfig(profileJSON) -> configJSON`
-   (string in, string out, gomobile-friendly).
+1. **Tenebra core** is gomobile-bound into its **own** small `.xcframework` from
+   the shared `core-bridge` package. The same package binds to an Android `.aar`
+   with `gomobile bind -target android` — one config generator, both mobile
+   targets — so this section's core work is not iOS-only. It exposes a few
+   string-in/string-out calls: `GenerateConfig(profileJSON) -> configJSON`, plus
+   `ImportSubscription` and `OrderNodes` for the native client wrapper.
 2. **sing-box `Libbox.xcframework`** is used **unmodified** as the engine.
 3. The host app calls `GenerateConfig`, then hands the resulting JSON to the
    extension's `CommandServer.StartOrReloadService(json)`, which boots sing-box

@@ -13,7 +13,7 @@ architecture and the reasoning; this README is the build/status companion to it.
 | Artifact | State | How it was checked |
 |---|---|---|
 | `project.yml` (XcodeGen) | Structurally valid YAML | Parsed; **not** run through `xcodegen generate` |
-| `core-bridge/bridge.go` | Compiles for iOS as portable Go | `GOOS=darwin GOARCH=arm64 go build -tags ios ./ui-ios/core-bridge` |
+| `core-bridge/` (repo root, shared) | Compiles for iOS **and** Android; unit-tested on host | `GOOS=android GOARCH=arm64 go build ./core-bridge` + `go test ./core-bridge/...` |
 | `Support/*.plist`, `*.entitlements` | Valid property lists | Parsed with a plist reader |
 | `App/*.swift`, `Extension/*.swift` | **Unverified stubs** | Not compiled — no swiftc on the authoring host |
 | `scripts/build-libbox.sh` | **Unverified plan** | `bash -n` syntax only; needs macOS to run |
@@ -27,10 +27,14 @@ explicit rather than faked.
 ## Layout
 
 ```
+core-bridge/                shared gomobile binding at the repo root — one package,
+                            two artifacts: the iOS .xcframework AND an Android .aar
+  bridge.go                 gomobile surface (//go:build ios || android):
+                            GenerateConfig / ImportSubscription / OrderNodes / Version
+  generate.go import.go     build-tag-free logic behind that surface, so it is
+    order.go                host-testable with `go test ./core-bridge/...`
 ui-ios/
   project.yml               XcodeGen manifest: host app + NE extension targets
-  core-bridge/
-    bridge.go               gomobile bridge: GenerateConfig(json) -> configJSON  (//go:build ios)
   App/                      SwiftUI host app (thin client; never touches packets)
     TenebraApp.swift          @main entry
     ContentView.swift         node list + connect toggle
@@ -48,8 +52,9 @@ scripts/
 
 The two Go modules stay separate on purpose (see
 [ios.md](../docs/porting/ios.md#architecture)): Tenebra's core is bound into its
-own small `TenebraCore.xcframework` (`core-bridge/`), and sing-box's
-`Libbox.xcframework` is used unmodified. They meet only at a JSON string.
+own small `TenebraCore.xcframework` (from the shared `core-bridge/` package, which
+also binds to an Android `.aar`), and sing-box's `Libbox.xcframework` is used
+unmodified. They meet only at a JSON string.
 
 ## Bring-up order (do these on a Mac, in this order)
 
@@ -155,8 +160,10 @@ job should, on a `macos-14` (Apple Silicon) runner:
    and TestFlight uploads need secrets and belong in the release workflow, not CI.
 
 Until then, the checkable slice of this scaffold on any host is: `project.yml`
-parses as YAML, and the Go bridge compiles for iOS
-(`GOOS=darwin GOARCH=arm64 go build -tags ios ./ui-ios/core-bridge`).
+parses as YAML, and the shared Go bridge compiles for both mobile targets and
+passes its unit tests (`GOOS=android GOARCH=arm64 go build ./core-bridge`,
+`GOOS=darwin GOARCH=arm64 go build -tags ios ./core-bridge`, and
+`go test ./core-bridge/...`).
 
 ## What this needs from a maintainer with a Mac + Apple account
 
