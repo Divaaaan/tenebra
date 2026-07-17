@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Foreground service: a VPN must run as one or the system kills it in the
+         background. SYSTEM_EXEMPTED is the correct type for a user-started VPN on
+         Android 14+ (there is no dedicated "vpn" FGS type); it pairs with the
+         foregroundServiceType on the service below. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
+
+    <!-- Runtime notification permission (Android 13+) for the persistent tunnel
+         notification. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Reserved for optional auto-start after reboot. The primary persistence
+         mechanism is the system "always-on VPN" toggle, which restarts the service
+         without a receiver; a BootReceiver can be added later behind this. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Lets the app deep-link the user to the battery-optimisation exemption
+         screen, so Doze does not throttle the tunnel on some OEMs. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <application
+        android:name=".TenebraApplication"
+        android:allowBackup="false"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Tenebra"
+        tools:targetApi="34">
+
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.Tenebra">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- The VpnService. The system binds it with BIND_VPN_SERVICE, and the
+             android.net.VpnService intent-filter is what makes it a selectable VPN
+             (and eligible for the always-on VPN setting). foregroundServiceType must
+             match the SYSTEM_EXEMPTED permission declared above. Not exported: only
+             the OS starts it. -->
+        <service
+            android:name=".bg.TenebraVpnService"
+            android:exported="false"
+            android:foregroundServiceType="systemExempted"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
+
+        <!-- Optional Quick Settings tile: one-tap connect/disconnect. If consent is
+             not yet granted it defers to the app rather than failing silently. -->
+        <service
+            android:name=".bg.TenebraTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_stat_tenebra"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+    </application>
+</manifest>

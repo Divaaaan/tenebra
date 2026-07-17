@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- App shell theme. Parented to a framework theme so no material-components
+         dependency is needed for a Compose-only app; the XML theme only styles the
+         window chrome that exists before Compose takes over. -->
+    <style name="Theme.Tenebra" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/tenebra_background</item>
+        <item name="android:statusBarColor">@color/tenebra_background</item>
+        <item name="android:navigationBarColor">@color/tenebra_background</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
