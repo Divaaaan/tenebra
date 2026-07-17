@@ -3,9 +3,8 @@
 build/
 !gradle/wrapper/gradle-wrapper.properties
 
-# The wrapper jar is a binary blob; CI restores it with `gradle wrapper` (or a
-# setup-gradle action) before building. Everything else in gradle/ is tracked.
-gradle/wrapper/gradle-wrapper.jar
+# The Gradle wrapper jar is committed on purpose (Gradle's own recommendation):
+# it makes ./gradlew work on a clean checkout and on CI with no bootstrap step.
 
 # Android / IDE local state
 local.properties
