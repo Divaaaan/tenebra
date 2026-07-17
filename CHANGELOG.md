@@ -11,6 +11,8 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-07-18
+
 ### Added
 
 - **Updates never interrupt a live tunnel.** Applying an update relaunches the
