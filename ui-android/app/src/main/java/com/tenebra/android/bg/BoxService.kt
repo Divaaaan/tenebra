@@ -1,4 +1,4 @@
-// Scaffold: not compiled on the authoring host (no Android SDK / libbox.aar).
+// Scaffold: not compiled on the authoring host (no Android SDK / tenebra.aar).
 // Mirrors io.nekohasekai.sfa.bg.BoxService from SagerNet/sing-box-for-android
 // (GPL-3.0). Tenebra is GPL-3.0-compatible.
 // Upstream: https://github.com/SagerNet/sing-box-for-android
@@ -6,7 +6,7 @@
 // Targets the MODERN libbox surface (sing-box ~1.13): the engine lifecycle is driven
 // through CommandServer.startOrReloadService rather than the classic
 // Libbox.newService. Points that differ across versions are flagged
-// "verify against generated libbox.aar".
+// "verify against generated tenebra.aar".
 package com.tenebra.android.bg
 
 import android.app.Service
@@ -42,7 +42,7 @@ class BoxService(
         setupOnce()
         val server = CommandServer(this, platform)
         server.start()
-        // verify against generated libbox.aar: modern libbox boots the engine via
+        // verify against generated tenebra.aar: modern libbox boots the engine via
         // CommandServer.startOrReloadService(config, OverrideOptions); classic used
         // Libbox.newService(config, platform) + service.start() + setService.
         server.startOrReloadService(config, OverrideOptions())
@@ -85,7 +85,7 @@ class BoxService(
 
     override fun getSystemProxyStatus(): SystemProxyStatus {
         // This client does not register a system HTTP proxy; report it unavailable.
-        // verify field names against generated libbox.aar.
+        // verify field names against generated tenebra.aar.
         return SystemProxyStatus().apply {
             available = false
             enabled = false
@@ -110,7 +110,7 @@ class BoxService(
                     java.util.Locale.getDefault().toLanguageTag().replace('-', '_'),
                 )
             }
-            // verify against generated libbox.aar: modern libbox takes a SetupOptions
+            // verify against generated tenebra.aar: modern libbox takes a SetupOptions
             // object; classic took four positional args (base, working, temp, debug).
             val base = service.filesDir.absolutePath
             val working = (service.getExternalFilesDir(null) ?: service.filesDir).absolutePath

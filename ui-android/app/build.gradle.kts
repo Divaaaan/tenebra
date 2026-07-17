@@ -59,13 +59,14 @@ android {
 }
 
 dependencies {
-    // The two gomobile artifacts. Both are git-ignored and dropped in by the build
-    // (see README "Bring-up order"): libbox.aar is the unmodified sing-box engine,
-    // tenebra-core.aar is our config generator (core-bridge). files() is deliberate —
-    // a gomobile .aar bundles the Go runtime statically and has no transitive Maven
-    // deps, and a missing file must fail the build loudly rather than resolve a
-    // stand-in. Order matches the paths the CI bind command writes to.
-    implementation(files("libs/libbox.aar", "libs/tenebra-core.aar"))
+    // The single fused gomobile artifact: our config generator (the ../mobile wrapper
+    // over core-bridge) AND the unmodified sing-box engine, bound together into one
+    // .aar (see README "Bring-up order"). It is git-ignored and dropped in by the
+    // build. files() is deliberate — a gomobile .aar bundles the Go runtime statically
+    // and has no transitive Maven deps, and a missing file must fail the build loudly
+    // rather than resolve a stand-in. One artifact is mandatory: two would each carry
+    // their own Go runtime and duplicate go/Seq + go/Universe, which D8 rejects.
+    implementation(files("libs/tenebra.aar"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

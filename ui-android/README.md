@@ -3,7 +3,7 @@
 This directory is a **libbox VPN client** for Android, structured as a faithful
 re-homing of SagerNet's `sing-box-for-android` (SFA) tunnel plumbing onto Tenebra's
 core. It was authored on a **Windows host with no Android SDK/NDK**, so **none of the
-Kotlin here has been compiled and neither `.aar` has been built.** What is here is a
+Kotlin here has been compiled and the fused `.aar` has not been built.** What is here is a
 correct-by-shape project — Gradle module, manifest, the VpnService/BoxService/libbox
 bridge, the config-generator wrapper, and a minimal Compose UI — that builds into an
 APK on a machine with the toolchain (see [Bring-up order](#bring-up-order)).
@@ -20,30 +20,29 @@ memory-driven app/extension split iOS needs does not apply here.
 | `gradle/libs.versions.toml` | Valid TOML version catalog | Parsed with `tomllib` |
 | `AndroidManifest.xml`, `res/**` | Valid XML | Parsed |
 | `gradlew`, `gradlew.bat` | Stock Gradle 8.11.1 wrapper scripts | `bash -n gradlew` OK |
-| `core-bridge/` (repo root, shared) | Compiles for Android **and** iOS; unit-tested | `GOOS=android GOARCH=arm64 go build ./core-bridge` + `go test ./core-bridge/...` |
+| `core-bridge/` + `mobile/` (repo root) | Plain Go generator + gomobile wrapper; unit-tested, cross-builds | `go test ./core-bridge/...`; `cd mobile && GOOS=android GOARCH=arm64 go build ./...` |
 | Kotlin — `core/`, `store/`, `ui/` | Standard AndroidX/Compose; **not compiled** | Bracket-balance smoke test; no `kotlinc`/Android SDK on host |
-| Kotlin — `bg/**` | **Unverified against the generated `.aar`** | Reviewed; every libbox/TenebraCore call site the bind must confirm is flagged `verify against generated libbox.aar` |
-| `app/libs/{libbox,tenebra-core}.aar` | **Do not exist yet** | Built by CI (see below) and dropped in; git-ignored |
+| Kotlin — `bg/**` | **Unverified against the generated `.aar`** | Reviewed; every libbox/TenebraCore call site the bind must confirm is flagged `verify against generated tenebra.aar` |
+| `app/libs/tenebra.aar` | **Does not exist yet** | Built by CI (see below) and dropped in; git-ignored |
 
-Nothing here builds into an APK until the two `.aar` are produced and the Gradle
+Nothing here builds into an APK until the fused `.aar` is produced and the Gradle
 build is run on a toolchain host. Files under `bg/` carry a one-line scaffold header
 and, where they mirror SFA, a GPL-3.0 upstream attribution.
 
 ## Layout
 
 ```
-core-bridge/                shared gomobile binding at the repo root — one package,
-                            two artifacts: the Android .aar AND the iOS .xcframework
+core-bridge/                the pure config generator at the repo root (plain Go lib)
+mobile/                     gomobile wrapper: binds core-bridge + libbox into one .aar
 ui-android/
   settings.gradle.kts       :app module, pluginManagement, repositories
   build.gradle.kts          root: plugin versions (apply false)
   gradle/libs.versions.toml  version catalog (single source of pins)
   gradlew(.bat)             stock wrapper (gradle-wrapper.jar git-ignored; CI restores)
   app/
-    build.gradle.kts        Compose app; implementation(files("libs/libbox.aar",
-                            "libs/tenebra-core.aar"))
+    build.gradle.kts        Compose app; implementation(files("libs/tenebra.aar"))
     proguard-rules.pro      gomobile keep-rules (minify OFF until proven on CI)
-    libs/                   the two .aar land here (git-ignored)
+    libs/                   the fused tenebra.aar lands here (git-ignored)
     src/main/
       AndroidManifest.xml   permissions + <service TenebraVpnService> + QS tile
       java/com/tenebra/android/
@@ -67,12 +66,17 @@ ui-android/
 
 ## How the pieces connect
 
-Two gomobile artifacts, meeting only at a JSON string — the same split as desktop and
-iOS:
+One fused gomobile artifact whose two halves meet only at a JSON string — the same
+generator-vs-engine split as desktop and iOS, but bound into a single `.aar`:
 
-- **`tenebra-core.aar`** — our config generator (`core-bridge`), class
-  `com.tenebra.core.Tenebracore`. No sing-box inside. Wrapped by `core/TenebraCore.kt`.
-- **`libbox.aar`** — the unmodified sing-box engine, package `io.nekohasekai.libbox`.
+- **config generator** — the `mobile/` wrapper over `core-bridge`, class
+  `io.nekohasekai.tenebracore.Tenebracore`. No sing-box inside it. Wrapped by
+  `core/TenebraCore.kt`.
+- **sing-box engine** — the unmodified `libbox`, package `io.nekohasekai.libbox`.
+
+They are bound together — one Go runtime, one `go` support package — into
+`tenebra.aar`; binding them separately would duplicate `go/Seq` + `go/Universe` and
+fail D8's duplicate-class check.
 
 The connect flow (`prepare -> import -> generate -> StartOrReloadService -> establish`):
 
@@ -117,7 +121,7 @@ current one. This scaffold targets the **modern** surface, matching the pinned e
 `prefix.prefix()`, `options.dnsServerAddress.value`).
 
 Every point that differs from the older ("classic") surface is marked in code with
-`verify against generated libbox.aar`. After the first bind, confirm with
+`verify against generated tenebra.aar`. After the first bind, confirm with
 `javap io.nekohasekai.libbox.PlatformInterface` / `TunOptions` / `Libbox`. The reliable
 tell:
 
@@ -133,12 +137,12 @@ the generated headers, not by us.
 
 ## Bring-up order
 
-1. **Build the two `.aar`** on a host with the Android NDK + SDK (the CI job, or a dev
-   box). Both are git-ignored; they land in `app/libs/`:
-   - `libbox.aar` — from `sing-box` v1.13.13, `make lib_android` (unmodified engine).
-   - `tenebra-core.aar` —
-     `gomobile bind -target android -androidapi 23 -javapkg com.tenebra.core -o ui-android/app/libs/tenebra-core.aar ./core-bridge`
-   - Then reconcile the `bg/**` `verify` markers against the generated libbox headers.
+1. **Build `tenebra.aar`** on a host with the Android NDK + SDK (the CI job, or a dev
+   box) via `scripts/build-libbox-android.sh`. It is git-ignored; it lands in
+   `app/libs/`. The script installs the sing-box-pinned gomobile fork, then runs one
+   `gomobile bind` over the `mobile/` wrapper and `experimental/libbox` together
+   (`-javapkg io.nekohasekai`, the API-23 libbox tags).
+   - Then reconcile the `bg/**` `verify` markers against the generated headers.
 2. **Build the APK**: `cd ui-android && ./gradlew assembleDebug`
    (CI restores `gradle-wrapper.jar` first, e.g. `gradle wrapper` or the
    `gradle/actions/setup-gradle` action).

@@ -15,9 +15,10 @@ captures/
 *.ap_
 *.dex
 
-# gomobile artifacts — the engine and the core bridge — are built by CI and dropped
-# into app/libs (see README). They statically bundle the Go runtime and are tens of
-# MB, so they are never committed; only the directory placeholder is.
+# The fused gomobile artifact (tenebra.aar — the sing-box engine plus our core
+# bridge, one bind) is built by CI and dropped into app/libs (see README). It
+# statically bundles the Go runtime and is tens of MB, so it is never committed;
+# only the directory placeholder is.
 app/libs/*.aar
 
 # Signing material must never be committed.

@@ -1,4 +1,4 @@
-// Scaffold: not compiled on the authoring host (no Android SDK / libbox.aar).
+// Scaffold: not compiled on the authoring host (no Android SDK / tenebra.aar).
 // Mirrors io.nekohasekai.sfa.bg.VPNService from SagerNet/sing-box-for-android
 // (GPL-3.0). Tenebra is GPL-3.0-compatible.
 // Upstream: https://github.com/SagerNet/sing-box-for-android
@@ -160,7 +160,7 @@ class TenebraVpnService : VpnService(), PlatformWrapper {
         }
 
         // The tun's own addresses come from the generated config (present even with
-        // externalTun). verify against generated libbox.aar: modern element getters
+        // externalTun). verify against generated tenebra.aar: modern element getters
         // are methods (address()/prefix()); classic exposes them as properties.
         addAddresses(builder, options.inet4Address)
         addAddresses(builder, options.inet6Address)

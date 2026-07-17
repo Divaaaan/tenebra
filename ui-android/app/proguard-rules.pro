@@ -1,7 +1,7 @@
 # R8/ProGuard rules for the release build.
 #
 # Minification is currently disabled in build.gradle.kts (isMinifyEnabled = false)
-# because the gomobile keep-rules below are UNVERIFIED against the real libbox.aar —
+# because the gomobile keep-rules below are UNVERIFIED against the real tenebra.aar —
 # gomobile binds Java classes that Go calls back by JNI reflection, and R8 will strip
 # them without an explicit keep, crashing the engine at runtime. Prove these on CI
 # with a shrunk build before flipping minification on.

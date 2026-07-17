@@ -1,11 +1,11 @@
-// Scaffold: not compiled on the authoring host (no Android SDK / libbox.aar).
+// Scaffold: not compiled on the authoring host (no Android SDK / tenebra.aar).
 // Mirrors io.nekohasekai.sfa.bg.PlatformInterfaceWrapper from
 // SagerNet/sing-box-for-android (GPL-3.0). Tenebra is GPL-3.0-compatible.
 // Upstream: https://github.com/SagerNet/sing-box-for-android
 //
 // This targets the MODERN libbox surface (sing-box ~1.13, matching the pinned engine
 // tag). The binding has drifted across sing-box versions; every point that changed is
-// flagged "verify against generated libbox.aar". The single reliable tell after the
+// flagged "verify against generated tenebra.aar". The single reliable tell after the
 // first bind: `findConnectionOwner` returning ConnectionOwner and `systemCertificates`
 // existing => modern (this file); returning Int with packageNameByUid/uidByPackageName
 // => classic (adjust the flagged members).
@@ -49,7 +49,7 @@ interface PlatformWrapper : PlatformInterface {
 
     // Only used by owner-matching routing rules, which this minimal client does not
     // emit. Returns an empty owner so the engine treats ownership as unknown.
-    // verify against generated libbox.aar: modern libbox returns ConnectionOwner;
+    // verify against generated tenebra.aar: modern libbox returns ConnectionOwner;
     // classic returns Int (the uid) and additionally declares packageNameByUid /
     // uidByPackageName. Adjust here if the bind reports the classic shape.
     override fun findConnectionOwner(
@@ -71,7 +71,7 @@ interface PlatformWrapper : PlatformInterface {
     // Interface enumeration for the engine. Built from java.net so it needs no
     // Context. Type/metered are coarse (Other/false) — enough for socket binding;
     // enriching them per-network via ConnectivityManager is a later refinement.
-    // verify against generated libbox.aar: NetworkInterface field names/setters below.
+    // verify against generated tenebra.aar: NetworkInterface field names/setters below.
     override fun getInterfaces(): NetworkInterfaceIterator {
         val out = ArrayList<NetworkInterface>()
         val ifaces = runCatching { JavaNetworkInterface.getNetworkInterfaces() }.getOrNull()

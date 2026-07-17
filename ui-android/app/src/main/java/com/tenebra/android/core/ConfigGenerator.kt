@@ -6,18 +6,18 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 
-// Thin Kotlin wrapper over the Tenebra core bridge (tenebra-core.aar, built by CI
-// from ./core-bridge via `gomobile bind ... -javapkg com.tenebra.core`). gomobile
-// renders the package's exported funcs as static methods on a class named after the
-// package: com.tenebra.core.Tenebracore.{generateConfig,importSubscription,
-// orderNodes,version}. Each Go `(string, error)` return becomes a Kotlin method that
-// returns String and throws on error.
+// Thin Kotlin wrapper over the Tenebra core bridge (bundled in tenebra.aar, built by
+// CI from the ../../mobile wrapper via `gomobile bind ... -javapkg io.nekohasekai`).
+// gomobile renders the wrapper package's exported funcs as static methods on a class
+// named after the package: io.nekohasekai.tenebracore.Tenebracore.{generateConfig,
+// importSubscription,orderNodes,version}. Each Go `(string, error)` return becomes a
+// Kotlin method that returns String and throws on error.
 //
 // VERIFY the exact class/method spelling against the generated headers after the
 // first Android bind (the iOS side leaves the same note, guarded by #if canImport).
 // Kotlin has no canImport equivalent, so the reference is direct: it compiles once
-// tenebra-core.aar is present in app/libs, and fails loudly if the ABI drifts —
-// which is the intended signal, not something to paper over.
+// tenebra.aar is present in app/libs, and fails loudly if the ABI drifts — which is
+// the intended signal, not something to paper over.
 //
 // The three call envelopes are the frozen ABI from core-bridge/{generate,import,
 // order}.go. The load-bearing invariant on Android is tun.externalTun = true: the

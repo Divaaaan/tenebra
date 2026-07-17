@@ -84,7 +84,7 @@ object DefaultNetworkMonitor {
     }
 
     private fun pushTo(listener: InterfaceUpdateListener) {
-        // verify against generated libbox.aar: modern libbox signature is
+        // verify against generated tenebra.aar: modern libbox signature is
         // updateDefaultInterface(interfaceName, interfaceIndex, isExpensive, isConstrained).
         runCatching {
             listener.updateDefaultInterface(
