@@ -17,9 +17,9 @@ func TestOrderNodesProtocolPreference(t *testing.T) {
 	p := bridgeProfile(t, hy2Node("h"), vlessNode("v"))
 	reqJSON, _ := json.Marshal(orderRequest{Profile: p})
 
-	out, err := orderNodes(string(reqJSON))
+	out, err := OrderNodes(string(reqJSON))
 	if err != nil {
-		t.Fatalf("orderNodes() error = %v", err)
+		t.Fatalf("OrderNodes() error = %v", err)
 	}
 	var tags []string
 	if err := json.Unmarshal([]byte(out), &tags); err != nil {
@@ -37,9 +37,9 @@ func TestOrderNodesLastGoodLeads(t *testing.T) {
 	lastID := p.Servers[1].ID
 	reqJSON, _ := json.Marshal(orderRequest{Profile: p, LastGood: lastID})
 
-	out, err := orderNodes(string(reqJSON))
+	out, err := OrderNodes(string(reqJSON))
 	if err != nil {
-		t.Fatalf("orderNodes() error = %v", err)
+		t.Fatalf("OrderNodes() error = %v", err)
 	}
 	var tags []string
 	if err := json.Unmarshal([]byte(out), &tags); err != nil {
@@ -57,9 +57,9 @@ func TestOrderNodesByLatency(t *testing.T) {
 	latency := map[string]int64{p.Servers[0].ID: 200, p.Servers[1].ID: 20}
 	reqJSON, _ := json.Marshal(orderRequest{Profile: p, Latency: latency})
 
-	out, err := orderNodes(string(reqJSON))
+	out, err := OrderNodes(string(reqJSON))
 	if err != nil {
-		t.Fatalf("orderNodes() error = %v", err)
+		t.Fatalf("OrderNodes() error = %v", err)
 	}
 	var tags []string
 	if err := json.Unmarshal([]byte(out), &tags); err != nil {
@@ -73,14 +73,14 @@ func TestOrderNodesByLatency(t *testing.T) {
 func TestOrderNodesEmptyAndError(t *testing.T) {
 	// An empty profile yields a deterministic empty array — not null, not an error.
 	empty, _ := json.Marshal(orderRequest{Profile: bridgeProfile(t)})
-	out, err := orderNodes(string(empty))
+	out, err := OrderNodes(string(empty))
 	if err != nil {
-		t.Fatalf("orderNodes(empty) error = %v", err)
+		t.Fatalf("OrderNodes(empty) error = %v", err)
 	}
 	if out != "[]" {
 		t.Errorf("empty order = %q, want []", out)
 	}
-	if _, err := orderNodes("{bad"); err == nil {
+	if _, err := OrderNodes("{bad"); err == nil {
 		t.Error("malformed JSON: want error")
 	}
 }

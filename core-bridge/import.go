@@ -34,6 +34,15 @@ func defaultFetch(ctx context.Context, url string, headers map[string]string) ([
 	return subscription.FetchWithHeaders(ctx, url, headers)
 }
 
+// ImportSubscription fetches a subscription URL and returns the JSON of the profile
+// built from it — its nodes plus any quota/expiry. It is the "import a subscription,
+// get a profile" call the app makes before GenerateConfig. See importRequest for the
+// envelope. It runs the production fetch (defaultFetch); the fetch seam is exercised
+// by the unexported importSubscription below, which the tests drive with a stub.
+func ImportSubscription(requestJSON string) (string, error) {
+	return importSubscription(requestJSON, defaultFetch)
+}
+
 // importSubscription fetches a subscription, parses its nodes, and builds a stored
 // profile from them — the mobile equivalent of the desktop daemon's
 // import_subscription handler. It mirrors that path field for field: fetch, parse,

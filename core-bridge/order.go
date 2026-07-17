@@ -25,7 +25,7 @@ type orderRequest struct {
 	Latency map[string]int64 `json:"latency,omitempty"`
 }
 
-// orderNodes returns the profile's selector tags in the order the native connect
+// OrderNodes returns the profile's selector tags in the order the native connect
 // loop should try them, so it doesn't have to re-implement the anti-DPI fallback
 // walk. The order is the fallback package's: last-good first (or fastest-first when
 // latency is supplied), then protocol preference, with every node tried exactly
@@ -33,7 +33,7 @@ type orderRequest struct {
 // GenerateConfig emits — which the app feeds to libbox's SelectOutbound. An empty
 // or all-unusable profile yields an empty array (a deterministic default), never
 // an error.
-func orderNodes(requestJSON string) (string, error) {
+func OrderNodes(requestJSON string) (string, error) {
 	var req orderRequest
 	if err := json.Unmarshal([]byte(requestJSON), &req); err != nil {
 		return "", fmt.Errorf("tenebracore: decode order request: %w", err)

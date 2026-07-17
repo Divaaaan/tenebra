@@ -1,36 +1,41 @@
-// Package tenebracore is the shared gomobile binding that exposes Tenebra's
-// config generator to the mobile clients. One package, two artifacts: gomobile
-// targets GOOS=ios to produce a `.xcframework` and GOOS=android to produce an
-// `.aar`. Either way the generator is compiled in-process — there is no
-// desktop-style sidecar process on mobile — and called from the host app (Swift
-// on iOS, Kotlin on Android; see docs/porting/ios.md).
+// Package tenebracore is Tenebra's config generator, shared by the desktop core
+// and the mobile clients. It is a *pure generator*: it turns a profile plus routing
+// and tun options into a sing-box configuration JSON string and never imports
+// sing-box itself, exactly like the desktop core. The generator and the sing-box
+// engine meet only at that JSON string — the app hands it to libbox's
+// CommandServer.StartOrReloadService — which is the generator-vs-engine split the
+// whole project is built on. Do NOT add a sing-box import to this package.
 //
-// # Generator, not engine
+// # How it reaches the phone
 //
-// This bridge deliberately stays a *pure config generator* with no sing-box
-// import, exactly like the desktop core. It is gomobile-bound into its own small
-// artifact (`TenebraCore.xcframework` on iOS, the equivalent `.aar` on Android),
-// while sing-box's engine ships as a separate, unmodified libbox artifact. The two
-// meet only at a JSON string: the app calls GenerateConfig here, then hands the
-// result to libbox's `CommandServer.StartOrReloadService(json)`. Keeping them
-// apart preserves the generator-vs-engine split the whole project is built on. Do
-// not add a sing-box dependency to this package.
+// On mobile the generator is NOT gomobile-bound on its own. A separate wrapper
+// module (../mobile) imports this package AND sing-box's experimental/libbox and
+// binds BOTH in a single gomobile pass into ONE artifact — a single tenebra.aar on
+// Android, a single Tenebra.xcframework on iOS. That is mandatory, not a
+// convenience: two independent gomobile artifacts cannot share one process. Each
+// carries its own Go runtime and its own copy of the gomobile support package `go`
+// (go.Seq, go.Universe), so linking a standalone core .aar next to a standalone
+// libbox.aar makes Android's D8 fail on duplicate go/Seq and go/Universe classes
+// and, even past that, would load two Go runtimes. Binding the wrapper and libbox
+// together yields one runtime and one `go` package, with the generated classes
+// (Tenebracore and Libbox*) side by side. See ../mobile,
+// scripts/build-libbox-android.sh and scripts/build-libbox.sh.
 //
-// # Layout and the build tag
+// # Layout
 //
-// The exported, gomobile-representable surface (string in, string/error out) lives
-// in bridge.go under a `//go:build ios || android` constraint, so gomobile picks
-// it up for both mobile targets while the desktop and CI builds — which set
-// neither tag — exclude it and can never be broken by it. The actual logic lives
-// in build-tag-free files (this one, import.go, order.go) as ordinary functions,
-// so it compiles and its tests run on every host, including Windows/Linux CI where
-// no mobile toolchain exists. bridge.go is a thin wrapper that delegates to them.
+// The exported surface — GenerateConfig, ImportSubscription, OrderNodes, Version,
+// all string-in / string-or-error-out — lives in this package as ordinary exported
+// functions with NO build tag, so the desktop and CI builds compile and unit-test
+// them on every host, including Windows/Linux CI where no mobile toolchain exists.
+// The ../mobile wrapper re-exports them from a package also named tenebracore, so
+// gomobile renders them as Tenebracore.generateConfig(...) from Kotlin and
+// TenebracoreGenerateConfig(...) from Swift. This package carries no gomobile
+// specifics of its own; it is a plain library the wrapper binds.
 //
-// SCAFFOLD STATUS — the Go here cross-compiles for both mobile targets and is unit
-// tested on the desktop, but the gomobile *bind* that turns it into a mobile
-// artifact has NOT been exercised on the host this was written on (the iOS bind
-// needs macOS + Xcode, the Android bind needs the NDK). See ui-ios/README.md and
-// scripts/build-libbox.sh.
+// SCAFFOLD STATUS — the Go here is unit-tested on the desktop, but the gomobile
+// *bind* in ../mobile that turns it (with libbox) into a mobile artifact has only
+// been exercised on CI for Android; iOS needs a Mac. See ui-android/README.md,
+// ui-ios/README.md and the build scripts.
 package tenebracore
 
 import (
@@ -91,13 +96,15 @@ type tunOptions struct {
 	ExternalTun bool `json:"externalTun,omitempty"`
 }
 
-// generateConfig turns a profile (plus optional routing/tun options) into a
-// sing-box configuration JSON string. It mirrors the desktop daemon's per-connect
-// config build exactly: extract the profile's nodes, construct routing/tun
-// options, and delegate to singbox.Build, which normalizes and validates. Errors
-// (no usable nodes, invalid routing) come back as a Go error, which the gomobile
-// wrapper surfaces to the host as a thrown exception/NSError.
-func generateConfig(requestJSON string) (string, error) {
+// GenerateConfig turns a profile (plus optional routing/tun options) into a
+// sing-box configuration JSON string, ready to hand to libbox unchanged. It mirrors
+// the desktop daemon's per-connect config build exactly: extract the profile's
+// nodes, construct routing/tun options, and delegate to singbox.Build, which
+// normalizes and validates. On mobile, set tun.externalTun so the tun inbound omits
+// auto_route — the platform owns routing. Errors (no usable nodes, invalid routing)
+// come back as a Go error, which gomobile surfaces to the host as a thrown
+// exception/NSError.
+func GenerateConfig(requestJSON string) (string, error) {
 	var req generateRequest
 	if err := json.Unmarshal([]byte(requestJSON), &req); err != nil {
 		return "", fmt.Errorf("tenebracore: decode request: %w", err)
@@ -143,4 +150,16 @@ func generateConfig(requestJSON string) (string, error) {
 		return "", fmt.Errorf("tenebracore: encode config: %w", err)
 	}
 	return string(out), nil
+}
+
+// bridgeVersion is the ABI version of this binding — the shape of the
+// request/response envelopes, NOT the app or sing-box version. Bump it when an
+// envelope changes so the native side can detect a mismatch.
+const bridgeVersion = "0.2.0"
+
+// Version returns the binding's ABI version — the shape of these calls'
+// request/response envelopes, distinct from the sing-box engine and app versions —
+// so a mismatched host and binding can be detected.
+func Version() string {
+	return bridgeVersion
 }

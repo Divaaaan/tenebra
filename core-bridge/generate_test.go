@@ -34,9 +34,9 @@ func TestGenerateConfigHappyPath(t *testing.T) {
 	req := generateRequest{Profile: bridgeProfile(t, vlessNode("a"), vlessNode("b"))}
 	reqJSON, _ := json.Marshal(req)
 
-	out, err := generateConfig(string(reqJSON))
+	out, err := GenerateConfig(string(reqJSON))
 	if err != nil {
-		t.Fatalf("generateConfig() error = %v", err)
+		t.Fatalf("GenerateConfig() error = %v", err)
 	}
 	var cfg map[string]any
 	if err := json.Unmarshal([]byte(out), &cfg); err != nil {
@@ -59,9 +59,9 @@ func TestGenerateConfigExternalTunOmitsAutoRoute(t *testing.T) {
 	}
 	reqJSON, _ := json.Marshal(req)
 
-	out, err := generateConfig(string(reqJSON))
+	out, err := GenerateConfig(string(reqJSON))
 	if err != nil {
-		t.Fatalf("generateConfig() error = %v", err)
+		t.Fatalf("GenerateConfig() error = %v", err)
 	}
 	var cfg map[string]any
 	if err := json.Unmarshal([]byte(out), &cfg); err != nil {
@@ -81,12 +81,12 @@ func TestGenerateConfigExternalTunOmitsAutoRoute(t *testing.T) {
 }
 
 func TestGenerateConfigErrors(t *testing.T) {
-	if _, err := generateConfig("{not json"); err == nil {
+	if _, err := GenerateConfig("{not json"); err == nil {
 		t.Error("malformed JSON: want error, got nil")
 	}
 	// A profile with no nodes has nothing usable to build.
 	empty, _ := json.Marshal(generateRequest{Profile: bridgeProfile(t)})
-	if _, err := generateConfig(string(empty)); err == nil {
+	if _, err := GenerateConfig(string(empty)); err == nil {
 		t.Error("empty profile: want a no-usable-nodes error, got nil")
 	}
 }
