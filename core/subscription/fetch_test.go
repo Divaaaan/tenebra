@@ -353,6 +353,39 @@ func TestFetchHTTPSchemeWarnsWithoutLeakingToken(t *testing.T) {
 	}
 }
 
+func TestFetchAppliesCustomHeaders(t *testing.T) {
+	var gotUA, gotTok atomic.Value
+	gotUA.Store("")
+	gotTok.Store("")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA.Store(r.Header.Get("User-Agent"))
+		gotTok.Store(r.Header.Get("X-Sub-Token"))
+		io.WriteString(w, "ok")
+	}))
+	t.Cleanup(srv.Close)
+
+	// blockAddr nil keeps the guard off so the loopback origin is reachable; the
+	// point here is that the extra headers reach the request, one of them overriding
+	// the default User-Agent.
+	cfg := fetchConfig{headers: map[string]string{
+		"X-Sub-Token": "abc123",
+		"User-Agent":  "custom-agent",
+	}}
+	body, _, err := fetchWithConfig(context.Background(), srv.URL+"/sub", cfg)
+	if err != nil {
+		t.Fatalf("fetchWithConfig() error = %v", err)
+	}
+	if string(body) != "ok" {
+		t.Fatalf("body = %q, want ok", body)
+	}
+	if got := gotTok.Load().(string); got != "abc123" {
+		t.Errorf("X-Sub-Token = %q, want abc123", got)
+	}
+	if got := gotUA.Load().(string); got != "custom-agent" {
+		t.Errorf("User-Agent = %q, want custom-agent (caller override)", got)
+	}
+}
+
 func TestFetchGuardOptOutEnvDisablesGuard(t *testing.T) {
 	t.Setenv(ssrfGuardOptOutEnv, "1")
 	if ssrfGuardDisabled() != true {
