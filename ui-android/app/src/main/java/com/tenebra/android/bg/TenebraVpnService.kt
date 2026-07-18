@@ -11,7 +11,6 @@
 // protect()'d, so nothing loops back into the tun.
 package com.tenebra.android.bg
 
-import android.app.Notification
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -75,9 +74,17 @@ class TenebraVpnService : VpnService(), PlatformWrapper {
 
         TunnelState.clearError()
         TunnelState.setStatus(TunnelState.Status.Starting)
-        startForegroundCompat(
-            ServiceNotification.build(this, getString(com.tenebra.android.R.string.notification_connecting)),
-        )
+
+        // Enter the foreground BEFORE the long work — the system requires the
+        // startForeground call promptly after startForegroundService. This runs
+        // outside the coroutine's try/catch below, so a throw here (e.g. an OEM/version
+        // rejecting the foreground-service type) would be uncaught and kill the whole
+        // process. enterForeground swallows that, records the reason, and we bail out
+        // cleanly instead.
+        if (!enterForeground()) {
+            stopTunnel()
+            return
+        }
 
         val requestedServerId = intent?.getStringExtra(EXTRA_SELECTED_SERVER_ID)
 
@@ -113,11 +120,21 @@ class TenebraVpnService : VpnService(), PlatformWrapper {
 
                 if (serverId != null) repository.setLastGoodServerId(serverId)
 
+                // A libbox callback (e.g. openTun) can fail by recording an error and
+                // returning an invalid value rather than throwing, so libbox may not
+                // raise here. If one did, do not claim a healthy tunnel.
+                val callbackError = TunnelState.lastError.value
+                if (!callbackError.isNullOrBlank()) error(callbackError)
+
                 TunnelState.setStatus(TunnelState.Status.Started)
                 updateNotification(getString(com.tenebra.android.R.string.notification_connected))
             } catch (t: Throwable) {
                 Log.e(TAG, "startTunnel failed", t)
-                TunnelState.setError(t.message ?: "Failed to start")
+                // Preserve a more specific error a callback already recorded; fall back
+                // to this exception's message only when none is set.
+                if (TunnelState.lastError.value.isNullOrBlank()) {
+                    TunnelState.setError(t.message ?: "Failed to start")
+                }
                 stopTunnel()
             }
         }
@@ -145,7 +162,20 @@ class TenebraVpnService : VpnService(), PlatformWrapper {
 
     // libbox asks for the tunnel fd. We build the interface from the config's tun
     // options (addresses/mtu/stack) and add routing/DNS ourselves, then establish().
-    override fun openTun(options: TunOptions): Int {
+    //
+    // This is a libbox callback: it runs on a Go-owned thread, so an exception that
+    // escapes it crosses the gomobile boundary, where it can abort the process
+    // (SIGABRT) instead of surfacing as a catchable error. Nothing is allowed to throw
+    // out of here — every failure is recorded and reported to the engine as an invalid
+    // fd (libbox treats fd < 0 as "could not open the tun" and stops).
+    override fun openTun(options: TunOptions): Int =
+        runCatching { openTunOrThrow(options) }.getOrElse {
+            Log.e(TAG, "openTun failed", it)
+            TunnelState.setError(it.message ?: "Failed to open the VPN interface")
+            -1
+        }
+
+    private fun openTunOrThrow(options: TunOptions): Int {
         if (VpnService.prepare(this) != null) {
             error("android: VPN permission is not granted")
         }
@@ -197,15 +227,21 @@ class TenebraVpnService : VpnService(), PlatformWrapper {
     }
 
     // libbox hands each engine-created socket here so it bypasses the tun. Backs
-    // usePlatformAutoDetectInterfaceControl() == true in PlatformWrapper.
+    // usePlatformAutoDetectInterfaceControl() == true in PlatformWrapper. libbox
+    // callback (Go thread): protect() should not throw, but guard it so nothing can
+    // escape back into the engine.
     override fun autoDetectInterfaceControl(fd: Int) {
-        protect(fd)
+        runCatching { protect(fd) }
+            .onFailure { Log.w(TAG, "protect($fd) failed", it) }
     }
 
     // Engine -> platform notifications (warnings, subscription messages). Surfaced to
-    // the log for now. verify: libbox Notification type/fields across versions.
+    // the log for now. libbox callback (Go thread): reading the fields must not throw
+    // back across the boundary. verify: libbox Notification type/fields across versions.
     override fun sendNotification(notification: io.nekohasekai.libbox.Notification) {
-        Log.i(TAG, "libbox notification: ${notification.title} — ${notification.body}")
+        runCatching {
+            Log.i(TAG, "libbox notification: ${notification.title} — ${notification.body}")
+        }
     }
 
     private fun addAddresses(builder: Builder, iterator: RoutePrefixIterator?) {
@@ -231,16 +267,50 @@ class TenebraVpnService : VpnService(), PlatformWrapper {
 
     // --- foreground helpers ---
 
-    private fun startForegroundCompat(notification: Notification) {
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(
-                ServiceNotification.NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED,
+    // Moves the service to the foreground without ever crashing the process. On
+    // Android 14+ a VPN uses the SYSTEM_EXEMPTED foreground-service type — the same
+    // type SagerNet/sing-box-for-android uses for its VpnService; there is no dedicated
+    // "vpn" type. If a particular OEM/version rejects the typed start we retry with the
+    // untyped form (which resolves the type from the manifest), and if even that fails
+    // we record the reason and give up cleanly rather than let an uncaught exception
+    // kill the app. Returns true once the service is in the foreground.
+    private fun enterForeground(): Boolean {
+        val notification = runCatching {
+            ServiceNotification.build(
+                this,
+                getString(com.tenebra.android.R.string.notification_connecting),
             )
-        } else {
-            startForeground(ServiceNotification.NOTIFICATION_ID, notification)
+        }.getOrElse {
+            Log.e(TAG, "failed to build the foreground notification", it)
+            TunnelState.setError(it.message ?: "Failed to build the notification")
+            return false
         }
+
+        if (Build.VERSION.SDK_INT >= 34) {
+            val typed = runCatching {
+                startForeground(
+                    ServiceNotification.NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED,
+                )
+            }
+            if (typed.isSuccess) return true
+            Log.e(TAG, "typed startForeground rejected, retrying untyped", typed.exceptionOrNull())
+        }
+
+        return runCatching {
+            startForeground(ServiceNotification.NOTIFICATION_ID, notification)
+        }.fold(
+            onSuccess = { true },
+            onFailure = {
+                Log.e(TAG, "startForeground failed", it)
+                TunnelState.setError(
+                    "The OS refused to start the VPN foreground service: " +
+                        "${it.javaClass.simpleName}: ${it.message}",
+                )
+                false
+            },
+        )
     }
 
     private fun stopForegroundCompat() {

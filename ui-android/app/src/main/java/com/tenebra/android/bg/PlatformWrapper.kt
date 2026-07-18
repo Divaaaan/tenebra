@@ -12,6 +12,7 @@
 package com.tenebra.android.bg
 
 import android.os.Build
+import android.util.Log
 import io.nekohasekai.libbox.ConnectionOwner
 import io.nekohasekai.libbox.InterfaceUpdateListener
 import io.nekohasekai.libbox.LocalDNSTransport
@@ -22,6 +23,8 @@ import io.nekohasekai.libbox.StringIterator
 import io.nekohasekai.libbox.TunOptions
 import io.nekohasekai.libbox.WIFIState
 import java.net.NetworkInterface as JavaNetworkInterface
+
+private const val TAG_PLATFORM = "TenebraPlatform"
 
 // Default implementations of libbox's PlatformInterface. The concrete VpnService
 // implements this interface and overrides only the members that need the service
@@ -73,9 +76,13 @@ interface PlatformWrapper : PlatformInterface {
     // enriching them per-network via ConnectivityManager is a later refinement.
     // verify against generated tenebra.aar: NetworkInterface field names/setters below.
     override fun getInterfaces(): NetworkInterfaceIterator {
+        // libbox callback (Go thread): build the list defensively. An exception that
+        // escaped here — e.g. a gomobile setter whose signature differs across binds
+        // (flagged above) — would cross into Go and can abort the process, so on any
+        // failure fall back to an empty iterator rather than throw.
         val out = ArrayList<NetworkInterface>()
-        val ifaces = runCatching { JavaNetworkInterface.getNetworkInterfaces() }.getOrNull()
-        if (ifaces != null) {
+        runCatching {
+            val ifaces = JavaNetworkInterface.getNetworkInterfaces() ?: return@runCatching
             for (ni in ifaces) {
                 if (!runCatching { ni.isUp }.getOrDefault(false)) continue
                 val addressStrings = ni.interfaceAddresses.mapNotNull { addr ->
@@ -89,7 +96,7 @@ interface PlatformWrapper : PlatformInterface {
                     flags = interfaceFlags(ni)
                 }
             }
-        }
+        }.onFailure { Log.w(TAG_PLATFORM, "getInterfaces failed", it) }
         return InterfaceArray(out.iterator())
     }
 

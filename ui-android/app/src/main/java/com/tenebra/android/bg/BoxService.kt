@@ -71,33 +71,40 @@ class BoxService(
 
     // --- CommandServerHandler (modern surface) ---
 
+    // All CommandServerHandler methods below are libbox callbacks invoked on a
+    // Go-owned thread. An exception that escapes any of them crosses the gomobile
+    // boundary, where it can abort the process rather than surface as a catchable
+    // error — so each guards its body and returns a safe default.
+
     override fun serviceReload() {
         // The minimal client keeps one static config per connect; a runtime node
         // switch goes through libbox SelectOutbound, not a reload. Nothing to rebuild
         // here, so acknowledge without action. A full client regenerates the config
         // and calls startOrReloadService again.
-        Log.d(TAG, "serviceReload (no-op in minimal client)")
+        runCatching { Log.d(TAG, "serviceReload (no-op in minimal client)") }
     }
 
     override fun serviceStop() {
-        onServiceStop?.invoke()
+        runCatching { onServiceStop?.invoke() }
+            .onFailure { Log.w(TAG, "serviceStop handler failed", it) }
     }
 
-    override fun getSystemProxyStatus(): SystemProxyStatus {
+    override fun getSystemProxyStatus(): SystemProxyStatus =
         // This client does not register a system HTTP proxy; report it unavailable.
         // verify field names against generated tenebra.aar.
-        return SystemProxyStatus().apply {
-            available = false
-            enabled = false
-        }
-    }
+        runCatching {
+            SystemProxyStatus().apply {
+                available = false
+                enabled = false
+            }
+        }.getOrElse { SystemProxyStatus() }
 
     override fun setSystemProxyEnabled(isEnabled: Boolean) {
         // No system proxy to toggle.
     }
 
     override fun writeDebugMessage(message: String?) {
-        if (message != null) Log.d(TAG, message)
+        runCatching { if (message != null) Log.d(TAG, message) }
     }
 
     // Libbox.setup must run once per process before any engine call. Idempotent.
