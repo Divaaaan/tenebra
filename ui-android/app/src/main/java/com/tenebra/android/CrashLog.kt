@@ -2,6 +2,8 @@ package com.tenebra.android
 
 import android.content.Context
 import android.os.Build
+import com.tenebra.android.bg.DiagnosticsReport
+import com.tenebra.android.bg.LogStore
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -50,6 +52,16 @@ object CrashLog {
                 pw.println("app: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
                 pw.println()
                 throwable.printStackTrace(pw)
+                // Fold in the recent in-memory log so a crash carries the engine/app
+                // lines that led up to it. The buffer dies with the process, and a JVM
+                // crash always forces a restart, so this run's live buffer is empty by
+                // the time the report is read back — no risk of duplicating it there.
+                val recent = runCatching { LogStore.snapshot() }.getOrNull().orEmpty()
+                if (recent.isNotEmpty()) {
+                    pw.println()
+                    pw.println("--- recent log (last ${minOf(recent.size, 200)} lines) ---")
+                    recent.takeLast(200).forEach { pw.println(DiagnosticsReport.formatLine(it)) }
+                }
             }
         }.toString()
         File(context.filesDir, FILE_NAME).writeText(trace)
