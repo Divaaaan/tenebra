@@ -124,4 +124,59 @@ describe("LogsScreen leak check", () => {
     expect(tenebra.clearLogs).toHaveBeenCalledTimes(1);
     expect(pushToast).toHaveBeenCalledWith("log cleared");
   });
+
+  it("copies a diagnostics bundle and confirms with a toast", async () => {
+    const tenebra = makeTenebra({
+      logs: [
+        {
+          id: 1,
+          at: new Date("2026-07-18T12:00:00Z"),
+          level: "info",
+          msg: "core started",
+        },
+      ],
+      state: { state: "connected", daemon_version: "0.4.4" },
+    });
+    renderWithProviders(<LogsScreen tenebra={tenebra} />);
+    const user = userEvent.setup();
+
+    // Install the write stub after userEvent.setup so it, not userEvent's own
+    // clipboard, is what the handler calls.
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Copy diagnostics" }));
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const bundle = writeText.mock.calls[0][0] as string;
+    expect(bundle).toContain("Daemon version: 0.4.4");
+    expect(bundle).toContain("core started");
+    expect(pushToast).toHaveBeenCalledWith("diagnostics copied");
+
+    delete (navigator as { clipboard?: unknown }).clipboard;
+  });
+
+  it("stays quiet when the clipboard write is refused — no false confirmation", async () => {
+    const tenebra = makeTenebra({
+      logs: [{ id: 1, at: new Date(), level: "info", msg: "core started" }],
+    });
+    renderWithProviders(<LogsScreen tenebra={tenebra} />);
+    const user = userEvent.setup();
+
+    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Copy diagnostics" }));
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(pushToast).not.toHaveBeenCalled();
+
+    delete (navigator as { clipboard?: unknown }).clipboard;
+  });
 });

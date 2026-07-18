@@ -9,6 +9,7 @@ import {
 import type { Tenebra } from "../state/useTenebra";
 import { useI18n } from "../i18n/I18nContext";
 import type { Strings } from "../i18n/strings";
+import { buildDiagnostics } from "../lib/diagnostics";
 import { formatTime } from "../lib/format";
 import { pushToast } from "../lib/toast";
 
@@ -109,6 +110,29 @@ export function LogsScreen({ tenebra }: LogsScreenProps) {
     pushToast(t.toast.logsCleared);
   }
 
+  // Gather the on-screen context (versions, platform, the last leak check and the
+  // log buffer) into one masked text block and put it on the clipboard, so a user
+  // can paste it into a report. Nothing leaves the machine — the copy is the whole
+  // action. writeText works in the WebView2/webkit shells without a Tauri
+  // permission, matching the crash-report copy; if it is refused we stay quiet
+  // rather than claim a copy that didn't happen.
+  async function copyDiagnostics() {
+    const bundle = buildDiagnostics({
+      appVersion: __APP_VERSION__,
+      daemonVersion: tenebra.state.daemon_version,
+      platform: navigator.userAgent,
+      when: new Date(),
+      leak,
+      logs,
+    });
+    try {
+      await navigator.clipboard.writeText(bundle);
+      pushToast(t.toast.diagnosticsCopied);
+    } catch {
+      // Clipboard blocked; nothing was copied, so we don't confirm.
+    }
+  }
+
   return (
     <section className="log-screen">
       <header className="log-head">
@@ -137,14 +161,23 @@ export function LogsScreen({ tenebra }: LogsScreenProps) {
       <section className="log-console-block">
         <div className="log-console-head">
           <span className="log-eyebrow">{t.logs.title}</span>
-          <button
-            type="button"
-            className="log-btn-ghost"
-            disabled={logs.length === 0}
-            onClick={clearLogs}
-          >
-            {t.logs.clear}
-          </button>
+          <div className="log-console-actions">
+            <button
+              type="button"
+              className="log-btn-ghost"
+              onClick={copyDiagnostics}
+            >
+              {t.logs.copy}
+            </button>
+            <button
+              type="button"
+              className="log-btn-ghost"
+              disabled={logs.length === 0}
+              onClick={clearLogs}
+            >
+              {t.logs.clear}
+            </button>
+          </div>
         </div>
 
         <div
