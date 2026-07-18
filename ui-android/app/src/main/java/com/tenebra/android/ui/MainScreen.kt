@@ -54,6 +54,7 @@ fun MainScreen(
     viewModel: MainViewModel,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
+    onOpenLogs: () -> Unit,
 ) {
     val profile by viewModel.profile.collectAsState()
     val status by viewModel.status.collectAsState()
@@ -74,11 +75,22 @@ fun MainScreen(
                 .fillMaxSize()
                 .padding(16.dp),
         ) {
-            Text(
-                text = "TENEBRA",
-                style = MaterialTheme.typography.headlineMedium,
-                color = MaterialTheme.colorScheme.primary,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = "TENEBRA",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f),
+                )
+                // Unobtrusive way into the log/diagnostics screen; does not touch the
+                // connect flow.
+                TextButton(onClick = onOpenLogs) {
+                    Text(androidx.compose.ui.res.stringResource(R.string.diagnostics))
+                }
+            }
             Spacer(Modifier.height(16.dp))
 
             StatusCard(

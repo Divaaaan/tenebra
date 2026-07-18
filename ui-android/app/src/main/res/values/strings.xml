@@ -28,4 +28,17 @@
     <string name="crash_title">The previous run crashed</string>
     <string name="crash_copy">Copy</string>
     <string name="crash_clear">Clear</string>
+
+    <!-- Diagnostics / logs screen -->
+    <string name="diagnostics">Diagnostics</string>
+    <string name="diagnostics_title">Diagnostics</string>
+    <string name="diagnostics_back">Back</string>
+    <string name="diagnostics_share">Share</string>
+    <string name="diagnostics_copy">Copy</string>
+    <string name="diagnostics_clear">Clear</string>
+    <string name="diagnostics_last_crash">Last crash</string>
+    <string name="diagnostics_log">Log</string>
+    <string name="diagnostics_empty">No logs yet. Connect once and they will show up here.</string>
+    <string name="diagnostics_copied">Copied — subscription and keys scrubbed</string>
+    <string name="diagnostics_privacy">Copy and Share remove subscription tokens and keys, and only go where you send them. Tenebra sends nothing on its own.</string>
 </resources>

@@ -9,6 +9,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModelProvider
 import com.tenebra.android.bg.TenebraVpnService
 import com.tenebra.android.ui.theme.TenebraTheme
@@ -39,11 +43,22 @@ class MainActivity : ComponentActivity() {
         requestNotificationPermissionIfNeeded()
         setContent {
             TenebraTheme {
-                MainScreen(
-                    viewModel = viewModel,
-                    onConnect = ::connect,
-                    onDisconnect = viewModel::disconnect,
-                )
+                // One flat switch instead of a nav library: the app has two screens and
+                // the Logs screen handles its own system-back (BackHandler) to return.
+                var showLogs by rememberSaveable { mutableStateOf(false) }
+                if (showLogs) {
+                    LogsScreen(
+                        viewModel = viewModel,
+                        onBack = { showLogs = false },
+                    )
+                } else {
+                    MainScreen(
+                        viewModel = viewModel,
+                        onConnect = ::connect,
+                        onDisconnect = viewModel::disconnect,
+                        onOpenLogs = { showLogs = true },
+                    )
+                }
             }
         }
     }
