@@ -74,6 +74,7 @@ class TenebraVpnService : VpnService(), PlatformWrapper {
 
         TunnelState.clearError()
         TunnelState.setStatus(TunnelState.Status.Starting)
+        LogStore.i(TAG, "connect requested")
 
         // Enter the foreground BEFORE the long work — the system requires the
         // startForeground call promptly after startForegroundService. This runs
@@ -115,6 +116,7 @@ class TenebraVpnService : VpnService(), PlatformWrapper {
                 val box = BoxService(this@TenebraVpnService, this@TenebraVpnService)
                 box.onServiceStop = { stopTunnel() }
                 // Boots the engine, which calls back into openTun below for the fd.
+                LogStore.i(TAG, "starting engine")
                 box.start(config)
                 boxService = box
 
@@ -127,9 +129,14 @@ class TenebraVpnService : VpnService(), PlatformWrapper {
                 if (!callbackError.isNullOrBlank()) error(callbackError)
 
                 TunnelState.setStatus(TunnelState.Status.Started)
+                LogStore.i(TAG, "tunnel connected")
                 updateNotification(getString(com.tenebra.android.R.string.notification_connected))
             } catch (t: Throwable) {
                 Log.e(TAG, "startTunnel failed", t)
+                // Record the exception itself (type + message) in the diagnostics log;
+                // TunnelState.setError below captures the user-facing message, but the
+                // exception class is often the more telling half for a bug report.
+                LogStore.e(TAG, "start failed", t)
                 // Preserve a more specific error a callback already recorded; fall back
                 // to this exception's message only when none is set.
                 if (TunnelState.lastError.value.isNullOrBlank()) {
@@ -144,6 +151,7 @@ class TenebraVpnService : VpnService(), PlatformWrapper {
         if (stopping) return
         stopping = true
         TunnelState.setStatus(TunnelState.Status.Stopping)
+        LogStore.i(TAG, "stopping tunnel")
         scope.launch {
             runCatching { boxService?.stop() }
             boxService = null
@@ -185,6 +193,7 @@ class TenebraVpnService : VpnService(), PlatformWrapper {
 
         val mtu = if (options.mtu > 0) options.mtu else DEFAULT_MTU
         builder.setMtu(mtu)
+        LogStore.i(TAG, "opening tun (mtu=$mtu)")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             builder.setMetered(false)
         }
@@ -240,7 +249,7 @@ class TenebraVpnService : VpnService(), PlatformWrapper {
     // back across the boundary. verify: libbox Notification type/fields across versions.
     override fun sendNotification(notification: io.nekohasekai.libbox.Notification) {
         runCatching {
-            Log.i(TAG, "libbox notification: ${notification.title} — ${notification.body}")
+            LogStore.i(TAG, "engine notification: ${notification.title} — ${notification.body}")
         }
     }
 
@@ -256,6 +265,7 @@ class TenebraVpnService : VpnService(), PlatformWrapper {
 
     // The user revoked the VPN (or another VPN took over). Tear down cleanly.
     override fun onRevoke() {
+        LogStore.w(TAG, "VPN revoked (user, or another VPN took over)")
         stopTunnel()
     }
 

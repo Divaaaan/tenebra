@@ -26,6 +26,9 @@ object TunnelState {
 
     fun setError(message: String?) {
         _lastError.value = message
+        // Mirror every surfaced error into the diagnostics buffer so it is in the log a
+        // tester shares, not only in the transient banner under the status.
+        if (!message.isNullOrBlank()) LogStore.append(LogStore.Level.Error, "tunnel: $message")
     }
 
     fun clearError() {

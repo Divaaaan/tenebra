@@ -103,8 +103,16 @@ class BoxService(
         // No system proxy to toggle.
     }
 
+    // The engine's own log. libbox only calls this once SetupOptions.debug is on (see
+    // setupOnce); every sing-box warning/error/notice arrives here. Strip the ANSI
+    // colour codes the engine formatter adds and file it in LogStore so the Diagnostics
+    // screen can show it — without this the log of a failed connect is lost to logcat.
     override fun writeDebugMessage(message: String?) {
-        runCatching { if (message != null) Log.d(TAG, message) }
+        runCatching {
+            val text = message?.let(::stripAnsi)?.takeIf { it.isNotEmpty() } ?: return
+            Log.d(TAG, text)
+            LogStore.append(sniffLevel(text), text)
+        }
     }
 
     // Libbox.setup must run once per process before any engine call. Idempotent.
@@ -129,6 +137,17 @@ class BoxService(
                     tempPath = temp
                     // Fixes a Go-runtime/Android stack interaction; SFA sets it true.
                     fixAndroidStack = true
+                    // Route the engine's log to writeDebugMessage. libbox gates the
+                    // platform debug hook on this flag (the daemon only forwards a line
+                    // when it is set), so without it every sing-box warning/error is
+                    // dropped and a failed connect is mute in-app. SFA ties this to
+                    // BuildConfig.DEBUG; we keep it on for alpha builds too, because the
+                    // whole point is that a tester with no adb still gets engine logs.
+                    // The output stays local (LogStore) and is never auto-sent.
+                    debug = true
+                    // Caps the daemon's own line ring (the gRPC log stream); harmless
+                    // here since we capture via writeDebugMessage, matched to SFA.
+                    logMaxLines = 3000
                 },
             )
             setupDone = true
@@ -140,5 +159,25 @@ class BoxService(
 
         @Volatile
         private var setupDone = false
+    }
+}
+
+// The engine's log formatter colours each line with ANSI escapes (its platform
+// formatter leaves colours on); strip them so the text is clean on screen and in a
+// shared report.
+private val ANSI_ESCAPE = Regex("\u001B\\[[0-9;]*m")
+
+private fun stripAnsi(message: String): String = ANSI_ESCAPE.replace(message, "")
+
+// Each engine line begins with its own level word ("INFO[..", "WARN ..", "ERROR ..").
+// Read it so the Diagnostics screen can colour the line; fall back to Info for any
+// shape we do not recognise so nothing is mis-flagged as an error.
+private fun sniffLevel(message: String): LogStore.Level {
+    val head = message.trimStart().takeWhile { it.isLetter() }.uppercase()
+    return when (head) {
+        "PANIC", "FATAL", "ERROR" -> LogStore.Level.Error
+        "WARN", "WARNING" -> LogStore.Level.Warn
+        "DEBUG", "TRACE" -> LogStore.Level.Debug
+        else -> LogStore.Level.Info
     }
 }
