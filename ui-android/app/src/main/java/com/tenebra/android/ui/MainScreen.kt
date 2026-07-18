@@ -7,12 +7,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -23,6 +27,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -31,6 +36,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -54,6 +61,11 @@ fun MainScreen(
     val isImporting by viewModel.isImporting.collectAsState()
     val importError by viewModel.importError.collectAsState()
     val tunnelError by viewModel.tunnelError.collectAsState()
+    val lastCrash by viewModel.lastCrash.collectAsState()
+
+    lastCrash?.let { crash ->
+        CrashDialog(text = crash, onClear = viewModel::clearCrashLog)
+    }
 
     Scaffold { padding ->
         Column(
@@ -302,3 +314,40 @@ private fun statusLabel(status: TunnelState.Status): Int = when (status) {
 @Composable
 private fun stringResourceUpper(id: Int): String =
     androidx.compose.ui.res.stringResource(id).uppercase()
+
+// Shown at launch when the previous run left an uncaught-crash report. Lets the tester
+// copy the stack trace out (no adb needed) and clear it. "Clear" deletes the saved
+// report; dismissing (back/scrim) only hides it for this launch so it can still be
+// copied later.
+@Composable
+private fun CrashDialog(text: String, onClear: () -> Unit) {
+    var open by rememberSaveable { mutableStateOf(true) }
+    if (!open) return
+    val clipboard = LocalClipboardManager.current
+    AlertDialog(
+        onDismissRequest = { open = false },
+        title = { Text(androidx.compose.ui.res.stringResource(R.string.crash_title)) },
+        text = {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier
+                    .heightIn(max = 320.dp)
+                    .verticalScroll(rememberScrollState()),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { clipboard.setText(AnnotatedString(text)) }) {
+                Text(androidx.compose.ui.res.stringResource(R.string.crash_copy))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = {
+                onClear()
+                open = false
+            }) {
+                Text(androidx.compose.ui.res.stringResource(R.string.crash_clear))
+            }
+        },
+    )
+}

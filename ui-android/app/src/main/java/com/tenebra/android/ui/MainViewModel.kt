@@ -3,6 +3,7 @@ package com.tenebra.android.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.tenebra.android.CrashLog
 import com.tenebra.android.bg.TenebraVpnService
 import com.tenebra.android.bg.TunnelState
 import com.tenebra.android.core.ConfigGenerator
@@ -43,6 +44,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _importError = MutableStateFlow<String?>(null)
     val importError: StateFlow<String?> = _importError.asStateFlow()
 
+    // The stack trace of the last uncaught JVM crash, if any, read once at launch.
+    // Shown to the user so a crash can be reported without adb; cleared on demand.
+    private val _lastCrash = MutableStateFlow(CrashLog.read(application))
+    val lastCrash: StateFlow<String?> = _lastCrash.asStateFlow()
+
     fun importSubscription(url: String) {
         val trimmed = url.trim()
         if (trimmed.isEmpty() || _isImporting.value) return
@@ -73,6 +79,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun disconnect() {
         TenebraVpnService.stop(getApplication())
+    }
+
+    fun clearCrashLog() {
+        CrashLog.clear(getApplication())
+        _lastCrash.value = null
     }
 
     fun dismissImportError() {

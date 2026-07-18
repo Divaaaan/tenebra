@@ -23,4 +23,9 @@
     <string name="nodes">Nodes</string>
     <string name="no_nodes">No nodes yet. Import a subscription to begin.</string>
     <string name="tile_label">Tenebra</string>
+
+    <!-- Crash self-report (shown when the previous run crashed) -->
+    <string name="crash_title">The previous run crashed</string>
+    <string name="crash_copy">Copy</string>
+    <string name="crash_clear">Clear</string>
 </resources>

@@ -10,6 +10,10 @@ import com.tenebra.android.bg.ServiceNotification
 class TenebraApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        // Record any uncaught JVM crash to a file the UI reads on next launch, so a
+        // tester without adb/logcat can send back the cause. Installed first so it
+        // covers the rest of startup too.
+        CrashLog.install(this)
         ServiceNotification.createChannel(this)
     }
 }
