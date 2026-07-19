@@ -83,6 +83,28 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
         run: bash scripts/build-libbox-android.sh
+      # Sign the debug APK with a shared, fixed keystore so its signing
+      # certificate is identical from run to run. Otherwise Gradle generates a
+      # throwaway ~/.android/debug.keystore on each runner, every debug APK is
+      # signed by a different key, and a tester must uninstall the previous build
+      # before a new one will install (INSTALL_FAILED_UPDATE_INCOMPATIBLE). We
+      # drop the shared keystore exactly where AGP's default debug signingConfig
+      # looks for it (~/.android/debug.keystore, alias androiddebugkey, store and
+      # key password "android"), so no Gradle change is needed. If the secret is
+      # absent — a fork PR has no access to it — the build falls back to Gradle's
+      # generated key instead of failing.
+      - name: Install the shared debug keystore
+        env:
+          ANDROID_DEBUG_KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ANDROID_DEBUG_KEYSTORE_B64:-}" ]; then
+            echo "ANDROID_DEBUG_KEYSTORE_B64 is not set — Gradle will generate a throwaway debug key; the signature will differ between runs."
+            exit 0
+          fi
+          mkdir -p ~/.android
+          echo "$ANDROID_DEBUG_KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+          echo "Installed the shared debug keystore at ~/.android/debug.keystore."
       - name: Assemble the debug APK
         working-directory: ui-android
         run: |

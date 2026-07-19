@@ -34,6 +34,8 @@ cache.db
 *.local
 profiles.json
 *.subscription
+# Signing keystores live only in CI secrets, never in the repo
+*.keystore
 
 # OS / editor
 .DS_Store
