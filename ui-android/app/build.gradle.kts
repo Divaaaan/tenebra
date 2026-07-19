@@ -22,6 +22,24 @@ android {
         }
     }
 
+    signingConfigs {
+        // In CI a shared debug keystore — decoded from a secret into the file named
+        // by the DEBUG_KEYSTORE env var — signs the debug APK, so its signing
+        // certificate is identical from run to run. Without it Gradle generates a
+        // throwaway debug key on each runner and a tester must uninstall the previous
+        // build before a new one will install (INSTALL_FAILED_UPDATE_INCOMPATIBLE).
+        // When DEBUG_KEYSTORE is unset (local development) the debug config keeps
+        // Gradle's default auto-generated keystore, so nothing is required to build.
+        getByName("debug") {
+            System.getenv("DEBUG_KEYSTORE")?.takeIf { it.isNotBlank() }?.let { ksPath ->
+                storeFile = file(ksPath)
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+
     buildTypes {
         release {
             // Kept off until the libbox/gomobile keep-rules are proven on CI. R8 will
