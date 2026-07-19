@@ -11,6 +11,15 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Copy diagnostics from the logs screen.** A single button gathers the app
+  and daemon versions, the platform, the last leak check of the session and the
+  whole log buffer into one text block and puts it on the clipboard, ready to
+  paste into a bug report. It stays true to the privacy stance: nothing is sent
+  anywhere — you copy it and share it yourself — and subscription tokens and node
+  credentials are masked out before it reaches the clipboard.
+
 ## [0.4.4] - 2026-07-18
 
 ### Added

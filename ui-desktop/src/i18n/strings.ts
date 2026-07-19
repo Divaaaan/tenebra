@@ -148,6 +148,8 @@ export interface Strings {
     profileImported: string;
     /** Raised when the log console is cleared. */
     logsCleared: string;
+    /** Raised when the diagnostics bundle is copied to the clipboard. */
+    diagnosticsCopied: string;
     /** Accessible label for a small self-dismissing card's close control. */
     dismiss: string;
   };
@@ -526,6 +528,8 @@ export interface Strings {
     title: string;
     empty: string;
     clear: string;
+    /** Copies a masked diagnostics bundle (versions, last leak check, logs). */
+    copy: string;
     leakCheck: string;
     checking: string;
     /** Section heading for the public-IP finding. */
@@ -667,6 +671,7 @@ const en: Strings = {
     profileRemoved: "profile removed · {name}",
     profileImported: "profile imported · {name}",
     logsCleared: "log cleared",
+    diagnosticsCopied: "diagnostics copied",
     dismiss: "Dismiss",
   },
   update: {
@@ -957,6 +962,7 @@ const en: Strings = {
     title: "Logs",
     empty: "No log entries yet.",
     clear: "Clear",
+    copy: "Copy diagnostics",
     leakCheck: "IP / leak check",
     checking: "Checking…",
     leakIpHeading: "Public IP",
@@ -1088,6 +1094,7 @@ const ru: Strings = {
     profileRemoved: "профиль удалён · {name}",
     profileImported: "профиль импортирован · {name}",
     logsCleared: "журнал очищен",
+    diagnosticsCopied: "диагностика скопирована",
     dismiss: "Закрыть",
   },
   update: {
@@ -1378,6 +1385,7 @@ const ru: Strings = {
     title: "Журнал",
     empty: "Записей пока нет.",
     clear: "Очистить",
+    copy: "Копировать диагностику",
     leakCheck: "Проверка IP / утечек",
     checking: "Проверяю…",
     leakIpHeading: "Внешний IP",

@@ -244,6 +244,12 @@
   padding-bottom: var(--sp-3);
   border-bottom: var(--bw) solid var(--line);
 }
+/* Copy + clear sit together on the right; the eyebrow keeps the left. */
+.log-console-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
 
 .log-console {
   border: var(--bw) solid var(--line);
