@@ -30,6 +30,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -78,9 +79,17 @@ fun MainScreen(
         CrashDialog(text = crash, onClear = viewModel::clearCrashLog)
     }
 
+    val pings by viewModel.pings.collectAsState()
+
     val nodes = profile?.nodes ?: emptyList()
     val hasProfile = profile != null
     val active = status == TunnelState.Status.Started || status == TunnelState.Status.Starting
+
+    // Probe latency once the node set is known. Re-runs when the node list changes
+    // (a fresh import), not on every recomposition.
+    LaunchedEffect(nodes.map { it.id }) {
+        if (nodes.isNotEmpty()) viewModel.refreshPings()
+    }
 
     Column(
         modifier = Modifier
@@ -119,6 +128,7 @@ fun MainScreen(
                     NodeRow(
                         node = node,
                         selected = node.id == selectedId,
+                        ping = pings[node.id],
                         onClick = { viewModel.selectNode(node.id) },
                     )
                 }
@@ -239,6 +249,7 @@ private fun SectionLabel(text: String) {
 private fun NodeRow(
     node: TenebraNode,
     selected: Boolean,
+    ping: Int?,
     onClick: () -> Unit,
 ) {
     Row(
@@ -278,7 +289,22 @@ private fun NodeRow(
                 color = TenebraPalette.signal,
             )
         }
+        ping?.let {
+            Spacer(Modifier.width(12.dp))
+            PingBadge(it)
+        }
     }
+}
+
+// Latency chip: colour by the desktop ping scale (good/warn/signal) or dim for no
+// answer. A null ping renders nothing — the sweep hasn't reported this node yet.
+@Composable
+private fun PingBadge(ms: Int) {
+    Text(
+        text = if (ms < 0) stringResource(R.string.ping_no_answer) else stringResource(R.string.ping_ms, ms),
+        style = MaterialTheme.typography.bodySmall,
+        color = TenebraPalette.ping(ms),
+    )
 }
 
 @Composable

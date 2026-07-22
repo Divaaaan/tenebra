@@ -11,6 +11,7 @@ import com.tenebra.android.bg.TenebraVpnService
 import com.tenebra.android.bg.TunnelState
 import com.tenebra.android.core.ConfigGenerator
 import com.tenebra.android.core.TenebraProfile
+import com.tenebra.android.net.NodePinger
 import com.tenebra.android.store.ProfileRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,6 +48,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _importError = MutableStateFlow<String?>(null)
     val importError: StateFlow<String?> = _importError.asStateFlow()
+
+    // Node latency badges: id -> connect-time ms (-1 = no answer). Empty until the first
+    // probe. refreshPings() is cheap to call again (e.g. pull-to-refresh); a probe
+    // already in flight is ignored so taps don't stack sweeps.
+    private val _pings = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val pings: StateFlow<Map<String, Int>> = _pings.asStateFlow()
+    private val _isPinging = MutableStateFlow(false)
+    val isPinging: StateFlow<Boolean> = _isPinging.asStateFlow()
 
     // The stack trace of the last uncaught JVM crash, if any, read once at launch.
     // Shown to the user so a crash can be reported without adb; cleared on demand.
@@ -90,6 +99,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectNode(serverId: String) {
         repository.setSelectedServerId(serverId)
+    }
+
+    // Probe every node's connect-time latency, concurrently and off the main thread.
+    // Safe to call repeatedly; a sweep already running is left to finish.
+    fun refreshPings() {
+        if (_isPinging.value) return
+        val nodes = profile.value?.nodes ?: return
+        if (nodes.isEmpty()) return
+        _isPinging.value = true
+        viewModelScope.launch {
+            try {
+                val targets = nodes.map { NodePinger.Target(it.id, it.server, it.port) }
+                _pings.value = withContext(Dispatchers.IO) { NodePinger.pingAll(targets) }
+            } finally {
+                _isPinging.value = false
+            }
+        }
     }
 
     // The current selection, read synchronously for the connect path in the activity.
