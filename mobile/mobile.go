@@ -34,6 +34,12 @@ func OrderNodes(requestJSON string) (string, error) {
 	return core.OrderNodes(requestJSON)
 }
 
+// NodeTags returns the profile's stable server ID -> selector tag mapping, for
+// switching the live tunnel to a specific node without a rebuild.
+func NodeTags(requestJSON string) (string, error) {
+	return core.NodeTags(requestJSON)
+}
+
 // Version returns the binding's ABI version.
 func Version() string {
 	return core.Version()
