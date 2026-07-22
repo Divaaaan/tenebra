@@ -8,20 +8,21 @@
 //     class PacketTunnelProvider: ExtensionProvider {}
 // with all logic in a shared Library/Network/ExtensionProvider.swift (~332 lines).
 // The scaffold inlines a reduced sketch of that logic here instead of vendoring
-// their shared library. The libbox calls are guarded by #if canImport(Libbox)
-// because the framework does not exist until scripts/build-libbox.sh runs on a Mac.
+// their shared library. The libbox calls are guarded by #if canImport(Tenebra)
+// because the fused framework does not exist until scripts/build-libbox.sh runs on a
+// Mac; the engine keeps its Libbox* class names inside the Tenebra module.
 
 import NetworkExtension
 import os
 
-#if canImport(Libbox)
-import Libbox
+#if canImport(Tenebra)
+import Tenebra
 #endif
 
 class PacketTunnelProvider: NEPacketTunnelProvider {
     private let log = Logger(subsystem: "com.tenebra.ios.tunnel", category: "tunnel")
 
-    #if canImport(Libbox)
+    #if canImport(Tenebra)
     // The libbox command server drives the engine lifecycle (start/stop/reload)
     // and forwards platform requests to our PlatformInterface. Held for the life
     // of the tunnel.
@@ -44,7 +45,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
 
-        #if canImport(Libbox)
+        #if canImport(Tenebra)
         do {
             try startEngine(configJSON: configJSON, completionHandler: completionHandler)
         } catch {
@@ -59,7 +60,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         log.info("stopTunnel: \(String(describing: reason), privacy: .public)")
-        #if canImport(Libbox)
+        #if canImport(Tenebra)
         try? boxService?.close()
         boxService = nil
         commandServer?.close()
@@ -80,25 +81,26 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     // exposes matching hooks so the engine can pause timers/connections and cut
     // idle memory — important under the jetsam cap.
     override func sleep(completionHandler: @escaping () -> Void) {
-        #if canImport(Libbox)
+        #if canImport(Tenebra)
         boxService?.pause()
         #endif
         completionHandler()
     }
 
     override func wake() {
-        #if canImport(Libbox)
+        #if canImport(Tenebra)
         boxService?.wake()
         #endif
     }
 
     // MARK: - Engine
 
-    #if canImport(Libbox)
+    #if canImport(Tenebra)
     // Bring up sing-box in-process. This sketches the libbox 1.13 surface; the
     // exact initializers/among LibboxSetup, LibboxNewCommandServer,
-    // StartOrReloadService come from the generated Libbox headers — confirm them
-    // on the Mac. The load-bearing steps are: (1) LibboxSetup once with base/temp
+    // StartOrReloadService come from the generated Tenebra framework (the Libbox*
+    // symbols) — confirm them on the Mac. The load-bearing steps are: (1) LibboxSetup
+    // once with base/temp
     // paths in the App Group and a memory limit WELL below 50 MB; (2) install our
     // PlatformInterface so libbox can call back for the utun fd et al.; (3) hand
     // the config JSON to StartOrReloadService, which internally builds the box.
@@ -160,7 +162,7 @@ enum PacketTunnelError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingConfig: return "No sing-box config found in the App Group container"
-        case .engineNotLinked: return "Libbox.xcframework is not linked — run scripts/build-libbox.sh on a Mac"
+        case .engineNotLinked: return "Tenebra.xcframework is not linked — run scripts/build-libbox.sh on a Mac"
         }
     }
 }

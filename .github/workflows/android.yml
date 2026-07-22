@@ -1,0 +1,209 @@
+name: Android
+
+# Android is a separate workflow from ci.yml on purpose: the gomobile + NDK build
+# is heavy and has its own toolchain, and keeping it out of the cross-platform CI
+# means an Android hiccup never reddens the desktop/core checks. Debug APKs build
+# on Android-relevant pushes and PRs; a v* tag builds a signed release APK and
+# attaches it to the GitHub release.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'core-bridge/**'
+      - 'core/**'
+      - 'mobile/**'
+      - 'ui-android/**'
+      - 'scripts/build-libbox-android.sh'
+      - '.github/workflows/android.yml'
+    # Path filters are ignored for tag pushes, so a v* tag always reaches the
+    # release job regardless of what the tagged commit touched.
+    tags:
+      - 'v*'
+  pull_request:
+    paths:
+      - 'core-bridge/**'
+      - 'core/**'
+      - 'mobile/**'
+      - 'ui-android/**'
+      - 'scripts/build-libbox-android.sh'
+      - '.github/workflows/android.yml'
+
+# Superseded runs on the same ref cancel; a tag release run is never cancelled.
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+jobs:
+  debug:
+    # Every Android-relevant push/PR (path-filtered above). Tag pushes skip this
+    # and go to the release job instead.
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          # >= the sing-box v1.13.14 floor (go 1.24.7) and the same version the
+          # rest of CI pins, so every job builds the Go core with one toolchain.
+          go-version: '1.26'
+          cache: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      # The SDK + build-tools Gradle needs to assemble the APK.
+      - uses: android-actions/setup-android@v4
+      # The NDK gomobile needs to bind BOTH .aars. Pinned to r28 (what the
+      # sing-box porting notes target); the generic SDK setup does not pin an NDK.
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r28
+      # Cache the Go module + build caches, NOT the .aar. The fused tenebra.aar is
+      # rebuilt every run so a core-bridge/, core/ or mobile/ change always shows up,
+      # but its slow part is compiling sing-box for the bind. Keying on the two go.sum
+      # files lets a run reuse the compiled engine from the module/build cache and
+      # skip the ~11-minute libbox compile whenever the dependency graph is unchanged.
+      # The singbox version in the key is a human-readable cache-buster (it is already
+      # pinned inside mobile/go.sum); restore-keys lets a stale cache seed a new one.
+      - name: Cache the Go module and build caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-bind-${{ runner.os }}-singbox-1.13.14-${{ hashFiles('go.sum', 'mobile/go.sum') }}
+          restore-keys: |
+            go-bind-${{ runner.os }}-singbox-1.13.14-
+      - name: Build the fused tenebra.aar (wrapper + libbox, one bind)
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
+        run: bash scripts/build-libbox-android.sh
+      # Sign the debug APK with a shared, fixed keystore so its signing certificate
+      # is identical from run to run. Otherwise Gradle generates a throwaway debug
+      # key on each runner, every debug APK is signed by a different key, and a
+      # tester must uninstall the previous build before a new one will install
+      # (INSTALL_FAILED_UPDATE_INCOMPATIBLE). Decode the shared keystore and point
+      # the debug signingConfig at it via DEBUG_KEYSTORE (read in
+      # ui-android/app/build.gradle.kts) — dropping it in ~/.android is not enough,
+      # AGP resolves the default debug keystore through ANDROID_USER_HOME on the
+      # runner, not $HOME. If the secret is absent — a fork PR has no access to it —
+      # the build falls back to Gradle's generated key instead of failing.
+      - name: Install the shared debug keystore
+        env:
+          ANDROID_DEBUG_KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ANDROID_DEBUG_KEYSTORE_B64:-}" ]; then
+            echo "ANDROID_DEBUG_KEYSTORE_B64 is not set — Gradle will generate a throwaway debug key; the signature will differ between runs."
+            exit 0
+          fi
+          keystore="$RUNNER_TEMP/debug.keystore"
+          echo "$ANDROID_DEBUG_KEYSTORE_B64" | base64 -d > "$keystore"
+          echo "DEBUG_KEYSTORE=$keystore" >> "$GITHUB_ENV"
+          echo "Installed the shared debug keystore at $keystore."
+      - name: Assemble the debug APK
+        working-directory: ui-android
+        run: |
+          chmod +x ./gradlew || true
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace
+      - uses: actions/upload-artifact@v6
+        with:
+          name: tenebra-android-debug
+          path: ui-android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  release:
+    # v* tags only: build a signed release APK and attach it to the GitHub
+    # release. The desktop release.yml publishes to this same tag's release; this
+    # job only adds the APK asset and never rewrites the release body.
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r28
+      - name: Cache the Go module and build caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-bind-${{ runner.os }}-singbox-1.13.14-${{ hashFiles('go.sum', 'mobile/go.sum') }}
+          restore-keys: |
+            go-bind-${{ runner.os }}-singbox-1.13.14-
+      - name: Build the fused tenebra.aar (wrapper + libbox, one bind)
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
+        run: bash scripts/build-libbox-android.sh
+      - name: Assemble the release APK (unsigned)
+        working-directory: ui-android
+        # ui-android's release build type must NOT declare a signingConfig; it
+        # produces an unsigned APK that this job signs with the CI keystore below.
+        # See docs/porting/android.md#release-signing.
+        run: |
+          chmod +x ./gradlew || true
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace
+      - name: Sign the release APK
+        id: sign
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_B64:-}" ]; then
+            echo "ANDROID_KEYSTORE_B64 is not set — cannot sign a release APK." >&2
+            echo "Create the keystore and secrets per docs/porting/android.md#release-signing." >&2
+            exit 1
+          fi
+          keystore="$RUNNER_TEMP/tenebra-release.jks"
+          echo "$KEYSTORE_B64" | base64 -d > "$keystore"
+
+          # zipalign + apksigner live in build-tools; use the newest installed.
+          build_tools="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n1)"
+          unsigned="$(find ui-android/app/build/outputs/apk/release -name '*-unsigned.apk' | head -n1)"
+          if [ -z "$unsigned" ]; then
+            echo "no unsigned release APK under ui-android/app/build/outputs/apk/release/." >&2
+            echo "ui-android's release build type must leave the APK unsigned for CI to sign." >&2
+            exit 1
+          fi
+
+          aligned="$RUNNER_TEMP/tenebra-aligned.apk"
+          signed="$RUNNER_TEMP/tenebra-${GITHUB_REF_NAME}.apk"
+          "${build_tools}zipalign" -f -v 4 "$unsigned" "$aligned"
+          "${build_tools}apksigner" sign \
+            --ks "$keystore" \
+            --ks-pass "pass:${KEYSTORE_PASS}" \
+            --ks-key-alias "${KEY_ALIAS}" \
+            --key-pass "pass:${KEY_PASS}" \
+            --out "$signed" \
+            "$aligned"
+          "${build_tools}apksigner" verify --verbose "$signed"
+          echo "apk=$signed" >> "$GITHUB_OUTPUT"
+      - name: Attach the APK to the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.sign.outputs.apk }}
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

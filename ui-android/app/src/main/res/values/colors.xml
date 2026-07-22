@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brutalist brand palette: near-black ground, signal orange accent. Used for
+         the pre-Compose window (background/status bar) so there is no light flash
+         before Compose paints. Compose's own theme carries the full scheme. -->
+    <color name="tenebra_background">#0E0E0E</color>
+    <color name="tenebra_accent">#FF3D00</color>
+    <color name="tenebra_on_background">#F5F5F5</color>
+</resources>

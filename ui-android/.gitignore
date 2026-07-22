@@ -1,0 +1,31 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.properties
+
+# The Gradle wrapper jar is committed on purpose (Gradle's own recommendation):
+# it makes ./gradlew work on a clean checkout and on CI with no bootstrap step.
+
+# Android / IDE local state
+local.properties
+.cxx/
+captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# The fused gomobile artifact (tenebra.aar — the sing-box engine plus our core
+# bridge, one bind) is built by CI and dropped into app/libs (see README). It
+# statically bundles the Go runtime and is tens of MB, so it is never committed;
+# only the directory placeholder is.
+app/libs/*.aar
+
+# Signing material must never be committed.
+*.jks
+*.keystore
+keystore.properties
+
+# IDE
+.idea/
+*.iml

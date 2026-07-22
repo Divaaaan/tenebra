@@ -17,9 +17,9 @@ directly into a **Network Extension**.
 That inverts the desktop model in two concrete ways:
 
 - **The engine moves in-process.** Instead of a bundled `sing-box` binary, the
-  engine is `libbox` — sing-box's `experimental/libbox` package built into an
-  `.xcframework` with gomobile — linked into a `NEPacketTunnelProvider`
-  extension.
+  engine is `libbox` — sing-box's `experimental/libbox` package — gomobile-bound
+  (together with Tenebra's core; see [Architecture](#architecture)) into a single
+  `.xcframework` linked into a `NEPacketTunnelProvider` extension.
 - **The control protocol moves off stdio.** The line-delimited JSON over
   stdin/stdout from [control-protocol.md](../control-protocol.md) cannot cross the
   app↔extension boundary. It re-homes onto an in-process IPC: libbox's
@@ -29,9 +29,11 @@ That inverts the desktop model in two concrete ways:
 The one thing that carries over cleanly is the part that matters most: Tenebra's
 core is a pure config **generator** with no sing-box import (see
 [architecture.md](../architecture.md#core-go--core)). It stays a generator here
-too — it just gets compiled to its own small `.xcframework` and called in-process
-instead of run as a sidecar. The protocol semantics (`connect`, node selection,
-routing, the fallback walk) are unchanged; only the transport under them changes.
+too — the sing-box-free source split is intact; it is just bound into the same
+`.xcframework` as libbox (one Go runtime; see [Architecture](#architecture)) and
+called in-process instead of run as a sidecar. The protocol semantics (`connect`,
+node selection, routing, the fallback walk) are unchanged; only the transport
+under them changes.
 
 The official sing-box Apple client (iOS + macOS, GPLv3 — the same license as
 Tenebra) is the reference implementation for all of this and can be read and
@@ -53,7 +55,7 @@ Two processes, the standard iOS VPN shape:
  host app (SwiftUI)                                   NE extension
  -----------------                                    ------------
  NETunnelProviderManager       App Group container    NEPacketTunnelProvider
- Tenebra core (xcframework)    group.<bundle-id>:     libbox = sing-box (unmodified)
+ Tenebra.xcframework (core)    group.<bundle-id>:     Tenebra.xcframework (libbox)
 
    GenerateConfig(json) ----->  config JSON  ------->  StartOrReloadService(json)
                                 command.sock                |
@@ -64,22 +66,33 @@ Two processes, the standard iOS VPN shape:
                       (IPC over command.sock, in the App Group)
 ```
 
-**Two Go modules, kept separate.** The clean design mirrors the desktop split
-exactly:
+**One fused framework, a source-level split preserved.** An earlier plan bound
+Tenebra's core into its *own* `.xcframework` and linked it next to a separately
+built `Libbox.xcframework`. That does not work: two independent gomobile artifacts
+each carry their own Go runtime and their own copy of the gomobile support package
+`go`, and cannot coexist in one process — the Apple mirror of the Android D8
+duplicate-class failure. The engine and the generator must be bound **together**:
 
-1. **Tenebra core** is gomobile-bound into its **own** small `.xcframework`
-   exposing essentially one call — `GenerateConfig(profileJSON) -> configJSON`
-   (string in, string out, gomobile-friendly).
-2. **sing-box `Libbox.xcframework`** is used **unmodified** as the engine.
+1. A thin wrapper module (`mobile/`, Go package `tenebracore`) re-exports the
+   `core-bridge` generator as a handful of string-in/string-out calls —
+   `GenerateConfig(profileJSON) -> configJSON`, plus `ImportSubscription`,
+   `OrderNodes` and `Version` — and imports no sing-box.
+2. A **single** `gomobile bind` lists two packages, the wrapper and sing-box's
+   `experimental/libbox`, and fuses them into one `Tenebra.xcframework` with one Go
+   runtime and one `go` support package. Android does the identical thing into one
+   `tenebra.aar`, so this core work is not iOS-only.
 3. The host app calls `GenerateConfig`, then hands the resulting JSON to the
    extension's `CommandServer.StartOrReloadService(json)`, which boots sing-box
    internally.
 
-Do **not** merge the two Go modules. Keeping Tenebra's generator free of any
-sing-box import is what preserves its stdlib-only purity, its independent version
-cadence, and the clean generator-vs-engine boundary the whole project is built
-on. They are two artifacts that meet only at a JSON string, the same contract as
-on the desktop.
+The split that matters is kept at the **source** level: `core-bridge` (and the
+`mobile/` wrapper over it) still import no sing-box, so the generator keeps its
+stdlib-only purity, its independent version cadence, and the clean
+generator-vs-engine boundary the whole project is built on. Swift sees one module,
+`Tenebra` (`import Tenebra`), carrying both halves: `TenebracoreGenerateConfig(...)`
+for the generator and the unchanged `Libbox*` classes for the engine. They still
+meet only at a JSON string, the same contract as on the desktop — they are just
+fused into one artifact at bind time, because a phone can host only one Go runtime.
 
 **How the tunnel FD is obtained — no root.** Unlike macOS, iOS never needs root.
 The extension implements libbox's `PlatformInterface`, and libbox calls back into
@@ -148,16 +161,25 @@ still demands discipline. Mitigations, in rough order of leverage:
 
 ## Building the core: gomobile
 
-`libbox` (and Tenebra's own core) are built for Apple with **gomobile**, but not
-upstream gomobile — sing-box maintains a fork (`github.com/sagernet/gomobile`)
-because upstream repeatedly broke on new Xcode releases. Pin whatever version the
-target sing-box tag's `Makefile` installs (v0.1.13 at time of writing). The shape
-of a bind:
+The wrapper and `libbox` are built for Apple with **gomobile**, but not upstream
+gomobile — sing-box maintains a fork (`github.com/sagernet/gomobile`) because
+upstream repeatedly broke on new Xcode releases. Pin whatever version the target
+sing-box tag's `Makefile` installs (v0.1.12 for v1.13.14); `mobile/go.mod` requires
+the same version, so the binder and the bind's `go` support package never drift.
+(The engine is pinned to v1.13.14, not the desktop's v1.13.13 — sing-box's v1.13.13
+module can't build libbox; see `scripts/build-libbox-android.sh` for why.)
+The bind runs from `mobile/`, lists both packages, and replicates sing-box's own
+Apple tag set verbatim (from its `cmd/internal/build_libbox`); `scripts/build-libbox.sh`
+is the source of truth. Its shape:
 
 ```
-gomobile bind -target ios,iossimulator \
-  -tags "with_gvisor,with_quic,with_utls,with_wireguard,with_clash_api" \
-  -o Libbox.xcframework ./experimental/libbox
+(cd mobile && gomobile bind \
+  -target ios,iossimulator -iosversion 15.0 -tags-not-macos=with_low_memory \
+  -trimpath -buildvcs=false \
+  -ldflags "-X github.com/sagernet/sing-box/constant.Version=v1.13.14 -X internal/godebug.defaultGODEBUG=multipathtcp=0 -s -w -buildid= -checklinkname=0" \
+  -tags "with_gvisor,with_quic,with_wireguard,with_utls,with_naive_outbound,with_clash_api,badlinkname,tfogo_checklinkname0,with_tailscale,ts_omit_logtail,ts_omit_ssh,ts_omit_drive,ts_omit_taildrop,ts_omit_webclient,ts_omit_doctor,ts_omit_capture,ts_omit_kube,ts_omit_aws,ts_omit_synology,ts_omit_bird,with_dhcp,grpcnotrace" \
+  -o ui-ios/Frameworks/Tenebra.xcframework \
+  . github.com/sagernet/sing-box/experimental/libbox)
 ```
 
 The resulting `.xcframework` carries an `ios-arm64` device slice and an
@@ -168,9 +190,12 @@ The resulting `.xcframework` carries an `ios-arm64` device slice and an
   `with_utls` (REALITY/uTLS fingerprinting), `with_wireguard` (AmneziaWG),
   `with_gvisor` (the userspace TUN stack). Ship exactly the tags the alpha's
   protocol set needs.
-- **Do _not_ use `with_naive_outbound` on iOS.** It pulls in Cronet, whose C++
-  runtime collides with other libraries' at link time on iOS — a real, hard-to-
-  diagnose linker failure. It is also not part of sing-box's own Apple tag set.
+- **`with_naive_outbound` and Cronet.** sing-box's own Apple build *does* include
+  `with_naive_outbound` (it is in its shared tag set), so the bind above keeps it
+  for parity rather than diverging from upstream. The caveat: it pulls in Cronet,
+  whose C++ runtime can collide at link time with other C++ libraries. Tenebra
+  links none of those (no libsignal and the like), so the upstream default is safe
+  here; if that ever changes, drop the tag and rebuild.
 - **Toolchain.** Go ≥ 1.24.7 (what the pinned sing-box tag requires when linked),
   and expect the usual sing-box linker workarounds — the `//go:linkname` hacks
   (`checklinkname=0` / `badlinkname` and friends) that recent Go versions
@@ -179,10 +204,10 @@ The resulting `.xcframework` carries an `ios-arm64` device slice and an
 - **No bitcode.** Bitcode was deprecated in Xcode 14 and is gone; build without
   it.
 - **macOS + Xcode only.** gomobile's Apple bind shells out to Xcode/clang for the
-  Objective-C bridge (cgo is inherently on), so the Apple frameworks **cannot** be
-  built on Windows or Linux. This is a hard CI constraint — the iOS artifacts come
+  Objective-C bridge (cgo is inherently on), so the Apple framework **cannot** be
+  built on Windows or Linux. This is a hard CI constraint — the iOS artifact comes
   off a macOS runner.
-- **Framework size.** `Libbox.xcframework` is tens of MB because it statically
+- **Framework size.** `Tenebra.xcframework` is tens of MB because it statically
   bundles the Go runtime, gVisor and quic-go. That counts against the app
   *download* size, not the 50 MB *runtime* cap, but it is another reason to
   include only the protocols the build actually ships.
@@ -249,13 +274,14 @@ The resulting `.xcframework` carries an `ios-arm64` device slice and an
 The ordering is deliberate: **prove the memory budget before building anything
 that depends on it.**
 
-1. **Memory spike — _without_ the Network Extension, first.** Build Tenebra's core
-   and `libbox` with gomobile, run the engine **in the host app** as a local SOCKS
-   proxy (routing only the app's own traffic, no NE, no 50 MB cap), and drive real
-   traffic while measuring RSS. This validates the gomobile bind, the two-module
-   split, and the `GenerateConfig → StartOrReloadService` handoff, and — crucially
-   — produces the first honest read on whether the target protocol mix fits under
-   50 MB once the NE cap applies. This is the highest-risk unknown; it goes first.
+1. **Memory spike — _without_ the Network Extension, first.** Build the fused
+   `Tenebra.xcframework` with gomobile, run the engine **in the host app** as a
+   local SOCKS proxy (routing only the app's own traffic, no NE, no 50 MB cap), and
+   drive real traffic while measuring RSS. This validates the gomobile bind, the
+   fused wrapper+libbox artifact, and the `GenerateConfig → StartOrReloadService`
+   handoff, and — crucially — produces the first honest read on whether the target
+   protocol mix fits under 50 MB once the NE cap applies. This is the highest-risk
+   unknown; it goes first.
 2. **NE scaffold.** Add the `NEPacketTunnelProvider` extension, the App Group,
    provisioning via `NETunnelProviderManager`, and the libbox
    `CommandServer`/`CommandClient` IPC. Get a minimal tunnel up and re-measure
