@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cleartext HTTP is denied everywhere by default (this is a privacy VPN client), with
+     one scoped exception: loopback. The running tunnel exposes its clash-api on
+     http://127.0.0.1 so the app can steer the live selector (hot node-switch); that
+     traffic never leaves the device, and the API is gated by a per-run secret. No
+     external host is allowed cleartext. -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>
