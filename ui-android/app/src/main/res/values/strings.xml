@@ -38,6 +38,12 @@
     <string name="empty_start_label">Начало</string>
     <string name="empty_hint">Ссылка приходит от бота вместе с оплатой. Один раз — дальше ноды обновляются сами.</string>
 
+    <!-- Import errors, in the app's voice — not the engine's raw text -->
+    <string name="import_err_bad_url">Это не похоже на ссылку подписки. Проверь и вставь ещё раз.</string>
+    <string name="import_err_network">Сервер не ответил. Проверь интернет и ссылку.</string>
+    <string name="import_err_empty">В подписке нет рабочих нод.</string>
+    <string name="import_err_generic">Не удалось импортировать подписку.</string>
+
     <!-- Crash self-report (shown when the previous run crashed) -->
     <string name="crash_title">Прошлый запуск упал</string>
     <string name="crash_copy">Копировать</string>

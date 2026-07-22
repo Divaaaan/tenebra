@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tenebra.android.CrashLog
+import com.tenebra.android.R
 import com.tenebra.android.bg.DiagnosticsReport
 import com.tenebra.android.bg.DiagnosticsScrubber
 import com.tenebra.android.bg.LogStore
@@ -97,7 +98,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // of thing a tester needs to report. Any URL token in the message is
                 // masked by the scrubber before the log is shared.
                 LogStore.e("import", "import failed", t)
-                _importError.value = t.message ?: "Import failed"
+                _importError.value = friendlyImportError(t)
             } finally {
                 _isImporting.value = false
             }
@@ -219,5 +220,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun dismissImportError() {
         _importError.value = null
+    }
+
+    // Map the core's raw import error (an engineer-facing Go string) to a message in the
+    // app's own voice. The raw text still goes to the diagnostics log for a bug report;
+    // this is only what the user sees under the import field.
+    private fun friendlyImportError(t: Throwable): String {
+        val app = getApplication<Application>()
+        val msg = (t.message ?: "").lowercase()
+        return when {
+            "scheme" in msg || ("http" in msg && "https" in msg) ->
+                app.getString(R.string.import_err_bad_url)
+            "no usable nodes" in msg || "no nodes" in msg || "empty" in msg ->
+                app.getString(R.string.import_err_empty)
+            "timeout" in msg || "no such host" in msg || "connection" in msg ||
+                "dial" in msg || "eof" in msg || "network" in msg || "refused" in msg ->
+                app.getString(R.string.import_err_network)
+            else -> app.getString(R.string.import_err_generic)
+        }
     }
 }
