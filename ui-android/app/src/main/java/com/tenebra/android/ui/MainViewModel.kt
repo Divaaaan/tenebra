@@ -43,6 +43,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val status: StateFlow<TunnelState.Status> = TunnelState.status
     val tunnelError: StateFlow<String?> = TunnelState.lastError
     val selectedServerId: StateFlow<String?> = repository.selectedServerId
+    val autoMode: StateFlow<Boolean> = repository.autoMode
 
     private val _isImporting = MutableStateFlow(false)
     val isImporting: StateFlow<Boolean> = _isImporting.asStateFlow()
@@ -104,8 +105,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectNode(serverId: String) {
+        repository.setAutoMode(false)
         repository.setSelectedServerId(serverId)
         hotSwitch(serverId)
+    }
+
+    // Turn on AUTO: keep the selection on the fastest node by ping, re-picking as pings
+    // refresh. Applies immediately (and switches the live tunnel if one is up).
+    fun selectAuto() {
+        repository.setAutoMode(true)
+        applyAuto()
+    }
+
+    private fun applyAuto() {
+        val fastest = fastestNodeId() ?: return
+        repository.setSelectedServerId(fastest)
+        hotSwitch(fastest)
+    }
+
+    // The reachable node with the lowest ping, or the first node when nothing has
+    // answered yet — so AUTO always resolves to something usable.
+    fun fastestNodeId(): String? {
+        val reachable = _pings.value.filterValues { it > 0 }
+        return reachable.minByOrNull { it.value }?.key
+            ?: profile.value?.nodes?.firstOrNull()?.id
     }
 
     // Steer the running tunnel to the chosen node immediately (no reconnect) when it is
@@ -150,6 +173,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val targets = nodes.map { NodePinger.Target(it.id, it.server, it.port) }
                 _pings.value = withContext(Dispatchers.IO) { NodePinger.pingAll(targets) }
+                // In AUTO, a fresh set of latencies may crown a new fastest node — follow it.
+                if (repository.currentAutoMode()) applyAuto()
             } finally {
                 _isPinging.value = false
             }

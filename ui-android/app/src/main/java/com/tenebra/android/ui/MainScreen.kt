@@ -34,6 +34,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -80,6 +81,7 @@ fun MainScreen(
     }
 
     val pings by viewModel.pings.collectAsState()
+    val autoMode by viewModel.autoMode.collectAsState()
 
     val nodes = profile?.nodes ?: emptyList()
     val hasProfile = profile != null
@@ -120,6 +122,13 @@ fun MainScreen(
             )
         } else {
             SectionLabel(stringResource(R.string.nodes))
+            // The node AUTO currently resolves to, for its subtitle — computed here so it
+            // tracks ping changes without the view model exposing derived state.
+            val fastestName = remember(pings, nodes) {
+                val best = pings.filterValues { it > 0 }.minByOrNull { it.value }?.key
+                    ?: nodes.firstOrNull()?.id
+                nodes.firstOrNull { it.id == best }?.let { it.name.ifBlank { it.server } }
+            }
             LazyColumn(
                 modifier = Modifier
                     .weight(1f)
@@ -127,10 +136,18 @@ fun MainScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 18.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                item(key = "__auto__") {
+                    AutoRow(
+                        selected = autoMode,
+                        fastestName = fastestName,
+                        onClick = { viewModel.selectAuto() },
+                    )
+                }
                 items(nodes, key = { it.id }) { node ->
                     NodeRow(
                         node = node,
-                        selected = node.id == selectedId,
+                        // In AUTO no specific node reads as chosen — the AUTO row does.
+                        selected = !autoMode && node.id == selectedId,
                         ping = pings[node.id],
                         onClick = { viewModel.selectNode(node.id) },
                     )
@@ -295,6 +312,54 @@ private fun NodeRow(
         ping?.let {
             Spacer(Modifier.width(12.dp))
             PingBadge(it)
+        }
+    }
+}
+
+// The AUTO pseudo-node: sits at the top of the list and, when chosen, keeps the tunnel
+// on the lowest-ping node. Its subtitle names the node it currently resolves to.
+@Composable
+private fun AutoRow(
+    selected: Boolean,
+    fastestName: String?,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (selected) TenebraPalette.surfaceRaised else TenebraPalette.surface)
+            .border(1.dp, TenebraPalette.border)
+            .drawBehind {
+                if (selected) drawRect(TenebraPalette.signal, size = Size(2.dp.toPx(), size.height))
+            }
+            .clickable(onClick = onClick)
+            .padding(start = 14.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = "◈ ${stringResource(R.string.node_auto)}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = TenebraPalette.text,
+                maxLines = 1,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = fastestName?.let { stringResource(R.string.node_auto_current, it) }
+                    ?: stringResource(R.string.node_auto_measuring),
+                style = MaterialTheme.typography.bodySmall,
+                color = TenebraPalette.dim,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (selected) {
+            Spacer(Modifier.width(12.dp))
+            Text(
+                text = stringResource(R.string.node_auto_on),
+                style = MaterialTheme.typography.bodySmall,
+                color = TenebraPalette.good,
+            )
         }
     }
 }

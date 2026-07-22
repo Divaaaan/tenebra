@@ -27,6 +27,13 @@ class ProfileRepository private constructor(context: Context) {
     private val _selectedServerId = MutableStateFlow(prefs.getString(KEY_SELECTED, null))
     val selectedServerId: StateFlow<String?> = _selectedServerId.asStateFlow()
 
+    // AUTO mode: the client keeps the selection pointed at the fastest node by ping. The
+    // selection itself still lives in selectedServerId (so the connect path is unchanged);
+    // this flag only tells the UI to show AUTO as chosen and lets the VM re-pick on new
+    // pings.
+    private val _autoMode = MutableStateFlow(prefs.getBoolean(KEY_AUTO, false))
+    val autoMode: StateFlow<Boolean> = _autoMode.asStateFlow()
+
     // --- profile ---
 
     @Synchronized
@@ -54,6 +61,13 @@ class ProfileRepository private constructor(context: Context) {
     }
 
     fun currentSelectedServerId(): String? = _selectedServerId.value
+
+    fun setAutoMode(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_AUTO, enabled).apply()
+        _autoMode.value = enabled
+    }
+
+    fun currentAutoMode(): Boolean = _autoMode.value
 
     // --- last-good (leads the fallback walk on the next connect) ---
 
@@ -87,6 +101,7 @@ class ProfileRepository private constructor(context: Context) {
         private const val PREFS = "tenebra"
         private const val KEY_SELECTED = "selected_server_id"
         private const val KEY_LAST_GOOD = "last_good_server_id"
+        private const val KEY_AUTO = "auto_mode"
 
         @Volatile
         private var instance: ProfileRepository? = null
