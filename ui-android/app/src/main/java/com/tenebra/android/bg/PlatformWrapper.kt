@@ -86,7 +86,11 @@ interface PlatformWrapper : PlatformInterface {
             for (ni in ifaces) {
                 if (!runCatching { ni.isUp }.getOrDefault(false)) continue
                 val addressStrings = ni.interfaceAddresses.mapNotNull { addr ->
-                    addr.address?.hostAddress?.let { "$it/${addr.networkPrefixLength}" }
+                    // Strip the IPv6 zone (fe80::1%wlan0): Go's netip.ParsePrefix
+                    // rejects zones in prefixes and libbox panics on them.
+                    addr.address?.hostAddress?.let { host ->
+                        "${host.substringBefore('%')}/${addr.networkPrefixLength}"
+                    }
                 }
                 out += NetworkInterface().apply {
                     name = ni.name
