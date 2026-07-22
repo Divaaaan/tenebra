@@ -112,6 +112,16 @@ object ConfigGenerator {
         val result = TenebraCore.orderNodes(request.toString())
         return json.decodeFromString(result)
     }
+
+    // Map each node's stable server ID to the selector tag GenerateConfig gives its
+    // outbound, so the UI can switch the live tunnel to a tapped node by handing that
+    // tag to the running selector (no config rebuild). See tags.go.
+    fun nodeTags(rawProfileJson: String): Map<String, String> {
+        val profileElement = json.parseToJsonElement(rawProfileJson)
+        val request = buildJsonObject { put("profile", profileElement) }
+        val result = TenebraCore.nodeTags(request.toString())
+        return json.decodeFromString(result)
+    }
 }
 
 // Gomobile-facing projection of routing.Options (core-bridge). Defaults to "global"

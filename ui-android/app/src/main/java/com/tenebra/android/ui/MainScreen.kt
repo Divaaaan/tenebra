@@ -85,10 +85,13 @@ fun MainScreen(
     val hasProfile = profile != null
     val active = status == TunnelState.Status.Started || status == TunnelState.Status.Starting
 
-    // Probe latency once the node set is known. Re-runs when the node list changes
-    // (a fresh import), not on every recomposition.
+    // Probe latency and load the node->tag map once the node set is known. Re-runs when
+    // the node list changes (a fresh import), not on every recomposition.
     LaunchedEffect(nodes.map { it.id }) {
-        if (nodes.isNotEmpty()) viewModel.refreshPings()
+        if (nodes.isNotEmpty()) {
+            viewModel.refreshTags()
+            viewModel.refreshPings()
+        }
     }
 
     Column(

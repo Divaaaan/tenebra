@@ -29,4 +29,8 @@ internal object TenebraCore {
     @Throws(Exception::class)
     fun orderNodes(requestJson: String): String =
         io.nekohasekai.tenebracore.Tenebracore.orderNodes(requestJson)
+
+    @Throws(Exception::class)
+    fun nodeTags(requestJson: String): String =
+        io.nekohasekai.tenebracore.Tenebracore.nodeTags(requestJson)
 }

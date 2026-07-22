@@ -11,6 +11,7 @@ import com.tenebra.android.bg.TenebraVpnService
 import com.tenebra.android.bg.TunnelState
 import com.tenebra.android.core.ConfigGenerator
 import com.tenebra.android.core.TenebraProfile
+import com.tenebra.android.net.ClashApiClient
 import com.tenebra.android.net.NodePinger
 import com.tenebra.android.store.ProfileRepository
 import kotlinx.coroutines.Dispatchers
@@ -57,6 +58,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isPinging = MutableStateFlow(false)
     val isPinging: StateFlow<Boolean> = _isPinging.asStateFlow()
 
+    // Node id -> selector tag (from the core's own authority), so a tap can steer the
+    // live tunnel to that node with no reconnect. Refreshed when the profile changes.
+    private val _tags = MutableStateFlow<Map<String, String>>(emptyMap())
+
     // The stack trace of the last uncaught JVM crash, if any, read once at launch.
     // Shown to the user so a crash can be reported without adb; cleared on demand.
     private val _lastCrash = MutableStateFlow(CrashLog.read(application))
@@ -85,6 +90,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 repository.saveProfile(profileJson)
                 LogStore.i("import", "subscription imported")
+                refreshTags()
             } catch (t: Throwable) {
                 // Goes into the diagnostics log too — a failed import is exactly the kind
                 // of thing a tester needs to report. Any URL token in the message is
@@ -99,6 +105,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectNode(serverId: String) {
         repository.setSelectedServerId(serverId)
+        hotSwitch(serverId)
+    }
+
+    // Steer the running tunnel to the chosen node immediately (no reconnect) when it is
+    // up. While disconnected this is a no-op — the saved selection applies on connect.
+    private fun hotSwitch(serverId: String) {
+        if (status.value != TunnelState.Status.Started) return
+        val tag = _tags.value[serverId] ?: return
+        viewModelScope.launch { ClashApiClient.selectOutbound(tag) }
+    }
+
+    // Refresh the id -> selector tag map for the current profile (off the main thread).
+    fun refreshTags() {
+        val raw = repository.currentProfileJson() ?: return
+        viewModelScope.launch {
+            _tags.value = withContext(Dispatchers.IO) {
+                runCatching { ConfigGenerator.nodeTags(raw) }.getOrDefault(emptyMap())
+            }
+        }
     }
 
     // Probe every node's connect-time latency, concurrently and off the main thread.

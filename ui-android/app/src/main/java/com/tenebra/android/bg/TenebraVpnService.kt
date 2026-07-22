@@ -112,6 +112,9 @@ class TenebraVpnService : VpnService(), PlatformWrapper {
                     rawProfileJson = profileJson,
                     selectedTag = selectedTag.ifEmpty { null },
                 )
+                // Capture this run's clash-api endpoint + secret so the UI can steer the
+                // live selector (hot node-switch) while the tunnel is up.
+                ClashControl.setFromConfig(config)
 
                 val box = BoxService(this@TenebraVpnService, this@TenebraVpnService)
                 box.onServiceStop = { stopTunnel() }
@@ -152,6 +155,9 @@ class TenebraVpnService : VpnService(), PlatformWrapper {
         stopping = true
         TunnelState.setStatus(TunnelState.Status.Stopping)
         LogStore.i(TAG, "stopping tunnel")
+        // No tunnel means no clash-api to steer; drop the endpoint so a stale switch
+        // can't fire against a dead controller.
+        ClashControl.clear()
         scope.launch {
             runCatching { boxService?.stop() }
             boxService = null
