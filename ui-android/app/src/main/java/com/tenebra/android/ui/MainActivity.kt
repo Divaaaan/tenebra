@@ -17,6 +17,10 @@ import androidx.lifecycle.ViewModelProvider
 import com.tenebra.android.bg.TenebraVpnService
 import com.tenebra.android.ui.theme.TenebraTheme
 
+// The screens this single activity switches between (no nav library — a handful of
+// flat screens, each owning its own system-back).
+private enum class Screen { Main, Logs, Settings }
+
 // The single activity. It hosts the Compose UI and owns the two things that need an
 // Activity: the VpnService consent dialog and the POST_NOTIFICATIONS request.
 class MainActivity : ComponentActivity() {
@@ -43,20 +47,24 @@ class MainActivity : ComponentActivity() {
         requestNotificationPermissionIfNeeded()
         setContent {
             TenebraTheme {
-                // One flat switch instead of a nav library: the app has two screens and
-                // the Logs screen handles its own system-back (BackHandler) to return.
-                var showLogs by rememberSaveable { mutableStateOf(false) }
-                if (showLogs) {
-                    LogsScreen(
+                // One flat switch instead of a nav library: the app has a few screens and
+                // each secondary one handles its own system-back (BackHandler) to return.
+                var screen by rememberSaveable { mutableStateOf(Screen.Main) }
+                when (screen) {
+                    Screen.Logs -> LogsScreen(
                         viewModel = viewModel,
-                        onBack = { showLogs = false },
+                        onBack = { screen = Screen.Main },
                     )
-                } else {
-                    MainScreen(
+                    Screen.Settings -> SettingsScreen(
+                        viewModel = viewModel,
+                        onBack = { screen = Screen.Main },
+                    )
+                    Screen.Main -> MainScreen(
                         viewModel = viewModel,
                         onConnect = ::connect,
                         onDisconnect = viewModel::disconnect,
-                        onOpenLogs = { showLogs = true },
+                        onOpenLogs = { screen = Screen.Logs },
+                        onOpenSettings = { screen = Screen.Settings },
                     )
                 }
             }

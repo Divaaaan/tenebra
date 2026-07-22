@@ -34,6 +34,10 @@ class ProfileRepository private constructor(context: Context) {
     private val _autoMode = MutableStateFlow(prefs.getBoolean(KEY_AUTO, false))
     val autoMode: StateFlow<Boolean> = _autoMode.asStateFlow()
 
+    // Auto-connect on device boot, when consent is already granted (see BootReceiver).
+    private val _autoConnect = MutableStateFlow(prefs.getBoolean(KEY_AUTOCONNECT, false))
+    val autoConnect: StateFlow<Boolean> = _autoConnect.asStateFlow()
+
     // --- profile ---
 
     @Synchronized
@@ -69,6 +73,13 @@ class ProfileRepository private constructor(context: Context) {
 
     fun currentAutoMode(): Boolean = _autoMode.value
 
+    fun setAutoConnect(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_AUTOCONNECT, enabled).apply()
+        _autoConnect.value = enabled
+    }
+
+    fun currentAutoConnect(): Boolean = _autoConnect.value
+
     // --- last-good (leads the fallback walk on the next connect) ---
 
     fun setLastGoodServerId(id: String?) {
@@ -102,6 +113,7 @@ class ProfileRepository private constructor(context: Context) {
         private const val KEY_SELECTED = "selected_server_id"
         private const val KEY_LAST_GOOD = "last_good_server_id"
         private const val KEY_AUTO = "auto_mode"
+        private const val KEY_AUTOCONNECT = "auto_connect"
 
         @Volatile
         private var instance: ProfileRepository? = null

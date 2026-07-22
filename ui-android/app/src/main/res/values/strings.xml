@@ -44,6 +44,22 @@
     <string name="import_err_empty">В подписке нет рабочих нод.</string>
     <string name="import_err_generic">Не удалось импортировать подписку.</string>
 
+    <!-- Settings -->
+    <string name="settings">Настройки</string>
+    <string name="settings_back">Назад</string>
+    <string name="settings_autoconnect">Автоподключение</string>
+    <string name="settings_autoconnect_desc">Подключаться при загрузке телефона</string>
+    <string name="settings_subscription">Подписка</string>
+    <string name="settings_updated">Обновлена: %1$s</string>
+    <string name="settings_traffic">Трафик: %1$s из %2$s</string>
+    <string name="settings_refresh">Обновить</string>
+    <string name="settings_remove">Удалить подписку</string>
+    <string name="settings_about">О приложении</string>
+    <string name="settings_app">Приложение</string>
+    <string name="settings_core">Ядро</string>
+    <string name="settings_engine">Движок</string>
+    <string name="settings_motto">In tenebris lux</string>
+
     <!-- Crash self-report (shown when the previous run crashed) -->
     <string name="crash_title">Прошлый запуск упал</string>
     <string name="crash_copy">Копировать</string>

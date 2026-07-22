@@ -75,5 +75,16 @@
             </intent-filter>
         </service>
 
+        <!-- Boot-connect: brings the tunnel up after a reboot when the user enabled it
+             and consent already exists (see BootReceiver). -->
+        <receiver
+            android:name=".bg.BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
     </application>
 </manifest>

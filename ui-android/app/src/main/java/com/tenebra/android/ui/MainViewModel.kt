@@ -3,6 +3,7 @@ package com.tenebra.android.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.tenebra.android.BuildConfig
 import com.tenebra.android.CrashLog
 import com.tenebra.android.R
 import com.tenebra.android.bg.DiagnosticsReport
@@ -221,6 +222,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun dismissImportError() {
         _importError.value = null
     }
+
+    // --- settings ---
+
+    val autoConnect: StateFlow<Boolean> = repository.autoConnect
+
+    fun setAutoConnect(enabled: Boolean) = repository.setAutoConnect(enabled)
+
+    // Re-fetch the stored subscription URL to refresh the node set. Reuses the import
+    // path (spinner + friendly errors), so the Settings screen shows the same state.
+    fun refreshSubscription() {
+        val url = profile.value?.url.orEmpty()
+        if (url.isNotBlank()) importSubscription(url)
+    }
+
+    fun removeProfile() = repository.clearProfile()
+
+    fun appVersion(): String = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
+
+    fun coreVersion(): String = runCatching { com.tenebra.android.core.ConfigGenerator.version() }.getOrDefault("—")
+
+    fun engineVersion(): String = runCatching { io.nekohasekai.libbox.Libbox.version() }.getOrDefault("—")
 
     // Map the core's raw import error (an engineer-facing Go string) to a message in the
     // app's own voice. The raw text still goes to the diagnostics log for a bug report;

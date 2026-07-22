@@ -67,6 +67,7 @@ fun MainScreen(
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
     onOpenLogs: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     val profile by viewModel.profile.collectAsState()
     val status by viewModel.status.collectAsState()
@@ -101,7 +102,7 @@ fun MainScreen(
             .fillMaxSize()
             .background(TenebraPalette.ground),
     ) {
-        TopBar(onOpenLogs = onOpenLogs)
+        TopBar(onOpenLogs = onOpenLogs, onOpenSettings = onOpenSettings)
 
         StatusPanel(
             status = status,
@@ -168,12 +169,12 @@ fun MainScreen(
 }
 
 @Composable
-private fun TopBar(onOpenLogs: () -> Unit) {
+private fun TopBar(onOpenLogs: () -> Unit, onOpenSettings: () -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 18.dp, end = 8.dp, top = 14.dp, bottom = 6.dp),
+            .padding(start = 18.dp, end = 6.dp, top = 14.dp, bottom = 6.dp),
     ) {
         Text(
             text = "TENEBRA",
@@ -184,6 +185,13 @@ private fun TopBar(onOpenLogs: () -> Unit) {
         TextButton(onClick = onOpenLogs) {
             Text(
                 text = stringResource(R.string.diagnostics),
+                style = MaterialTheme.typography.labelMedium,
+                color = TenebraPalette.dim,
+            )
+        }
+        TextButton(onClick = onOpenSettings) {
+            Text(
+                text = stringResource(R.string.settings),
                 style = MaterialTheme.typography.labelMedium,
                 color = TenebraPalette.dim,
             )
