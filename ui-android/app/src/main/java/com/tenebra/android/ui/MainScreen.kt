@@ -1,6 +1,11 @@
 package com.tenebra.android.ui
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -9,23 +14,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -36,7 +37,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -45,10 +53,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import com.tenebra.android.R
 import com.tenebra.android.bg.TunnelState
 import com.tenebra.android.core.TenebraNode
+import com.tenebra.android.ui.theme.TenebraPalette
 
-// The whole client surface: status + connect toggle, subscription import, node list.
-// Connect/disconnect are hoisted to the activity because the VpnService consent
-// dialog needs an Activity; everything else is driven by the view model.
+// The whole client surface, laid out for one-handed use (canon "layout B"): status up
+// top, the node list fills the middle, and the connect/disconnect control is docked at
+// the bottom in the thumb zone. Connect/disconnect are hoisted to the activity because
+// the VpnService consent dialog needs an Activity; everything else is view-model driven.
 @Composable
 fun MainScreen(
     viewModel: MainViewModel,
@@ -68,185 +78,161 @@ fun MainScreen(
         CrashDialog(text = crash, onClear = viewModel::clearCrashLog)
     }
 
-    Scaffold { padding ->
-        Column(
-            modifier = Modifier
-                .padding(padding)
-                .fillMaxSize()
-                .padding(16.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth(),
+    val nodes = profile?.nodes ?: emptyList()
+    val hasProfile = profile != null
+    val active = status == TunnelState.Status.Started || status == TunnelState.Status.Starting
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(TenebraPalette.ground),
+    ) {
+        TopBar(onOpenLogs = onOpenLogs)
+
+        StatusPanel(
+            status = status,
+            currentNode = nodes.firstOrNull { it.id == selectedId },
+            hasProfile = hasProfile,
+            connected = status == TunnelState.Status.Started,
+        )
+        tunnelError?.let {
+            MessageText(text = it, error = true, modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp))
+        }
+
+        if (!hasProfile) {
+            EmptyState(
+                isImporting = isImporting,
+                importError = importError,
+                onImport = viewModel::importSubscription,
+                modifier = Modifier.weight(1f),
+            )
+        } else {
+            SectionLabel(stringResource(R.string.nodes))
+            LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Text(
-                    text = "TENEBRA",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.weight(1f),
-                )
-                // Unobtrusive way into the log/diagnostics screen; does not touch the
-                // connect flow.
-                TextButton(onClick = onOpenLogs) {
-                    Text(androidx.compose.ui.res.stringResource(R.string.diagnostics))
+                items(nodes, key = { it.id }) { node ->
+                    NodeRow(
+                        node = node,
+                        selected = node.id == selectedId,
+                        onClick = { viewModel.selectNode(node.id) },
+                    )
                 }
             }
-            Spacer(Modifier.height(16.dp))
-
-            StatusCard(
-                status = status,
-                hasProfile = profile != null,
+            importError?.let {
+                MessageText(text = it, error = true, modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp))
+            }
+            DockButton(
+                active = active,
+                busy = status == TunnelState.Status.Starting || status == TunnelState.Status.Stopping,
+                enabled = active || hasProfile,
                 onConnect = onConnect,
                 onDisconnect = onDisconnect,
             )
-
-            tunnelError?.let {
-                Spacer(Modifier.height(8.dp))
-                MessageText(text = it, error = true)
-            }
-
-            Spacer(Modifier.height(24.dp))
-
-            ImportRow(
-                isImporting = isImporting,
-                onImport = viewModel::importSubscription,
-            )
-            importError?.let {
-                Spacer(Modifier.height(8.dp))
-                MessageText(text = it, error = true)
-            }
-
-            Spacer(Modifier.height(24.dp))
-
-            Text(
-                text = stringResourceUpper(R.string.nodes),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(8.dp))
-
-            val nodes = profile?.nodes ?: emptyList()
-            if (nodes.isEmpty()) {
-                MessageText(text = androidx.compose.ui.res.stringResource(R.string.no_nodes), error = false)
-            } else {
-                LazyColumn(
-                    // weight so the list takes the remaining height and scrolls within
-                    // it, rather than being measured against the full column height.
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(nodes, key = { it.id }) { node ->
-                        NodeRow(
-                            node = node,
-                            selected = node.id == selectedId,
-                            onClick = { viewModel.selectNode(node.id) },
-                        )
-                    }
-                }
-            }
         }
     }
 }
 
 @Composable
-private fun StatusCard(
-    status: TunnelState.Status,
-    hasProfile: Boolean,
-    onConnect: () -> Unit,
-    onDisconnect: () -> Unit,
-) {
-    Card(
-        shape = RectangleShape,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = Modifier.fillMaxWidth(),
+private fun TopBar(onOpenLogs: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 18.dp, end = 8.dp, top = 14.dp, bottom = 6.dp),
     ) {
-        Column(Modifier.padding(16.dp)) {
+        Text(
+            text = "TENEBRA",
+            style = MaterialTheme.typography.titleLarge,
+            color = TenebraPalette.signal,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onOpenLogs) {
             Text(
-                text = androidx.compose.ui.res.stringResource(statusLabel(status)),
-                style = MaterialTheme.typography.titleLarge,
-                color = when (status) {
-                    TunnelState.Status.Started -> MaterialTheme.colorScheme.primary
-                    else -> MaterialTheme.colorScheme.onSurface
-                },
+                text = stringResource(R.string.diagnostics),
+                style = MaterialTheme.typography.labelMedium,
+                color = TenebraPalette.dim,
             )
-            Spacer(Modifier.height(12.dp))
-
-            val active = status == TunnelState.Status.Started ||
-                status == TunnelState.Status.Starting
-            val busy = status == TunnelState.Status.Starting ||
-                status == TunnelState.Status.Stopping
-
-            Button(
-                onClick = { if (active) onDisconnect() else onConnect() },
-                enabled = (active || hasProfile) && !busy,
-                shape = RectangleShape,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (active) {
-                        MaterialTheme.colorScheme.surfaceVariant
-                    } else {
-                        MaterialTheme.colorScheme.primary
-                    },
-                    contentColor = if (active) {
-                        MaterialTheme.colorScheme.onSurface
-                    } else {
-                        MaterialTheme.colorScheme.onPrimary
-                    },
-                ),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                if (busy) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.height(18.dp).width(18.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                }
-                Text(
-                    text = androidx.compose.ui.res.stringResource(
-                        if (active) R.string.disconnect else R.string.connect,
-                    ),
-                )
-            }
         }
     }
 }
 
 @Composable
-private fun ImportRow(
-    isImporting: Boolean,
-    onImport: (String) -> Unit,
+private fun StatusPanel(
+    status: TunnelState.Status,
+    currentNode: TenebraNode?,
+    hasProfile: Boolean,
+    connected: Boolean,
 ) {
-    var url by rememberSaveable { mutableStateOf("") }
-    Column {
-        OutlinedTextField(
-            value = url,
-            onValueChange = { url = it },
-            singleLine = true,
-            label = { Text(androidx.compose.ui.res.stringResource(R.string.import_subscription)) },
-            placeholder = { Text(androidx.compose.ui.res.stringResource(R.string.subscription_url_hint)) },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-            shape = RectangleShape,
-            modifier = Modifier.fillMaxWidth(),
+    Column(
+        modifier = Modifier
+            .padding(horizontal = 18.dp)
+            .fillMaxWidth()
+            .border(1.dp, TenebraPalette.border)
+            .background(TenebraPalette.surface)
+            .padding(16.dp),
+    ) {
+        EclipseGlyph(on = connected)
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = stringResource(statusLabel(status)),
+            style = MaterialTheme.typography.displaySmall,
+            color = when (status) {
+                TunnelState.Status.Started -> TenebraPalette.wordOn
+                TunnelState.Status.Starting, TunnelState.Status.Stopping -> TenebraPalette.wordPending
+                TunnelState.Status.Stopped -> TenebraPalette.wordOff
+            },
         )
-        Spacer(Modifier.height(8.dp))
-        OutlinedButton(
-            onClick = { onImport(url) },
-            enabled = url.isNotBlank() && !isImporting,
-            shape = RectangleShape,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            if (isImporting) {
-                CircularProgressIndicator(
-                    modifier = Modifier.height(18.dp).width(18.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Spacer(Modifier.width(8.dp))
-            }
-            Text(androidx.compose.ui.res.stringResource(R.string.import_action))
+        val subtitle = when {
+            connected && currentNode != null -> stringResource(R.string.current_via, currentNode.name.ifBlank { currentNode.server })
+            !hasProfile -> stringResource(R.string.no_subscription)
+            else -> null
+        }
+        subtitle?.let {
+            Spacer(Modifier.height(8.dp))
+            Text(text = it, style = MaterialTheme.typography.bodySmall, color = TenebraPalette.dim)
         }
     }
+}
+
+// The signature mark: a faint full ring (the occulted sun) with a signal crescent of
+// light escaping when the tunnel is up, nothing escaping when it is down.
+@Composable
+private fun EclipseGlyph(on: Boolean) {
+    Canvas(Modifier.size(14.dp)) {
+        val sw = 1.5.dp.toPx()
+        val inset = sw / 2
+        drawCircle(
+            color = TenebraPalette.border,
+            radius = size.minDimension / 2 - inset,
+            style = Stroke(sw),
+        )
+        if (on) {
+            drawArc(
+                color = TenebraPalette.signal,
+                startAngle = -60f,
+                sweepAngle = 150f,
+                useCenter = false,
+                topLeft = Offset(inset, inset),
+                size = Size(size.width - sw, size.height - sw),
+                style = Stroke(sw, cap = StrokeCap.Round),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text = text.uppercase(),
+        style = MaterialTheme.typography.labelSmall,
+        color = TenebraPalette.dim,
+        modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 18.dp, bottom = 8.dp),
+    )
 }
 
 @Composable
@@ -255,64 +241,170 @@ private fun NodeRow(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
-    Card(
-        shape = RectangleShape,
-        colors = CardDefaults.cardColors(
-            containerColor = if (selected) {
-                MaterialTheme.colorScheme.surfaceVariant
-            } else {
-                MaterialTheme.colorScheme.surface
-            },
-        ),
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .background(if (selected) TenebraPalette.surfaceRaised else TenebraPalette.surface)
+            .border(1.dp, TenebraPalette.border)
+            .drawBehind {
+                if (selected) drawRect(TenebraPalette.signal, size = Size(2.dp.toPx(), size.height))
+            }
+            .clickable(onClick = onClick)
+            .padding(start = 14.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.padding(12.dp).fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = node.name.ifBlank { node.server },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = "${node.protocol} · ${node.server}:${node.port}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            if (node.insecure) {
-                Text(
-                    text = "!",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.error,
-                )
-                Spacer(Modifier.width(12.dp))
-            }
-            if (selected) {
-                Text(
-                    text = "✓", // check mark
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = node.name.ifBlank { node.server },
+                style = MaterialTheme.typography.bodyMedium,
+                color = TenebraPalette.text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = "${node.protocol} · ${node.server}:${node.port}",
+                style = MaterialTheme.typography.bodySmall,
+                color = TenebraPalette.dim,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (node.insecure) {
+            Spacer(Modifier.width(12.dp))
+            Text(
+                text = "!",
+                style = MaterialTheme.typography.headlineSmall,
+                color = TenebraPalette.signal,
+            )
         }
     }
 }
 
 @Composable
-private fun MessageText(text: String, error: Boolean) {
+private fun DockButton(
+    active: Boolean,
+    busy: Boolean,
+    enabled: Boolean,
+    onConnect: () -> Unit,
+    onDisconnect: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(TenebraPalette.ground)
+            .padding(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 18.dp),
+    ) {
+        Button(
+            onClick = { if (active) onDisconnect() else onConnect() },
+            enabled = enabled && !busy,
+            shape = RectangleShape,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (active) TenebraPalette.surface else TenebraPalette.signal,
+                contentColor = if (active) TenebraPalette.text else TenebraPalette.ground,
+                disabledContainerColor = TenebraPalette.surface,
+                disabledContentColor = TenebraPalette.dim,
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                .then(if (active) Modifier.border(1.dp, TenebraPalette.border) else Modifier),
+        ) {
+            if (busy) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                    color = TenebraPalette.text,
+                )
+                Spacer(Modifier.width(8.dp))
+            }
+            Text(
+                text = stringResource(if (active) R.string.disconnect else R.string.connect),
+                style = MaterialTheme.typography.labelLarge,
+            )
+        }
+    }
+}
+
+@Composable
+private fun EmptyState(
+    isImporting: Boolean,
+    importError: String?,
+    onImport: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var url by rememberSaveable { mutableStateOf("") }
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 18.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        SectionLabelInline(stringResource(R.string.empty_start_label))
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = url,
+            onValueChange = { url = it },
+            singleLine = true,
+            placeholder = { Text(stringResource(R.string.subscription_url_hint), color = TenebraPalette.dim) },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+            shape = RectangleShape,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(10.dp))
+        Button(
+            onClick = { onImport(url) },
+            enabled = url.isNotBlank() && !isImporting,
+            shape = RectangleShape,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = TenebraPalette.signal,
+                contentColor = TenebraPalette.ground,
+                disabledContainerColor = TenebraPalette.surface,
+                disabledContentColor = TenebraPalette.dim,
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+        ) {
+            if (isImporting) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                    color = TenebraPalette.ground,
+                )
+                Spacer(Modifier.width(8.dp))
+            }
+            Text(stringResource(R.string.import_action), style = MaterialTheme.typography.labelLarge)
+        }
+        importError?.let {
+            Spacer(Modifier.height(10.dp))
+            MessageText(text = it, error = true)
+        }
+        Spacer(Modifier.height(14.dp))
+        Text(
+            text = stringResource(R.string.empty_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = TenebraPalette.dim,
+        )
+    }
+}
+
+@Composable
+private fun SectionLabelInline(text: String) {
+    Text(
+        text = text.uppercase(),
+        style = MaterialTheme.typography.labelSmall,
+        color = TenebraPalette.dim,
+    )
+}
+
+@Composable
+private fun MessageText(text: String, error: Boolean, modifier: Modifier = Modifier) {
     Text(
         text = text,
         style = MaterialTheme.typography.bodySmall,
-        color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        color = if (error) TenebraPalette.signal else TenebraPalette.dim,
+        modifier = modifier,
     )
 }
 
@@ -322,10 +414,6 @@ private fun statusLabel(status: TunnelState.Status): Int = when (status) {
     TunnelState.Status.Started -> R.string.status_connected
     TunnelState.Status.Stopping -> R.string.status_stopping
 }
-
-@Composable
-private fun stringResourceUpper(id: Int): String =
-    androidx.compose.ui.res.stringResource(id).uppercase()
 
 // Shown at launch when the previous run left an uncaught-crash report. Lets the tester
 // copy the stack trace out (no adb needed) and clear it. "Clear" deletes the saved
@@ -338,7 +426,7 @@ private fun CrashDialog(text: String, onClear: () -> Unit) {
     val clipboard = LocalClipboardManager.current
     AlertDialog(
         onDismissRequest = { open = false },
-        title = { Text(androidx.compose.ui.res.stringResource(R.string.crash_title)) },
+        title = { Text(stringResource(R.string.crash_title)) },
         text = {
             Text(
                 text = text,
@@ -350,7 +438,7 @@ private fun CrashDialog(text: String, onClear: () -> Unit) {
         },
         confirmButton = {
             TextButton(onClick = { clipboard.setText(AnnotatedString(text)) }) {
-                Text(androidx.compose.ui.res.stringResource(R.string.crash_copy))
+                Text(stringResource(R.string.crash_copy))
             }
         },
         dismissButton = {
@@ -358,7 +446,7 @@ private fun CrashDialog(text: String, onClear: () -> Unit) {
                 onClear()
                 open = false
             }) {
-                Text(androidx.compose.ui.res.stringResource(R.string.crash_clear))
+                Text(stringResource(R.string.crash_clear))
             }
         },
     )

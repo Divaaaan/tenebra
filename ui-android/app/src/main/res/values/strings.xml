@@ -1,44 +1,52 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Russian is the primary locale (the product ships to a Russian-speaking audience).
+     An English values-en/ fallback is added in a later wave. -->
 <resources>
     <string name="app_name">Tenebra</string>
 
     <!-- Notification -->
-    <string name="notification_channel_name">VPN status</string>
-    <string name="notification_channel_description">Shows whether the tunnel is running.</string>
-    <string name="notification_connecting">Connecting…</string>
-    <string name="notification_connected">Connected</string>
-    <string name="notification_stopping">Stopping…</string>
+    <string name="notification_channel_name">Статус VPN</string>
+    <string name="notification_channel_description">Показывает, работает ли туннель.</string>
+    <string name="notification_connecting">Подключаемся…</string>
+    <string name="notification_connected">Подключено</string>
+    <string name="notification_stopping">Отключаемся…</string>
 
     <!-- UI -->
-    <string name="status_disconnected">Disconnected</string>
-    <string name="status_connecting">Connecting…</string>
-    <string name="status_connected">Connected</string>
-    <string name="status_stopping">Stopping…</string>
-    <string name="status_error">Error</string>
-    <string name="connect">Connect</string>
-    <string name="disconnect">Disconnect</string>
-    <string name="import_subscription">Import subscription</string>
+    <string name="status_disconnected">Отключено</string>
+    <string name="status_connecting">Подключаемся…</string>
+    <string name="status_connected">Подключено</string>
+    <string name="status_stopping">Отключаемся…</string>
+    <string name="status_error">Ошибка</string>
+    <string name="connect">Подключить</string>
+    <string name="disconnect">Отключить</string>
+    <string name="import_subscription">Ссылка подписки</string>
     <string name="subscription_url_hint">https://…</string>
-    <string name="import_action">Import</string>
-    <string name="nodes">Nodes</string>
-    <string name="no_nodes">No nodes yet. Import a subscription to begin.</string>
+    <string name="import_action">Импортировать</string>
+    <string name="nodes">Ноды</string>
+    <string name="no_nodes">Нет нод. Импортируй подписку, чтобы начать.</string>
     <string name="tile_label">Tenebra</string>
 
+    <!-- Main screen -->
+    <string name="current_via">через %1$s</string>
+    <string name="no_subscription">нет подписки</string>
+    <string name="empty_start_label">Начало</string>
+    <string name="empty_hint">Ссылка приходит от бота вместе с оплатой. Один раз — дальше ноды обновляются сами.</string>
+
     <!-- Crash self-report (shown when the previous run crashed) -->
-    <string name="crash_title">The previous run crashed</string>
-    <string name="crash_copy">Copy</string>
-    <string name="crash_clear">Clear</string>
+    <string name="crash_title">Прошлый запуск упал</string>
+    <string name="crash_copy">Копировать</string>
+    <string name="crash_clear">Очистить</string>
 
     <!-- Diagnostics / logs screen -->
-    <string name="diagnostics">Diagnostics</string>
-    <string name="diagnostics_title">Diagnostics</string>
-    <string name="diagnostics_back">Back</string>
-    <string name="diagnostics_share">Share</string>
-    <string name="diagnostics_copy">Copy</string>
-    <string name="diagnostics_clear">Clear</string>
-    <string name="diagnostics_last_crash">Last crash</string>
-    <string name="diagnostics_log">Log</string>
-    <string name="diagnostics_empty">No logs yet. Connect once and they will show up here.</string>
-    <string name="diagnostics_copied">Copied — subscription and keys scrubbed</string>
-    <string name="diagnostics_privacy">Copy and Share remove subscription tokens and keys, and only go where you send them. Tenebra sends nothing on its own.</string>
+    <string name="diagnostics">Диагностика</string>
+    <string name="diagnostics_title">Диагностика</string>
+    <string name="diagnostics_back">Назад</string>
+    <string name="diagnostics_share">Поделиться</string>
+    <string name="diagnostics_copy">Копировать</string>
+    <string name="diagnostics_clear">Очистить</string>
+    <string name="diagnostics_last_crash">Последний сбой</string>
+    <string name="diagnostics_log">Лог</string>
+    <string name="diagnostics_empty">Логов пока нет. Подключись — и они появятся здесь.</string>
+    <string name="diagnostics_copied">Скопировано — токены подписки и ключи вырезаны</string>
+    <string name="diagnostics_privacy">Копирование и «Поделиться» вырезают токены подписки и ключи и уходят только туда, куда ты их отправишь. Tenebra сама ничего не шлёт.</string>
 </resources>
