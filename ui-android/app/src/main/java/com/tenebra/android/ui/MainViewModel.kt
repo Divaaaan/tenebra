@@ -110,19 +110,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Steer the running tunnel to the chosen node immediately (no reconnect) when it is
     // up. While disconnected this is a no-op — the saved selection applies on connect.
+    // The switch is logged so a tester can see it took (or why it didn't).
     private fun hotSwitch(serverId: String) {
         if (status.value != TunnelState.Status.Started) return
-        val tag = _tags.value[serverId] ?: return
-        viewModelScope.launch { ClashApiClient.selectOutbound(tag) }
+        val tag = _tags.value[serverId]
+        if (tag == null) {
+            LogStore.w("switch", "no tag for $serverId (have ${_tags.value.size} tags)")
+            return
+        }
+        viewModelScope.launch {
+            val ok = ClashApiClient.selectOutbound(tag)
+            LogStore.i("switch", "hot-switch to $tag: ${if (ok) "ok" else "failed"}")
+        }
     }
 
     // Refresh the id -> selector tag map for the current profile (off the main thread).
     fun refreshTags() {
         val raw = repository.currentProfileJson() ?: return
         viewModelScope.launch {
-            _tags.value = withContext(Dispatchers.IO) {
-                runCatching { ConfigGenerator.nodeTags(raw) }.getOrDefault(emptyMap())
+            val tags = withContext(Dispatchers.IO) {
+                runCatching { ConfigGenerator.nodeTags(raw) }.getOrElse {
+                    LogStore.e("tags", "nodeTags failed", it)
+                    emptyMap()
+                }
             }
+            _tags.value = tags
+            LogStore.i("tags", "loaded ${tags.size} node tags")
         }
     }
 
