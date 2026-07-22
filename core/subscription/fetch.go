@@ -68,6 +68,11 @@ type fetchConfig struct {
 	// it to blockedByDefaultIP unless the opt-out env var is set; a nil predicate
 	// disables the guard, which is how tests reach loopback httptest servers.
 	blockAddr func(net.IP) bool
+	// headers are extra request headers applied on top of the default
+	// User-Agent/Accept, on both the primary and the DoH-fallback attempt. Nil in
+	// most callers; FetchWithHeaders threads a caller-supplied set through here for
+	// panels that gate on a specific header.
+	headers map[string]string
 }
 
 func defaultFetchConfig() fetchConfig {
@@ -91,6 +96,17 @@ func Fetch(ctx context.Context, url string) (body []byte, header http.Header, er
 	return fetchWithConfig(ctx, url, defaultFetchConfig())
 }
 
+// FetchWithHeaders is Fetch with extra request headers applied on top of the
+// defaults (e.g. a subscription panel that gates on a specific header, or a
+// caller-chosen User-Agent). It runs the identical hardened path — the same SSRF
+// guard and DoH fallback — so a caller never trades those protections for the
+// ability to set a header. A nil or empty map behaves exactly like Fetch.
+func FetchWithHeaders(ctx context.Context, url string, headers map[string]string) (body []byte, header http.Header, err error) {
+	cfg := defaultFetchConfig()
+	cfg.headers = headers
+	return fetchWithConfig(ctx, url, cfg)
+}
+
 func fetchWithConfig(ctx context.Context, rawURL string, cfg fetchConfig) ([]byte, http.Header, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -108,7 +124,7 @@ func fetchWithConfig(ctx context.Context, rawURL string, cfg fetchConfig) ([]byt
 		return nil, nil, err
 	}
 
-	body, header, err := doFetch(ctx, rawURL, cfg.primaryDial, cfg.rootCAs, cfg.blockAddr)
+	body, header, err := doFetch(ctx, rawURL, cfg.primaryDial, cfg.rootCAs, cfg.blockAddr, cfg.headers)
 	if err == nil {
 		return body, header, nil
 	}
@@ -122,7 +138,7 @@ func fetchWithConfig(ctx context.Context, rawURL string, cfg fetchConfig) ([]byt
 	// original SNI/Host.
 	log.Printf("tenebra-core: subscription fetch via system resolver failed for %s: %v; trying DoH fallback", host, err)
 	resolver := newDoHResolver(cfg.dohEndpoints, cfg.rootCAs)
-	dohBody, dohHeader, dohErr := doFetch(ctx, rawURL, resolver.dialContext, cfg.rootCAs, cfg.blockAddr)
+	dohBody, dohHeader, dohErr := doFetch(ctx, rawURL, resolver.dialContext, cfg.rootCAs, cfg.blockAddr, cfg.headers)
 	if dohErr != nil {
 		log.Printf("tenebra-core: subscription DoH fallback failed for %s: %v", host, dohErr)
 		return nil, header, fmt.Errorf("subscription: fetch: system resolver and DoH fallback failed for %s [%v]: %w", host, err, dohErr)
@@ -143,13 +159,18 @@ func dohEligible(ctx context.Context, err error) bool {
 // TLSClientConfig.ServerName is deliberately left unset so the transport still
 // derives the SNI and Host header from rawURL: dialing an IP while keeping the
 // original SNI is what keeps TLS/REALITY working through the fallback.
-func doFetch(ctx context.Context, rawURL string, dial dialFunc, rootCAs *x509.CertPool, blockAddr func(net.IP) bool) (body []byte, header http.Header, err error) {
+func doFetch(ctx context.Context, rawURL string, dial dialFunc, rootCAs *x509.CertPool, blockAddr func(net.IP) bool, headers map[string]string) (body []byte, header http.Header, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("subscription: fetch: %s", scrub(err, rawURL))
 	}
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "*/*")
+	// Caller-supplied headers apply last so they can add to — or deliberately
+	// override — the defaults above.
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 
 	// Cloudflare and some subscription panels ask for a TLS renegotiation
 	// mid-handshake. Go's default is RenegotiateNever, which fails the request

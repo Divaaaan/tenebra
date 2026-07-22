@@ -13,9 +13,9 @@
 # Treat every path, bundle id and build setting below as a reviewed starting
 # point to validate on a Mac, not a finished configuration. See ui-ios/README.md.
 #
-# The frameworks referenced under each target (Frameworks/Libbox.xcframework and
-# Frameworks/TenebraCore.xcframework) do NOT exist until scripts/build-libbox.sh
-# is run on a Mac; XcodeGen will warn about the missing paths until then.
+# The framework referenced under each target (Frameworks/Tenebra.xcframework) does
+# NOT exist until scripts/build-libbox.sh is run on a Mac; XcodeGen will warn about
+# the missing path until then.
 
 name: Tenebra
 
@@ -31,8 +31,9 @@ options:
   # in Xcode's Signing & Capabilities. Left blank so the spec carries no identity.
   # settingPresets: all
 
-# No Swift Package Manager dependencies: the engine (Libbox) and Tenebra's core
-# (TenebraCore) come in as prebuilt gomobile xcframeworks, not SPM packages.
+# No Swift Package Manager dependencies: the engine and Tenebra's core come in as ONE
+# prebuilt gomobile xcframework (Tenebra — the Apple mirror of the fused tenebra.aar),
+# not SPM packages.
 packages: {}
 
 # Shared build settings applied to every target unless overridden.
@@ -74,15 +75,13 @@ targets:
       # Embed the Network Extension into the app bundle (PlugIns/).
       - target: TenebraTunnel
         embed: true
-      # The app links libbox for the CommandClient side of the app<->extension IPC
-      # and TenebraCore for GenerateConfig. Both are gomobile xcframeworks built by
-      # scripts/build-libbox.sh. Embedding for BOTH the app and the extension is the
-      # single most likely thing to need adjustment on a Mac (duplicate-dylib vs
-      # @rpath sharing); this mirrors SagerNet/sing-box-for-apple as the starting
-      # point — validate the embed/link split against a real build.
-      - framework: Frameworks/TenebraCore.xcframework
-        embed: true
-      - framework: Frameworks/Libbox.xcframework
+      # The app links the fused Tenebra framework for BOTH GenerateConfig (Tenebracore*)
+      # and the CommandClient side of the app<->extension IPC (Libbox*) — one gomobile
+      # xcframework built by scripts/build-libbox.sh. Embedding it in BOTH the app and
+      # the extension is the single most likely thing to need adjustment on a Mac
+      # (duplicate-dylib vs @rpath sharing); this mirrors SagerNet/sing-box-for-apple as
+      # the starting point — validate the embed/link split against a real build.
+      - framework: Frameworks/Tenebra.xcframework
         embed: true
 
   # ---------------------------------------------------------------------------
@@ -106,8 +105,10 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.tenebra.ios.tunnel
         PRODUCT_NAME: TenebraTunnel
     dependencies:
-      # The extension runs the engine, so it links + embeds libbox (CommandServer
-      # + the sing-box core). It does NOT link TenebraCore: it receives the already
-      # generated config JSON from the app over the CommandServer IPC.
-      - framework: Frameworks/Libbox.xcframework
+      # The extension runs the engine, so it links + embeds the fused Tenebra framework
+      # for libbox (CommandServer + the sing-box core). It ignores the generator half
+      # (Tenebracore*): it receives the already-generated config JSON from the app over
+      # the CommandServer IPC. One framework is unavoidable — the generator and engine
+      # share a Go runtime and cannot be split into two.
+      - framework: Frameworks/Tenebra.xcframework
         embed: true

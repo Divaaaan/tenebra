@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Russian is the primary locale (the product ships to a Russian-speaking audience).
+     An English values-en/ fallback is added in a later wave. -->
+<resources>
+    <string name="app_name">Tenebra</string>
+
+    <!-- Notification -->
+    <string name="notification_channel_name">Статус VPN</string>
+    <string name="notification_channel_description">Показывает, работает ли туннель.</string>
+    <string name="notification_connecting">Подключаемся…</string>
+    <string name="notification_connected">Подключено</string>
+    <string name="notification_stopping">Отключаемся…</string>
+
+    <!-- UI -->
+    <string name="status_disconnected">Отключено</string>
+    <string name="status_connecting">Подключаемся…</string>
+    <string name="status_connected">Подключено</string>
+    <string name="status_stopping">Отключаемся…</string>
+    <string name="status_error">Ошибка</string>
+    <string name="connect">Подключить</string>
+    <string name="disconnect">Отключить</string>
+    <string name="import_subscription">Ссылка подписки</string>
+    <string name="subscription_url_hint">https://…</string>
+    <string name="import_action">Импортировать</string>
+    <string name="nodes">Ноды</string>
+    <string name="no_nodes">Нет нод. Импортируй подписку, чтобы начать.</string>
+    <string name="tile_label">Tenebra</string>
+
+    <!-- Main screen -->
+    <string name="current_via">через %1$s</string>
+    <string name="no_subscription">нет подписки</string>
+    <string name="ping_ms">%1$d мс</string>
+    <string name="ping_no_answer">нет ответа</string>
+    <string name="node_auto">АВТО</string>
+    <string name="node_auto_current">минимальный пинг · сейчас: %1$s</string>
+    <string name="node_auto_measuring">минимальный пинг</string>
+    <string name="node_auto_on">вкл</string>
+    <string name="empty_start_label">Начало</string>
+    <string name="empty_hint">Ссылка приходит от бота вместе с оплатой. Один раз — дальше ноды обновляются сами.</string>
+
+    <!-- Import errors, in the app's voice — not the engine's raw text -->
+    <string name="import_err_bad_url">Это не похоже на ссылку подписки. Проверь и вставь ещё раз.</string>
+    <string name="import_err_network">Сервер не ответил. Проверь интернет и ссылку.</string>
+    <string name="import_err_empty">В подписке нет рабочих нод.</string>
+    <string name="import_err_generic">Не удалось импортировать подписку.</string>
+
+    <!-- Settings -->
+    <string name="settings">Настройки</string>
+    <string name="settings_back">Назад</string>
+    <string name="settings_autoconnect">Автоподключение</string>
+    <string name="settings_autoconnect_desc">Подключаться при загрузке телефона</string>
+    <string name="settings_subscription">Подписка</string>
+    <string name="settings_updated">Обновлена: %1$s</string>
+    <string name="settings_traffic">Трафик: %1$s из %2$s</string>
+    <string name="settings_refresh">Обновить</string>
+    <string name="settings_remove">Удалить подписку</string>
+    <string name="settings_about">О приложении</string>
+    <string name="settings_app">Приложение</string>
+    <string name="settings_core">Ядро</string>
+    <string name="settings_engine">Движок</string>
+    <string name="settings_motto">In tenebris lux</string>
+
+    <!-- Crash self-report (shown when the previous run crashed) -->
+    <string name="crash_title">Прошлый запуск упал</string>
+    <string name="crash_copy">Копировать</string>
+    <string name="crash_clear">Очистить</string>
+
+    <!-- Diagnostics / logs screen -->
+    <string name="diagnostics">Диагностика</string>
+    <string name="diagnostics_title">Диагностика</string>
+    <string name="diagnostics_back">Назад</string>
+    <string name="diagnostics_share">Поделиться</string>
+    <string name="diagnostics_copy">Копировать</string>
+    <string name="diagnostics_clear">Очистить</string>
+    <string name="diagnostics_last_crash">Последний сбой</string>
+    <string name="diagnostics_log">Лог</string>
+    <string name="diagnostics_empty">Логов пока нет. Подключись — и они появятся здесь.</string>
+    <string name="diagnostics_copied">Скопировано — токены подписки и ключи вырезаны</string>
+    <string name="diagnostics_privacy">Копирование и «Поделиться» вырезают токены подписки и ключи и уходят только туда, куда ты их отправишь. Tenebra сама ничего не шлёт.</string>
+</resources>
