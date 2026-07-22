@@ -7,6 +7,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
+import android.net.NetworkCapabilities
 import android.system.Os
 import io.nekohasekai.libbox.InterfaceUpdateListener
 
@@ -35,6 +36,12 @@ object DefaultNetworkMonitor {
         connectivity = cm
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onLinkPropertiesChanged(network: Network, props: LinkProperties) {
+                // Once our own tunnel is up, the app's default network becomes the VPN
+                // itself, so this callback reports tun0 as the default. Binding the
+                // engine's upstream sockets there loops the tunnel into itself and
+                // sing-box fails every dial with "no available network interface".
+                // Skip any VPN network and keep the last real underlying interface.
+                if (isVpn(cm, network)) return
                 updateFrom(props)
             }
 
@@ -71,6 +78,15 @@ object DefaultNetworkMonitor {
     @Synchronized
     fun unregister(listener: InterfaceUpdateListener) {
         listeners -= listener
+    }
+
+    // A network with TRANSPORT_VPN (equivalently, lacking NET_CAPABILITY_NOT_VPN) is
+    // our own tunnel. Treat an unknown/null capability set as non-VPN so a transient
+    // lookup miss never drops a real underlying interface.
+    private fun isVpn(cm: ConnectivityManager, network: Network): Boolean {
+        val caps = runCatching { cm.getNetworkCapabilities(network) }.getOrNull() ?: return false
+        return caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) ||
+            !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
     }
 
     @Synchronized
