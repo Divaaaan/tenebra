@@ -1,14 +1,17 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import type { State } from "./api";
 import { App } from "./App";
+import { dictionaries } from "./i18n/strings";
+import { subscribeToast } from "./lib/toast";
 import { renderWithProviders } from "./test/renderWithProviders";
 
-// What the shell does when the core is not there, and when it is there but has
-// nothing to connect to. Both used to look identical from the outside: a fully
-// drawn window whose main button did nothing at all when clicked. The api is
-// stubbed exactly as App.shell does — no Tauri, no network.
+// How the shell behaves against a core that is not there, has nothing to offer,
+// or refuses what it is sent. All three used to look identical from the outside:
+// a fully drawn window where clicking did nothing whatsoever. The api is stubbed
+// exactly as App.shell does — no Tauri, no network.
 
 const profile = {
   id: "p1",
@@ -32,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   listProfiles: vi.fn(),
   connect: vi.fn(),
   disconnect: vi.fn(),
+  setKillSwitch: vi.fn(),
   ping: vi.fn(),
   leakCheck: vi.fn(),
   onState: vi.fn(),
@@ -51,6 +55,7 @@ vi.mock("./api", () => ({
     listProfiles: mocks.listProfiles,
     connect: mocks.connect,
     disconnect: mocks.disconnect,
+    setKillSwitch: mocks.setKillSwitch,
     ping: mocks.ping,
     leakCheck: mocks.leakCheck,
   },
@@ -195,6 +200,52 @@ describe("App bootstrap", () => {
           screen.getByRole("button", { name: /Disconnect/ }),
         ).toBeEnabled(),
       );
+    });
+  });
+
+  // The bottom bar drives two core-owned settings the same way the Settings
+  // screen drives the rest, and used to swallow their failures the same way:
+  // the control is drawn from the core's echo, so a refusal left it sitting
+  // where it was with nothing said.
+  describe("refused commands", () => {
+    const en = dictionaries.en;
+    const detach: (() => void)[] = [];
+    afterEach(() => {
+      detach.splice(0).forEach((fn) => fn());
+    });
+
+    function captureToasts(): string[] {
+      const seen: string[] = [];
+      detach.push(subscribeToast((m) => seen.push(m)));
+      return seen;
+    }
+
+    it("reports a refused kill-switch toggle", async () => {
+      mocks.listProfiles.mockResolvedValue([profile]);
+      mocks.setKillSwitch.mockRejectedValue("the service is still down");
+      const toasts = captureToasts();
+      renderWithProviders(<App />);
+      await screen.findAllByText("EX-TEST-01");
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: /kill-switch/i }));
+
+      await waitFor(() => expect(toasts).toContain(en.daemon.commandFailed));
+    });
+
+    it("blames the out-of-date service for an unknown kill-switch command", async () => {
+      mocks.listProfiles.mockResolvedValue([profile]);
+      mocks.setKillSwitch.mockRejectedValue(
+        'unknown command "set_kill_switch"',
+      );
+      const toasts = captureToasts();
+      renderWithProviders(<App />);
+      await screen.findAllByText("EX-TEST-01");
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: /kill-switch/i }));
+
+      await waitFor(() => expect(toasts).toContain(en.daemon.commandUnknown));
     });
   });
 });
