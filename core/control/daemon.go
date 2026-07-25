@@ -65,6 +65,15 @@ const pingDialTimeout = 3 * time.Second
 // dropped.
 type emitFunc func(name string, body any)
 
+// defaultClientWriteTimeout is how long one outbound frame may take to reach a
+// client before that client is given up on (see Server.writeTimeout). It is
+// deliberately long: the daemon no longer waits on the client for anything, so
+// the only thing this decides is when a stream counts as dead, and a UI is
+// allowed to be busy for a while. It has to be finite all the same — the
+// Windows control pipe buffers nothing, so a UI whose reader has stalled leaves
+// a write outstanding forever, and something has to end that.
+const defaultClientWriteTimeout = 30 * time.Second
+
 // Daemon holds all mutable connection state and implements every protocol
 // command. It is driven by a Server (one request at a time) but its connection
 // lifecycle also spawns goroutines (traffic poll, process watch) that mutate
@@ -91,6 +100,11 @@ type Daemon struct {
 	// emit is set by the server via SetEmitter before serving; the daemon calls
 	// it to publish state/traffic/log events. Guarded by mu.
 	emit emitFunc
+
+	// clientWriteTimeout is handed to every Server built over this daemon (see
+	// defaultClientWriteTimeout). Set before serving — tests shrink it to exercise
+	// the drop of a stalled client without waiting out the production value.
+	clientWriteTimeout time.Duration
 
 	// attempts holds the latest fallback-walk snapshot (the body of the last
 	// attempts event), or nil when no walk is in flight. The connect loop keeps it
@@ -291,6 +305,8 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 		autoFailover: true,
 		now:          time.Now,
 		fetch:        subscription.Fetch,
+
+		clientWriteTimeout: defaultClientWriteTimeout,
 
 		httpGet:    defaultHTTPGet,
 		ipEchoes:   defaultIPEchoes,
