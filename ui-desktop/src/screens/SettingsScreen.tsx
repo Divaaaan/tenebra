@@ -9,7 +9,8 @@ import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import { UpdateConfirm } from "../components/UpdateConfirm";
 import { useI18n } from "../i18n/I18nContext";
 import { useTheme } from "../theme/ThemeContext";
-import type { Language } from "../i18n/strings";
+import { describeCoreError, type Language } from "../i18n/strings";
+import { pushToast } from "../lib/toast";
 import {
   getAutoFastest,
   getAutoInstallUpdates,
@@ -197,6 +198,14 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   const { t, lang, setLang } = useI18n();
   const { theme, setTheme } = useTheme();
 
+  // Every control below is core-owned: its drawn position comes from the state
+  // the daemon echoes back, never from a local guess. So a refused command means
+  // the control does not move — and while these were sent with a bare `void` or
+  // a catch that discarded the error, that was the entire user-visible outcome.
+  // Report it on the toast bus the rest of the app already uses, naming an
+  // out-of-date service when that is what the refusal actually was.
+  const reportRefusal = (e: unknown) => pushToast(describeCoreError(e, t));
+
   // Section navigation. The content column owns its own scroll; the rail tracks
   // which section is in view and jumps to one on click. A layout-free picker
   // (pickActiveSection) turns the scroll position into the active index.
@@ -335,8 +344,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   const autoconnect = tenebra.state.autoconnect ?? false;
 
   function toggleAutoconnect() {
-    // Failures surface on the state/log channels the UI already renders.
-    void tenebra.setAutoconnect(!autoconnect).catch(() => {});
+    void tenebra.setAutoconnect(!autoconnect).catch(reportRefusal);
   }
 
   // Crash reports are core-owned and opt-in, like autoconnect: the daemon
@@ -345,7 +353,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   const crashReports = tenebra.state.crash_reports ?? false;
 
   function toggleCrashReports() {
-    void tenebra.setCrashReports(!crashReports).catch(() => {});
+    void tenebra.setCrashReports(!crashReports).catch(reportRefusal);
   }
 
   // Forced TLS-ClientHello fragmentation — the DPI-obfuscation override. Core-owned
@@ -354,7 +362,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   const tlsFragment = tenebra.state.tls_fragment ?? false;
 
   function toggleTlsFragment() {
-    void tenebra.setTlsFragment(!tlsFragment).catch(() => {});
+    void tenebra.setTlsFragment(!tlsFragment).catch(reportRefusal);
   }
 
   // Multihop two-hop chain. Core-owned like the other toggles: off with no
@@ -380,17 +388,17 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     }
     void tenebra
       .setMultihop(multihopProfileId, !multihopEnabled, multihopEntry, multihopExit)
-      .catch(() => {});
+      .catch(reportRefusal);
   }
   function selectMultihopEntry(entryId: string) {
     void tenebra
       .setMultihop(multihopProfileId, multihopEnabled, entryId, multihopExit)
-      .catch(() => {});
+      .catch(reportRefusal);
   }
   function selectMultihopExit(exitId: string) {
     void tenebra
       .setMultihop(multihopProfileId, multihopEnabled, multihopEntry, exitId)
-      .catch(() => {});
+      .catch(reportRefusal);
   }
 
   // Health-failover watchdog. On by default in the core, which projects the
@@ -402,7 +410,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   const autoFailover = tenebra.state.auto_failover ?? false;
 
   function toggleAutoFailover() {
-    void tenebra.setAutoFailover(!autoFailover).catch(() => {});
+    void tenebra.setAutoFailover(!autoFailover).catch(reportRefusal);
   }
 
   // Whether a tunnel is live — gates the diagnostics speed test.
@@ -584,7 +592,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     const delta = e.key === "ArrowDown" ? 1 : -1;
     const nextIndex =
       (index + delta + routingOptions.length) % routingOptions.length;
-    void tenebra.setRouting(routingOptions[nextIndex].mode);
+    void tenebra.setRouting(routingOptions[nextIndex].mode).catch(reportRefusal);
     routingRefs.current[nextIndex]?.focus();
   }
 
@@ -605,7 +613,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     if (mode === splitMode) {
       return;
     }
-    void tenebra.setSplit(mode, splitApps);
+    void tenebra.setSplit(mode, splitApps).catch(reportRefusal);
   }
 
   // See routingRefs: arrow keys move focus along with the selection here too.
@@ -635,15 +643,19 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     if (!canAddApp) {
       return;
     }
-    void tenebra.setSplit(splitMode, [...splitApps, normalizedDraft]);
+    void tenebra
+      .setSplit(splitMode, [...splitApps, normalizedDraft])
+      .catch(reportRefusal);
     setAppDraft("");
   }
 
   function removeApp(name: string) {
-    void tenebra.setSplit(
-      splitMode,
-      splitApps.filter((a) => a !== name),
-    );
+    void tenebra
+      .setSplit(
+        splitMode,
+        splitApps.filter((a) => a !== name),
+      )
+      .catch(reportRefusal);
   }
 
   function onAppInputKey(e: KeyboardEvent) {
@@ -672,7 +684,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     if (mode === proxyMode) {
       return;
     }
-    void tenebra.setProxyMode(mode);
+    void tenebra.setProxyMode(mode).catch(reportRefusal);
   }
 
   // See routingRefs: arrow keys move focus along with the selection here too.
@@ -704,7 +716,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     if (stack === tunStack) {
       return;
     }
-    void tenebra.setTun(stack);
+    void tenebra.setTun(stack).catch(reportRefusal);
   }
 
   // See routingRefs: arrow keys move focus along with the selection here too.
@@ -752,10 +764,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   // Every set_dns carries the whole set of preferences, so each toggle/edit path
   // re-sends the current values of the others alongside the one it changes.
   function pushDns(nextAdBlock: boolean, nextIpv4Only: boolean) {
-    // Failures surface on the state/log channels the UI already renders.
     void tenebra
       .setDns(nextAdBlock, remoteValue, directValue, nextIpv4Only)
-      .catch(() => {});
+      .catch(reportRefusal);
   }
 
   function toggleAdBlock() {
@@ -798,10 +809,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     nextBanking: boolean,
     nextGov: boolean,
   ) {
-    // Failures surface on the state/log channels the UI already renders.
     void tenebra
       .setRules(nextDirect, nextProxy, nextBanking, nextGov)
-      .catch(() => {});
+      .catch(reportRefusal);
   }
 
   function toggleRuleBanking() {
@@ -884,7 +894,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
                   aria-checked={checked}
                   tabIndex={checked ? 0 : -1}
                   className={`set-option${checked ? " is-checked" : ""}`}
-                  onClick={() => void tenebra.setRouting(opt.mode)}
+                  onClick={() =>
+                    void tenebra.setRouting(opt.mode).catch(reportRefusal)
+                  }
                   onKeyDown={(e) => onRoutingKey(e, index)}
                 >
                   <span className="set-mark" aria-hidden="true">{checked ? "▣" : "▢"}</span>

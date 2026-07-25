@@ -76,6 +76,31 @@ describe("ConnectionPanel", () => {
     });
   });
 
+  describe("primary button", () => {
+    it("is clickable by default", async () => {
+      const props = baseProps({ phase: "idle" });
+      const user = userEvent.setup();
+      renderWithProviders(<ConnectionPanel {...props} />);
+
+      await user.click(screen.getByRole("button", { name: /Connect/ }));
+      expect(props.onPrimary).toHaveBeenCalledTimes(1);
+    });
+
+    it("is disabled when the host says there is nothing to act on", async () => {
+      // The shell sets this when a click could not do anything (no profile to
+      // connect to). A button that looks live and silently eats the click is
+      // the thing being fixed.
+      const props = baseProps({ phase: "idle", disabled: true });
+      const user = userEvent.setup();
+      renderWithProviders(<ConnectionPanel {...props} />);
+
+      const button = screen.getByRole("button", { name: /Connect/ });
+      expect(button).toBeDisabled();
+      await user.click(button);
+      expect(props.onPrimary).not.toHaveBeenCalled();
+    });
+  });
+
   describe("connecting", () => {
     it("shows the connecting status, the abort label and the generic sub-line", () => {
       renderWithProviders(
