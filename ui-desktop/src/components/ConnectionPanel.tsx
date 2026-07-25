@@ -47,6 +47,14 @@ interface ConnectionPanelProps {
   resolveNodeName?: (nodeId: string) => string;
   /** Connect / disconnect / abort, depending on phase. */
   onPrimary: () => void;
+  /**
+   * Blocks the primary button. The shell sets it when a click could not do
+   * anything — there is no profile to connect to — so the control reads as dead
+   * instead of looking live and eating the click, which is what it did before.
+   * The shell never sets it while a tunnel is up or in flight, so disconnect and
+   * abort always stay reachable.
+   */
+  disabled?: boolean;
   /** Focus the node search (the "change" affordance). */
   onChange: () => void;
 }
@@ -113,6 +121,7 @@ export function ConnectionPanel({
   attempts,
   resolveNodeName,
   onPrimary,
+  disabled = false,
   onChange,
 }: ConnectionPanelProps) {
   const { t } = useI18n();
@@ -213,6 +222,7 @@ export function ConnectionPanel({
             type="button"
             className={`connect-btn${connected ? " on" : ""}${pending ? " pending" : ""}${reconnecting ? " reconnecting" : ""}`}
             onClick={onPrimary}
+            disabled={disabled}
           >
             {buttonLabel}
           </button>

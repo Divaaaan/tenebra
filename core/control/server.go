@@ -7,30 +7,219 @@ import (
 	"log"
 	"runtime/debug"
 	"sync"
+	"time"
 )
+
+// outQueueDepth is how many outbound frames may sit undelivered before the
+// server starts shedding. It is generous on purpose — a UI that pauses for a
+// moment (a GC, a modal, a slow render) must not lose anything — but bounded,
+// because a client that never drains would otherwise grow this without limit
+// inside a privileged daemon. At the daemon's own event rate (a traffic tick per
+// second, plus bursts during a fallback walk) it is minutes of backlog.
+const outQueueDepth = 512
+
+// writeDrainGrace bounds how long a teardown waits for the outbound queue to
+// flush when the underlying stream cannot be aborted. The listener path closes
+// the connection first, so its writer returns at once and never spends this; it
+// exists for the sidecar's stdout, which has no deadline and no Close of ours —
+// a parent that stopped reading must not keep the core from exiting.
+const writeDrainGrace = 2 * time.Second
+
+// outFrame is one already-marshalled line waiting to go out. event marks the
+// frames that may be shed under pressure: an event is a snapshot of something
+// the client can re-derive (it re-syncs with a status request on reconnect),
+// whereas a response is the other half of a request someone is waiting on.
+type outFrame struct {
+	line  []byte
+	event bool
+}
+
+// deadlineWriter is the part of net.Conn the writer uses when the transport
+// offers it. Both transports that carry this protocol to a detached client (the
+// Windows named pipe and the unix socket) do; the sidecar's stdout does not, and
+// falls back to an undeadlined write.
+type deadlineWriter interface {
+	SetWriteDeadline(t time.Time) error
+}
 
 // Server runs the control loop: it reads request lines from an io.Reader,
 // dispatches each to the Daemon, and writes responses plus asynchronous events
-// to an io.Writer. All writes go through a single mutex because the daemon's
-// traffic poller and process watcher emit events from their own goroutines while
-// the request loop writes responses — without serialisation two JSON objects
-// could interleave on one line.
+// to an io.Writer.
+//
+// Outbound frames do NOT go straight to the writer. They are queued and drained
+// by one goroutine, for two reasons:
+//
+//   - ordering: the daemon's traffic poller, health watchdog and fallback walk
+//     emit events from their own goroutines while the request loop writes
+//     responses; a single writer is what keeps two JSON objects off one line;
+//   - isolation: the client's stream is not the daemon's to wait on. A client
+//     that stops reading stalls a write indefinitely (the Windows pipe buffers
+//     nothing, so the very first frame to a stalled client blocks), and every
+//     emitter that touched that write used to stall with it — including the
+//     accept loop in ServeListener, which emits peer-authentication lines before
+//     it displaces the previous session and so wedged the whole service off the
+//     air with nothing left to close the stream.
+//
+// A client that cannot keep up is dropped rather than waited on: a frame gets
+// writeTimeout to leave, and the backlog gets outQueueDepth frames of slack.
+// Past either, the stream is declared failed, its queue is discarded and
+// stalled is closed so the session owner can end it. A timed-out write may have
+// left half a line on the wire, so continuing to write to that client would
+// corrupt its protocol — the only correct move is to close it and let it
+// reconnect, which re-syncs it with a status request.
 type Server struct {
 	daemon *Daemon
 
 	r io.Reader
+	w io.Writer
 
-	wmu sync.Mutex
-	w   io.Writer
+	// writeTimeout bounds one frame's write, when the writer supports deadlines.
+	// Zero disables the bound.
+	writeTimeout time.Duration
+
+	// mu guards the outbound queue and its state flags; cond wakes the writer.
+	mu     sync.Mutex
+	cond   *sync.Cond
+	queue  []outFrame
+	closed bool // no more frames accepted; drain what is left and stop
+	failed bool // the stream is unusable; drop everything
+
+	// stalled is closed once the stream is declared failed, so the session owner
+	// can tear the client down. drained is closed when the writer goroutine has
+	// returned.
+	stalled chan struct{}
+	drained chan struct{}
 }
 
 // NewServer wires a daemon to a reader/writer pair. It installs the daemon's
-// event emitter so events flow out through the same serialised writer as
-// responses.
+// event emitter so events flow out through the same ordered writer as responses,
+// and starts that writer. Every Server therefore owns a goroutine from
+// construction and must be finished with stopWriter — Serve does that for the
+// sidecar, startSession for a listener session.
 func NewServer(d *Daemon, r io.Reader, w io.Writer) *Server {
-	s := &Server{daemon: d, r: r, w: w}
+	s := &Server{
+		daemon:       d,
+		r:            r,
+		w:            w,
+		writeTimeout: d.clientWriteTimeout,
+		stalled:      make(chan struct{}),
+		drained:      make(chan struct{}),
+	}
+	s.cond = sync.NewCond(&s.mu)
+	go s.writeLoop()
 	d.SetEmitter(s.emit)
 	return s
+}
+
+// stalledStream is closed when the client stopped taking delivery and the stream
+// was given up on. The listener's session watches it so a stalled client is
+// dropped instead of holding the daemon's only event sink.
+func (s *Server) stalledStream() <-chan struct{} { return s.stalled }
+
+// writeLoop drains the outbound queue in order until the queue is closed and
+// empty, or a write fails. It is the only goroutine that touches s.w.
+func (s *Server) writeLoop() {
+	defer close(s.drained)
+	for {
+		s.mu.Lock()
+		for len(s.queue) == 0 && !s.closed && !s.failed {
+			s.cond.Wait()
+		}
+		if s.failed || (s.closed && len(s.queue) == 0) {
+			s.mu.Unlock()
+			return
+		}
+		fr := s.queue[0]
+		s.queue[0] = outFrame{} // drop the reference so the line can be collected
+		s.queue = s.queue[1:]
+		if len(s.queue) == 0 {
+			s.queue = nil // release the backing array once the burst has passed
+		}
+		s.mu.Unlock()
+
+		if err := s.writeFrame(fr.line); err != nil {
+			// The client is gone or has stopped taking delivery. Either way this
+			// stream is finished; say so once and stop.
+			s.mu.Lock()
+			s.failStreamLocked()
+			s.mu.Unlock()
+			return
+		}
+	}
+}
+
+// writeFrame writes one line, bounded by writeTimeout when the transport
+// supports deadlines. The deadline is re-armed per frame, so a queue that sat
+// idle isn't judged by an old one.
+func (s *Server) writeFrame(line []byte) error {
+	if dw, ok := s.w.(deadlineWriter); ok && s.writeTimeout > 0 {
+		_ = dw.SetWriteDeadline(time.Now().Add(s.writeTimeout))
+	}
+	_, err := s.w.Write(line)
+	return err
+}
+
+// enqueue puts a frame on the outbound queue. It never blocks the caller: that
+// is the whole point — the daemon's event path must be independent of whether a
+// client is reading. A full queue sheds the oldest event first; if the backlog
+// is all responses there is nothing safe to drop and the client is given up on.
+func (s *Server) enqueue(line []byte, event bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.failed {
+		return
+	}
+	if len(s.queue) >= outQueueDepth && !s.dropOldestEventLocked() {
+		s.failStreamLocked()
+		return
+	}
+	s.queue = append(s.queue, outFrame{line: line, event: event})
+	s.cond.Signal()
+}
+
+// dropOldestEventLocked removes the oldest sheddable frame, reporting whether it
+// found one. Dropping an event is safe by protocol: events carry no id, nothing
+// waits on one, and a client that missed some re-syncs with a status request.
+func (s *Server) dropOldestEventLocked() bool {
+	for i, fr := range s.queue {
+		if fr.event {
+			copy(s.queue[i:], s.queue[i+1:])
+			s.queue[len(s.queue)-1] = outFrame{} // don't retain the dropped line
+			s.queue = s.queue[:len(s.queue)-1]
+			return true
+		}
+	}
+	return false
+}
+
+// failStreamLocked marks the stream unusable, discards the backlog and signals
+// the owner. Idempotent: a failure can be reached from the writer and from an
+// overflowing enqueue at the same time.
+func (s *Server) failStreamLocked() {
+	if s.failed {
+		return
+	}
+	s.failed = true
+	s.queue = nil
+	close(s.stalled)
+	s.cond.Broadcast()
+}
+
+// stopWriter stops accepting frames, lets the writer flush whatever is already
+// queued, and waits for it to finish. The wait is bounded by writeDrainGrace
+// because not every writer can be aborted from here (see writeDrainGrace); a
+// caller that owns the connection should close it first, which makes the wait
+// immediate.
+func (s *Server) stopWriter() {
+	s.mu.Lock()
+	s.closed = true
+	s.cond.Broadcast()
+	s.mu.Unlock()
+
+	select {
+	case <-s.drained:
+	case <-time.After(writeDrainGrace):
+	}
 }
 
 // Serve reads and handles requests until the reader hits EOF or ctx is
@@ -62,6 +251,9 @@ func (s *Server) Serve(ctx context.Context) error {
 
 	err := s.serveStream(ctx)
 	_ = s.daemon.Close()
+	// After Close, so the shutdown's final state events still reach the UI, and
+	// before returning, so the process doesn't exit on top of a half-written line.
+	s.stopWriter()
 	return err
 }
 
@@ -138,23 +330,28 @@ func dispatchRequest(ctx context.Context, req Request, handle func(context.Conte
 	return handle(ctx, req)
 }
 
-// writeResponse serialises a response to the writer under the write lock.
+// writeResponse queues a response for delivery. It does not wait for the write:
+// a client that stopped reading must not hold the request loop, which would in
+// turn hold whatever is waiting for this session to end. A response is never
+// shed under pressure — someone is waiting on its id — so a backlog that leaves
+// no event to drop ends the stream instead.
 func (s *Server) writeResponse(resp Response) {
-	s.wmu.Lock()
-	defer s.wmu.Unlock()
-	// A write error means the UI side is gone; nothing useful to do but stop
-	// trying. The read loop will hit EOF and Serve will return.
-	_ = writeMessage(s.w, resp)
+	line, err := marshalLine(resp)
+	if err != nil {
+		// Unmarshallable response data is a programming error in the handler, not a
+		// transport failure; there is nothing to send and nothing to retry.
+		return
+	}
+	s.enqueue(line, false)
 }
 
 // emit is the daemon's event sink. It renders the event as one merged JSON line
-// and writes it under the same lock as responses.
+// and queues it behind whatever is already outbound, so events and responses
+// keep their order on the wire without the emitter ever waiting on the client.
 func (s *Server) emit(name string, body any) {
 	line, err := marshalEvent(name, body)
 	if err != nil {
 		return
 	}
-	s.wmu.Lock()
-	defer s.wmu.Unlock()
-	_, _ = s.w.Write(line)
+	s.enqueue(line, true)
 }

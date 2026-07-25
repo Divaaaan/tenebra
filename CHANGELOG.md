@@ -11,6 +11,55 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **One stuck app no longer takes the whole service off the air.** The core
+  served its control channel from a single accept loop that, on a new
+  connection, waited for the previous session's goroutine to finish — while
+  writes to a client had no deadline at all, and several settings commands
+  block until a live re-apply finishes. So a client that stopped reading, or a
+  command still walking the fallback chain, could leave the service accepting
+  nobody at all: still "Running", still holding the tunnel, but deaf, so every
+  app window came up drawn and dead and restarting the app changed nothing.
+  Outgoing frames are now queued and written by a dedicated writer with a
+  deadline, taking over a session no longer waits on the old one, and a client
+  that has genuinely stopped reading is dropped so it can reconnect and
+  re-sync. Under pressure the core sheds events, never answers.
+- **The window is no longer drawn but dead when the core is slow to answer.**
+  The app asked the core for its state exactly once at launch, with nothing
+  catching a refusal. If that one request missed — the Windows service still
+  starting after an update or at logon, a session displaced on the control
+  pipe — the window came up looking perfectly normal and did nothing at all
+  from then on: no toggle moved, and Connect sat there enabled and silent,
+  because the profile list was empty. The opening request now retries on its
+  own until the core answers, the event stream is wired up regardless, and
+  while there is no core the app says so instead of pretending.
+- **Windows: a service that is still starting no longer costs you the
+  service.** The installer starts the service moments before it launches the
+  app, and at logon the two race as well. Losing that race made the app fall
+  back to running its own copy of the core — unelevated, and reading a
+  different profile store, so a subscription added through the service was
+  invisible and connecting could not work. The first attempt now waits out a
+  service that is coming up, and if the app does end up on its own core it
+  says so plainly in the log rather than in passing.
+- **A setting that will not apply now tells you why.** Every switch on the
+  settings screen sent its command and discarded any refusal, and since the
+  switch draws itself from the core's answer, a refused command looked exactly
+  like a dead button. Refusals are now reported, and a core older than the app
+  — the usual case on macOS, where the privileged daemon is updated by hand
+  and stays behind after an app update — is named as such instead of surfacing
+  as silence.
+- **Connect no longer looks available with no subscription.** With no profile
+  the button did nothing when pressed; it is now disabled, matching the simple
+  view.
+- **Settings: clicks near the top of the panel land where you aim them.** The
+  bar holding the close button spanned the whole column and swallowed clicks
+  across its full width, though only the ✕ at the right edge is visible, and
+  jumping to a section from the rail parked that section's first control right
+  underneath it. The bar now only catches clicks where it actually draws, and
+  sections keep clear of it. The rail scrolls instead of silently cutting off
+  its last entries in a short window.
+
 ### Added
 
 - **Copy diagnostics from the logs screen.** A single button gathers the app
