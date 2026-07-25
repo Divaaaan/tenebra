@@ -1,9 +1,12 @@
 package control
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
+	"os"
 	"testing"
 	"time"
 )
@@ -63,15 +66,25 @@ func (c *silentClient) send(req Request) {
 	_ = c.conn.SetWriteDeadline(time.Time{})
 }
 
-// awaitClosed reports whether the server ended this client's stream within d.
-func (c *silentClient) awaitClosed(d time.Duration) error {
+// awaitClosed waits for the server to end this client's stream and returns the
+// error that surfaces on this end, or os.ErrDeadlineExceeded if the stream was
+// still alive after within. It probes by writing a blank line (which the request
+// scanner skips) rather than by reading: reading would take delivery of the very
+// frame whose stall is under test.
+func (c *silentClient) awaitClosed(within time.Duration) error {
 	c.t.Helper()
-	_ = c.conn.SetReadDeadline(time.Now().Add(d))
-	buf := make([]byte, 4096)
+	deadline := time.Now().Add(within)
 	for {
-		if _, err := c.conn.Read(buf); err != nil {
+		_ = c.conn.SetWriteDeadline(time.Now().Add(50 * time.Millisecond))
+		_, err := c.conn.Write([]byte("\n"))
+		var ne net.Error
+		if err != nil && !(errors.As(err, &ne) && ne.Timeout()) {
 			return err
 		}
+		if time.Now().After(deadline) {
+			return os.ErrDeadlineExceeded
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -180,5 +193,71 @@ func TestServeListenerServesANewClientWhileTheOldStreamIsStalled(t *testing.T) {
 	r := b.await()
 	if r.ID != 2 || !r.Ok {
 		t.Fatalf("status response = %+v, want ok with id 2", r)
+	}
+}
+
+// TestStalledClientIsDropped: a client that never takes delivery is let go
+// rather than kept as the daemon's event sink forever. Closing its stream is
+// what tells it to reconnect, and a reconnect re-syncs it with a status request
+// — the same recovery a takeover gives it.
+func TestStalledClientIsDropped(t *testing.T) {
+	h := newListenerHarness(t)
+	// Production waits half a minute before writing a client off (a UI is allowed
+	// to be busy); the behaviour under test is the same at any value.
+	h.daemon.clientWriteTimeout = 150 * time.Millisecond
+
+	a := h.dialSilent()
+	a.send(Request{ID: 1, Cmd: CmdStatus}) // its response can never be delivered
+
+	err := a.awaitClosed(3 * time.Second)
+	if err == nil {
+		t.Fatal("read returned data on a stream nobody was draining")
+	}
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("stalled client was never dropped: %v", err)
+	}
+}
+
+// TestSlowClientKeepsItsResponses: shedding under pressure must cost the client
+// only events, never a reply it is waiting on. The flood here overruns the queue
+// several times over with one response mixed into each round.
+func TestSlowClientKeepsItsResponses(t *testing.T) {
+	d, _ := newTestDaemon(t)
+	client, server := net.Pipe()
+	t.Cleanup(func() { _ = client.Close(); _ = server.Close() })
+	srv := NewServer(d, server, server)
+	t.Cleanup(srv.stopWriter)
+
+	const rounds = 4
+	go func() {
+		for i := 0; i < rounds; i++ {
+			for j := 0; j < outQueueDepth; j++ {
+				srv.emit(EventLog, LogEvent{Level: LogInfo, Msg: "flood"})
+			}
+			srv.writeResponse(Response{ID: int64(i + 1), Ok: true})
+		}
+	}()
+
+	seen := make(map[int64]bool)
+	sc := bufio.NewScanner(client)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	_ = client.SetReadDeadline(time.Now().Add(20 * time.Second))
+	for len(seen) < rounds && sc.Scan() {
+		var probe map[string]any
+		if err := json.Unmarshal(sc.Bytes(), &probe); err != nil {
+			continue
+		}
+		if _, isEvent := probe["event"]; isEvent {
+			continue
+		}
+		var r Response
+		if err := json.Unmarshal(sc.Bytes(), &r); err == nil {
+			seen[r.ID] = true
+		}
+	}
+	for i := int64(1); i <= rounds; i++ {
+		if !seen[i] {
+			t.Errorf("response %d was dropped under pressure; only events may be shed", i)
+		}
 	}
 }

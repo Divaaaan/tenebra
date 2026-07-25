@@ -194,6 +194,88 @@ func TestPipeCancelTearsDown(t *testing.T) {
 	_ = l.Close()
 }
 
+// TestPipeServesANewClientWhileACommandIsInFlight is the wedge that took a live
+// service off the air, over the transport it happened on. A command that is
+// still running must not keep the listener from taking the next client: winio
+// only offers a pipe instance while Accept is in flight, so an accept loop stuck
+// waiting on the previous session makes every dial fail with ERROR_SEM_TIMEOUT
+// while the service still reports Running.
+func TestPipeServesANewClientWhileACommandIsInFlight(t *testing.T) {
+	h := newPipeHarness(t)
+
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	t.Cleanup(func() { close(release) })
+	h.daemon.httpGet = func(context.Context, string) ([]byte, error) {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-release
+		return nil, errors.New("released")
+	}
+
+	a := h.dial()
+	a.send(Request{ID: 1, Cmd: CmdLeakCheck})
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("leak_check never reached the injected getter")
+	}
+
+	b := h.dial() // fails the test on a dial timeout, which is the wedge
+	b.send(Request{ID: 2, Cmd: CmdStatus})
+	if r := b.await(); r.ID != 2 || !r.Ok {
+		t.Fatalf("status response = %+v, want ok with id 2", r)
+	}
+}
+
+// TestPipeStalledClientDoesNotBlockTheListener: a client that stops taking
+// delivery is the other half of the same failure. The named pipe carries no
+// buffer of its own, so the first frame to such a client stalls in the server;
+// that must neither hold the listener nor keep the stalled session alive
+// forever.
+func TestPipeStalledClientDoesNotBlockTheListener(t *testing.T) {
+	h := newPipeHarness(t)
+	// Production waits half a minute before writing a client off; shrink it so
+	// the drop is observable inside a test.
+	h.daemon.clientWriteTimeout = 200 * time.Millisecond
+
+	timeout := 3 * time.Second
+	a, err := winio.DialPipe(h.name, &timeout)
+	if err != nil {
+		t.Fatalf("DialPipe: %v", err)
+	}
+	defer a.Close()
+	line, err := marshalLine(Request{ID: 1, Cmd: CmdStatus})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if _, err := a.Write(line); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	// A never reads, so that response can never be delivered.
+
+	b := h.dial()
+	b.send(Request{ID: 2, Cmd: CmdStatus})
+	if r := b.await(); r.ID != 2 || !r.Ok {
+		t.Fatalf("status response = %+v, want ok with id 2", r)
+	}
+
+	// And A's stream is gone: a blank line (which the request scanner skips) no
+	// longer reaches a server.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := a.Write([]byte("\n")); err != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("stalled client was never dropped")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 // TestPipeNameCannotBeSquatted: the listener claims the name exclusively
 // (FILE_FLAG_FIRST_PIPE_INSTANCE under the hood), so a second listener — e.g.
 // another process trying to stand in for the service — is refused.
