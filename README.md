@@ -75,6 +75,24 @@ The kill-switch (drop proxied traffic instead of leaking when the tunnel drops) 
 UI toggle — best-effort by design, with the exact guarantee described in the
 [changelog](CHANGELOG.md); LAN bypass is a core routing option.
 
+## Installing
+
+**Windows** — from the [Windows Package Manager](https://learn.microsoft.com/windows/package-manager/winget/):
+
+```powershell
+winget install Divaaaan.Tenebra
+```
+
+or grab `Tenebra_x.y.z_x64-setup.exe` from the
+[latest release](https://github.com/Divaaaan/tenebra/releases/latest). Either
+way the installer sets up the background service and the in-app updater keeps
+everything current.
+
+**macOS** — download the universal DMG from the
+[latest release](https://github.com/Divaaaan/tenebra/releases/latest), then
+read the [macOS note](#macos-note--read-before-downloading-the-dmg) first —
+the build currently needs a hand-installed root daemon.
+
 ## Getting a server
 
 Tenebra is a **client** — it ships no servers and hard-codes nothing. You bring
