@@ -7,10 +7,15 @@
 .set-shell {
   display: grid;
   grid-template-columns: 190px 1fr;
-  /* Fill the overlay body's capped box (720 window − 72 overlay padding − the
+  /* Fill the overlay body's capped box (the window − 72 overlay padding − the
      body's own 8px padding top and bottom) so the rail spans full height and
-     only the content column scrolls. */
-  height: calc(720px - 72px - 2 * var(--sp-2));
+     only the content column scrolls. The window is fixed at 720px, so at the
+     design size the two lines below agree exactly; measuring the viewport is
+     what keeps the box honest when it is shorter than the design (a zoomed
+     WebView reports fewer CSS pixels), where a hard 632px would push the rail's
+     tail out of sight with nothing to scroll it back. */
+  height: calc(100vh - 72px - 2 * var(--sp-2));
+  max-height: calc(720px - 72px - 2 * var(--sp-2));
 }
 
 /* ── left rail: title, section links, version/licence foot ── */
@@ -31,9 +36,21 @@
   padding: 0 18px;
   margin-bottom: var(--sp-5);
 }
+/* The rail carries 13 fixed items between a title and the version foot, inside a
+   height the window dictates. Whenever the metrics run large — a fallback mono
+   face, a wrapped label, a zoomed WebView — that stack outgrows the rail, and
+   with the nav clipping it the tail items (appearance, startup, updates) simply
+   vanished: no scrollbar, no hint, unreachable. The list scrolls instead, so the
+   overflow is visible and every section stays reachable. min-height: 0 is what
+   lets it shrink at all (a flex item's automatic minimum is its content), and it
+   only engages under overflow — with room to spare the list keeps its natural
+   height and the foot stays pinned to the bottom by its auto margin. */
 .set-nav-list {
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 .set-nav-item {
   text-align: left;
@@ -77,8 +94,14 @@
   padding: 0 var(--sp-6) var(--sp-5);
 }
 
-/* Sticky "esc ✕" close, pinned to the top-right of the scrolling content. The
-   bar carries a solid background so section content scrolls cleanly underneath. */
+/* Sticky "esc ✕" close, pinned to the top-right of the scrolling content.
+   The bar spans the whole column but only the button at its right end is ever
+   visible, so the bar itself must stay click-through: as an opaque, full-width
+   sticky strip it laid a ~47px dead zone over the top of every section and
+   swallowed clicks aimed at the first control of one (the ON/OFF switches most
+   of all). The background moves onto the button — the one place that has to mask
+   the content passing behind it — and the button takes its pointer events back.
+   The invariant this keeps: in this column, visible == clickable. */
 .set-close-bar {
   position: sticky;
   top: 0;
@@ -86,9 +109,10 @@
   display: flex;
   justify-content: flex-end;
   padding: var(--sp-3) 0 var(--sp-2);
-  background: var(--bg);
+  pointer-events: none;
 }
 .set-close {
+  pointer-events: auto;
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
@@ -97,6 +121,7 @@
   letter-spacing: var(--track-body);
   text-transform: uppercase;
   color: var(--text-dim);
+  background: var(--bg);
   padding: 4px 10px;
   border: var(--bw) solid var(--line);
   transition:
@@ -115,6 +140,14 @@
   gap: var(--sp-4);
   padding: var(--sp-5) 0;
   border-top: var(--bw) solid var(--line);
+  /* The rail jumps here with scrollIntoView({block: "start"}), which parks the
+     section's top edge at the very top of the scrollport — i.e. behind the
+     sticky close bar (12 + ~27 + 8 ≈ 47px tall), leaving the section's first
+     control barely clear of it. Offset the jump so the head and the first
+     control always land below the bar. Ceiling: the 60px threshold
+     pickActiveSection uses in SettingsScreen.tsx — a larger offset would stop
+     the jump from registering and the rail would keep the previous item lit. */
+  scroll-margin-top: 56px;
 }
 /* The first section sits directly under the sticky close bar, so it drops the
    top rule and extra margin the stacked sections carry. */
