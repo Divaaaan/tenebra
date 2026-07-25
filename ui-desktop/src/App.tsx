@@ -241,6 +241,20 @@ export function App() {
     t,
   );
 
+  // Whether the primary button has anything to act on. It mirrors the branches
+  // of handlePrimary below exactly: a live (or in-flight) tunnel can always be
+  // taken down, otherwise a connect needs a profile. Without a profile the
+  // handler ran no branch at all — no invoke, no error, no toast — while the
+  // button stayed fully live, so a click on a fresh install (or with the core
+  // unreachable, which leaves the list empty) was swallowed in silence.
+  // Disabling it is the smallest honest fix and matches SimpleView, which has
+  // always gated its own button on having a profile.
+  const canPrimary =
+    connected ||
+    phase === "connecting" ||
+    phase === "health_reconnecting" ||
+    selectedProfileId !== null;
+
   const handlePrimary = useCallback(() => {
     if (busy) return;
     setBusy(true);
@@ -523,6 +537,16 @@ export function App() {
         </div>
       )}
 
+      {tenebra.coreError && (
+        // The core never answered, so nothing on this screen is backed by
+        // anything: no profiles, no real state, every action doomed. Say it in
+        // the banner strip the update and skew notices already use (no new
+        // visual language), and let the hook's retry clear it on its own.
+        <div className="update-banner" role="alert">
+          <span className="update-banner-text">⚠ {t.daemon.unreachable}</span>
+        </div>
+      )}
+
       {update.available && (
         <UpdateBanner
           version={update.available}
@@ -534,7 +558,11 @@ export function App() {
         />
       )}
 
-      {daemonSkew.stale && !skewDismissed && (
+      {/* Only once a snapshot has actually landed: the skew check latches its
+          verdict from the hook's placeholder "idle" state, so a core that never
+          answered used to read as a *stale* one — the wrong diagnosis, and it
+          would now contradict the unreachable banner right above. */}
+      {tenebra.ready && daemonSkew.stale && !skewDismissed && (
         <DaemonSkewBanner
           daemonVersion={daemonSkew.daemonVersion}
           appVersion={__APP_VERSION__}
@@ -579,6 +607,7 @@ export function App() {
           cumulativeUp={traffic.up}
           errorMsg={state.error}
           onPrimary={handlePrimary}
+          disabled={!canPrimary}
           onChange={focusSearch}
         />
 
