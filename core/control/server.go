@@ -183,7 +183,9 @@ func (s *Server) enqueue(line []byte, event bool) {
 func (s *Server) dropOldestEventLocked() bool {
 	for i, fr := range s.queue {
 		if fr.event {
-			s.queue = append(s.queue[:i], s.queue[i+1:]...)
+			copy(s.queue[i:], s.queue[i+1:])
+			s.queue[len(s.queue)-1] = outFrame{} // don't retain the dropped line
+			s.queue = s.queue[:len(s.queue)-1]
 			return true
 		}
 	}
