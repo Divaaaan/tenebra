@@ -1,11 +1,11 @@
 //! The named-pipe transport: a client of the core running detached from the
-//! GUI вЂ” as the Windows service, or via `tenebra-core --pipe`.
+//! GUI — as the Windows service, or via `tenebra-core --pipe`.
 //!
 //! The core listens on `\\.\pipe\tenebra` (see `core/control/pipe_windows.go`
 //! and the Transports section of `docs/control-protocol.md`); this type dials
 //! it and runs the same [`wire`](super::wire) client the sidecar uses. What is
 //! different from the sidecar is the lifecycle: the service outlives any one
-//! GUI process, so the connection вЂ” not the process вЂ” is the thing to manage.
+//! GUI process, so the connection — not the process — is the thing to manage.
 //!
 //! - **Patience on the first dial.** The service is often seconds behind the
 //!   GUI (an installer that just ran `sc start`, or an autostart login racing
@@ -17,11 +17,11 @@
 //!   already is. Every new session therefore opens with a `status` request and
 //!   pushes the answer at the UI.
 //! - **Reconnect on loss.** The session ending (service restarted or died, or
-//!   another client displaced us вЂ” the pipe is last-writer-wins) is not fatal:
+//!   another client displaced us — the pipe is last-writer-wins) is not fatal:
 //!   a supervisor thread pushes a synthetic "reconnecting" state at the UI and
 //!   redials with capped exponential backoff until the pipe answers again,
 //!   then re-syncs. Only a loss that outlasts [`RECONNECT_GRACE`] is escalated
-//!   to an error state вЂ” a planned service restart or a displaced session is
+//!   to an error state — a planned service restart or a displaced session is
 //!   back well inside the window and never reads as a failure. While
 //!   disconnected, commands fail fast instead of timing out.
 //!
@@ -30,7 +30,7 @@
 //! The pipe handle is opened synchronously (no `FILE_FLAG_OVERLAPPED`), and
 //! Windows serializes I/O on a synchronous file object: a `ReadFile` parked
 //! waiting for data holds the file-object lock and blocks any `WriteFile` on
-//! the same object вЂ” including one through a duplicated handle, which shares
+//! the same object — including one through a duplicated handle, which shares
 //! it. A thread camping in a blocking read would deadlock every request. So
 //! the reader never blocks in `read`: it asks `PeekNamedPipe` how many bytes
 //! are ready and only reads that fast path, sleeping a short tick otherwise.
@@ -63,8 +63,8 @@ use super::{ConnectionState, EventSink, State};
 pub const PIPE_NAME: &str = r"\\.\pipe\tenebra";
 
 /// How often the reader re-peeks an idle pipe (and rechecks shutdown). Events
-/// and responses arrive at most this much late вЂ” imperceptible next to the
-/// commands' own latency вЂ” and an idle GUI costs one no-op syscall per tick.
+/// and responses arrive at most this much late — imperceptible next to the
+/// commands' own latency — and an idle GUI costs one no-op syscall per tick.
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// Reconnect backoff: first retry comes quickly (the common loss is a service
@@ -74,9 +74,9 @@ const INITIAL_BACKOFF: Duration = Duration::from_millis(250);
 const MAX_BACKOFF: Duration = Duration::from_secs(5);
 
 /// How long a lost session may present itself as "reconnecting" before the
-/// loss is reported as an error. The interruptions worth staying quiet for вЂ”
+/// loss is reported as an error. The interruptions worth staying quiet for —
 /// the service restarting under an update, a crash the service manager
-/// restarts, a displaced session redialing вЂ” are back within a couple of
+/// restarts, a displaced session redialing — are back within a couple of
 /// seconds. Eight seconds comfortably outlasts all of those and spans the
 /// first five dial attempts (backoff puts them ~0.25 s to ~7.75 s after the
 /// loss), while still reporting a genuinely stopped service in single-digit
@@ -182,8 +182,8 @@ struct PipeShared {
 impl PipeBackend {
     /// Dial `name` and start serving. The dial happens synchronously so the
     /// caller can fall back to another transport when no core is listening;
-    /// after that the connection is supervised вЂ” lost sessions reconnect with
-    /// backoff and re-sync вЂ” until the backend is dropped.
+    /// after that the connection is supervised — lost sessions reconnect with
+    /// backoff and re-sync — until the backend is dropped.
     ///
     /// It is deliberately patient: a service that is merely still starting
     /// answers within [`DIAL_ABSENT_WAIT`], and only a name nobody binds in that
@@ -212,7 +212,7 @@ impl PipeBackend {
 
     /// Wire up the supervisor around an already-dialed first connection.
     /// `grace` is how long a lost session may stay "reconnecting" before it is
-    /// reported as an error вЂ” [`RECONNECT_GRACE`] in production, shortened by
+    /// reported as an error — [`RECONNECT_GRACE`] in production, shortened by
     /// the tests that exercise the expiry path.
     fn start(
         first: Conn,
@@ -253,7 +253,7 @@ impl WireSession for PipeBackend {
 
 impl Drop for PipeBackend {
     fn drop(&mut self) {
-        // Closing the GUI leaves the service вЂ” and a live tunnel вЂ” running by
+        // Closing the GUI leaves the service — and a live tunnel — running by
         // design; only the connection is torn down. Raise stop for the poll
         // loops, wake a backoff wait by dropping its sender, fail any in-flight
         // request, and wait the supervisor out (all its waits are ticked, so
@@ -272,7 +272,7 @@ impl Drop for PipeBackend {
 /// The synthetic state pushed the moment the control connection drops. The
 /// tunnel may or may not still be up (a restarting service tears it down; a
 /// displaced session leaves it), so neither `Connected` nor `Idle` would be
-/// honest вЂ” and `Error` is premature while the redial usually lands within a
+/// honest — and `Error` is premature while the redial usually lands within a
 /// second or two. `Connecting` is the truthful in-between: nothing is claimed
 /// about the tunnel, session-bound commands already fail fast with their own
 /// "reconnecting" error, and the message says what is actually going on. The
@@ -313,7 +313,7 @@ fn reconnecting_state() -> State {
 
 /// The synthetic state pushed when the service has not answered within the
 /// grace window. By now the outage is not a restart blip, the tunnel state is
-/// unknown, and `Error` is the honest choice of the protocol's four states вЂ”
+/// unknown, and `Error` is the honest choice of the protocol's four states —
 /// the UI must not claim the tunnel is either up or cleanly down. The re-sync
 /// after an eventual reconnect replaces this with the real state.
 fn lost_state() -> State {
@@ -357,7 +357,7 @@ fn next_backoff(current: Duration) -> Duration {
 /// backoff and serve again. Only when the service stays away past `grace` is
 /// the loss escalated to an error state, once per outage. EOF from a
 /// displacement (another client took the pipe) is indistinguishable from a
-/// service restart on this side and is handled identically вЂ” retry, never
+/// service restart on this side and is handled identically — retry, never
 /// panic; the single-instance GUI makes a genuine takeover war impossible in
 /// practice, and both causes normally redial well inside the grace window.
 fn supervise(
@@ -377,7 +377,7 @@ fn supervise(
         }
 
         // The session is gone and already cleared, so commands now fail fast;
-        // tell the UI before spending time redialing вЂ” as a reconnect under
+        // tell the UI before spending time redialing — as a reconnect under
         // way, not yet a failure.
         sink.state(&reconnecting_state());
         sink.log(
@@ -553,7 +553,7 @@ fn dial_wait_for(e: &io::Error, absent_wait: Duration) -> Option<Duration> {
     }
 }
 
-/// `Read` over the pipe that never parks in `ReadFile` вЂ” see the module docs
+/// `Read` over the pipe that never parks in `ReadFile` — see the module docs
 /// for why that would deadlock writes. EOF (`Ok(0)`) covers both the peer
 /// closing the pipe and our own shutdown flag, which is exactly the signal
 /// `read_loop` ends on.
@@ -772,13 +772,13 @@ mod tests {
         let requests1 = Arc::new(Mutex::new(Vec::new()));
         let requests2 = Arc::new(Mutex::new(Vec::new()));
         // The first service instance answers exactly one request (the re-sync)
-        // and hangs up вЂ” a restart. The second serves normally.
+        // and hangs up — a restart. The second serves normally.
         let stub1 = spawn_stub_core(theirs1, Arc::clone(&requests1), connected_state, Some(1));
         let stub2 = spawn_stub_core(theirs2, Arc::clone(&requests2), connected_state, None);
 
         let sink = Arc::new(Rec::default());
         // First redial fails (the service is still coming back), the next one
-        // lands on the new instance вЂ” well inside the production grace window.
+        // lands on the new instance — well inside the production grace window.
         let dialer = ScriptDialer {
             script: VecDeque::from([
                 Err("the service is still down".to_string()),
@@ -794,7 +794,7 @@ mod tests {
         )
         .expect("start pipe backend");
 
-        // connected (re-sync 1) в†’ connecting (loss) в†’ connected (re-sync 2).
+        // connected (re-sync 1) → connecting (loss) → connected (re-sync 2).
         let states = sink.wait_for_states(3, WAIT);
         assert_eq!(states[0].state, ConnectionState::Connected);
         assert_eq!(states[1].state, ConnectionState::Connecting);
@@ -836,7 +836,7 @@ mod tests {
 
     #[test]
     fn a_displaced_session_redials_at_once_and_stays_quiet() {
-        // A displacement (another client took the pipe вЂ” last-writer-wins) is
+        // A displacement (another client took the pipe — last-writer-wins) is
         // an EOF with the listener still up, so the very first redial lands.
         // The UI sees a brief reconnecting state and then the re-synced real
         // state; nothing about the blip reads as a failure.
@@ -897,7 +897,7 @@ mod tests {
         let sink = Arc::new(Rec::default());
         // Two failed dials (~0.25 s and ~0.75 s in), success on the third
         // (~1.75 s in). A 600 ms grace expires between the first and second
-        // dial вЂ” in the middle of a backoff wait, which must wake for it.
+        // dial — in the middle of a backoff wait, which must wake for it.
         let grace = Duration::from_millis(600);
         let dialer = ScriptDialer {
             script: VecDeque::from([
@@ -915,7 +915,7 @@ mod tests {
         )
         .expect("start pipe backend");
 
-        // connected (re-sync 1) в†’ connecting (loss) в†’ error (grace expired) в†’
+        // connected (re-sync 1) → connecting (loss) → error (grace expired) →
         // connected (re-sync 2 replaces the error).
         let states = sink.wait_for_states(4, WAIT);
         assert_eq!(states[0].state, ConnectionState::Connected);
@@ -969,7 +969,7 @@ mod tests {
 
         // Once the reconnecting state is out, the session is guaranteed cleared
         // (the supervisor clears it before reporting), so a command must fail
-        // fast with the reconnecting error rather than riding out a timeout вЂ”
+        // fast with the reconnecting error rather than riding out a timeout —
         // the grace window softens the presentation, never the semantics.
         let states = sink.wait_for_states(2, WAIT);
         assert_eq!(states[1].state, ConnectionState::Connecting);
@@ -1128,7 +1128,7 @@ mod tests {
         });
 
         // A command round-trips while the poll-reader idles on the same handle
-        // вЂ” the write would deadlock if reads parked blocking (module docs).
+        // — the write would deadlock if reads parked blocking (module docs).
         let state = backend.status().expect("status over the real pipe");
         assert_eq!(state.state, ConnectionState::Connected);
 
@@ -1155,8 +1155,8 @@ mod tests {
         let sink = Arc::new(Rec::default());
         let backend = retry_connect(&name, Arc::clone(&sink));
 
-        // connected в†’ connecting (hangup, the redial lands inside the grace
-        // window) в†’ connected (redial + re-sync).
+        // connected → connecting (hangup, the redial lands inside the grace
+        // window) → connected (redial + re-sync).
         let states = sink.wait_for_states(3, WAIT);
         assert_eq!(states[0].state, ConnectionState::Connected);
         assert_eq!(states[1].state, ConnectionState::Connecting);
@@ -1304,7 +1304,7 @@ mod tests {
         server.join().expect("pipe server thread");
     }
 
-    /// Dial until the server thread's instance is up вЂ” the tests create it on
+    /// Dial until the server thread's instance is up — the tests create it on
     /// another thread, so the very first dial can lose the race.
     fn retry_connect(name: &str, sink: Arc<Rec>) -> PipeBackend {
         let deadline = Instant::now() + WAIT;
@@ -1332,7 +1332,7 @@ mod tests {
 
     // --- the real core over the real pipe ------------------------------------
 
-    /// Locate the built core binary, or `None` if it isn't present yet вЂ” the
+    /// Locate the built core binary, or `None` if it isn't present yet — the
     /// same skip contract as `tests/sidecar_e2e.rs`, so `cargo test` stays
     /// green on a fresh checkout.
     fn core_binary() -> Option<std::path::PathBuf> {
@@ -1359,7 +1359,7 @@ mod tests {
     }
 
     /// The full cross-implementation round-trip: this client against the real
-    /// Go core serving `--pipe`, on the well-known name вЂ” the exact production
+    /// Go core serving `--pipe`, on the well-known name — the exact production
     /// wiring of the service transport. Catches framing or session-semantics
     /// drift between the two sides that the in-process stub server cannot.
     ///
