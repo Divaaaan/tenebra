@@ -230,6 +230,27 @@ describe("bootstrap resilience", () => {
     }
   });
 
+  it("abandons a snapshot that fails after the hook is gone", async () => {
+    let rejectStatus: (e: unknown) => void = () => {};
+    mockApi.status.mockReturnValue(
+      new Promise((_, reject) => {
+        rejectStatus = reject;
+      }),
+    );
+    mockApi.listProfiles.mockResolvedValue([]);
+
+    const { unmount } = renderHook(() => useTenebra());
+    unmount();
+
+    // The request only fails once the hook is torn down: nothing may be written
+    // behind it and no retry may be armed, or the loop would outlive the window.
+    rejectStatus(DOWN);
+    await settle();
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(mockApi.status).toHaveBeenCalledTimes(1);
+  });
+
   it("stops retrying on unmount, leaving no timer and no late setState", async () => {
     mockApi.status.mockRejectedValue(DOWN);
     mockApi.listProfiles.mockRejectedValue(DOWN);
