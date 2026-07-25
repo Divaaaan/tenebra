@@ -1453,3 +1453,24 @@ const ru: Strings = {
 };
 
 export const dictionaries: Record<Language, Strings> = { en, ru };
+
+/**
+ * Turn a rejected core command into a line worth showing a person.
+ *
+ * The daemon answers a command it does not have with `unknown command "…"`
+ * (core/control/daemon.go), which is exactly what a background service older
+ * than the app does to every setting added since it was installed — the macOS
+ * reality, where the in-app updater refreshes the .app and never the root
+ * LaunchDaemon. That case is reported as the cause it is; the engine's own
+ * wording would mean nothing to the person holding the mouse. Everything else
+ * is a plain refusal, with the raw text left to the log console.
+ *
+ * Lives here rather than in a screen because both the shell and the settings
+ * screen need it, and neither should import the other.
+ */
+export function describeCoreError(e: unknown, t: Strings): string {
+  const raw = e instanceof Error ? e.message : String(e ?? "");
+  return raw.toLowerCase().includes("unknown command")
+    ? t.daemon.commandUnknown
+    : t.daemon.commandFailed;
+}

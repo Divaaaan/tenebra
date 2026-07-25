@@ -1,10 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { SettingsScreen, pickActiveSection } from "./SettingsScreen";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { makeProfile, makeTenebra } from "../test/fixtures";
+import { dictionaries } from "../i18n/strings";
+import { subscribeToast } from "../lib/toast";
 import type { State } from "../api";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getVersion } from "@tauri-apps/api/app";
@@ -1429,6 +1431,101 @@ describe("SettingsScreen", () => {
           screen.getByRole("heading", { level: 2, name }),
         ).toBeInTheDocument();
       }
+    });
+  });
+
+  // Every core-owned control here used to send its command with either a bare
+  // `void` (an unhandled rejection) or `.catch(() => {})`. Since the visible
+  // position of a switch is read back from the core's echo, a refused command
+  // meant the switch simply did not move and nothing said why — which is exactly
+  // the "half the toggles are dead" report from a machine whose background
+  // service is older than the app.
+  describe("refused commands", () => {
+    const en = dictionaries.en;
+
+    // Toast subscriptions live in a module-level bus, so each test detaches its
+    // own listener again or later tests would keep feeding it.
+    const detach: (() => void)[] = [];
+    afterEach(() => {
+      detach.splice(0).forEach((fn) => fn());
+    });
+
+    /** Collect everything raised on the toast bus during a test. */
+    function captureToasts(): string[] {
+      const seen: string[] = [];
+      detach.push(subscribeToast((m) => seen.push(m)));
+      return seen;
+    }
+
+    /** The switch inside the row carrying `label` (its own name is "ON"/"OFF"). */
+    function switchIn(label: string): HTMLElement {
+      const row = screen.getByText(label).closest(".set-row");
+      if (!row) {
+        throw new Error(`${label} row not found`);
+      }
+      const toggle = row.querySelector('[role="switch"]');
+      if (!toggle) {
+        throw new Error(`${label} switch not found`);
+      }
+      return toggle as HTMLElement;
+    }
+
+    it("blames the out-of-date service when a toggle is refused as unknown", async () => {
+      const tenebra = makeTenebra({
+        state: { state: "idle" } as State,
+        setTlsFragment: vi
+          .fn()
+          .mockRejectedValue('unknown command "set_tls_fragment"'),
+      });
+      const toasts = captureToasts();
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(switchIn("DPI bypass — TLS fragmentation"));
+
+      await waitFor(() => expect(toasts).toContain(en.daemon.commandUnknown));
+    });
+
+    it("reports a refused setting instead of swallowing it", async () => {
+      const tenebra = makeTenebra({
+        state: { state: "idle" } as State,
+        setAutoconnect: vi.fn().mockRejectedValue("the service is still down"),
+      });
+      const toasts = captureToasts();
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(switchIn("Connect on launch"));
+
+      await waitFor(() => expect(toasts).toContain(en.daemon.commandFailed));
+    });
+
+    it("reports a refused radio choice too, not only the switches", async () => {
+      // setRouting was sent with a bare `void` — no catch at all, so a refusal
+      // was an unhandled rejection the user never saw.
+      const tenebra = makeTenebra({
+        state: { state: "idle", routing: "smart" } as State,
+        setRouting: vi.fn().mockRejectedValue('unknown command "set_routing"'),
+      });
+      const toasts = captureToasts();
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(screen.getByRole("radio", { name: /Global/ }));
+
+      await waitFor(() => expect(toasts).toContain(en.daemon.commandUnknown));
+    });
+
+    it("stays quiet when the command is accepted", async () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const toasts = captureToasts();
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(switchIn("Connect on launch"));
+
+      await waitFor(() => expect(tenebra.setAutoconnect).toHaveBeenCalled());
+      expect(toasts).toEqual([]);
     });
   });
 });

@@ -20,6 +20,8 @@ import { SimpleView } from "./components/SimpleView";
 import { EclipseOverlay } from "./components/EclipseOverlay";
 import { useTenebra } from "./state/useTenebra";
 import { useI18n } from "./i18n/I18nContext";
+import { describeCoreError } from "./i18n/strings";
+import { pushToast } from "./lib/toast";
 import type { RoutingMode } from "./api";
 import {
   api,
@@ -148,12 +150,22 @@ export function App() {
   const crash = useCrashReport(crashConsent, tenebra.ready);
   const [viewingReport, setViewingReport] = useState(false);
 
+  // The core-owned controls the shell drives directly. Their drawn position is
+  // the state the daemon echoes back, so a refused command leaves the control
+  // exactly where it was — and these used to discard the error, which made that
+  // the whole of what the user got to see. Same reporting as the settings
+  // screen: the toast bus, naming an out-of-date service when that is the cause.
+  const reportRefusal = useCallback(
+    (e: unknown) => pushToast(describeCoreError(e, t)),
+    [t],
+  );
+
   const enableCrashReports = useCallback(() => {
-    void tenebra.setCrashReports(true).catch(() => {});
-  }, [tenebra]);
+    void tenebra.setCrashReports(true).catch(reportRefusal);
+  }, [tenebra, reportRefusal]);
   const declineCrashReports = useCallback(() => {
-    void tenebra.setCrashReports(false).catch(() => {});
-  }, [tenebra]);
+    void tenebra.setCrashReports(false).catch(reportRefusal);
+  }, [tenebra, reportRefusal]);
   const createCrashIssue = useCallback(() => {
     // The core builds the whole URL and opens it from Rust; failures surface on
     // the log channel the UI already renders.
@@ -316,15 +328,14 @@ export function App() {
 
   const handleSetRouting = useCallback(
     (mode: RoutingMode) => {
-      void tenebra.setRouting(mode).catch(() => {});
+      void tenebra.setRouting(mode).catch(reportRefusal);
     },
-    [tenebra],
+    [tenebra, reportRefusal],
   );
 
   const handleToggleKill = useCallback(() => {
-    // Failures surface on the state/log channels the UI already renders.
-    void tenebra.setKillSwitch(!killSwitch).catch(() => {});
-  }, [tenebra, killSwitch]);
+    void tenebra.setKillSwitch(!killSwitch).catch(reportRefusal);
+  }, [tenebra, killSwitch, reportRefusal]);
 
   const focusSearch = useCallback(() => {
     searchRef.current?.focus();
