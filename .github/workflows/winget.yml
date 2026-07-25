@@ -1,0 +1,57 @@
+name: Winget
+
+# Publishes stable releases to the Windows Package Manager community repo
+# (microsoft/winget-pkgs): winget-releaser drives komac, which reads the
+# GitHub release, bumps the manifests and opens the winget-pkgs PR from the
+# Divaaaan fork. The `released` event never fires for pre-releases, so
+# android-alpha tags stay out of winget; workflow_dispatch covers re-runs or
+# publishing a release that predates this workflow.
+on:
+  release:
+    types: [released]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish (e.g. v0.4.5)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  # secrets.* cannot be read in a job-level `if`, so a gate job exposes
+  # "is the token configured" as an output (same pattern as the Android
+  # release gate). Without WINGET_TOKEN the publish job skips with a notice;
+  # add the secret and the workflow arms itself on the next release.
+  winget-gate:
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          if [ -n "$WINGET_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::WINGET_TOKEN is not configured; skipping the winget publish."
+          fi
+
+  publish:
+    needs: winget-gate
+    if: needs.winget-gate.outputs.enabled == 'true'
+    # winget-releaser documents windows-latest; this job fires once per
+    # release and is painful to debug, so stay on the beaten path.
+    runs-on: windows-latest
+    steps:
+      - uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: Divaaaan.Tenebra
+          # Only the Windows NSIS installer — keeps the macOS dmg/tar.gz and
+          # any future artifacts out of the winget manifest.
+          installers-regex: '_x64-setup\.exe$'
+          release-tag: ${{ inputs.tag || github.event.release.tag_name }}
+          token: ${{ secrets.WINGET_TOKEN }}
