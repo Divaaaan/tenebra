@@ -117,11 +117,34 @@ jobs:
           path: ui-android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
+  release-gate:
+    # A v* tag drives the desktop release too, and Android can only join it if
+    # the release signing secrets exist. Without them the release job used to
+    # fail, painting a desktop tag red over an Android release nobody asked it
+    # to cut. Decide once here so the job is skipped rather than broken — and
+    # starts running on its own the day the secrets are added.
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    outputs:
+      signable: ${{ steps.check.outputs.signable }}
+    steps:
+      - id: check
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -n "${KEYSTORE_B64:-}" ]; then
+            echo "signable=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signable=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Android release skipped::ANDROID_KEYSTORE_B64 is not set; see docs/porting/android.md#release-signing."
+          fi
+
   release:
     # v* tags only: build a signed release APK and attach it to the GitHub
     # release. The desktop release.yml publishes to this same tag's release; this
     # job only adds the APK asset and never rewrites the release body.
-    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    needs: release-gate
+    if: ${{ startsWith(github.ref, 'refs/tags/') && needs.release-gate.outputs.signable == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
