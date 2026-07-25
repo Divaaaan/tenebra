@@ -44,6 +44,10 @@ stopping tears the tunnel down. Two consequences for clients:
 - on connect, the state is whatever it already was — send `status` (and
   `list_profiles`) first instead of assuming `idle`;
 - events emitted while no client is connected are dropped, not queued.
+- a client that stops reading its stream is dropped: the core gives one frame
+  30 s to be delivered and holds at most 512 frames of backlog, shedding events
+  (never responses) under pressure. Past either bound it closes the session, so
+  the client reconnects and re-syncs like it does after a displacement.
 
 ### How the desktop app chooses a transport
 

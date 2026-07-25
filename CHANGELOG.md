@@ -13,6 +13,18 @@ All notable changes to Tenebra are documented here. The format follows
 
 ### Fixed
 
+- **One stuck app no longer takes the whole service off the air.** The core
+  served its control channel from a single accept loop that, on a new
+  connection, waited for the previous session's goroutine to finish — while
+  writes to a client had no deadline at all, and several settings commands
+  block until a live re-apply finishes. So a client that stopped reading, or a
+  command still walking the fallback chain, could leave the service accepting
+  nobody at all: still "Running", still holding the tunnel, but deaf, so every
+  app window came up drawn and dead and restarting the app changed nothing.
+  Outgoing frames are now queued and written by a dedicated writer with a
+  deadline, taking over a session no longer waits on the old one, and a client
+  that has genuinely stopped reading is dropped so it can reconnect and
+  re-sync. Under pressure the core sheds events, never answers.
 - **The window is no longer drawn but dead when the core is slow to answer.**
   The app asked the core for its state exactly once at launch, with nothing
   catching a refusal. If that one request missed — the Windows service still
