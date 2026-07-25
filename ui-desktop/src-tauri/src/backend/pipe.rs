@@ -1,4 +1,4 @@
-﻿//! The named-pipe transport: a client of the core running detached from the
+//! The named-pipe transport: a client of the core running detached from the
 //! GUI вЂ” as the Windows service, or via `tenebra-core --pipe`.
 //!
 //! The core listens on `\\.\pipe\tenebra` (see `core/control/pipe_windows.go`
@@ -54,7 +54,7 @@ use windows_sys::Win32::Foundation::{
     ERROR_PIPE_NOT_CONNECTED,
 };
 use windows_sys::Win32::Storage::FileSystem::{SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT};
-use windows_sys::Win32::System::Pipes::PeekNamedPipe;
+use windows_sys::Win32::System::Pipes::{PeekNamedPipe, WaitNamedPipeW, NMPWAIT_NOWAIT};
 
 use super::wire::{obj, read_loop, WireClient, WireSession};
 use super::{ConnectionState, EventSink, State};
@@ -129,6 +129,25 @@ fn name_from(value: Option<&str>) -> Option<String> {
     }
 }
 
+/// Whether a core is listening on `name` right now, asked without connecting.
+///
+/// `WaitNamedPipeW` with `NMPWAIT_NOWAIT` answers exactly the availability
+/// question and does nothing else — in particular it never opens a session,
+/// which is the whole point: pipe sessions are last-writer-wins (see the
+/// Named-pipe sessions section of `docs/control-protocol.md`), so a dial used as
+/// a probe would displace whichever client currently holds the service.
+///
+/// The answer is a snapshot, and it errs towards "no": a server whose only free
+/// instance is momentarily taken — it is between accepting a client and creating
+/// the next instance — reads as absent. Callers should treat `false` as "not
+/// this instant" and look again, never as "there is no service on this machine".
+pub fn is_listening(name: &str) -> bool {
+    let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+    // SAFETY: `wide` is a valid NUL-terminated wide string that outlives the
+    // call, and NMPWAIT_NOWAIT keeps it from blocking on a bound-but-busy name.
+    unsafe { WaitNamedPipeW(wide.as_ptr(), NMPWAIT_NOWAIT) != 0 }
+}
+
 /// One dialed connection, as the halves the wire client consumes.
 struct Conn {
     reader: Box<dyn Read + Send>,
@@ -174,7 +193,7 @@ impl PipeBackend {
     }
 
     /// [`connect`](Self::connect) with an explicit budget for a pipe that is not
-    /// bound yet вЂ” [`DIAL_ABSENT_WAIT`] in production, zero in the tests that
+    /// bound yet — [`DIAL_ABSENT_WAIT`] in production, zero in the tests that
     /// assert the fallback path stays prompt when nothing is listening.
     fn connect_within(
         name: &str,
@@ -461,7 +480,7 @@ struct PipeDialer {
     /// first dial spends it and leaves it at zero: startup is the one moment an
     /// absent listener is worth waiting out, because the choice of transport
     /// hangs on that single answer. The supervisor's redials must come back
-    /// promptly instead вЂ” they already have their own backoff, and the grace
+    /// promptly instead — they already have their own backoff, and the grace
     /// escalation is timed against the moment each redial is due, so a dial that
     /// parked for seconds inside that schedule would delay the honest "the
     /// service is still unreachable" report it exists to produce.
@@ -489,7 +508,7 @@ impl Dial for PipeDialer {
 /// Open the pipe as a plain file, waiting out the two failures that mean "ask
 /// again in a moment": `ERROR_PIPE_BUSY` (the server exists but has no free
 /// instance) for [`DIAL_BUSY_WAIT`], and `ERROR_FILE_NOT_FOUND` (nothing has
-/// bound the name) for `absent_wait` вЂ” [`DIAL_ABSENT_WAIT`] on the first dial,
+/// bound the name) for `absent_wait` — [`DIAL_ABSENT_WAIT`] on the first dial,
 /// zero on every later one, see [`PipeDialer::absent_wait`]. Any other failure
 /// is the caller's to judge: at startup it selects the sidecar fallback, mid-run
 /// it feeds the reconnect backoff.
@@ -522,7 +541,7 @@ fn open_pipe(name: &str, stop: &Arc<AtomicBool>, absent_wait: Duration) -> io::R
 /// How long a dial keeps re-attempting after a failure like this one, or `None`
 /// when the failure is not one to wait out. Only the two transient shapes get a
 /// window: `ERROR_PIPE_BUSY` (every instance is taken this instant) and
-/// `ERROR_FILE_NOT_FOUND` (the name is not bound вЂ” nobody home, or not home
+/// `ERROR_FILE_NOT_FOUND` (the name is not bound — nobody home, or not home
 /// *yet*). Everything else, `ERROR_ACCESS_DENIED` above all, describes a
 /// standing condition that a retry loop would only turn into a stall, so it goes
 /// straight back to the caller.
@@ -1193,7 +1212,7 @@ mod tests {
             Some(DIAL_BUSY_WAIT)
         );
         // "No such pipe" is the one the startup race turns on, so it gets the
-        // caller's budget вЂ” which is zero for the supervisor's redials.
+        // caller's budget — which is zero for the supervisor's redials.
         assert_eq!(
             dial_wait_for(
                 &io::Error::from_raw_os_error(ERROR_FILE_NOT_FOUND as i32),
@@ -1242,6 +1261,42 @@ mod tests {
             .expect("the first dial must wait out a service that is still starting");
 
         // And the session that came out of it is a real one: the re-sync landed.
+        let states = sink.wait_for_states(1, WAIT);
+        assert_eq!(states[0].state, ConnectionState::Connected);
+
+        drop(backend);
+        server.join().expect("pipe server thread");
+    }
+
+    #[test]
+    fn a_probe_sees_a_listener_without_taking_its_session() {
+        // The probe behind the late-service watch runs while some other client
+        // may be on the pipe, and a dial would displace it — sessions are
+        // last-writer-wins. So it must answer "is anyone listening?" without
+        // opening a session: the instance it reports has to still be there,
+        // unconsumed, for the client that actually wants it.
+        let name = unique_pipe_name("probe");
+        assert!(!is_listening(&name), "nothing has bound {name} yet");
+
+        let server_name = name.clone();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let server_requests = Arc::clone(&requests);
+        let server = thread::spawn(move || {
+            let conn = accept_one(&server_name, true);
+            serve_requests(&conn, &server_requests, None, None);
+        });
+
+        // The instance exists from CreateNamedPipeW on, before anyone connects.
+        wait_until(WAIT, || is_listening(&name));
+        // Asking again changes nothing: the waiting instance is still free.
+        assert!(
+            is_listening(&name),
+            "the probe must not consume the listener"
+        );
+
+        // And that same untouched instance is what a real client connects to.
+        let sink = Arc::new(Rec::default());
+        let backend = retry_connect(&name, Arc::clone(&sink));
         let states = sink.wait_for_states(1, WAIT);
         assert_eq!(states[0].state, ConnectionState::Connected);
 
