@@ -389,16 +389,6 @@ func marshalLine(v any) ([]byte, error) {
 	return b, nil
 }
 
-// writeMessage marshals v and writes it as one line to w.
-func writeMessage(w io.Writer, v any) error {
-	line, err := marshalLine(v)
-	if err != nil {
-		return err
-	}
-	_, err = w.Write(line)
-	return err
-}
-
 // marshalEvent renders an event with name and an already-marshalled body into a
 // single JSON object. The body's fields are merged with the event field so the
 // wire form is a flat object like {"event":"state","state":"connected"} rather
