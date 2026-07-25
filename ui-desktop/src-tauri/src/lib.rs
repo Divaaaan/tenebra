@@ -158,7 +158,9 @@ impl EventSink for TauriSink {
 // The ONE place a transport is chosen, tried in order:
 //
 //  1. TENEBRA_MOCK=1 forces the in-process demo fake (UI work without the
-//     core, or when the sidecar binary isn't built).
+//     core, or when the sidecar binary isn't built). Read by value, so an
+//     explicit `0`/`off`/`false`/`no` вЂ” or an empty one вЂ” is not a request
+//     for it; see mock_requested.
 //  2. On Windows, if a core is already listening on the control pipe (the
 //     installed service, or `tenebra-core --pipe` in a console), attach to it.
 //     The tunnel then outlives this process and the GUI needs no elevation.
@@ -177,7 +179,7 @@ impl EventSink for TauriSink {
 // channel, so nothing else in this file or the front end changes.
 // =============================================================================
 fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
-    if std::env::var_os("TENEBRA_MOCK").is_some() {
+    if mock_requested(std::env::var("TENEBRA_MOCK").ok().as_deref()) {
         return Arc::new(backend::mock::MockBackend::new(sink));
     }
 
@@ -250,6 +252,28 @@ fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
             );
             Arc::new(backend::mock::MockBackend::new(sink))
         }
+    }
+}
+
+/// Whether `TENEBRA_MOCK` asks for the in-process demo backend, judged by its
+/// *value*: unset or empty means no, and so do the usual ways of writing "off"
+/// (`0`, `off`, `false`, `no`, in any case, with surrounding whitespace
+/// ignored). Anything else arms the fake.
+///
+/// The same on/off convention `backend::pipe::configured_name` applies to
+/// `TENEBRA_PIPE`, and for the same reason: a variable is set to a value, not
+/// merely present, and `TENEBRA_MOCK=0` unmistakably means "no mock". Testing
+/// presence alone made every one of those spellings arm it — and the mock is
+/// compiled into release builds too (see `backend/mod.rs`), so that was a live
+/// footgun, not just a development annoyance: a user with the variable parked at
+/// `0` in their environment would get a plausible, entirely fictional app.
+fn mock_requested(value: Option<&str>) -> bool {
+    match value.map(str::trim) {
+        None | Some("") => false,
+        Some(v) => !matches!(
+            v.to_ascii_lowercase().as_str(),
+            "0" | "off" | "false" | "no"
+        ),
     }
 }
 
@@ -984,6 +1008,31 @@ mod tests {
         s.kill_switch = Some(true);
         let notice = transition_notice(Lang::En, Some(ConnectionState::Connected), &s);
         assert_eq!(notice.map(|(t, _)| t), Some("Kill switch engaged"));
+    }
+
+    #[test]
+    fn the_mock_is_requested_by_value_not_by_presence() {
+        // The demo backend is compiled into every release build, so the switch
+        // that arms it has to mean what it says. Anyone who exports
+        // TENEBRA_MOCK=0 (or leaves it empty) is asking for the real core, and
+        // getting a fake one instead would look exactly like the bug this
+        // module's fallback path already produces: an app that answers, plausibly
+        // and wrongly, with somebody else's data.
+        assert!(!mock_requested(None));
+        assert!(!mock_requested(Some("")));
+        assert!(!mock_requested(Some("0")));
+        assert!(!mock_requested(Some("off")));
+        assert!(!mock_requested(Some("false")));
+        assert!(!mock_requested(Some("no")));
+        // Case and stray whitespace come from hand-typed shell exports, not from
+        // data, so they must not decide the outcome.
+        assert!(!mock_requested(Some("  OFF  ")));
+        assert!(!mock_requested(Some("False")));
+        // And the ways a developer actually turns it on still work.
+        assert!(mock_requested(Some("1")));
+        assert!(mock_requested(Some("on")));
+        assert!(mock_requested(Some("true")));
+        assert!(mock_requested(Some("yes")));
     }
 
     #[test]
