@@ -7,6 +7,11 @@
 //! different from the sidecar is the lifecycle: the service outlives any one
 //! GUI process, so the connection вЂ” not the process вЂ” is the thing to manage.
 //!
+//! - **Patience on the first dial.** The service is often seconds behind the
+//!   GUI (an installer that just ran `sc start`, or an autostart login racing
+//!   the SCM), and the transport is chosen once per run, so the opening dial
+//!   waits a bounded [`DIAL_ABSENT_WAIT`] for a listener to appear rather than
+//!   reading its absence as "no service on this machine".
 //! - **Re-sync on connect.** The pipe serves exactly one session at a time and
 //!   buffers no events between sessions, so the state on connect is whatever it
 //!   already is. Every new session therefore opens with a `status` request and
@@ -45,7 +50,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{
-    ERROR_BROKEN_PIPE, ERROR_NO_DATA, ERROR_PIPE_BUSY, ERROR_PIPE_NOT_CONNECTED,
+    ERROR_BROKEN_PIPE, ERROR_FILE_NOT_FOUND, ERROR_NO_DATA, ERROR_PIPE_BUSY,
+    ERROR_PIPE_NOT_CONNECTED,
 };
 use windows_sys::Win32::Storage::FileSystem::{SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT};
 use windows_sys::Win32::System::Pipes::PeekNamedPipe;
@@ -81,7 +87,29 @@ const RECONNECT_GRACE: Duration = Duration::from_secs(8);
 /// server exists but has no free instance this instant (it is between accepting
 /// a client and creating the next instance), so a short retry is enough.
 const DIAL_BUSY_WAIT: Duration = Duration::from_secs(2);
-const DIAL_BUSY_TICK: Duration = Duration::from_millis(50);
+
+/// How long the *first* dial tolerates `ERROR_FILE_NOT_FOUND` — the name is not
+/// bound at all, which is "no service on this machine" and "the service has not
+/// got to `ListenPipe` yet" wearing the same error code. One attempt cannot tell
+/// them apart, and the cost of guessing wrong is not a dropped beat: the GUI
+/// picks its transport exactly once (`make_backend` in `lib.rs`), so a lost race
+/// here strands the whole run on an unprivileged sidecar with its own profile
+/// store — the user's profiles simply are not there, and Connect does nothing.
+///
+/// Both ways into that race are ordinary. The installer runs `sc start tenebra`
+/// and launches the app in the next breath; an autostart login starts the
+/// service and the GUI concurrently. In each the core still has to clamp its
+/// data directory's DACL and load the store before it binds the name. Five
+/// seconds covers that with room to spare while staying under the eight-second
+/// [`RECONNECT_GRACE`] the mid-run path already treats as "not a failure yet",
+/// and the dial re-attempts every [`DIAL_RETRY_TICK`], so a listener that
+/// arrives early is picked up within tens of milliseconds. Only a machine with
+/// genuinely no core pays the whole window, once, before falling back.
+const DIAL_ABSENT_WAIT: Duration = Duration::from_secs(5);
+
+/// How often a dial re-attempts while it is waiting out one of the retryable
+/// failures above.
+const DIAL_RETRY_TICK: Duration = Duration::from_millis(50);
 
 /// The pipe name the GUI should use, or `None` to skip the pipe transport
 /// entirely. Honors `TENEBRA_PIPE`: unset or empty means the well-known name,
@@ -137,11 +165,27 @@ impl PipeBackend {
     /// caller can fall back to another transport when no core is listening;
     /// after that the connection is supervised вЂ” lost sessions reconnect with
     /// backoff and re-sync вЂ” until the backend is dropped.
+    ///
+    /// It is deliberately patient: a service that is merely still starting
+    /// answers within [`DIAL_ABSENT_WAIT`], and only a name nobody binds in that
+    /// window is reported as "no core here" for the caller to fall back on.
     pub fn connect(name: &str, sink: Arc<dyn EventSink>) -> Result<Self, String> {
+        Self::connect_within(name, sink, DIAL_ABSENT_WAIT)
+    }
+
+    /// [`connect`](Self::connect) with an explicit budget for a pipe that is not
+    /// bound yet вЂ” [`DIAL_ABSENT_WAIT`] in production, zero in the tests that
+    /// assert the fallback path stays prompt when nothing is listening.
+    fn connect_within(
+        name: &str,
+        sink: Arc<dyn EventSink>,
+        absent_wait: Duration,
+    ) -> Result<Self, String> {
         let stop = Arc::new(AtomicBool::new(false));
         let mut dialer = PipeDialer {
             name: name.to_string(),
             stop: Arc::clone(&stop),
+            absent_wait,
         };
         let first = dialer.dial()?;
         Self::start(first, dialer, sink, stop, RECONNECT_GRACE)
@@ -413,12 +457,22 @@ fn serve_session(conn: Conn, shared: &Arc<PipeShared>, sink: &Arc<dyn EventSink>
 struct PipeDialer {
     name: String,
     stop: Arc<AtomicBool>,
+    /// How long the *next* dial waits for a name nothing has bound yet. The
+    /// first dial spends it and leaves it at zero: startup is the one moment an
+    /// absent listener is worth waiting out, because the choice of transport
+    /// hangs on that single answer. The supervisor's redials must come back
+    /// promptly instead вЂ” they already have their own backoff, and the grace
+    /// escalation is timed against the moment each redial is due, so a dial that
+    /// parked for seconds inside that schedule would delay the honest "the
+    /// service is still unreachable" report it exists to produce.
+    absent_wait: Duration,
 }
 
 impl Dial for PipeDialer {
     fn dial(&mut self) -> Result<Conn, String> {
-        let file =
-            open_pipe(&self.name, &self.stop).map_err(|e| format!("open {}: {e}", self.name))?;
+        let absent_wait = std::mem::take(&mut self.absent_wait);
+        let file = open_pipe(&self.name, &self.stop, absent_wait)
+            .map_err(|e| format!("open {}: {e}", self.name))?;
         let writer = file
             .try_clone()
             .map_err(|e| format!("clone the pipe handle: {e}"))?;
@@ -432,13 +486,15 @@ impl Dial for PipeDialer {
     }
 }
 
-/// Open the pipe as a plain file, retrying briefly through `ERROR_PIPE_BUSY`
-/// (no free instance right now). Any other failure вЂ” including
-/// `ERROR_FILE_NOT_FOUND`, meaning no core is listening вЂ” is the caller's to
-/// judge: at startup it selects the sidecar fallback, mid-run it feeds the
-/// reconnect backoff.
-fn open_pipe(name: &str, stop: &Arc<AtomicBool>) -> io::Result<File> {
-    let deadline = Instant::now() + DIAL_BUSY_WAIT;
+/// Open the pipe as a plain file, waiting out the two failures that mean "ask
+/// again in a moment": `ERROR_PIPE_BUSY` (the server exists but has no free
+/// instance) for [`DIAL_BUSY_WAIT`], and `ERROR_FILE_NOT_FOUND` (nothing has
+/// bound the name) for `absent_wait` вЂ” [`DIAL_ABSENT_WAIT`] on the first dial,
+/// zero on every later one, see [`PipeDialer::absent_wait`]. Any other failure
+/// is the caller's to judge: at startup it selects the sidecar fallback, mid-run
+/// it feeds the reconnect backoff.
+fn open_pipe(name: &str, stop: &Arc<AtomicBool>, absent_wait: Duration) -> io::Result<File> {
+    let started = Instant::now();
     loop {
         let attempt = OpenOptions::new()
             .read(true)
@@ -452,14 +508,29 @@ fn open_pipe(name: &str, stop: &Arc<AtomicBool>) -> io::Result<File> {
             .open(name);
         match attempt {
             Err(e)
-                if e.raw_os_error() == Some(ERROR_PIPE_BUSY as i32)
-                    && Instant::now() < deadline
+                if dial_wait_for(&e, absent_wait)
+                    .is_some_and(|window| started.elapsed() < window)
                     && !stop.load(Ordering::SeqCst) =>
             {
-                thread::sleep(DIAL_BUSY_TICK)
+                thread::sleep(DIAL_RETRY_TICK)
             }
             other => return other,
         }
+    }
+}
+
+/// How long a dial keeps re-attempting after a failure like this one, or `None`
+/// when the failure is not one to wait out. Only the two transient shapes get a
+/// window: `ERROR_PIPE_BUSY` (every instance is taken this instant) and
+/// `ERROR_FILE_NOT_FOUND` (the name is not bound вЂ” nobody home, or not home
+/// *yet*). Everything else, `ERROR_ACCESS_DENIED` above all, describes a
+/// standing condition that a retry loop would only turn into a stall, so it goes
+/// straight back to the caller.
+fn dial_wait_for(e: &io::Error, absent_wait: Duration) -> Option<Duration> {
+    match e.raw_os_error().map(|code| code as u32) {
+        Some(ERROR_PIPE_BUSY) => Some(DIAL_BUSY_WAIT),
+        Some(ERROR_FILE_NOT_FOUND) => Some(absent_wait),
+        _ => None,
     }
 }
 
@@ -903,7 +974,9 @@ mod tests {
 
     use std::os::windows::io::FromRawHandle;
     use std::sync::atomic::AtomicUsize;
-    use windows_sys::Win32::Foundation::{ERROR_PIPE_CONNECTED, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Foundation::{
+        ERROR_ACCESS_DENIED, ERROR_PIPE_CONNECTED, INVALID_HANDLE_VALUE,
+    };
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX,
     };
@@ -1088,13 +1161,92 @@ mod tests {
 
     #[test]
     fn connect_fails_cleanly_with_nobody_listening() {
+        // With no patience budget (the production one is exercised below), a
+        // name nothing has bound must fail at once rather than wait: this is the
+        // answer `make_backend` turns into the sidecar fallback, and a machine
+        // that simply has no service should not pay for the verdict twice.
         let name = unique_pipe_name("absent");
         let sink: Arc<dyn EventSink> = Arc::new(Rec::default());
-        let err = match PipeBackend::connect(&name, sink) {
+        let started = Instant::now();
+        let err = match PipeBackend::connect_within(&name, sink, Duration::ZERO) {
             Ok(_) => panic!("dialing a nonexistent pipe must fail"),
             Err(e) => e,
         };
         assert!(err.contains(&name), "the error should name the pipe: {err}");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "a dial with no patience budget must fail fast, took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn dial_waits_out_only_the_transient_failures() {
+        let absent_wait = Duration::from_secs(5);
+        // Busy keeps its own short window: the server is there, just between
+        // instances.
+        assert_eq!(
+            dial_wait_for(
+                &io::Error::from_raw_os_error(ERROR_PIPE_BUSY as i32),
+                absent_wait
+            ),
+            Some(DIAL_BUSY_WAIT)
+        );
+        // "No such pipe" is the one the startup race turns on, so it gets the
+        // caller's budget вЂ” which is zero for the supervisor's redials.
+        assert_eq!(
+            dial_wait_for(
+                &io::Error::from_raw_os_error(ERROR_FILE_NOT_FOUND as i32),
+                absent_wait
+            ),
+            Some(absent_wait)
+        );
+        assert_eq!(
+            dial_wait_for(
+                &io::Error::from_raw_os_error(ERROR_FILE_NOT_FOUND as i32),
+                Duration::ZERO
+            ),
+            Some(Duration::ZERO)
+        );
+        // A standing refusal must not be retried for seconds; the caller decides
+        // what it means.
+        assert_eq!(
+            dial_wait_for(
+                &io::Error::from_raw_os_error(ERROR_ACCESS_DENIED as i32),
+                absent_wait
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn the_first_dial_waits_out_a_service_that_is_still_starting() {
+        // The production race this transport lives with: the SCM has been told
+        // to start the service (the installer's `sc start`, or an autostart
+        // login) but its listener is not up yet, so the very first dial hits
+        // ERROR_FILE_NOT_FOUND. Giving up there is not a small miss — the GUI
+        // picks its transport exactly once, so it spends the whole run on an
+        // unprivileged sidecar with a different profile store.
+        let name = unique_pipe_name("late");
+        let server_name = name.clone();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let server_requests = Arc::clone(&requests);
+        let server = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(600));
+            let conn = accept_one(&server_name, true);
+            serve_requests(&conn, &server_requests, None, None);
+        });
+
+        let sink = Arc::new(Rec::default());
+        let backend = PipeBackend::connect(&name, Arc::clone(&sink) as Arc<dyn EventSink>)
+            .expect("the first dial must wait out a service that is still starting");
+
+        // And the session that came out of it is a real one: the re-sync landed.
+        let states = sink.wait_for_states(1, WAIT);
+        assert_eq!(states[0].state, ConnectionState::Connected);
+
+        drop(backend);
+        server.join().expect("pipe server thread");
     }
 
     /// Dial until the server thread's instance is up вЂ” the tests create it on
