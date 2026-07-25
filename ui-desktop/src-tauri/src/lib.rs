@@ -218,7 +218,8 @@ fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
                     &format!(
                         "could not reach the Tenebra service on {name} ({e}); \
                          running this app's own core instead — profiles saved by the service \
-                         are not visible here, and connecting needs administrator rights"
+                         are not visible here, and connecting in tun mode needs \
+                         administrator rights"
                     ),
                 );
                 watch_for_a_late_service(name, Arc::clone(&sink));
@@ -241,7 +242,8 @@ fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
                 &format!(
                     "could not reach the Tenebra daemon on {path} ({e}); \
                      running this app's own core instead — profiles saved by the daemon \
-                     are not visible here, and connecting needs administrator rights"
+                     are not visible here, and connecting in tun mode needs \
+                     administrator rights"
                 ),
             ),
         }
