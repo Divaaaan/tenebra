@@ -175,10 +175,10 @@ export interface Strings {
   };
 
   /**
-   * Daemon-skew banner: the privileged daemon provably comes from a different
-   * build than this UI (macOS: the in-app updater refreshes only the .app, the
-   * hand-installed LaunchDaemon keeps its install-time binaries), so toggles of
-   * newer commands silently do nothing until it is reinstalled.
+   * Everything the UI says about the privileged background service: that it is
+   * behind this build (macOS: the in-app updater refreshes only the .app, the
+   * hand-installed LaunchDaemon keeps its install-time binaries), that it is not
+   * answering at all, and why a command it was sent did not take.
    */
   daemon: {
     /** "{daemon}" and "{app}" interpolated by the caller. */
@@ -191,6 +191,21 @@ export interface Strings {
     /** Windows fallback hint — the installer refreshes the service. */
     reinstallHint: string;
     dismiss: string;
+    /**
+     * Bootstrap banner: the opening snapshot keeps failing, so the app has no
+     * state, no profiles and nothing its actions could reach. The retry runs
+     * underneath, hence the "retrying" — this is a wait, not a dead end.
+     */
+    unreachable: string;
+    /**
+     * A command the service answered with `unknown command "…"` — i.e. it
+     * predates the setting being toggled. Said in those terms rather than
+     * echoing the engine's wording, which means nothing to the person holding
+     * the mouse.
+     */
+    commandUnknown: string;
+    /** Any other refused command: the setting simply did not take effect. */
+    commandFailed: string;
   };
 
   /**
@@ -693,6 +708,12 @@ const en: Strings = {
     copied: "Copied",
     reinstallHint: "Reinstall the app to update it",
     dismiss: "Dismiss",
+    unreachable:
+      "No connection to the background service — retrying. Until it answers, connecting and settings do nothing.",
+    commandUnknown:
+      "The background service is older than this app and doesn't know this setting — update or reinstall the service.",
+    commandFailed:
+      "The setting didn't apply — the background service refused it. See the log for details.",
   },
   crash: {
     consentText:
@@ -1116,6 +1137,12 @@ const ru: Strings = {
     copied: "Скопировано",
     reinstallHint: "Переустановите приложение, чтобы обновить её",
     dismiss: "Скрыть",
+    unreachable:
+      "Нет связи с фоновой службой — повторяем попытки. Пока она не ответит, подключение и настройки не работают.",
+    commandUnknown:
+      "Фоновая служба старее приложения и не знает эту настройку — обновите или переустановите службу.",
+    commandFailed:
+      "Настройка не применилась — фоновая служба отклонила команду. Подробности в журнале.",
   },
   crash: {
     consentText:
@@ -1426,3 +1453,24 @@ const ru: Strings = {
 };
 
 export const dictionaries: Record<Language, Strings> = { en, ru };
+
+/**
+ * Turn a rejected core command into a line worth showing a person.
+ *
+ * The daemon answers a command it does not have with `unknown command "…"`
+ * (core/control/daemon.go), which is exactly what a background service older
+ * than the app does to every setting added since it was installed — the macOS
+ * reality, where the in-app updater refreshes the .app and never the root
+ * LaunchDaemon. That case is reported as the cause it is; the engine's own
+ * wording would mean nothing to the person holding the mouse. Everything else
+ * is a plain refusal, with the raw text left to the log console.
+ *
+ * Lives here rather than in a screen because both the shell and the settings
+ * screen need it, and neither should import the other.
+ */
+export function describeCoreError(e: unknown, t: Strings): string {
+  const raw = e instanceof Error ? e.message : String(e ?? "");
+  return raw.toLowerCase().includes("unknown command")
+    ? t.daemon.commandUnknown
+    : t.daemon.commandFailed;
+}

@@ -5,9 +5,9 @@
 //! `lib.rs` never has to know which one is wired in. [`wire`] holds the
 //! transport-agnostic protocol client; [`sidecar`] runs it over a spawned
 //! core's stdin/stdout; [`pipe`] (Windows) runs it over the named pipe of a
-//! core that outlives the GUI вЂ” the service or `tenebra-core --pipe`; [`unix`]
+//! core that outlives the GUI — the service or `tenebra-core --pipe`; [`unix`]
 //! (macOS) runs it over the unix domain socket of a root LaunchDaemon that
-//! likewise outlives the GUI вЂ” `tenebra-core --socket`; [`mock`] is an
+//! likewise outlives the GUI — `tenebra-core --socket`; [`mock`] is an
 //! in-process fake for UI work without the core. `make_backend` in `lib.rs`
 //! picks one at startup.
 //!
@@ -373,7 +373,7 @@ pub enum Verdict {
 }
 
 /// DNS leak assessment outcome, mirroring the core's `DNSStatus`. `Inconclusive`
-/// and `Unavailable` are deliberately distinct from a pass вЂ” the UI must never
+/// and `Unavailable` are deliberately distinct from a pass — the UI must never
 /// present them as "safe".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -530,7 +530,7 @@ pub trait Backend: Send + Sync + 'static {
     fn set_split(&self, mode: SplitMode, apps: Vec<String>) -> Result<State, String>;
     /// Arm or disarm the kill switch. The core persists the choice and, when a
     /// tunnel is live, re-applies it in place by hot-swapping sing-box on the
-    /// same node (a brief connectingв†’connected dip, not a full reconnect).
+    /// same node (a brief connecting→connected dip, not a full reconnect).
     fn set_kill_switch(&self, on: bool) -> Result<State, String>;
     /// Arm or disarm forced TLS ClientHello fragmentation (the unconditional
     /// DPI-obfuscation override). Same live re-apply semantics as the kill switch —
@@ -571,14 +571,14 @@ pub trait Backend: Send + Sync + 'static {
     fn set_auto_failover(&self, on: bool) -> Result<State, String>;
     /// Record the crash-report consent (opt in or out). The core persists the
     /// choice and reports it back; like autoconnect it changes nothing about a
-    /// live tunnel, and nothing is ever sent anywhere вЂ” it only governs whether
+    /// live tunnel, and nothing is ever sent anywhere — it only governs whether
     /// the GUI offers to surface a locally saved crash report on the next launch.
     fn set_crash_reports(&self, on: bool) -> Result<State, String>;
     /// Record the DNS preferences: the ad/tracker-block toggle, the IPv4-only
     /// toggle, plus the two custom resolvers (the encrypted proxied resolver and
     /// the direct one). The core persists them and, when a tunnel is live,
     /// re-applies them in place by hot-swapping sing-box on the same node (a brief
-    /// connectingв†’connected dip, not a full reconnect). An empty resolver resets
+    /// connecting→connected dip, not a full reconnect). An empty resolver resets
     /// that one to the core's default; a malformed one is refused.
     fn set_dns(
         &self,
@@ -591,9 +591,9 @@ pub trait Backend: Send + Sync + 'static {
     /// presets: `rules_direct` pins destinations to the direct outbound,
     /// `rules_proxy` to the proxy, and the presets add bundled banking /
     /// government direct rules. The core validates each suffix (a malformed one is
-    /// refused), persists them, and вЂ” when a tunnel is live вЂ” re-applies them in
+    /// refused), persists them, and — when a tunnel is live — re-applies them in
     /// place by hot-swapping sing-box on the same node (a brief
-    /// connectingв†’connected dip, not a full reconnect).
+    /// connecting→connected dip, not a full reconnect).
     fn set_rules(
         &self,
         rules_direct: Vec<String>,
@@ -1030,7 +1030,7 @@ mod tests {
     #[test]
     fn ping_result_rtt_ms_is_i64_wire_compatible() {
         // The core emits RTTMs as int64. A negative sentinel and a value past
-        // u32::MAX must both decode вЂ” modelling rtt_ms as u32 would reject these
+        // u32::MAX must both decode — modelling rtt_ms as u32 would reject these
         // and fail the entire ping response.
         for rtt in [-1_i64, 0, 42, i64::from(u32::MAX) + 1, i64::MAX] {
             let value = json!({ "node": "n", "rttMs": rtt, "ok": false });

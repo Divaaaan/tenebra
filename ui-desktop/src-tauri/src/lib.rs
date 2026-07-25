@@ -13,6 +13,8 @@ mod tray;
 mod update_channel;
 
 use std::sync::{Arc, Mutex};
+#[cfg(windows)]
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, State as TauriState, WindowEvent};
@@ -80,7 +82,7 @@ fn current_lang(app: &AppHandle) -> Lang {
 struct TauriSink {
     app: AppHandle,
     /// The last connection state delivered here, so a desktop notification fires
-    /// only on a real transition вЂ” not on every snapshot that leaves the state
+    /// only on a real transition — not on every snapshot that leaves the state
     /// unchanged (e.g. a live kill-switch or tun re-apply).
     last_state: Mutex<Option<ConnectionState>>,
 }
@@ -158,26 +160,40 @@ impl EventSink for TauriSink {
 // The ONE place a transport is chosen, tried in order:
 //
 //  1. TENEBRA_MOCK=1 forces the in-process demo fake (UI work without the
-//     core, or when the sidecar binary isn't built).
+//     core, or when the sidecar binary isn't built). Read by value, so an
+//     explicit `0`/`off`/`false`/`no` — or an empty one — is not a request
+//     for it; see mock_requested.
 //  2. On Windows, if a core is already listening on the control pipe (the
 //     installed service, or `tenebra-core --pipe` in a console), attach to it.
 //     The tunnel then outlives this process and the GUI needs no elevation.
-//     TENEBRA_PIPE renames the pipe or (`off`) skips it вЂ” see
+//     TENEBRA_PIPE renames the pipe or (`off`) skips it — see
 //     backend::pipe::configured_name.
 //  2'. On macOS, the same probe over the daemon's unix socket
 //     (`/var/run/tenebra.sock`): if the root LaunchDaemon is listening, attach.
-//     TENEBRA_SOCKET renames the path or (`off`) skips it вЂ” see
+//     TENEBRA_SOCKET renames the path or (`off`) skips it — see
 //     backend::unix::configured_path.
-//  3. Otherwise spawn the `tenebra-core` sidecar and own it вЂ” today's default
+//  3. Otherwise spawn the `tenebra-core` sidecar and own it — today's default
 //     and the development path.
 //
 // If the sidecar fails to spawn (e.g. the binary is missing), we log and fall
 // back to the mock rather than leaving the UI with no backend at all. Every
 // choice implements the same `Backend` trait and is logged on the UI's own log
 // channel, so nothing else in this file or the front end changes.
+//
+// The choice is made once and kept for the life of the process (the front end
+// holds no notion of a transport, and a live sidecar tunnel cannot be handed to
+// the service mid-run), which makes step 3 a consequential place to land by
+// accident: an app-owned core keeps its profiles in the per-user store, so a
+// user whose profiles live in the service's machine store sees an empty list
+// and a Connect button that appears to do nothing. Two things guard against
+// arriving there by mistake rather than by configuration: the pipe dial itself
+// waits out a service that is merely still starting (backend::pipe), and the
+// fallback is reported at warn with a plain description of what changed. On
+// Windows we then keep watching for a while and say so if the service turns up
+// late, so a user in that state is told a restart is all it takes.
 // =============================================================================
 fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
-    if std::env::var_os("TENEBRA_MOCK").is_some() {
+    if mock_requested(std::env::var("TENEBRA_MOCK").ok().as_deref()) {
         return Arc::new(backend::mock::MockBackend::new(sink));
     }
 
@@ -191,12 +207,23 @@ fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
                 );
                 return Arc::new(backend);
             }
-            // No service (or an unreachable pipe) is the normal development
-            // case, not an error: fall through to the sidecar.
-            Err(e) => sink.log(
-                "info",
-                &format!("no Tenebra service on {name} ({e}); spawning the core as a sidecar"),
-            ),
+            // Falling through to the sidecar is a working configuration (it is
+            // the development path), but on an installed machine it is a
+            // downgrade the user never asked for and cannot see from the UI, so
+            // it is reported as a warning that names the consequences rather
+            // than as a note about spawning a process.
+            Err(e) => {
+                sink.log(
+                    "warn",
+                    &format!(
+                        "could not reach the Tenebra service on {name} ({e}); \
+                         running this app's own core instead — profiles saved by the service \
+                         are not visible here, and connecting in tun mode needs \
+                         administrator rights"
+                    ),
+                );
+                watch_for_a_late_service(name, Arc::clone(&sink));
+            }
         }
     }
 
@@ -207,18 +234,24 @@ fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
                 sink.log("info", &format!("attached to the Tenebra daemon on {path}"));
                 return Arc::new(backend);
             }
-            // No daemon (or an unreachable socket) is the normal development
-            // case, not an error: fall through to the sidecar.
+            // As on Windows: a working configuration, but on an installed
+            // machine a downgrade the user cannot see from the UI, so it is
+            // reported as a warning naming what changed.
             Err(e) => sink.log(
-                "info",
-                &format!("no Tenebra daemon on {path} ({e}); spawning the core as a sidecar"),
+                "warn",
+                &format!(
+                    "could not reach the Tenebra daemon on {path} ({e}); \
+                     running this app's own core instead — profiles saved by the daemon \
+                     are not visible here, and connecting in tun mode needs \
+                     administrator rights"
+                ),
             ),
         }
     }
 
     // Both the core and sing-box must resolve to an absolute, bundled path. If
     // either can't be located we fail closed to the demo backend rather than let
-    // a bare name resolve from the current directory or PATH вЂ” a spawn against a
+    // a bare name resolve from the current directory or PATH — a spawn against a
     // planted `tenebra-core`/`sing-box` in an attacker-chosen CWD would otherwise
     // run untrusted code with the app's privileges.
     let program = match backend::sidecar::SidecarBackend::default_program() {
@@ -250,6 +283,93 @@ fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
             );
             Arc::new(backend::mock::MockBackend::new(sink))
         }
+    }
+}
+
+/// How long the app keeps an eye out for a service that started after it did,
+/// and how often it looks. The window covers the cases where the fallback was a
+/// lost race rather than a verdict — an installer's `sc start`, a boot where the
+/// SCM was slow, a service started by hand right after the app — and then stops:
+/// a machine that genuinely has no service should not carry a polling thread for
+/// the life of the process. The tick is deliberately lazy; nothing here depends
+/// on catching the transition promptly, only on catching it at all.
+#[cfg(windows)]
+const LATE_SERVICE_WATCH: Duration = Duration::from_secs(60);
+#[cfg(windows)]
+const LATE_SERVICE_TICK: Duration = Duration::from_secs(2);
+
+/// Watch for a service that comes up after this app already committed to its own
+/// core, and say so once if it does.
+///
+/// This app cannot promote itself onto the service mid-run: the sidecar it
+/// spawned may be carrying a live tunnel, and dropping that to attach elsewhere
+/// would take the user's connection down without being asked. What it can do is
+/// stop the state from being silent — a relaunch is all it takes, and the user
+/// has no way to know that from a UI that simply shows no profiles. The watch
+/// lives on its own thread, ends with [`LATE_SERVICE_WATCH`], and probes without
+/// dialing (see [`backend::pipe::is_listening`]) so it never displaces the
+/// session of whatever client the service is actually serving.
+#[cfg(windows)]
+fn watch_for_a_late_service(name: String, sink: Arc<dyn EventSink>) {
+    // A thread that cannot be spawned costs the user nothing but this notice.
+    let _ = std::thread::Builder::new()
+        .name("tenebra-service-watch".into())
+        .spawn(move || {
+            let appeared = await_probe(
+                || backend::pipe::is_listening(&name),
+                LATE_SERVICE_TICK,
+                LATE_SERVICE_WATCH,
+            );
+            if appeared {
+                sink.log(
+                    "warn",
+                    &format!(
+                        "the Tenebra service is listening on {name} now, but this session is \
+                         already running the app's own core; restart Tenebra to control the \
+                         service and see the profiles saved there"
+                    ),
+                );
+            }
+        });
+}
+
+/// Poll `probe` every `tick` until it answers true or `window` runs out,
+/// reporting whether it ever did. Split out from the watch thread so its
+/// schedule — look first, then wait, and always look at least once — can be
+/// tested without a real pipe or real seconds.
+#[cfg(windows)]
+fn await_probe(mut probe: impl FnMut() -> bool, tick: Duration, window: Duration) -> bool {
+    let deadline = Instant::now() + window;
+    loop {
+        if probe() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(tick);
+    }
+}
+
+/// Whether `TENEBRA_MOCK` asks for the in-process demo backend, judged by its
+/// *value*: unset or empty means no, and so do the usual ways of writing "off"
+/// (`0`, `off`, `false`, `no`, in any case, with surrounding whitespace
+/// ignored). Anything else arms the fake.
+///
+/// The same on/off convention `backend::pipe::configured_name` applies to
+/// `TENEBRA_PIPE`, and for the same reason: a variable is set to a value, not
+/// merely present, and `TENEBRA_MOCK=0` unmistakably means "no mock". Testing
+/// presence alone made every one of those spellings arm it — and the mock is
+/// compiled into release builds too (see `backend/mod.rs`), so that was a live
+/// footgun, not just a development annoyance: a user with the variable parked at
+/// `0` in their environment would get a plausible, entirely fictional app.
+fn mock_requested(value: Option<&str>) -> bool {
+    match value.map(str::trim) {
+        None | Some("") => false,
+        Some(v) => !matches!(
+            v.to_ascii_lowercase().as_str(),
+            "0" | "off" | "false" | "no"
+        ),
     }
 }
 
@@ -398,7 +518,7 @@ async fn connect(
     profile: String,
     node: Option<String>,
     // Optional so an older/leaner caller can omit it; Tauri maps a missing arg to
-    // None, which we treat as "not auto" вЂ” the protocol's default order.
+    // None, which we treat as "not auto" — the protocol's default order.
     auto: Option<bool>,
 ) -> Result<State, String> {
     let auto = auto.unwrap_or(false);
@@ -511,7 +631,7 @@ async fn set_dns(
 
 // rename_all keeps the JS-side argument keys snake_case (rules_direct,
 // rules_proxy, preset_ru_banking, preset_ru_gov), matching this file's multi-word
-// command convention (see set_dns) вЂ” Tauri v2 would otherwise expect camelCase.
+// command convention (see set_dns) — Tauri v2 would otherwise expect camelCase.
 #[tauri::command(rename_all = "snake_case")]
 async fn set_rules(
     state: TauriState<'_, AppState>,
@@ -588,7 +708,7 @@ struct PingList {
 pub fn run() {
     // Capture GUI panics to the local crash file before Tauri starts. Under the
     // release profile's panic=abort the hook runs and then the process aborts, so
-    // it is the only chance to persist a panic вЂ” install it first of all.
+    // it is the only chance to persist a panic — install it first of all.
     crash::install_panic_hook();
     tauri::Builder::default()
         // Single-instance must be the FIRST plugin so a second launch is caught
@@ -597,7 +717,7 @@ pub fn run() {
         // forwarding may not reach the primary instance on Windows), routes any
         // tenebra:// link the second launch carried in its argv. The deep-link
         // feature also forwards that argv to the deep-link plugin, so the same
-        // link can arrive twice вЂ” deliver_live de-dups it.
+        // link can arrive twice — deliver_live de-dups it.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             focus_main_window(app);
             deeplink::deliver_live(app, &deeplink::find_urls(&argv));
@@ -698,7 +818,7 @@ fn setup_deep_link(app: &AppHandle) {
 
     // Cold start: the OS launches us with the link as a CLI argument. Collect it
     // from the plugin (get_current) and, defensively, the raw argv, then queue it
-    // for the front end to drain once the webview is listening вЂ” an event emitted
+    // for the front end to drain once the webview is listening — an event emitted
     // now, before setup finishes, would be lost.
     let mut launch: Vec<String> = Vec::new();
     if let Ok(Some(urls)) = app.deep_link().get_current() {
@@ -984,6 +1104,71 @@ mod tests {
         s.kill_switch = Some(true);
         let notice = transition_notice(Lang::En, Some(ConnectionState::Connected), &s);
         assert_eq!(notice.map(|(t, _)| t), Some("Kill switch engaged"));
+    }
+
+    #[test]
+    fn the_mock_is_requested_by_value_not_by_presence() {
+        // The demo backend is compiled into every release build, so the switch
+        // that arms it has to mean what it says. Anyone who exports
+        // TENEBRA_MOCK=0 (or leaves it empty) is asking for the real core, and
+        // getting a fake one instead would look exactly like the bug this
+        // module's fallback path already produces: an app that answers, plausibly
+        // and wrongly, with somebody else's data.
+        assert!(!mock_requested(None));
+        assert!(!mock_requested(Some("")));
+        assert!(!mock_requested(Some("0")));
+        assert!(!mock_requested(Some("off")));
+        assert!(!mock_requested(Some("false")));
+        assert!(!mock_requested(Some("no")));
+        // Case and stray whitespace come from hand-typed shell exports, not from
+        // data, so they must not decide the outcome.
+        assert!(!mock_requested(Some("  OFF  ")));
+        assert!(!mock_requested(Some("False")));
+        // And the ways a developer actually turns it on still work.
+        assert!(mock_requested(Some("1")));
+        assert!(mock_requested(Some("on")));
+        assert!(mock_requested(Some("true")));
+        assert!(mock_requested(Some("yes")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_service_watch_stops_at_the_first_sighting() {
+        // A service that shows up on the third look is reported, and the watch
+        // ends there rather than keeping a thread polling for the rest of the
+        // run.
+        let looks = std::cell::Cell::new(0);
+        let seen = await_probe(
+            || {
+                looks.set(looks.get() + 1);
+                looks.get() >= 3
+            },
+            Duration::from_millis(1),
+            Duration::from_secs(5),
+        );
+        assert!(seen, "a service that appeared must be reported");
+        assert_eq!(looks.get(), 3, "the watch must stop once it has an answer");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_service_watch_gives_up_when_its_window_closes() {
+        // Nothing ever appears — the ordinary case on a machine with no service
+        // at all. The watch must look at least once, then end by itself.
+        let looks = std::cell::Cell::new(0);
+        let seen = await_probe(
+            || {
+                looks.set(looks.get() + 1);
+                false
+            },
+            Duration::from_millis(1),
+            Duration::from_millis(20),
+        );
+        assert!(!seen);
+        assert!(
+            looks.get() >= 1,
+            "the window must be given at least one look"
+        );
     }
 
     #[test]

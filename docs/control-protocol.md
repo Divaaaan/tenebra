@@ -44,16 +44,46 @@ stopping tears the tunnel down. Two consequences for clients:
 - on connect, the state is whatever it already was — send `status` (and
   `list_profiles`) first instead of assuming `idle`;
 - events emitted while no client is connected are dropped, not queued.
+- a client that stops reading its stream is dropped: the core gives one frame
+  30 s to be delivered and holds at most 512 frames of backlog, shedding events
+  (never responses) under pressure. Past either bound it closes the session, so
+  the client reconnects and re-syncs like it does after a displacement.
 
 ### How the desktop app chooses a transport
 
-At startup the GUI probes the pipe once: if a core is listening it attaches
-(and opens the session with the `status` re-sync above); if nothing is
-listening it spawns the core as its stdio sidecar, exactly the pre-service
-behaviour. When a pipe session ends mid-run — the service restarted, or
+At startup the GUI dials the pipe: if a core is listening it attaches (and
+opens the session with the `status` re-sync above); if nothing is listening it
+spawns the core as its stdio sidecar, exactly the pre-service behaviour.
+
+The dial is deliberately patient — up to **5 s**, re-attempting every 50 ms —
+because "nothing is listening" and "nothing is listening *yet*" arrive as the
+same `ERROR_FILE_NOT_FOUND`, and the app cannot ask again later (see below).
+Both ways of racing the service are ordinary: the installer runs
+`sc start tenebra` and launches the app in the next breath, and an autostart
+login starts the service and the GUI concurrently, while the core still has to
+secure its data directory and load the store before it binds the name. A busy
+pipe (`ERROR_PIPE_BUSY`, no free instance this instant) is waited out for 2 s
+in the same loop. Anything else — an access denial, say — is returned at once;
+retrying a standing condition would only stall the launch.
+
+**The transport is chosen once and kept for the life of the process**, in
+either direction. When a pipe session ends mid-run — the service restarted, or
 another client displaced this one — the GUI redials with capped exponential
 backoff and re-syncs when it gets back in; it never falls back to a sidecar
-mid-run, since the service owns the tunnel.
+mid-run, since the service owns the tunnel. And an app that fell back to a
+sidecar at startup does not promote itself onto the service later, since that
+sidecar may be carrying a live tunnel this app owns and would take down.
+
+That makes the fallback consequential rather than cosmetic: a core the app
+spawned itself runs unelevated and keeps its profiles in the per-user store,
+not the service's machine store under `%ProgramData%\Tenebra\data`, so the
+profile list looks empty and a tun-mode connect fails for want of rights
+(system-proxy mode is the only one that works without them). The GUI therefore
+logs the fallback at `warn` naming both consequences, and on Windows keeps
+looking for a listener for a minute afterwards — with `WaitNamedPipeW`, which
+asks whether an instance is free without taking the session away from whoever
+holds it. If the service does turn up late the GUI says so, since restarting
+the app is then all it takes to land on the service.
 
 While disconnected the GUI synthesizes `state` events of its own, since the
 core cannot speak for a connection that is gone. The moment the session drops
@@ -69,9 +99,12 @@ the synthetic state with the real one as soon as a session is back. These
 events are a client-side presentation detail, not part of the core's wire
 contract.
 
-`TENEBRA_PIPE` overrides the probe: an alternate pipe name, or `off`
+`TENEBRA_PIPE` overrides the dial: an alternate pipe name, or `off`
 to force the sidecar (useful in development, where a running service would
-otherwise capture the session meant for a freshly built core).
+otherwise capture the session meant for a freshly built core). It is a
+client-side override only — the core has no `TENEBRA_PIPE`, and the service
+always serves the well-known name. (macOS is symmetric here: both ends of the
+unix transport honour `TENEBRA_SOCKET`.)
 
 The GUI dials with `SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION`, capping
 impersonation at identification: an instance-squatter admitted by the DACL

@@ -20,6 +20,8 @@ import { SimpleView } from "./components/SimpleView";
 import { EclipseOverlay } from "./components/EclipseOverlay";
 import { useTenebra } from "./state/useTenebra";
 import { useI18n } from "./i18n/I18nContext";
+import { describeCoreError } from "./i18n/strings";
+import { pushToast } from "./lib/toast";
 import type { RoutingMode } from "./api";
 import {
   api,
@@ -148,12 +150,22 @@ export function App() {
   const crash = useCrashReport(crashConsent, tenebra.ready);
   const [viewingReport, setViewingReport] = useState(false);
 
+  // The core-owned controls the shell drives directly. Their drawn position is
+  // the state the daemon echoes back, so a refused command leaves the control
+  // exactly where it was — and these used to discard the error, which made that
+  // the whole of what the user got to see. Same reporting as the settings
+  // screen: the toast bus, naming an out-of-date service when that is the cause.
+  const reportRefusal = useCallback(
+    (e: unknown) => pushToast(describeCoreError(e, t)),
+    [t],
+  );
+
   const enableCrashReports = useCallback(() => {
-    void tenebra.setCrashReports(true).catch(() => {});
-  }, [tenebra]);
+    void tenebra.setCrashReports(true).catch(reportRefusal);
+  }, [tenebra, reportRefusal]);
   const declineCrashReports = useCallback(() => {
-    void tenebra.setCrashReports(false).catch(() => {});
-  }, [tenebra]);
+    void tenebra.setCrashReports(false).catch(reportRefusal);
+  }, [tenebra, reportRefusal]);
   const createCrashIssue = useCallback(() => {
     // The core builds the whole URL and opens it from Rust; failures surface on
     // the log channel the UI already renders.
@@ -241,6 +253,20 @@ export function App() {
     t,
   );
 
+  // Whether the primary button has anything to act on. It mirrors the branches
+  // of handlePrimary below exactly: a live (or in-flight) tunnel can always be
+  // taken down, otherwise a connect needs a profile. Without a profile the
+  // handler ran no branch at all — no invoke, no error, no toast — while the
+  // button stayed fully live, so a click on a fresh install (or with the core
+  // unreachable, which leaves the list empty) was swallowed in silence.
+  // Disabling it is the smallest honest fix and matches SimpleView, which has
+  // always gated its own button on having a profile.
+  const canPrimary =
+    connected ||
+    phase === "connecting" ||
+    phase === "health_reconnecting" ||
+    selectedProfileId !== null;
+
   const handlePrimary = useCallback(() => {
     if (busy) return;
     setBusy(true);
@@ -302,15 +328,14 @@ export function App() {
 
   const handleSetRouting = useCallback(
     (mode: RoutingMode) => {
-      void tenebra.setRouting(mode).catch(() => {});
+      void tenebra.setRouting(mode).catch(reportRefusal);
     },
-    [tenebra],
+    [tenebra, reportRefusal],
   );
 
   const handleToggleKill = useCallback(() => {
-    // Failures surface on the state/log channels the UI already renders.
-    void tenebra.setKillSwitch(!killSwitch).catch(() => {});
-  }, [tenebra, killSwitch]);
+    void tenebra.setKillSwitch(!killSwitch).catch(reportRefusal);
+  }, [tenebra, killSwitch, reportRefusal]);
 
   const focusSearch = useCallback(() => {
     searchRef.current?.focus();
@@ -523,6 +548,16 @@ export function App() {
         </div>
       )}
 
+      {tenebra.coreError && (
+        // The core never answered, so nothing on this screen is backed by
+        // anything: no profiles, no real state, every action doomed. Say it in
+        // the banner strip the update and skew notices already use (no new
+        // visual language), and let the hook's retry clear it on its own.
+        <div className="update-banner" role="alert">
+          <span className="update-banner-text">⚠ {t.daemon.unreachable}</span>
+        </div>
+      )}
+
       {update.available && (
         <UpdateBanner
           version={update.available}
@@ -534,7 +569,11 @@ export function App() {
         />
       )}
 
-      {daemonSkew.stale && !skewDismissed && (
+      {/* Only once a snapshot has actually landed: the skew check latches its
+          verdict from the hook's placeholder "idle" state, so a core that never
+          answered used to read as a *stale* one — the wrong diagnosis, and it
+          would now contradict the unreachable banner right above. */}
+      {tenebra.ready && daemonSkew.stale && !skewDismissed && (
         <DaemonSkewBanner
           daemonVersion={daemonSkew.daemonVersion}
           appVersion={__APP_VERSION__}
@@ -579,6 +618,7 @@ export function App() {
           cumulativeUp={traffic.up}
           errorMsg={state.error}
           onPrimary={handlePrimary}
+          disabled={!canPrimary}
           onChange={focusSearch}
         />
 

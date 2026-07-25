@@ -1,5 +1,5 @@
 ﻿//! The unix-domain-socket transport: a client of the core running detached from
-//! the GUI as a root LaunchDaemon вЂ” `tenebra-core --socket`, which serves the
+//! the GUI as a root LaunchDaemon — `tenebra-core --socket`, which serves the
 //! control protocol on `/var/run/tenebra.sock`.
 //!
 //! The daemon listens on that socket through the same transport-agnostic
@@ -7,7 +7,7 @@
 //! Transports section of `docs/control-protocol.md`); this type dials it and
 //! runs the same [`wire`](super::wire) client the sidecar and pipe backends use.
 //! The lifecycle is the pipe's, not the sidecar's: the daemon outlives any one
-//! GUI process, so the connection вЂ” not the process вЂ” is the thing to manage,
+//! GUI process, so the connection — not the process — is the thing to manage,
 //! and the unprivileged GUI needs no elevation of its own because the privileged
 //! tunnel already lives in the daemon.
 //!
@@ -15,11 +15,11 @@
 //!   so the state on connect is whatever it already is. Every new session
 //!   therefore opens with a `status` request and pushes the answer at the UI.
 //! - **Reconnect on loss.** The session ending (the daemon restarted or died, or
-//!   another client displaced us вЂ” `ServeListener` keeps exactly one session
+//!   another client displaced us — `ServeListener` keeps exactly one session
 //!   live, last-writer-wins) is not fatal: a supervisor thread pushes a synthetic
 //!   "reconnecting" state at the UI and redials with capped exponential backoff
 //!   until the socket answers again, then re-syncs. Only a loss that outlasts
-//!   [`RECONNECT_GRACE`] is escalated to an error state вЂ” a planned daemon
+//!   [`RECONNECT_GRACE`] is escalated to an error state — a planned daemon
 //!   restart or a displaced session is back well inside the window and never
 //!   reads as a failure. While disconnected, commands fail fast instead of
 //!   timing out.
@@ -31,7 +31,7 @@
 //!
 //! - **No peek-polling.** A unix socket is full-duplex: a blocking read on one
 //!   `UnixStream::try_clone` half never blocks a write on another, so the reader
-//!   just parks in `read` like an ordinary stream вЂ” no `PeekNamedPipe`
+//!   just parks in `read` like an ordinary stream — no `PeekNamedPipe`
 //!   availability probe, no idle poll tick. The pipe needs that dance only
 //!   because Windows serializes I/O on a synchronous file object, where a parked
 //!   `ReadFile` would deadlock every `WriteFile` on the same handle. To wake a
@@ -68,9 +68,9 @@ const INITIAL_BACKOFF: Duration = Duration::from_millis(250);
 const MAX_BACKOFF: Duration = Duration::from_secs(5);
 
 /// How long a lost session may present itself as "reconnecting" before the loss
-/// is reported as an error. The interruptions worth staying quiet for вЂ” the
+/// is reported as an error. The interruptions worth staying quiet for — the
 /// daemon restarting under an update, a crash launchd restarts, a displaced
-/// session redialing вЂ” are back within a couple of seconds. Eight seconds
+/// session redialing — are back within a couple of seconds. Eight seconds
 /// comfortably outlasts all of those and spans the first five dial attempts
 /// (backoff puts them ~0.25 s to ~7.75 s after the loss), while still reporting
 /// a genuinely stopped daemon in single-digit seconds.
@@ -140,8 +140,8 @@ struct UnixShared {
 impl UnixBackend {
     /// Dial `path` and start serving. The dial happens synchronously so the
     /// caller can fall back to another transport when no core is listening;
-    /// after that the connection is supervised вЂ” lost sessions reconnect with
-    /// backoff and re-sync вЂ” until the backend is dropped.
+    /// after that the connection is supervised — lost sessions reconnect with
+    /// backoff and re-sync — until the backend is dropped.
     pub fn connect(path: &str, sink: Arc<dyn EventSink>) -> Result<Self, String> {
         let stop = Arc::new(AtomicBool::new(false));
         let mut dialer = UnixDialer {
@@ -153,7 +153,7 @@ impl UnixBackend {
 
     /// Wire up the supervisor around an already-dialed first connection.
     /// `grace` is how long a lost session may stay "reconnecting" before it is
-    /// reported as an error вЂ” [`RECONNECT_GRACE`] in production, shortened by
+    /// reported as an error — [`RECONNECT_GRACE`] in production, shortened by
     /// the tests that exercise the expiry path.
     fn start(
         first: Conn,
@@ -195,7 +195,7 @@ impl WireSession for UnixBackend {
 
 impl Drop for UnixBackend {
     fn drop(&mut self) {
-        // Closing the GUI leaves the daemon вЂ” and a live tunnel вЂ” running by
+        // Closing the GUI leaves the daemon — and a live tunnel — running by
         // design; only the connection is torn down. Raise stop for the backoff
         // wait, wake it by dropping its sender, shut the live socket down so the
         // reader unblocks (a live daemon won't hang up just because we are going
@@ -218,7 +218,7 @@ impl Drop for UnixBackend {
 /// The synthetic state pushed the moment the control connection drops. The
 /// tunnel may or may not still be up (a restarting daemon tears it down; a
 /// displaced session leaves it), so neither `Connected` nor `Idle` would be
-/// honest вЂ” and `Error` is premature while the redial usually lands within a
+/// honest — and `Error` is premature while the redial usually lands within a
 /// second or two. `Connecting` is the truthful in-between: nothing is claimed
 /// about the tunnel, session-bound commands already fail fast with their own
 /// "reconnecting" error, and the message says what is actually going on. The
@@ -259,7 +259,7 @@ fn reconnecting_state() -> State {
 
 /// The synthetic state pushed when the daemon has not answered within the grace
 /// window. By now the outage is not a restart blip, the tunnel state is unknown,
-/// and `Error` is the honest choice of the protocol's four states вЂ” the UI must
+/// and `Error` is the honest choice of the protocol's four states — the UI must
 /// not claim the tunnel is either up or cleanly down. The re-sync after an
 /// eventual reconnect replaces this with the real state.
 fn lost_state() -> State {
@@ -302,9 +302,9 @@ fn next_backoff(current: Duration) -> Duration {
 /// its end, present the loss as a reconnect in progress, then redial with
 /// backoff and serve again. Only when the daemon stays away past `grace` is the
 /// loss escalated to an error state, once per outage. EOF from a displacement
-/// (another client took the session вЂ” `ServeListener` is last-writer-wins) is
+/// (another client took the session — `ServeListener` is last-writer-wins) is
 /// indistinguishable from a daemon restart on this side and is handled
-/// identically вЂ” retry, never panic; the single-instance GUI makes a genuine
+/// identically — retry, never panic; the single-instance GUI makes a genuine
 /// takeover war impossible in practice, and both causes normally redial well
 /// inside the grace window.
 fn supervise(
@@ -324,7 +324,7 @@ fn supervise(
         }
 
         // The session is gone and already cleared, so commands now fail fast;
-        // tell the UI before spending time redialing вЂ” as a reconnect under
+        // tell the UI before spending time redialing — as a reconnect under
         // way, not yet a failure.
         sink.state(&reconnecting_state());
         sink.log(
@@ -434,8 +434,8 @@ struct UnixDialer {
 
 impl Dial for UnixDialer {
     fn dial(&mut self) -> Result<Conn, String> {
-        // `connect` either succeeds or fails at once вЂ” a missing socket file is
-        // `ENOENT`, a bound-but-unserved one `ECONNREFUSED` вЂ” so unlike the
+        // `connect` either succeeds or fails at once — a missing socket file is
+        // `ENOENT`, a bound-but-unserved one `ECONNREFUSED` — so unlike the
         // named pipe there is no "server exists but has no free instance"
         // transient to wait through. A failure here is the caller's to judge: at
         // startup it selects the sidecar fallback, mid-run it feeds the
@@ -595,7 +595,7 @@ mod tests {
         assert_eq!(states[0].state, ConnectionState::Connected);
         assert_eq!(states[0].node.as_deref(), Some("n1"));
 
-        // Commands flow through the same session вЂ” driven via the blanket
+        // Commands flow through the same session — driven via the blanket
         // `Backend` impl over `WireSession`, exactly as the command layer calls
         // them.
         let state = backend.disconnect().expect("disconnect over the socket");
@@ -625,13 +625,13 @@ mod tests {
         let requests1 = Arc::new(Mutex::new(Vec::new()));
         let requests2 = Arc::new(Mutex::new(Vec::new()));
         // The first daemon instance answers exactly one request (the re-sync)
-        // and hangs up вЂ” a restart. The second serves normally.
+        // and hangs up — a restart. The second serves normally.
         let stub1 = spawn_stub_core(theirs1, Arc::clone(&requests1), connected_state, Some(1));
         let stub2 = spawn_stub_core(theirs2, Arc::clone(&requests2), connected_state, None);
 
         let sink = Arc::new(Rec::default());
         // First redial fails (the daemon is still coming back), the next one
-        // lands on the new instance вЂ” well inside the production grace window.
+        // lands on the new instance — well inside the production grace window.
         let dialer = ScriptDialer {
             script: VecDeque::from([
                 Err("the daemon is still down".to_string()),
@@ -647,7 +647,7 @@ mod tests {
         )
         .expect("start unix backend");
 
-        // connected (re-sync 1) в†’ connecting (loss) в†’ connected (re-sync 2).
+        // connected (re-sync 1) → connecting (loss) → connected (re-sync 2).
         let states = sink.wait_for_states(3, WAIT);
         assert_eq!(states[0].state, ConnectionState::Connected);
         assert_eq!(states[1].state, ConnectionState::Connecting);
@@ -700,7 +700,7 @@ mod tests {
         let sink = Arc::new(Rec::default());
         // Two failed dials (~0.25 s and ~0.75 s in), success on the third
         // (~1.75 s in). A 600 ms grace expires between the first and second
-        // dial вЂ” in the middle of a backoff wait, which must wake for it.
+        // dial — in the middle of a backoff wait, which must wake for it.
         let grace = Duration::from_millis(600);
         let dialer = ScriptDialer {
             script: VecDeque::from([
@@ -718,7 +718,7 @@ mod tests {
         )
         .expect("start unix backend");
 
-        // connected (re-sync 1) в†’ connecting (loss) в†’ error (grace expired) в†’
+        // connected (re-sync 1) → connecting (loss) → error (grace expired) →
         // connected (re-sync 2 replaces the error).
         let states = sink.wait_for_states(4, WAIT);
         assert_eq!(states[0].state, ConnectionState::Connected);
@@ -772,7 +772,7 @@ mod tests {
 
         // Once the reconnecting state is out, the session is guaranteed cleared
         // (the supervisor clears it before reporting), so a command must fail
-        // fast with the reconnecting error rather than riding out a timeout вЂ”
+        // fast with the reconnecting error rather than riding out a timeout —
         // the grace window softens the presentation, never the semantics.
         let states = sink.wait_for_states(2, WAIT);
         assert_eq!(states[1].state, ConnectionState::Connecting);
@@ -870,7 +870,7 @@ mod tests {
         }
     }
 
-    /// Dial until the server thread's listener is up вЂ” the tests bind it on
+    /// Dial until the server thread's listener is up — the tests bind it on
     /// another thread, so the very first dial can lose the race.
     fn retry_connect(path: &str, sink: Arc<Rec>) -> UnixBackend {
         let deadline = Instant::now() + WAIT;
@@ -931,7 +931,7 @@ mod tests {
         });
 
         // A command round-trips through the blanket `Backend` impl while the
-        // blocking reader idles on a clone of the same socket вЂ” the write would
+        // blocking reader idles on a clone of the same socket — the write would
         // deadlock only if reads and writes contended on one handle, which unix
         // sockets do not (module docs).
         let state = backend.status().expect("status over the real socket");
@@ -951,7 +951,7 @@ mod tests {
         let server = thread::spawn(move || {
             let listener = bind_listener(&server_path);
             // First session: answer the re-sync, then hang up (a restart, from
-            // the client's point of view вЂ” the listener stays up so the redial
+            // the client's point of view — the listener stays up so the redial
             // lands at once, like a displaced session).
             let (stream, _addr) = listener.accept().expect("accept first client");
             serve_requests(&stream, &server_requests, Some(1), None);
@@ -964,8 +964,8 @@ mod tests {
         let sink = Arc::new(Rec::default());
         let backend = retry_connect(&path, Arc::clone(&sink));
 
-        // connected в†’ connecting (hangup, the redial lands inside the grace
-        // window) в†’ connected (redial + re-sync).
+        // connected → connecting (hangup, the redial lands inside the grace
+        // window) → connected (redial + re-sync).
         let states = sink.wait_for_states(3, WAIT);
         assert_eq!(states[0].state, ConnectionState::Connected);
         assert_eq!(states[1].state, ConnectionState::Connecting);
