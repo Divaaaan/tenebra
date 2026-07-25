@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
   AttemptsEvent,
@@ -10,7 +10,11 @@ import type {
   TrafficEvent,
 } from "../api";
 import { makeProfile } from "../test/fixtures";
-import { useTenebra } from "./useTenebra";
+import {
+  BOOTSTRAP_RETRY_MAX_MS,
+  BOOTSTRAP_RETRY_MS,
+  useTenebra,
+} from "./useTenebra";
 
 // Captured event handlers and the api stub live in a hoisted block so the
 // vi.mock factory (itself hoisted) can close over them without tripping the
@@ -111,6 +115,134 @@ describe("initial load", () => {
       upRate: 0,
       downRate: 0,
     });
+  });
+});
+
+// The core is not always up when the window is: the privileged service can be
+// starting, restarting after an update, or briefly unreachable over the pipe.
+// A single unguarded snapshot request left the app drawn but permanently mute —
+// no ready, no profiles, no event subscriptions, no way back short of a
+// restart. These cover the way out of that.
+describe("bootstrap resilience", () => {
+  const DOWN = "the connection to tenebra-core is closed";
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Let the pending microtasks (the in-flight snapshot) settle. */
+  async function settle(ms = 0) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  }
+
+  it("retries the initial snapshot until the core answers", async () => {
+    const profile = makeProfile();
+    mockApi.status.mockRejectedValueOnce(DOWN).mockResolvedValue(idleState);
+    mockApi.listProfiles.mockRejectedValueOnce(DOWN).mockResolvedValue([profile]);
+
+    const { result } = renderHook(() => useTenebra());
+
+    // First attempt failed: nothing from the core, so nothing is ready yet.
+    await settle();
+    expect(result.current.ready).toBe(false);
+    expect(result.current.profiles).toEqual([]);
+
+    // The backoff elapses and the retry lands — the app comes fully alive.
+    await settle(BOOTSTRAP_RETRY_MS);
+    expect(result.current.ready).toBe(true);
+    expect(result.current.profiles).toEqual([profile]);
+    expect(result.current.state).toEqual(idleState);
+  });
+
+  it("surfaces the failure as coreError and clears it once the core answers", async () => {
+    mockApi.status.mockRejectedValueOnce(DOWN);
+    mockApi.listProfiles.mockRejectedValueOnce(DOWN);
+
+    const { result } = renderHook(() => useTenebra());
+
+    await settle();
+    // A named failure the shell can render — silence is what made the bug
+    // undiagnosable from the outside.
+    expect(result.current.coreError).toContain("tenebra-core");
+
+    await settle(BOOTSTRAP_RETRY_MS);
+    expect(result.current.coreError).toBeNull();
+    expect(result.current.ready).toBe(true);
+  });
+
+  it("keeps the event stream wired when the first snapshot fails", async () => {
+    mockApi.status.mockRejectedValue(DOWN);
+    mockApi.listProfiles.mockRejectedValue(DOWN);
+
+    const { result } = renderHook(() => useTenebra());
+    await settle();
+
+    // Subscribing is a webview-side registration, not a core round-trip, so a
+    // failing snapshot must not cost us the stream: whatever the core pushes
+    // once it is up has to land in a live UI.
+    expect(h.state).toBeDefined();
+    expect(h.log).toBeDefined();
+
+    act(() => h.state?.({ state: "connected", node: "node-1" }));
+    expect(result.current.state.state).toBe("connected");
+
+    act(() => h.log?.({ level: "info", msg: "core says hello" }));
+    // The failed attempt logs a line of its own first, so assert on the tail.
+    const logs = result.current.logs;
+    expect(logs[logs.length - 1].msg).toBe("core says hello");
+  });
+
+  it("does not roll a pushed state back to a late snapshot", async () => {
+    mockApi.status.mockRejectedValueOnce(DOWN).mockResolvedValue(idleState);
+    mockApi.listProfiles.mockRejectedValueOnce(DOWN).mockResolvedValue([]);
+
+    const { result } = renderHook(() => useTenebra());
+    await settle();
+
+    // The core came up and announced itself before the retried status returned.
+    act(() => h.state?.({ state: "connected", node: "node-1" }));
+    await settle(BOOTSTRAP_RETRY_MS);
+
+    expect(result.current.ready).toBe(true);
+    expect(result.current.state.state).toBe("connected");
+  });
+
+  it("backs off exponentially up to the ceiling", async () => {
+    mockApi.status.mockRejectedValue(DOWN);
+    mockApi.listProfiles.mockRejectedValue(DOWN);
+
+    renderHook(() => useTenebra());
+    await settle();
+    expect(mockApi.status).toHaveBeenCalledTimes(1);
+
+    // 500 → 1000 → 2000 → 4000 → capped at 5000 from there on.
+    for (const delay of [500, 1000, 2000, 4000, 5000, 5000]) {
+      const before = mockApi.status.mock.calls.length;
+      await settle(delay - 1);
+      expect(mockApi.status.mock.calls.length).toBe(before);
+      await settle(1);
+      expect(mockApi.status.mock.calls.length).toBe(before + 1);
+    }
+  });
+
+  it("stops retrying on unmount, leaving no timer and no late setState", async () => {
+    mockApi.status.mockRejectedValue(DOWN);
+    mockApi.listProfiles.mockRejectedValue(DOWN);
+
+    const { unmount } = renderHook(() => useTenebra());
+    await settle();
+    const attempts = mockApi.status.mock.calls.length;
+
+    unmount();
+    await settle(BOOTSTRAP_RETRY_MAX_MS * 4);
+
+    expect(mockApi.status.mock.calls.length).toBe(attempts);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 
