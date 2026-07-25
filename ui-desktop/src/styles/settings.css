@@ -7,10 +7,15 @@
 .set-shell {
   display: grid;
   grid-template-columns: 190px 1fr;
-  /* Fill the overlay body's capped box (720 window − 72 overlay padding − the
+  /* Fill the overlay body's capped box (the window − 72 overlay padding − the
      body's own 8px padding top and bottom) so the rail spans full height and
-     only the content column scrolls. */
-  height: calc(720px - 72px - 2 * var(--sp-2));
+     only the content column scrolls. The window is fixed at 720px, so at the
+     design size the two lines below agree exactly; measuring the viewport is
+     what keeps the box honest when it is shorter than the design (a zoomed
+     WebView reports fewer CSS pixels), where a hard 632px would push the rail's
+     tail out of sight with nothing to scroll it back. */
+  height: calc(100vh - 72px - 2 * var(--sp-2));
+  max-height: calc(720px - 72px - 2 * var(--sp-2));
 }
 
 /* ── left rail: title, section links, version/licence foot ── */
@@ -31,9 +36,21 @@
   padding: 0 18px;
   margin-bottom: var(--sp-5);
 }
+/* The rail carries 13 fixed items between a title and the version foot, inside a
+   height the window dictates. Whenever the metrics run large — a fallback mono
+   face, a wrapped label, a zoomed WebView — that stack outgrows the rail, and
+   with the nav clipping it the tail items (appearance, startup, updates) simply
+   vanished: no scrollbar, no hint, unreachable. The list scrolls instead, so the
+   overflow is visible and every section stays reachable. min-height: 0 is what
+   lets it shrink at all (a flex item's automatic minimum is its content), and it
+   only engages under overflow — with room to spare the list keeps its natural
+   height and the foot stays pinned to the bottom by its auto margin. */
 .set-nav-list {
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 .set-nav-item {
   text-align: left;
