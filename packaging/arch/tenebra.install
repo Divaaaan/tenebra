@@ -1,0 +1,57 @@
+# pacman scriptlet for the tenebra package. It never starts or restarts the
+# daemon on its own: this one owns the tunnel, so an automatic restart would drop
+# a live connection out from under whoever is using it. It tells the
+# administrator what to run instead.
+
+# Arch's own systemd hook reloads the manager when a package changes a unit under
+# /usr/lib/systemd/system. Calling it here as well costs nothing and keeps the
+# scriptlet correct where that hook does not run — an install into a container
+# image, or a pacman invoked with a different --hookdir.
+_reload_units() {
+  systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
+post_install() {
+  _reload_units
+  cat <<'EOF'
+
+Tenebra's tunnel runs as a root service; the desktop app attaches to it over
+/run/tenebra.sock and cannot connect on its own. Enable it once:
+
+    sudo systemctl enable --now tenebra.service
+
+Profiles and settings live in /var/lib/tenebra/data, owned by root and readable
+only by root — the app reaches them through the daemon, never through the files.
+Logs go to the journal: journalctl -u tenebra -f
+
+Updates come from pacman. The in-app updater is disabled for packaged installs
+(it can only replace an AppImage), so it will not offer to update this build.
+
+EOF
+}
+
+post_upgrade() {
+  _reload_units
+  cat <<'EOF'
+
+Tenebra was upgraded, but the running daemon is still the old binary — the
+tunnel it holds was deliberately left up. Restart it when convenient:
+
+    sudo systemctl restart tenebra.service
+
+Until then the app will warn that the daemon has fallen behind it.
+
+EOF
+}
+
+post_remove() {
+  _reload_units
+  cat <<'EOF'
+
+Removed. /var/lib/tenebra was kept: it holds your imported profiles and their
+subscription credentials. Delete it by hand if you want them gone:
+
+    sudo rm -rf /var/lib/tenebra
+
+EOF
+}

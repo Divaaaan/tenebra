@@ -25,8 +25,10 @@ Everything that isn't tied to a specific OS lives here:
 - **control** — the JSON protocol the UI uses to drive the core.
 
 The core's only third-party dependencies are `github.com/Microsoft/go-winio`
-and `golang.org/x/sys` — Windows plumbing for the named-pipe transport and the
-service entry point; everything else is standard library. It generates sing-box
+and `golang.org/x/sys` — the named-pipe transport and service entry point on
+Windows, and the OS calls the detached daemon needs on the unix side (peer
+credentials on the control socket, per-socket interface binding for the ping
+probe); everything else is standard library. It generates sing-box
 configuration as plain JSON rather than linking sing-box as a library; sing-box
 itself is the runtime. That keeps the core pure, fully unit-testable offline,
 and free of the sing-box dependency tree.
@@ -39,7 +41,7 @@ The system tunnel cannot be cross-platform; each OS exposes its own:
 |---------|-------------------|
 | Windows | wintun            |
 | macOS   | utun              |
-| Linux   | utun / tun        |
+| Linux   | tun (`/dev/net/tun`) |
 | Android | `VpnService`      |
 | iOS     | Network Extension |
 
@@ -65,12 +67,15 @@ the wintun tunnel and the sing-box lifecycle. The wire format is specified in
                                                             +-- wintun tunnel
 ```
 
-On Windows the same core can also run detached from the UI — as a Windows
-service serving the identical protocol on the `\\.\pipe\tenebra` named pipe
-(`tenebra-core --pipe` serves it from a console for development). That is the
-path to the WireGuard/Tailscale privilege model, where the tunnel lives in a
-SYSTEM service and the GUI runs unprivileged; the desktop shell does not use it
-yet. Transports and the pipe's security model are described in
+The same core can also run detached from the UI, serving the identical protocol
+on a well-known endpoint: the `\\.\pipe\tenebra` named pipe from a Windows
+service, or a unix domain socket from a root LaunchDaemon on macOS and a systemd
+service on Linux (`tenebra-core --pipe` / `--socket` serve them from a console
+for development). That is the WireGuard/Tailscale privilege model, where the
+tunnel lives in a privileged service and the GUI runs unprivileged — on Linux it
+is the only arrangement, since opening `/dev/net/tun` and claiming the default
+route need `CAP_NET_ADMIN`. Transports, peer authentication and the endpoints'
+security models are described in
 [control-protocol.md](control-protocol.md#transports).
 
 ### Mobile (later)

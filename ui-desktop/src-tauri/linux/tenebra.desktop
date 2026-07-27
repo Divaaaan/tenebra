@@ -1,0 +1,20 @@
+[Desktop Entry]
+# Handlebars template for the desktop entry the bundler writes into the .deb and
+# the AppImage (bundle > linux > deb > desktopTemplate; the AppImage is built
+# from the same tree). It is the bundler's own default with one addition: the %u
+# field code on Exec. MimeType below is filled in from the deep-link schemes, so
+# without %u the desktop environment would hand a tenebra:// link to a launcher
+# that drops it — the app would come up with no link and nothing would happen.
+Categories={{categories}}
+{{#if comment}}
+Comment={{comment}}
+{{/if}}
+Exec={{exec}} %u
+StartupWMClass={{exec}}
+Icon={{icon}}
+Name={{name}}
+Terminal=false
+Type=Application
+{{#if mime_type}}
+MimeType={{mime_type}}
+{{/if}}

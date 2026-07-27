@@ -13,7 +13,7 @@ mod tray;
 mod update_channel;
 
 use std::sync::{Arc, Mutex};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use std::time::{Duration, Instant};
 
 use serde_json::json;
@@ -168,10 +168,11 @@ impl EventSink for TauriSink {
 //     The tunnel then outlives this process and the GUI needs no elevation.
 //     TENEBRA_PIPE renames the pipe or (`off`) skips it — see
 //     backend::pipe::configured_name.
-//  2'. On macOS, the same probe over the daemon's unix socket
-//     (`/var/run/tenebra.sock`): if the root LaunchDaemon is listening, attach.
-//     TENEBRA_SOCKET renames the path or (`off`) skips it — see
-//     backend::unix::configured_path.
+//  2'. On macOS and Linux, the same probe over the daemon's unix socket
+//     (`/var/run/tenebra.sock` and `/run/tenebra.sock` respectively): if the
+//     root daemon — the macOS LaunchDaemon, the Linux systemd service — is
+//     listening, attach. TENEBRA_SOCKET renames the path or (`off`) skips it —
+//     see backend::unix::configured_path.
 //  3. Otherwise spawn the `tenebra-core` sidecar and own it — today's default
 //     and the development path.
 //
@@ -186,11 +187,14 @@ impl EventSink for TauriSink {
 // accident: an app-owned core keeps its profiles in the per-user store, so a
 // user whose profiles live in the service's machine store sees an empty list
 // and a Connect button that appears to do nothing. Two things guard against
-// arriving there by mistake rather than by configuration: the pipe dial itself
-// waits out a service that is merely still starting (backend::pipe), and the
-// fallback is reported at warn with a plain description of what changed. On
-// Windows we then keep watching for a while and say so if the service turns up
-// late, so a user in that state is told a restart is all it takes.
+// arriving there by mistake rather than by configuration: the dial itself waits
+// out a service that is merely still starting (backend::pipe, and
+// backend::unix where the platform warrants it), and the fallback is reported
+// at warn with a plain description of what changed. Where a listener can be
+// probed without displacing whoever holds it — Windows via WaitNamedPipeW,
+// Linux via /proc/net/unix — we then keep watching for a while and say so if
+// the service turns up late, so a user in that state is told a restart is all
+// it takes. macOS has no such probe, so there the warning stands alone.
 // =============================================================================
 fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
     if mock_requested(std::env::var("TENEBRA_MOCK").ok().as_deref()) {
@@ -227,7 +231,7 @@ fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
         }
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     if let Some(path) = backend::unix::configured_path() {
         match backend::unix::UnixBackend::connect(&path, Arc::clone(&sink)) {
             Ok(backend) => {
@@ -237,15 +241,19 @@ fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
             // As on Windows: a working configuration, but on an installed
             // machine a downgrade the user cannot see from the UI, so it is
             // reported as a warning naming what changed.
-            Err(e) => sink.log(
-                "warn",
-                &format!(
-                    "could not reach the Tenebra daemon on {path} ({e}); \
-                     running this app's own core instead — profiles saved by the daemon \
-                     are not visible here, and connecting in tun mode needs \
-                     administrator rights"
-                ),
-            ),
+            Err(e) => {
+                sink.log(
+                    "warn",
+                    &format!(
+                        "could not reach the Tenebra daemon on {path} ({e}); \
+                         running this app's own core instead — profiles saved by the daemon \
+                         are not visible here, and connecting in tun mode needs \
+                         root privileges"
+                    ),
+                );
+                #[cfg(target_os = "linux")]
+                watch_for_a_late_daemon(path, Arc::clone(&sink));
+            }
         }
     }
 
@@ -288,14 +296,15 @@ fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
 
 /// How long the app keeps an eye out for a service that started after it did,
 /// and how often it looks. The window covers the cases where the fallback was a
-/// lost race rather than a verdict — an installer's `sc start`, a boot where the
-/// SCM was slow, a service started by hand right after the app — and then stops:
-/// a machine that genuinely has no service should not carry a polling thread for
-/// the life of the process. The tick is deliberately lazy; nothing here depends
-/// on catching the transition promptly, only on catching it at all.
-#[cfg(windows)]
+/// lost race rather than a verdict — an installer's `sc start` or `systemctl
+/// start`, a boot where the service manager was slow, a service started by hand
+/// right after the app — and then stops: a machine that genuinely has no service
+/// should not carry a polling thread for the life of the process. The tick is
+/// deliberately lazy; nothing here depends on catching the transition promptly,
+/// only on catching it at all.
+#[cfg(any(windows, target_os = "linux"))]
 const LATE_SERVICE_WATCH: Duration = Duration::from_secs(60);
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 const LATE_SERVICE_TICK: Duration = Duration::from_secs(2);
 
 /// Watch for a service that comes up after this app already committed to its own
@@ -333,11 +342,41 @@ fn watch_for_a_late_service(name: String, sink: Arc<dyn EventSink>) {
         });
 }
 
+/// Watch for a daemon that comes up after this app already committed to its own
+/// core, and say so once if it does. The Linux half of
+/// [`watch_for_a_late_service`], for the same reason and with the same limits;
+/// it probes the kernel's socket table rather than dialing (see
+/// [`backend::unix::is_listening`]), so it never displaces the session of
+/// whatever client the daemon is actually serving.
+#[cfg(target_os = "linux")]
+fn watch_for_a_late_daemon(path: String, sink: Arc<dyn EventSink>) {
+    // A thread that cannot be spawned costs the user nothing but this notice.
+    let _ = std::thread::Builder::new()
+        .name("tenebra-daemon-watch".into())
+        .spawn(move || {
+            let appeared = await_probe(
+                || backend::unix::is_listening(&path),
+                LATE_SERVICE_TICK,
+                LATE_SERVICE_WATCH,
+            );
+            if appeared {
+                sink.log(
+                    "warn",
+                    &format!(
+                        "the Tenebra daemon is listening on {path} now, but this session is \
+                         already running the app's own core; restart Tenebra to control the \
+                         daemon and see the profiles saved there"
+                    ),
+                );
+            }
+        });
+}
+
 /// Poll `probe` every `tick` until it answers true or `window` runs out,
 /// reporting whether it ever did. Split out from the watch thread so its
 /// schedule — look first, then wait, and always look at least once — can be
-/// tested without a real pipe or real seconds.
-#[cfg(windows)]
+/// tested without a real pipe, a real socket, or real seconds.
+#[cfg(any(windows, target_os = "linux"))]
 fn await_probe(mut probe: impl FnMut() -> bool, tick: Duration, window: Duration) -> bool {
     let deadline = Instant::now() + window;
     loop {
@@ -379,41 +418,117 @@ fn mock_requested(value: Option<&str>) -> bool {
 /// platform: `sing-box.exe` on Windows (with wintun.dll in the same directory
 /// for the tun device to load), plain `sing-box` elsewhere.
 ///
-/// Fails closed: if the bundled resource can't be resolved to an absolute path
-/// that exists, we return an error instead of falling back to a bare name.
-/// A bare `sing-box` would be resolved by the core relative to its CWD (and
-/// then PATH), so a `sing-box` planted in an attacker-chosen working directory
-/// could be launched with the tunnel's privileges. `resolve` against the
-/// Resource base directory is always absolute and rooted at the app bundle, so
-/// it can't be redirected by the CWD; requiring it removes the planting vector.
-/// The `TENEBRA_SINGBOX` override is operator-supplied, not webview-reachable,
-/// so it stays trusted.
+/// The core derives more than the executable from this path: the bundled
+/// rule-sets (`geoip-ru.srs` and friends) are looked up in the same directory,
+/// so whatever answers here has to be the directory the whole payload was laid
+/// down in.
+///
+/// Fails closed: if no candidate resolves to an absolute path that exists, we
+/// return an error instead of falling back to a bare name. A bare `sing-box`
+/// would be resolved by the core relative to its CWD (and then PATH), so a
+/// `sing-box` planted in an attacker-chosen working directory could be launched
+/// with the tunnel's privileges. Every candidate here is absolute — Tauri's
+/// `resolve` against the Resource base directory is rooted at the app bundle,
+/// and the packaged locations are literal system paths — so none can be
+/// redirected by the CWD. The `TENEBRA_SINGBOX` override is operator-supplied,
+/// not webview-reachable, so it stays trusted.
 fn singbox_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     if let Some(p) = std::env::var_os("TENEBRA_SINGBOX") {
         return Ok(std::path::PathBuf::from(p));
     }
     #[cfg(windows)]
-    let resource = "resources/sing-box.exe";
+    let name = "sing-box.exe";
     #[cfg(not(windows))]
-    let resource = "resources/sing-box";
+    let name = "sing-box";
+    let resource = format!("resources/{name}");
 
+    let mut tried: Vec<String> = Vec::new();
     let resolved = app
         .path()
-        .resolve(resource, tauri::path::BaseDirectory::Resource)
+        .resolve(&resource, tauri::path::BaseDirectory::Resource)
         .map_err(|e| {
             format!(
                 "cannot resolve the bundled sing-box resource ({resource}): {e}; \
                  refusing to fall back to a bare name resolved from CWD/PATH"
             )
         })?;
-    if !resolved.exists() {
-        return Err(format!(
-            "bundled sing-box resource resolved to {} but no file is there; \
-             refusing to fall back to a bare name resolved from CWD/PATH",
-            resolved.display()
-        ));
+    if resolved.exists() {
+        return Ok(resolved);
     }
-    Ok(resolved)
+    tried.push(resolved.display().to_string());
+
+    for candidate in packaged_resource_paths(name) {
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+        tried.push(candidate.display().to_string());
+    }
+
+    Err(format!(
+        "no bundled sing-box found (looked for {}); \
+         refusing to fall back to a bare name resolved from CWD/PATH",
+        tried.join(", ")
+    ))
+}
+
+/// Where a distribution package may have put the payload instead of the layout
+/// Tauri's own bundler produces.
+///
+/// Tauri resolves resources relative to the bundle it built (`/usr/lib/Tenebra`
+/// from the .deb, the mount point inside an AppImage), which is exactly right
+/// for those two and useless for a native package built without the bundler: a
+/// distribution package spreads the same payload across the filesystem
+/// hierarchy, with the launcher in `<prefix>/bin` and the private helpers in a
+/// per-package directory. Arch ships one of those, and it carries its own
+/// sing-box — the binary is not in the official repositories — so the resources
+/// really are somewhere under `/usr/lib/tenebra` rather than beside the app.
+///
+/// The system directories are the ones the core walks for the same payload
+/// (`adapters/linux.InstallDirs`), in the same order, so both ends of the handoff
+/// agree on where a package may have put things: `<prefix>/{lib,libexec,share}
+/// /tenebra` derived from the running executable, then the same three under
+/// `/usr` as an absolute backstop. Each is tried with and without the
+/// `resources/` sub-directory the bundler adds. The core's list opens with the
+/// executable's own directory, which here is already covered by the Tauri
+/// resolve this runs after; it closes with a `PATH` lookup, which this one
+/// deliberately omits — a search that ends in a spawn must not resolve anything
+/// a user could have planted, the whole reason [`singbox_path`] fails closed.
+///
+/// Empty off Linux: nothing else ships the app outside its own bundle format.
+fn packaged_resource_paths(name: &str) -> Vec<std::path::PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::path::PathBuf;
+
+        // /usr for a /usr/bin/tenebra, /usr/local for a local install; absent
+        // when the executable cannot be located, leaving the /usr backstop.
+        let prefix = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().and_then(|dir| dir.parent()).map(PathBuf::from));
+
+        let mut out: Vec<PathBuf> = Vec::new();
+        for base in prefix.into_iter().chain([PathBuf::from("/usr")]) {
+            for private in ["lib", "libexec", "share"] {
+                let dir = base.join(private).join("tenebra");
+                for candidate in [dir.join(name), dir.join("resources").join(name)] {
+                    // An install under /usr makes the prefix and the backstop the
+                    // same directory; drop the repeats so the error a miss
+                    // produces reads as an honest search path. Absolute only —
+                    // a relative candidate would be resolved from the current
+                    // directory, the very thing this must never do.
+                    if candidate.is_absolute() && !out.contains(&candidate) {
+                        out.push(candidate);
+                    }
+                }
+            }
+        }
+        out
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = name;
+        Vec::new()
+    }
 }
 
 // --- command handlers ---------------------------------------------------------
@@ -796,6 +911,7 @@ pub fn run() {
             set_language,
             take_launch_deep_links,
             update_channel::check_update_for_channel,
+            update_channel::in_app_updates_supported,
             crash::check_crash_report,
             crash::record_web_crash,
             crash::open_report_url,
@@ -808,10 +924,19 @@ pub fn run() {
 /// any link the app launched with (cold start), and forward links that arrive
 /// while it runs. Pulled out of `run` so the setup closure stays readable.
 fn setup_deep_link(app: &AppHandle) {
-    // Development only: register the tenebra:// scheme at runtime so links work
-    // from a `tauri dev` build. In a release build the installer owns
-    // registration, pointing the scheme at the installed executable.
-    #[cfg(debug_assertions)]
+    // Register the tenebra:// scheme at runtime where nothing else will have.
+    // In development that is every platform: a `tauri dev` build was never
+    // installed, so no installer claimed the scheme for it.
+    //
+    // On Linux it is also the release path. The scheme is claimed by a .desktop
+    // file, and only a package that installs one — the .deb, or a native package
+    // shipping the same entry — hands the desktop environment a handler; an
+    // AppImage is a single file that no one registered, so without this the
+    // link has nowhere to go. Registration writes a per-user handler entry
+    // pointing at this executable (the AppImage path when running from one) and
+    // is idempotent, so re-running it on every launch keeps it correct after the
+    // file moves. A machine without `xdg-mime` simply gets an error we ignore.
+    #[cfg(any(debug_assertions, target_os = "linux"))]
     {
         let _ = app.deep_link().register_all();
     }
@@ -1131,7 +1256,7 @@ mod tests {
         assert!(mock_requested(Some("yes")));
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     #[test]
     fn the_service_watch_stops_at_the_first_sighting() {
         // A service that shows up on the third look is reported, and the watch
@@ -1150,7 +1275,7 @@ mod tests {
         assert_eq!(looks.get(), 3, "the watch must stop once it has an answer");
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     #[test]
     fn the_service_watch_gives_up_when_its_window_closes() {
         // Nothing ever appears — the ordinary case on a machine with no service
@@ -1169,6 +1294,50 @@ mod tests {
             looks.get() >= 1,
             "the window must be given at least one look"
         );
+    }
+
+    #[test]
+    fn packaged_resource_paths_stay_absolute_and_off_windows_and_macos() {
+        // The fallback exists for a distribution package that lays the payload
+        // out per the FHS instead of inside a Tauri bundle. Every candidate has
+        // to be an absolute system path: a relative one would be resolved from
+        // the current directory, which is exactly the planting vector
+        // `singbox_path` fails closed to avoid.
+        let paths = packaged_resource_paths("sing-box");
+        assert!(
+            paths.iter().all(|p| p.is_absolute()),
+            "every candidate must be absolute: {paths:?}"
+        );
+
+        #[cfg(target_os = "linux")]
+        {
+            let shown: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+            // The layout the Arch package actually ships — sing-box is not in
+            // the official repositories, so the package carries its own copy
+            // beside the rule-sets — plus the other FHS homes the core walks for
+            // the same payload, and the bundler's resources/ sub-directory.
+            for expected in [
+                "/usr/lib/tenebra/sing-box",
+                "/usr/lib/tenebra/resources/sing-box",
+                "/usr/libexec/tenebra/sing-box",
+                "/usr/share/tenebra/sing-box",
+            ] {
+                assert!(
+                    shown.iter().any(|p| p == expected),
+                    "missing {expected} in {shown:?}"
+                );
+            }
+            // Each directory is offered once, even though the running
+            // executable's own prefix is very often /usr itself.
+            let mut unique = shown.clone();
+            unique.sort();
+            unique.dedup();
+            assert_eq!(unique.len(), shown.len(), "duplicate candidates: {shown:?}");
+        }
+        // Nothing else ships the app outside its own bundle format, so nothing
+        // else widens the search.
+        #[cfg(not(target_os = "linux"))]
+        assert!(paths.is_empty(), "unexpected candidates: {paths:?}");
     }
 
     #[test]

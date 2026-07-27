@@ -190,6 +190,12 @@ export interface Strings {
     copied: string;
     /** Windows fallback hint — the installer refreshes the service. */
     reinstallHint: string;
+    /**
+     * Linux hint. The daemon is a system service installed with the package,
+     * not something the app can touch: updating means updating the package and
+     * restarting the service, in that order.
+     */
+    restartServiceHint: string;
     dismiss: string;
     /**
      * Bootstrap banner: the opening snapshot keeps failing, so the app has no
@@ -411,6 +417,13 @@ export interface Strings {
     updatesError: string;
     /** "Current version {version}", shown while idle. */
     updatesCurrent: string;
+    /**
+     * Shown in place of the whole updater flow when the app cannot replace
+     * itself — a Linux install that came from a package manager rather than an
+     * AppImage. The controls are disabled there, so this has to say where
+     * updates do come from instead of leaving a dead button.
+     */
+    updatesPackaged: string;
     /** "Install updates automatically" toggle label and its explanation. */
     autoInstall: string;
     autoInstallHint: string;
@@ -707,6 +720,8 @@ const en: Strings = {
     copyCommand: "Copy update command",
     copied: "Copied",
     reinstallHint: "Reinstall the app to update it",
+    restartServiceHint:
+      "Update the Tenebra package, then restart the tenebra service",
     dismiss: "Dismiss",
     unreachable:
       "No connection to the background service — retrying. Until it answers, connecting and settings do nothing.",
@@ -875,6 +890,8 @@ const en: Strings = {
     updatesInstalling: "Installing…",
     updatesError: "Couldn't check for updates. Try again later.",
     updatesCurrent: "Current version {version}",
+    updatesPackaged:
+      "This copy was installed by your package manager — update Tenebra through it.",
     autoInstall: "Install updates automatically",
     autoInstallHint:
       "When a launch check finds a new version, install it and restart without asking.",
@@ -1136,6 +1153,8 @@ const ru: Strings = {
     copyCommand: "Скопировать команду обновления",
     copied: "Скопировано",
     reinstallHint: "Переустановите приложение, чтобы обновить её",
+    restartServiceHint:
+      "Обновите пакет Tenebra и перезапустите службу tenebra",
     dismiss: "Скрыть",
     unreachable:
       "Нет связи с фоновой службой — повторяем попытки. Пока она не ответит, подключение и настройки не работают.",
@@ -1304,6 +1323,8 @@ const ru: Strings = {
     updatesInstalling: "Устанавливаю…",
     updatesError: "Не удалось проверить обновление. Попробуйте позже.",
     updatesCurrent: "Текущая версия {version}",
+    updatesPackaged:
+      "Эта копия установлена пакетным менеджером — обновляйте Tenebra через него.",
     autoInstall: "Устанавливать обновления автоматически",
     autoInstallHint:
       "Если проверка при запуске нашла новую версию — установить её и перезапустить без вопросов.",

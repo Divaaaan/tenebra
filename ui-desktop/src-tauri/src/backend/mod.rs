@@ -6,10 +6,10 @@
 //! transport-agnostic protocol client; [`sidecar`] runs it over a spawned
 //! core's stdin/stdout; [`pipe`] (Windows) runs it over the named pipe of a
 //! core that outlives the GUI — the service or `tenebra-core --pipe`; [`unix`]
-//! (macOS) runs it over the unix domain socket of a root LaunchDaemon that
-//! likewise outlives the GUI — `tenebra-core --socket`; [`mock`] is an
-//! in-process fake for UI work without the core. `make_backend` in `lib.rs`
-//! picks one at startup.
+//! (macOS and Linux) runs it over the unix domain socket of a root daemon that
+//! likewise outlives the GUI — the macOS LaunchDaemon or the Linux systemd
+//! service, both `tenebra-core --socket`; [`mock`] is an in-process fake for UI
+//! work without the core. `make_backend` in `lib.rs` picks one at startup.
 //!
 //! The structs below mirror the protocol's `State`, `Node`, `Profile` and
 //! `PingResult` shapes. They serialize to exactly the JSON the front-end types
@@ -21,7 +21,10 @@ pub mod pipe;
 pub mod sidecar;
 #[cfg(test)]
 pub mod testutil;
-#[cfg(target_os = "macos")]
+// Every platform whose core runs as a socket-serving daemon. Spelled out rather
+// than `cfg(unix)` so a future mobile target of this crate can't silently
+// acquire a transport that has no daemon behind it.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod unix;
 pub mod wire;
 
