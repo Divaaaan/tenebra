@@ -40,17 +40,43 @@ const MAX_DETAIL: usize = 4000;
 /// webview never supplies a URL, so the destination host can't be redirected.
 const ISSUE_BASE: &str = "https://github.com/Divaaaan/tenebra/issues/new";
 
-/// The Tenebra data directory (`%LOCALAPPDATA%\Tenebra`, falling back to the temp
-/// dir), created if missing. Pure `std::env` so it works from a panic hook set
-/// before Tauri starts, and shared with the sidecar's `core.log` path so both
-/// files land in the same, one-place-to-share directory.
+/// The Tenebra data directory (`%LOCALAPPDATA%\Tenebra` on Windows,
+/// `$XDG_DATA_HOME/Tenebra` on Linux, the temp dir elsewhere), created if
+/// missing. Pure `std::env` so it works from a panic hook set before Tauri
+/// starts, and shared with the sidecar's `core.log` path so both files land in
+/// the same, one-place-to-share directory.
+///
+/// Linux gets its own branch rather than the temp-dir fallback, and not only
+/// for tidiness: `/tmp` is world-writable and shared between users, so a
+/// pre-created `Tenebra/crash-gui.txt` symlink there would redirect this
+/// append-only writer at a file of somebody else's choosing. A per-user data
+/// directory is not shared, and survives a reboot besides.
 pub fn data_dir() -> Option<PathBuf> {
     let base = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
+        .or_else(linux_data_home)
         .unwrap_or_else(std::env::temp_dir);
     let dir = base.join("Tenebra");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
+}
+
+/// The XDG base directory for per-user data, as `$XDG_DATA_HOME` or the
+/// `$HOME/.local/share` the spec defaults it to. `None` when neither is set (a
+/// service-like environment with no home), leaving the temp-dir fallback.
+/// Absent off Linux, where the platform has its own convention.
+fn linux_data_home() -> Option<PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .or_else(|| {
+                std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share"))
+            })
+    }
+    #[cfg(not(target_os = "linux"))]
+    None
 }
 
 fn crash_file() -> Option<PathBuf> {

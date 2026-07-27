@@ -12,6 +12,7 @@ import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getVersion } from "@tauri-apps/api/app";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { invoke } from "@tauri-apps/api/core";
 
 // The screen reads the OS autostart registration on mount; stub it so no real
 // platform call happens and the toggle starts off.
@@ -32,6 +33,12 @@ vi.mock("@tauri-apps/plugin-updater", () => ({
 vi.mock("@tauri-apps/plugin-process", () => ({
   relaunch: vi.fn(),
 }));
+// The updates row also asks the backend whether this install can replace itself
+// (only a package manager's copy cannot); stub the command channel so the screen
+// mounts without a Tauri host.
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+}));
 
 describe("SettingsScreen", () => {
   beforeEach(() => {
@@ -45,6 +52,9 @@ describe("SettingsScreen", () => {
     // The updates row reads the app version on mount; restoreMocks wipes the
     // factory impl between tests, so re-arm it here like the autostart stubs.
     vi.mocked(getVersion).mockResolvedValue("0.1.0");
+    // Same for the "can this install replace itself?" probe: everything but the
+    // packaged-install case runs as a self-updating build.
+    vi.mocked(invoke).mockResolvedValue(true);
   });
 
   describe("routing", () => {
@@ -1137,6 +1147,27 @@ describe("SettingsScreen", () => {
 
       await user.click(crashReportsToggle());
       expect(tenebra.setCrashReports).toHaveBeenCalledWith(true);
+    });
+
+    it("stands the updater down when a package manager owns this install", async () => {
+      // A Linux copy from apt/pacman: the app cannot replace files the package
+      // manager owns, so the row has to say where updates come from rather than
+      // leave a Check button that leads to an install that would fail.
+      vi.mocked(invoke).mockResolvedValue(false);
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(
+        await screen.findByText(
+          "This copy was installed by your package manager — update Tenebra through it.",
+        ),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Check for updates" }),
+      ).toBeDisabled();
+      // And the auto-install preference has nothing to arm: the launch check
+      // never runs on such an install.
+      expect(autoInstallToggle()).toBeDisabled();
     });
 
     it("moves from checking to available when the updater finds a release", async () => {
