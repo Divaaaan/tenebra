@@ -28,6 +28,26 @@ messages changes between transports.
   and the UI does not need administrator rights. Diagnostics go to
   `%ProgramData%\Tenebra\service.log` in service mode (a service has no
   stderr), and to stderr under `--pipe`.
+- **unix domain socket** (macOS, Linux): `/var/run/tenebra.sock` on macOS,
+  `/run/tenebra.sock` on Linux. The same arrangement as the named pipe, for the
+  same reason — the core runs detached, as a root LaunchDaemon or a systemd
+  service, and an unprivileged GUI attaches to it — and `tenebra-core --socket`
+  serves it from a shell for development. The path differs only because `/run`
+  is the canonical spelling on Linux and the real directory on macOS is
+  `/var/run`. `TENEBRA_SOCKET` overrides it on both ends: a path, or `off`/`0`
+  to disable the transport.
+
+  Two hazards a pipe gets from the OS for free are handled at bind time. A
+  socket file left behind by a crash would otherwise wedge every later start
+  (`bind` refuses an existing path whether or not anyone serves it), so the core
+  dials it first: if something answers, another core owns the tunnel and this
+  one refuses to start rather than steal it; if nothing answers the file is
+  stale and is unlinked. And `bind` honours the umask, which would leave a
+  root-bound socket unreachable to the GUI, so it is chmod'd — see below.
+
+  The machine-scoped store lives at `/Library/Application Support/Tenebra/data`
+  on macOS and `/var/lib/tenebra/data` on Linux, clamped to root-owned `0700`
+  on every start.
 
 ### Named-pipe sessions
 
@@ -103,8 +123,8 @@ contract.
 to force the sidecar (useful in development, where a running service would
 otherwise capture the session meant for a freshly built core). It is a
 client-side override only — the core has no `TENEBRA_PIPE`, and the service
-always serves the well-known name. (macOS is symmetric here: both ends of the
-unix transport honour `TENEBRA_SOCKET`.)
+always serves the well-known name. (The unix transport is symmetric here
+instead: both ends honour `TENEBRA_SOCKET`.)
 
 The GUI dials with `SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION`, capping
 impersonation at identification: an instance-squatter admitted by the DACL
@@ -141,6 +161,42 @@ identity from adding instances to the bound name later (on pipes,
 `GENERIC_WRITE` implies `FILE_CREATE_PIPE_INSTANCE`) — which is another face
 of the same trust statement: interactive users are trusted with this control
 surface.
+
+### Unix-socket security
+
+The socket is chmod'd to `0666`: the unix-permission analog of the pipe DACL's
+grant to INTERACTIVE, and necessary for the same reason — a root daemon binds
+it and an unprivileged GUI has to reach it. Mode alone would therefore admit
+every local user, so **reaching the socket is not being admitted to it**. Each
+accepted connection is authenticated from credentials the kernel attached to
+it, which the peer cannot forge or change after connecting: `LOCAL_PEERCRED` on
+macOS, `SO_PEERCRED` on Linux.
+
+The policy those credentials feed is shared with Windows, which resolves the
+caller's SID instead: a peer is admitted if it is the daemon's own account
+(root, so an elevated same-account helper is not locked out) or the user of the
+interactive session. That is narrower than the historical "any local user" the
+pipe DACL still grants, and it is where the two platforms differ in what
+"interactive session" means:
+
+- macOS reads the owner of `/dev/console`, which the window server chowns to
+  whoever is logged in at the display.
+- Linux has no such file. It reads logind's runtime state — `ACTIVE_UID` from
+  the seat under `/run/systemd/seats` — and falls back to the sole per-user
+  runtime directory under `/run/user` when no seat state is published. Both are
+  session-manager state, not kernel interfaces: a host running seatd or no
+  session manager publishes neither.
+
+**The lookup fails open.** When the interactive user cannot be determined —
+no seat state, a session mid-transition, two seats disagreeing, an unparseable
+value — the peer is admitted and the daemon logs a warning naming the reason.
+A wrong deny bricks GUI attach, the product's core interaction, on legitimate
+edge cases; the fail-open leaves the exposure exactly where the transport
+already stood, and makes it auditable in the log rather than silent.
+
+The honest limits are the pipe's, restated: the tunnel is machine-wide, a
+second user at the same seat inherits control of it, and processes of the same
+user are not defended against each other.
 
 ## Requests
 

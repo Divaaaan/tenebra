@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build darwin || linux
 
 package control
 
@@ -13,11 +13,11 @@ import (
 	"time"
 )
 
-// tempSocketPath returns a short unix socket path under /tmp. macOS caps the
-// socket path (sun_path) at 104 bytes, and the per-test TMPDIR under
-// /var/folders is long enough to blow that once a socket name is appended; /tmp
-// is short and always present. Never /var/run — a test must not touch the
-// production path.
+// tempSocketPath returns a short unix socket path under /tmp. sun_path is capped
+// at 104 bytes on macOS (108 on Linux), and the per-test TMPDIR — under
+// /var/folders on macOS — is long enough to blow that once a socket name is
+// appended; /tmp is short and always present on both. Never the production
+// DefaultSocketPath: a test must not touch the path a live daemon binds.
 func tempSocketPath(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "tnb-sock")
@@ -30,7 +30,7 @@ func tempSocketPath(t *testing.T) string {
 
 // socketHarness runs ServeListener over a real unix domain socket, mirroring the
 // pipe harness so the shared session semantics (round-trip, takeover, EOF,
-// shutdown) are exercised on the darwin transport too. The session-behavior
+// shutdown) are exercised on the unix transport too. The session-behavior
 // coverage itself lives in listener_test.go; these tests focus on the socket
 // bring-up hygiene ListenSocket adds.
 type socketHarness struct {
@@ -166,7 +166,7 @@ func TestSocketStaleSocketCleaned(t *testing.T) {
 
 // TestSocketLiveNotStolen: a second bring-up on a socket someone is already
 // serving is refused — the dial probe answers, so the file is not stale and the
-// running core keeps its tunnel. This is the darwin stand-in for the pipe's
+// running core keeps its tunnel. This is the unix stand-in for the pipe's
 // first-instance claim (TestPipeNameCannotBeSquatted).
 func TestSocketLiveNotStolen(t *testing.T) {
 	path := tempSocketPath(t)

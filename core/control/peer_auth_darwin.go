@@ -12,26 +12,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// authorizePeer decides whether the just-accepted control-socket peer may drive
-// the daemon. It reads the connecting process's uid from the unix socket and
-// runs the shared peerAllowed policy against the console user (see peer_auth.go
-// for the trust rationale). A conn whose peer uid can't be read — an in-memory
-// test pipe, or a getsockopt failure — is allowed with a log line, matching the
-// policy's fail-open stance: the goal is to authenticate, never to brick attach.
-func (d *Daemon) authorizePeer(conn net.Conn) bool {
-	uid, ok := peerCredUID(conn)
-	if !ok {
-		// Only reached off the production path (the real listener always hands us
-		// a unix socket); log at info so it doesn't masquerade as a security event.
-		d.emitLog(LogInfo, "control: peer uid unavailable on this connection; allowing")
-		return true
-	}
-	self := strconv.Itoa(os.Getuid())
-	return peerAllowed(strconv.Itoa(uid), self, consoleUserUID, func(msg string) {
-		d.emitLog(LogWarn, msg)
-	})
-}
-
 // peerCredUID reads the connected peer's effective uid from a unix-domain socket
 // via getsockopt(SOL_LOCAL, LOCAL_PEERCRED), which returns the credentials of
 // the process on the other end at connect time. It returns ok=false for any conn
