@@ -3,15 +3,20 @@ import { StrictMode } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 
 import { useUpdateCheck } from "./useUpdateCheck";
-import { checkForUpdate, installUpdate } from "./updates";
+import {
+  checkForUpdate,
+  inAppUpdatesSupported,
+  installUpdate,
+} from "./updates";
 import type { ConnectionState } from "../api";
 import type { Update } from "@tauri-apps/plugin-updater";
 
-// The hook drives the whole launch flow through these two calls; stub the
-// module so no test touches the updater plugin or performs a real download.
-// tunnelBusy is left real (from ./tunnel) — the gate logic is what we exercise.
+// The hook drives the whole launch flow through these calls; stub the module so
+// no test touches the updater plugin or performs a real download. tunnelBusy is
+// left real (from ./tunnel) — the gate logic is what we exercise.
 vi.mock("./updates", () => ({
   checkForUpdate: vi.fn(),
+  inAppUpdatesSupported: vi.fn(),
   installUpdate: vi.fn(),
 }));
 
@@ -25,6 +30,23 @@ describe("useUpdateCheck", () => {
   beforeEach(() => {
     // The auto-install preference lives in localStorage; start each test clean.
     localStorage.clear();
+    // Every case but the packaged one runs on an install that can update
+    // itself; restoreMocks wipes the factory impl between tests, so re-arm it.
+    vi.mocked(inAppUpdatesSupported).mockResolvedValue(true);
+  });
+
+  it("does not even check on an install that cannot replace itself", async () => {
+    // A Linux copy owned by a package manager: the banner's only action would
+    // fail, so the launch check is skipped outright and nothing is offered.
+    vi.mocked(inAppUpdatesSupported).mockResolvedValue(false);
+    vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
+
+    const { result } = renderHook(() => useUpdateCheck("idle"));
+
+    await waitFor(() => expect(inAppUpdatesSupported).toHaveBeenCalled());
+    expect(checkForUpdate).not.toHaveBeenCalled();
+    expect(result.current.available).toBeNull();
+    expect(installUpdate).not.toHaveBeenCalled();
   });
 
   it("surfaces the found version for the banner", async () => {

@@ -107,7 +107,21 @@ impl SidecarBackend {
         let dir = exe
             .parent()
             .ok_or_else(|| format!("app executable {} has no parent directory", exe.display()))?;
-        resolve_core_in(dir)
+        match resolve_core_in(dir) {
+            Ok(path) => Ok(path),
+            // A native package need not keep the two side by side the way a
+            // Tauri bundle does, so fall back to the same system locations the
+            // bundled resources are looked for in (see
+            // `crate::packaged_resource_paths`) before giving up. Absolute
+            // paths only, so this stays as fail-closed as the directory scan.
+            Err(e) => {
+                let name = format!("tenebra-core{}", std::env::consts::EXE_SUFFIX);
+                crate::packaged_resource_paths(&name)
+                    .into_iter()
+                    .find(|p| p.exists())
+                    .ok_or(e)
+            }
+        }
     }
 }
 
@@ -149,9 +163,9 @@ impl WireSession for SidecarBackend {
 }
 
 /// Where the core's stderr diagnostics are written: `core.log` in the Tenebra
-/// data directory (`%LOCALAPPDATA%\Tenebra`, temp-dir fallback), so a user hitting
-/// a problem has one file to share. Shares [`crash::data_dir`](crate::crash::data_dir)
-/// with the GUI crash log so both land in the same place.
+/// data directory (per platform — see [`crash::data_dir`](crate::crash::data_dir)),
+/// so a user hitting a problem has one file to share. Shares that directory with
+/// the GUI crash log so both land in the same place.
 fn core_log_path() -> Option<PathBuf> {
     crate::crash::data_dir().map(|d| d.join("core.log"))
 }

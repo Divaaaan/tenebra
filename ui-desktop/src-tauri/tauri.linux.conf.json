@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png"
+    ],
+    "resources": [
+      "resources/sing-box",
+      "resources/geoip-ru.srs",
+      "resources/geosite-ru.srs",
+      "resources/geosite-ads.srs",
+      "../../THIRD-PARTY-NOTICES.md"
+    ],
+    "linux": {
+      "deb": {
+        "section": "net",
+        "desktopTemplate": "linux/tenebra.desktop"
+      }
+    }
+  }
+}

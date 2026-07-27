@@ -68,6 +68,7 @@ vi.mock("./api", () => ({
 // The launch update check would otherwise reach the (absent) updater plugin.
 vi.mock("./lib/updates", () => ({
   checkForUpdate: vi.fn().mockResolvedValue(null),
+  inAppUpdatesSupported: vi.fn().mockResolvedValue(true),
   installUpdate: vi.fn().mockResolvedValue(undefined),
 }));
 

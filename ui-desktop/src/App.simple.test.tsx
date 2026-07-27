@@ -68,6 +68,7 @@ vi.mock("./api", () => ({
 
 vi.mock("./lib/updates", () => ({
   checkForUpdate: vi.fn().mockResolvedValue(null),
+  inAppUpdatesSupported: vi.fn().mockResolvedValue(true),
   installUpdate: vi.fn().mockResolvedValue(undefined),
 }));
 

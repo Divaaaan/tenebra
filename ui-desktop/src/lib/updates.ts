@@ -33,6 +33,26 @@ interface UpdateMetadata {
   rawJson: Record<string, unknown>;
 }
 
+/** Whether this install can update itself in place, asked of the backend (only
+ *  Rust can see how the app was installed).
+ *
+ *  Everywhere but Linux the answer is always yes. On Linux the updater can only
+ *  replace an AppImage — a copy from a package manager is owned by that manager,
+ *  and offering to overwrite it would be a button that fails at best. The UI
+ *  therefore drops the whole flow and says where updates come from instead; see
+ *  `in_app_updates_supported` in `src-tauri/src/update_channel.rs`.
+ *
+ *  A failed call means no backend answered (an older shell, a test host), which
+ *  is not a reason to hide a working updater — it resolves to `true`, the
+ *  behaviour every build had before the question existed. */
+export async function inAppUpdatesSupported(): Promise<boolean> {
+  try {
+    return await invoke<boolean>("in_app_updates_supported");
+  } catch {
+    return true;
+  }
+}
+
 /** Ask the release host whether a newer signed release exists on the user's
  *  chosen channel. Returns the `Update` handle when one is available (the caller
  *  then downloads + installs it), or `null` when we're already current.

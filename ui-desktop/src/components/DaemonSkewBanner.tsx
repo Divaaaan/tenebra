@@ -22,9 +22,11 @@ interface DaemonSkewBannerProps {
 // One-line strip under the top bar, sharing the update banner's quiet look: a
 // skewed daemon is a degradation warning, not an incident. It names the two
 // builds and offers the platform's way out — the reinstall command on macOS
-// (where the in-app updater never touches the root LaunchDaemon), a reinstall
-// hint elsewhere (the Windows installer refreshes the service itself, so a skew
-// there means the app was laid down without running it).
+// (where the in-app updater never touches the root LaunchDaemon), the package
+// route on Linux (the daemon is a system service the package owns, so the app
+// can neither update nor restart it), and a reinstall hint on Windows (the
+// installer refreshes the service itself, so a skew there means the app was
+// laid down without running it).
 export function DaemonSkewBanner({
   daemonVersion,
   appVersion,
@@ -33,8 +35,11 @@ export function DaemonSkewBanner({
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
 
-  // No os plugin in the app; the UA is enough to pick a hint string.
+  // No os plugin in the app; the UA is enough to pick a hint string. Linux
+  // browsers report "X11" or "Linux" in it, and never "Mac", so the two tests
+  // cannot both match.
   const isMac = navigator.userAgent.includes("Mac");
+  const isLinux = !isMac && /Linux|X11/.test(navigator.userAgent);
 
   const text = daemonVersion
     ? t.daemon.stale
@@ -61,7 +66,9 @@ export function DaemonSkewBanner({
             ⧉ {copied ? t.daemon.copied : t.daemon.copyCommand}
           </button>
         ) : (
-          <span className="daemon-skew-hint">{t.daemon.reinstallHint}</span>
+          <span className="daemon-skew-hint">
+            {isLinux ? t.daemon.restartServiceHint : t.daemon.reinstallHint}
+          </span>
         )}
         <button type="button" onClick={onDismiss}>
           ✕ {t.daemon.dismiss}

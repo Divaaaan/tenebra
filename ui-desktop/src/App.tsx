@@ -135,10 +135,11 @@ export function App() {
   const update = useUpdateCheck(phase);
 
   // Daemon build vs app build, latched from state snapshots. A skew means the
-  // privileged daemon predates this UI (the macOS LaunchDaemon is never touched
-  // by the in-app updater), so toggles of newer commands silently do nothing —
-  // surface it instead. Dismissal is session-only: the degradation is real, so
-  // it may re-prompt on the next launch.
+  // privileged daemon predates this UI — nothing the app installs itself
+  // refreshes it, neither the macOS LaunchDaemon nor the Linux system service —
+  // so toggles of newer commands silently do nothing; surface it instead.
+  // Dismissal is session-only: the degradation is real, so it may re-prompt on
+  // the next launch.
   const daemonSkew = useDaemonSkew(state, __APP_VERSION__);
   const [skewDismissed, setSkewDismissed] = useState(false);
 

@@ -307,7 +307,7 @@ fn reconnecting_state() -> State {
         preset_ru_gov: None,
         crash_reports: None,
         crash_reports_asked: false,
-        error: Some("Reconnecting to the Tenebra serviceвЂ¦".to_string()),
+        error: Some("Reconnecting to the Tenebra service…".to_string()),
     }
 }
 
