@@ -32,8 +32,12 @@ sing-box
 sing-box.exe
 wintun.dll
 
-# gomobile bind leftover: the ARM core binary produced during Android bind work
-tenebra-core
+# gomobile bind leftover: the ARM core binary produced during Android bind work.
+# Anchored to the repository root on purpose — an unanchored pattern also matches
+# the cmd/tenebra-core directory, and git then silently refuses to add anything
+# new inside it (existing files stay tracked, so the hole is invisible until a
+# fresh source file goes missing from a commit).
+/tenebra-core
 
 # sing-box runtime cache, written next to wherever the core runs
 cache.db
