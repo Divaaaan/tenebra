@@ -1,0 +1,26 @@
+# The concrete desktop entry for installs that place files themselves — the Arch
+# package in packaging/arch. The .deb and the AppImage do not use it: Tauri's
+# bundler writes their entry from the handlebars template in
+# ui-desktop/src-tauri/linux/tenebra.desktop, filling the fields in from the
+# bundle config. Keep the two in step when either changes — note the bundler
+# takes Categories from `bundle.category` in tauri.conf.json, which is the
+# generic "Utility"; a VPN client belongs under Network, so aligning the two
+# means changing that config rather than this file.
+[Desktop Entry]
+Type=Application
+Name=Tenebra
+GenericName=VPN Client
+Comment=VPN client built on sing-box
+# The GUI is installed as a plain `tenebra` command; %u carries a tenebra:// URL
+# through when the entry is launched as a scheme handler.
+Exec=tenebra %u
+Icon=tenebra
+Terminal=false
+# One main category on purpose. Security would have to be paired with System or
+# Settings to satisfy the spec, and two main categories make the entry show up
+# twice in some menus — Network is where a VPN client belongs anyway.
+Categories=Network;
+Keywords=VPN;proxy;sing-box;
+# Registers the app as the handler for tenebra:// deep links — importing a
+# subscription or connecting a profile from a link goes through this line.
+MimeType=x-scheme-handler/tenebra;

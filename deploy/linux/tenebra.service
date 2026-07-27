@@ -1,0 +1,208 @@
+# systemd unit for tenebra-core, the privileged service that owns the tun device
+# on Linux. It is installed to /etc/systemd/system and enabled by
+# scripts/linux/install-daemon.sh. This is the Linux counterpart of
+# deploy/macos/com.tenebra.core.plist and of the `tenebra` Windows service: one
+# root process holds the tunnel and serves the control protocol on a unix
+# socket, and an unprivileged GUI attaches to it. See docs/porting/linux.md.
+#
+# This is the single copy of the unit, and it is written for the hand-install
+# prefix: every path below must match what scripts/linux/install-daemon.sh writes
+# to, and that script refuses to install a unit whose paths have drifted from its
+# own. packaging/arch/PKGBUILD reuses this same file and rewrites the
+# /usr/local/lib/tenebra prefix to /usr/lib/tenebra, the half of the hierarchy a
+# package owns — so keep the prefix spelled consistently rather than mixing forms.
+
+[Unit]
+Description=Tenebra VPN core
+Documentation=https://github.com/Divaaaan/tenebra/blob/main/docs/porting/linux.md
+
+# Ordering mirrors wg-quick's, the closest analog — a route-owning VPN unit
+# wants a configured link before it starts. The core fires autoconnect once at
+# startup, so coming up before the link exists would turn an armed autoconnect
+# into a failed one. nss-lookup.target keeps resolver setup ahead of the first
+# subscription refresh. The cost is the usual one: on a host where
+# network-online.target genuinely waits, boot reaches this unit later.
+Wants=network-online.target
+After=network-online.target nss-lookup.target
+# systemd-resolved, where it exists, owns the stub resolver the tunnel's DNS has
+# to coexist with; starting after it keeps that ordering deterministic. An
+# After= on a unit this system does not have is simply ignored.
+After=systemd-resolved.service
+
+# Never give up restarting. The rate limit that would otherwise put the unit into
+# a permanent failed state after a few quick restarts is disabled here (it is a
+# [Unit] setting, not a [Service] one) because a VPN daemon that has quietly
+# stopped trying is worse than one that keeps trying — the restart floor in
+# [Service] is what keeps a hard-failing binary from spinning.
+StartLimitIntervalSec=0
+
+[Service]
+# Plain forking-free process: the core does not implement sd_notify, so systemd
+# considers the service started as soon as it is exec'd. The control socket
+# appearing is the real readiness signal, and install-daemon.sh waits on it.
+Type=simple
+
+# The core serves the control protocol on /run/tenebra.sock instead of
+# stdin/stdout, which a service has no useful pair of. It lives under
+# /usr/local/lib — the FHS home for locally installed, machine-specific program
+# files — beside the sing-box it drives.
+ExecStart=/usr/local/lib/tenebra/tenebra-core --socket
+
+# Point the core at the sing-box installed beside it. This also drives local
+# rule-set loading: the core looks for the .srs rule-sets in the directory of
+# TENEBRA_SINGBOX, and with it unset they fall back to a slow remote download at
+# connect time (see ruleSetDir in cmd/tenebra-core).
+#
+# TENEBRA_CONFIG_DIR is deliberately NOT set here. Running as root the core pins
+# its own machine-scoped store at /var/lib/tenebra/data and clamps it to
+# root-owned 0700 — but only when the variable is unset, since an operator-set
+# value is honoured as an override everywhere else. Setting it here would look
+# tidy and quietly skip that clamp, so the store's protection is left to the
+# code that enforces it.
+Environment=TENEBRA_SINGBOX=/usr/local/lib/tenebra/sing-box
+
+# The machine-scoped store, created before the service starts and owned by root.
+# 0700 matches the mode the core itself enforces on it; profiles hold
+# subscription credentials, which unprivileged users reach through the socket
+# protocol, never through the files.
+StateDirectory=tenebra/data
+StateDirectoryMode=0700
+# sing-box writes its cache database relative to the working directory, so give
+# it the state directory rather than letting the file land in /.
+WorkingDirectory=/var/lib/tenebra/data
+
+# Restart on every exit, the process-supervision backstop beneath the kill
+# switch: the core relaunches a dead sing-box on its own, but nothing inside the
+# core can put the core back if the core itself crashes. systemd outlives both
+# and re-establishes the tunnel and its strict_route filter on the next start.
+# The 5s floor keeps a hard-failing binary from spinning; together with the
+# disabled start-limit in [Unit] this matches launchd's KeepAlive on macOS.
+Restart=always
+RestartSec=5
+
+# Tearing down auto_route leaves routes and routing rules to unwind, so give the
+# core room to exit cleanly on SIGTERM before systemd escalates to SIGKILL; a
+# kill mid-teardown can strand routes pointing at a dead interface. The default
+# control-group kill mode is what stops the sing-box child along with it.
+TimeoutStopSec=20
+
+# Both streams go to the journal — the platform's own log, so there is no
+# service.log to rotate the way the macOS LaunchDaemon needs. Read it with
+# `journalctl -u tenebra -f`.
+SyslogIdentifier=tenebra
+
+# A proxy multiplexes a lot of sockets; the default 1024 soft limit is the wrong
+# order of magnitude for one, and running out of descriptors surfaces as opaque
+# connection failures rather than a clear error.
+LimitNOFILE=infinity
+
+# --- Sandboxing -------------------------------------------------------------
+#
+# The daemon runs as root because opening /dev/net/tun and programming routes
+# require it, so the sandbox below is about shrinking what that root process can
+# reach beyond the tunnel — not about dropping to an unprivileged user, which is
+# not possible for this workload. Every knob here was chosen against one rule:
+# nothing may interfere with the tun device, routing, or DNS.
+#
+# Deliberately NOT set, because each of these would break the tunnel:
+#   PrivateDevices=      replaces /dev with a minimal set that has no
+#                        /dev/net/tun, so the tunnel could not be opened at all.
+#   ProtectKernelTunables=  policy routing for a tun device is configured partly
+#                        through /proc/sys — reverse-path filtering above all —
+#                        which this would mount read-only.
+#   ProtectProc=, ProcSubset=  per-app split tunnelling matches traffic by
+#                        reading other processes' /proc entries; an invisible
+#                        /proc silently stops matching anything.
+#   PrivateNetwork=, RestrictNetworkInterfaces=, IPAddressDeny=  a VPN client
+#                        creates its own interface and dials arbitrary endpoints.
+#   ProtectKernelModules=  would only add a redundant seccomp layer: CAP_SYS_MODULE
+#                        is already outside the bounding set below, so this
+#                        process cannot load a module either way, and leaving it
+#                        off keeps the tun autoload path easy to reason about.
+
+# No setuid or setgid helper is ever exec'd — sing-box is a plain binary — so
+# nothing here can gain privileges the unit did not start with.
+NoNewPrivileges=yes
+
+# The capabilities a running tunnel actually needs, and nothing else. Everything
+# outside this set is unavailable to the core and to the sing-box it spawns —
+# no CAP_SYS_ADMIN, no CAP_SYS_MODULE, no CAP_SYS_BOOT, no CAP_DAC_OVERRIDE — so
+# a compromised tunnel process stops well short of the root it nominally runs as.
+#   CAP_NET_ADMIN        open /dev/net/tun, and install auto_route's routes,
+#                        routing rules and nftables sets.
+#   CAP_NET_RAW          bind sockets to a specific interface (SO_BINDTODEVICE),
+#                        which auto-detect-interface relies on, plus ICMP probes.
+#   CAP_NET_BIND_SERVICE bind a privileged port when a config puts DNS on 53.
+#   CAP_SYS_PTRACE       resolve another process's executable through /proc for
+#   CAP_DAC_READ_SEARCH  per-app split tunnelling; the same pair upstream
+#                        sing-box's own unit carries for process matching.
+#   CAP_CHOWN            re-assert root ownership of the data directory on every
+#                        start, the anti-squat clamp the core performs itself.
+# The last three are the broad ones and are here on purpose: DAC_READ_SEARCH does
+# bypass read permission checks, and CHOWN can retitle any file. They buy process
+# matching and the store clamp respectively, and dropping them would trade a
+# working feature for a capability a root process could reacquire no other way.
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_CHOWN
+
+# Device access: the standard pseudo-devices (/dev/null, /dev/zero, /dev/random,
+# /dev/urandom, /dev/tty, ...) stay reachable under `closed`, everything else is
+# denied, and /dev/net/tun is added back because it is the tunnel. Note this is
+# the cgroup device filter, not a private /dev — the node keeps its real
+# identity, which is exactly why PrivateDevices= is not used above.
+DevicePolicy=closed
+DeviceAllow=/dev/net/tun rw
+
+# /usr, /boot, /efi and /etc read-only. /run and /var stay writable, which they
+# must: the control socket is bound at /run/tenebra.sock and the store lives
+# under /var/lib. ProtectSystem=strict is not used for the same reason — it
+# would take /run with it. Nothing in the tunnel path writes below /etc: unlike
+# wg-quick, sing-box installs DNS by routing it into the tunnel rather than by
+# rewriting resolv.conf. If that ever changes, relax this to `yes` rather than
+# punching a ReadWritePaths= hole into /etc.
+ProtectSystem=full
+
+# Home directories are invisible to the daemon. Its store is the machine-scoped
+# /var/lib/tenebra/data, so it has no business in anyone's home, and a tunnel
+# process that is compromised should not be able to read user files.
+ProtectHome=yes
+
+# A private /tmp and /var/tmp. Nothing here coordinates through either, so this
+# only removes a shared namespace that temp-file attacks live in.
+PrivateTmp=yes
+
+# Read-only cgroup hierarchy and no clock changes: the tunnel needs neither, and
+# both are standard footholds for persistence and for skewing certificate
+# validity checks.
+ProtectControlGroups=yes
+ProtectClock=yes
+
+# The daemon never unshares a namespace, never asks for realtime scheduling and
+# never creates setuid files. Denying all three costs nothing and removes a
+# common sandbox-escape and privilege-escalation surface.
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+# The address families a tunnel needs: AF_UNIX for the control socket, AF_INET
+# and AF_INET6 for proxied traffic, AF_NETLINK to program interfaces, routes and
+# rules, and AF_PACKET because sing-box's DHCP-based DNS transport and its raw
+# probes use it. Everything else (Bluetooth, CAN, XDP, ...) is refused.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET
+
+# The standard system-service syscall allow-list. It keeps the socket, ioctl and
+# netlink calls the tunnel is built on while blocking module loading, mounting,
+# swapping, rebooting and raw I/O. SystemCallArchitectures=native additionally
+# rejects the compat (32-bit) call table, a classic way to reach a syscall the
+# filter only blocked in its native form.
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+
+# Everything the daemon writes — profiles carrying subscription credentials, the
+# sing-box cache — is root-only. The control socket is not affected: the core
+# chmods it to 0666 after binding so an unprivileged GUI can attach, and chmod
+# ignores the umask.
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

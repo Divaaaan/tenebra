@@ -17,6 +17,15 @@ target/
 /ui-desktop/src-tauri/target/
 /ui-desktop/src-tauri/gen/
 
+# makepkg builds in place, so running packaging/arch/PKGBUILD from a checkout
+# drops a source clone, a build tree and the finished package next to it
+/packaging/arch/src/
+/packaging/arch/pkg/
+/packaging/arch/tenebra/
+/packaging/arch/*.pkg.tar.*
+/packaging/arch/*.srs
+/packaging/arch/sing-box-*.tar.gz
+
 # sing-box and tunnel binaries are fetched at build time, never committed
 /bin/
 sing-box

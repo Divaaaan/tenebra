@@ -1,0 +1,201 @@
+# Maintainer: Tenebra contributors <https://github.com/Divaaaan/tenebra/issues>
+
+# Builds Tenebra from source for Arch Linux: the privileged core daemon, the
+# Tauri desktop UI, the systemd unit and the bundled sing-box the generated
+# configs are cut against. Tauri's bundler has no pacman target — its config
+# schema only knows deb, rpm, appimage, msi, nsis, app and dmg — so the desktop
+# binary is built with --no-bundle and packaged here instead.
+#
+# Build and install straight from a checkout:
+#   cd packaging/arch && makepkg -si
+#
+# See docs/porting/linux.md for how this differs from the hand-install script in
+# scripts/linux, and for the update story (pacman, not the in-app updater).
+
+pkgname=tenebra
+# The release this builds. It is also the git tag the source is taken from, so it
+# has to name a tag that exists — scripts/set-version.mjs rewrites this line along
+# with the desktop manifests and the Go core, which is what keeps the two in step.
+# Do not edit it by hand.
+pkgver=0.4.5
+pkgrel=1
+pkgdesc="VPN client built on sing-box: a privileged core daemon and a desktop UI"
+arch=('x86_64')
+url="https://github.com/Divaaaan/tenebra"
+# The repository ships the plain GPLv3 text with no "or later" grant in any
+# source header, so the narrow identifier is the accurate one; ui-desktop's
+# Cargo.toml and package.json declare the same.
+license=('GPL-3.0-only')
+depends=(
+  'webkit2gtk-4.1'            # the web engine the Tauri shell renders in
+  'gtk3'                      # the toolkit under it
+  # The system tray. namcap will report this as "may not be needed" because
+  # nothing links against it — the tray-icon crate dlopen's it at runtime — so
+  # do not drop it on namcap's advice or the tray silently disappears.
+  'libayatana-appindicator'
+  'hicolor-icon-theme'        # owns the icon directories this package fills
+)
+makedepends=(
+  'git'                       # the source is a tagged clone
+  'go'                        # the core and the sidecar
+  'rust'                      # the Tauri shell
+  'nodejs'                    # the front end
+  'npm'
+)
+install="${pkgname}.install"
+# Arch enables link-time optimisation by default, which appends -flto=auto to the
+# CFLAGS and LDFLAGS makepkg exports. The Rust dependency tree here reaches `ring`
+# (through rustls, through the updater plugin), and ring's build script assembles
+# hand-written .S files with exactly those CFLAGS — under -flto they come out as
+# bitcode with none of the asm symbols in them, and the final link dies on a wall
+# of "undefined symbol: ring_core_*". Turning LTO off for this package is the
+# standard remedy and costs nothing here, since Rust does its own LTO anyway.
+#
+# !debug for a plainer reason: both binaries ship stripped of debug info, so the
+# split debug package Arch would otherwise build carries no symbols at all — just
+# a copy of the sources and a pair of "No debugging symbols" errors from
+# gdb-add-index during the strip step.
+options=('!lto' '!debug')
+
+# sing-box is bundled, not depended on. Do not "simplify" this into
+# depends=('sing-box'): there is no such package in core or extra — `pacman -S
+# sing-box` on a stock Arch install answers "target not found" — it exists only
+# in the AUR, and a repository package may not depend on an AUR one. Bundling is
+# also what keeps the engine on the exact version Tenebra's config generator
+# targets, the same reason the Windows and macOS bundles pin it. The binary goes
+# into this package's private directory rather than /usr/bin, so a user who
+# already has the AUR sing-box installed keeps it and nothing collides.
+#
+# makepkg verifies the digest below before anything is unpacked. Keep this
+# version and the three rule-set commits in step with scripts/fetch-resources.sh
+# and scripts/fetch-resources.ps1 — all three files pin the same artifacts.
+_singboxver=1.13.13
+_geoipcommit=a508a0a09d30111e0ab5a0d9a3de1aff832d72b4
+_geositecommit=02b7bc85184c7fa94ccdfe9a35b7f4a169b28b4d
+
+# The rule-sets are shipped locally so smart routing loads them from disk instead
+# of downloading them at every connect (a throttled raw.githubusercontent.com
+# blocks sing-box startup for ~10s). They are pinned to immutable commits rather
+# than the rolling `rule-set` branch, which is regenerated daily and would drift
+# out from under the checksums.
+source=(
+  "git+${url}.git#tag=v${pkgver}"
+  "sing-box-${_singboxver}-linux-amd64.tar.gz::https://github.com/SagerNet/sing-box/releases/download/v${_singboxver}/sing-box-${_singboxver}-linux-amd64.tar.gz"
+  "geoip-ru-${_geoipcommit}.srs::https://raw.githubusercontent.com/SagerNet/sing-geoip/${_geoipcommit}/geoip-ru.srs"
+  "geosite-ru-${_geositecommit}.srs::https://raw.githubusercontent.com/SagerNet/sing-geosite/${_geositecommit}/geosite-category-ru.srs"
+  "geosite-ads-${_geositecommit}.srs::https://raw.githubusercontent.com/SagerNet/sing-geosite/${_geositecommit}/geosite-category-ads-all.srs"
+)
+# A git tag is verified by its own name, not a tarball digest, so SKIP is the
+# only meaningful value for the first entry. Every downloaded artifact after it
+# is pinned.
+sha256sums=(
+  'SKIP'
+  'bb99cabf47694625db421ee17898f36cdc1f9c2cb5decf65b12bac8d8437e842'
+  '8bc18433e5d5b0644ba2a9ff74cd03428ba4f4e388b3c409f182de930e3c3170'
+  '3fb41849eefac86a4e65a86da3b868ecd40512e4d3f097ee325474f4cd401f76'
+  'ca44c97fce76f4f889e08bbc28e80d497a43239328e09f760129844057a2780a'
+)
+
+prepare() {
+  cd "${pkgname}"
+
+  # Fetch every dependency up front so build() does no network I/O, and keep the
+  # caches inside $srcdir instead of the packager's home.
+  export GOPATH="${srcdir}/gopath"
+  go mod download
+
+  cd ui-desktop
+  npm ci
+  cd src-tauri
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/^host: //p')"
+}
+
+build() {
+  cd "${pkgname}"
+
+  export GOPATH="${srcdir}/gopath"
+  # Arch's Go packaging template builds with cgo and an external linker, which
+  # gets the distribution's full-RELRO LDFLAGS into the binary. This one does not,
+  # on purpose: cgo also switches Go's net package to the libc resolver, and DNS
+  # behaviour is load-bearing for a VPN client — the Windows and macOS builds are
+  # cgo-free, and the resolver must not differ per platform. The cost is a namcap
+  # "lacks FULL RELRO" warning on tenebra-core; PIE is still on.
+  export CGO_ENABLED=0
+  # -trimpath keeps build paths out of the binary, -mod=readonly refuses to edit
+  # go.mod mid-build, and -modcacherw leaves the module cache deletable.
+  export GOFLAGS="-trimpath -mod=readonly -modcacherw -buildmode=pie"
+  go build -o build/tenebra-core ./cmd/tenebra-core
+
+  # Tauri resolves an externalBin sidecar by target triple at build time, so the
+  # core has to exist under that name even though the packaged app never spawns
+  # it: on Linux the UI attaches to the root daemon's socket instead. The triple
+  # comes from rustc rather than being spelled out, so it stays right on any
+  # architecture this package is ever built for.
+  local triple
+  triple="$(rustc -vV | sed -n 's/^host: //p')"
+  install -Dm755 build/tenebra-core \
+    "ui-desktop/src-tauri/binaries/tenebra-core-${triple}"
+
+  # The bundled sing-box and rule-sets have to sit where the Tauri config
+  # declares its resources, or the build fails on a missing resource.
+  install -Dm755 "${srcdir}/sing-box-${_singboxver}-linux-amd64/sing-box" \
+    ui-desktop/src-tauri/resources/sing-box
+  install -Dm644 "${srcdir}/geoip-ru-${_geoipcommit}.srs" ui-desktop/src-tauri/resources/geoip-ru.srs
+  install -Dm644 "${srcdir}/geosite-ru-${_geositecommit}.srs" ui-desktop/src-tauri/resources/geosite-ru.srs
+  install -Dm644 "${srcdir}/geosite-ads-${_geositecommit}.srs" ui-desktop/src-tauri/resources/geosite-ads.srs
+
+  cd ui-desktop
+  export RUSTUP_TOOLCHAIN=stable
+  # --no-bundle stops at the compiled binary: pacman is the bundler here, and the
+  # deb/AppImage targets would only produce artifacts this package throws away.
+  npm run tauri build -- --no-bundle
+}
+
+package() {
+  cd "${pkgname}"
+
+  # The privileged half. Core, sing-box and the rule-sets live together because
+  # the core resolves the rule-sets from the directory of TENEBRA_SINGBOX.
+  install -Dm755 build/tenebra-core "${pkgdir}/usr/lib/${pkgname}/tenebra-core"
+  install -Dm755 ui-desktop/src-tauri/resources/sing-box "${pkgdir}/usr/lib/${pkgname}/sing-box"
+  install -Dm644 ui-desktop/src-tauri/resources/geoip-ru.srs "${pkgdir}/usr/lib/${pkgname}/geoip-ru.srs"
+  install -Dm644 ui-desktop/src-tauri/resources/geosite-ru.srs "${pkgdir}/usr/lib/${pkgname}/geosite-ru.srs"
+  install -Dm644 ui-desktop/src-tauri/resources/geosite-ads.srs "${pkgdir}/usr/lib/${pkgname}/geosite-ads.srs"
+
+  # The unprivileged half, under the command name the .desktop entry launches.
+  install -Dm755 ui-desktop/src-tauri/target/release/tenebra-desktop "${pkgdir}/usr/bin/${pkgname}"
+
+  # The one unit file this repository has, re-pointed from the /usr/local prefix
+  # the hand-install script uses to the /usr prefix a package owns. Rewriting it
+  # here keeps a single copy of the sandbox settings instead of a near-duplicate
+  # that would quietly drift.
+  install -Dm644 deploy/linux/tenebra.service "${pkgdir}/usr/lib/systemd/system/${pkgname}.service"
+  sed -i "s|/usr/local/lib/tenebra|/usr/lib/tenebra|g" "${pkgdir}/usr/lib/systemd/system/${pkgname}.service"
+
+  # The unit keeps CAP_SYS_MODULE out of its bounding set, so the daemon cannot
+  # pull in tun itself; loading it at boot is the packaged equivalent of what the
+  # install script does with modprobe.
+  install -Dm644 /dev/stdin "${pkgdir}/usr/lib/modules-load.d/${pkgname}.conf" <<'EOF'
+# Tenebra opens /dev/net/tun; make sure the module is present at boot.
+tun
+EOF
+
+  install -Dm644 deploy/linux/tenebra.desktop "${pkgdir}/usr/share/applications/${pkgname}.desktop"
+  local size
+  for size in 32x32 64x64 128x128; do
+    install -Dm644 "ui-desktop/src-tauri/icons/${size}.png" \
+      "${pkgdir}/usr/share/icons/hicolor/${size}/apps/${pkgname}.png"
+  done
+  install -Dm644 "ui-desktop/src-tauri/icons/128x128@2x.png" \
+    "${pkgdir}/usr/share/icons/hicolor/256x256/apps/${pkgname}.png"
+
+  # /var/lib/tenebra/data is deliberately NOT packaged. The unit's StateDirectory=
+  # creates it before the service starts and the core re-clamps it to root-owned
+  # 0700 on every start, so shipping an empty directory would only duplicate that
+  # — and leaving it unowned means pacman can never touch a user's stored
+  # profiles, which is the behaviour an uninstall should have anyway.
+
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 THIRD-PARTY-NOTICES.md "${pkgdir}/usr/share/licenses/${pkgname}/THIRD-PARTY-NOTICES.md"
+}
