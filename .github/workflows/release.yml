@@ -346,10 +346,32 @@ jobs:
         run: |
           set -euo pipefail
           pacman -U --noconfirm packaging/arch/*.pkg.tar.zst
-          # Prove the layout the daemon and the UI resolve against is really there.
-          test -x /usr/bin/tenebra-core
-          test -x /usr/lib/tenebra/sing-box
-          test -f /usr/lib/systemd/system/tenebra.service
+          # Prove the layout the daemon and the UI resolve against is really
+          # there. The paths are the package's, not the hand-install script's:
+          # the core and its engine are private files under /usr/lib/tenebra,
+          # and /usr/bin carries the desktop launcher named after the package.
+          for path in \
+            /usr/lib/tenebra/tenebra-core \
+            /usr/lib/tenebra/sing-box \
+            /usr/bin/tenebra; do
+            test -x "$path" || { echo "missing or not executable: $path" >&2; exit 1; }
+          done
+          for path in \
+            /usr/lib/systemd/system/tenebra.service \
+            /usr/lib/tenebra/geoip-ru.srs \
+            /usr/share/applications/tenebra.desktop; do
+            test -f "$path" || { echo "missing: $path" >&2; exit 1; }
+          done
+          # The unit has to point at the packaged prefix, not the one the
+          # hand-install script uses; the PKGBUILD rewrites it and a silent
+          # failure there would ship a unit that cannot start.
+          grep -q '^ExecStart=/usr/lib/tenebra/tenebra-core' /usr/lib/systemd/system/tenebra.service
+          # The daemon must find its engine through the same search the core
+          # does, with nothing pre-set in the environment.
+          env -u TENEBRA_SINGBOX timeout 5 /usr/lib/tenebra/tenebra-core --socket 2>&1 |
+            tee /tmp/core.log || true
+          grep -q 'sing-box at /usr/lib/tenebra/sing-box' /tmp/core.log
+          grep -q 'rule-set' /tmp/core.log && echo 'rule-sets reported' || true
       - name: Attach the package to the release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
