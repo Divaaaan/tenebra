@@ -134,6 +134,7 @@ jobs:
         working-directory: ui-desktop
         run: npm ci
       - name: Build the Debian package
+        working-directory: ui-desktop
         # Same reasoning as the Windows job: CI only proves the bundle builds, so
         # it overrides the config to skip updater artifacts and never touches the
         # signing key. AppImage is left to the release workflow — it downloads a

@@ -9,6 +9,45 @@ All notable changes to Tenebra are documented here. The format follows
 > [project status](README.md#project-status). Expect breaking changes between
 > 0.x releases.
 
+## [0.4.6] - 2026-07-27
+
+### Added
+
+- **Linux is a supported desktop platform.** Until now Linux only compiled: the
+  core was built and tested in CI, but it could not host a daemon there — the
+  socket transport was rejected off macOS — and no installable artifact was
+  produced. It now runs the same way Windows and macOS do: one privileged core
+  under systemd owns the tunnel and serves the control protocol on
+  `/run/tenebra.sock`, and the unprivileged desktop app attaches to it. The
+  connecting user is authenticated from the kernel's own socket credentials,
+  and the profile store under `/var/lib/tenebra/data` is created root-only and
+  re-checked on every start.
+- **An Arch package.** `packaging/arch/PKGBUILD` builds the core, the desktop
+  app and the systemd unit from source; the release workflow builds it in an
+  Arch container, verifies it installs, and attaches the resulting
+  `.pkg.tar.zst` to the release. sing-box is bundled with a pinned digest
+  rather than declared as a dependency: there is no such package in Arch's own
+  repositories, only in the AUR, and it goes into a private directory so an
+  existing AUR install is untouched.
+- **Debian and AppImage bundles** for everything else, plus install and
+  uninstall scripts for setting the service up by hand. Only the Arch package
+  installs the systemd unit for you; the Debian bundle cannot run a
+  post-install script, so there the service is one manual step.
+
+### Fixed
+
+- **Linux: the crash and core logs no longer live in `/tmp`.** They now follow
+  the XDG data directory. `/tmp` is shared and world-writable, so a symlink
+  planted at the old path could have redirected an append-only writer.
+- **Linux: `tenebra://` links now work in a release build.** Deep-link
+  registration was compiled in only for development builds, and an AppImage has
+  no installer to claim the scheme on its behalf, so a released build never
+  registered as a handler at all.
+- **Linux: the app no longer offers an update it cannot install.** The bundled
+  updater can only replace an AppImage, so an install that came from a package
+  manager now says where its updates come from instead of showing a button that
+  would fail.
+
 ## [0.4.5] - 2026-07-25
 
 ### Fixed
@@ -568,7 +607,8 @@ Initial tagged release.
   first run. Updates delivered in-app are minisign-verified against the bundled
   key; only the initial download is unsigned.
 
-[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.4.5...HEAD
+[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.4.6...HEAD
+[0.4.6]: https://github.com/Divaaaan/tenebra/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/Divaaaan/tenebra/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/Divaaaan/tenebra/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/Divaaaan/tenebra/compare/v0.4.2...v0.4.3
