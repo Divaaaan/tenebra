@@ -73,9 +73,19 @@ func TestRuleSetDirRequiresAllFiles(t *testing.T) {
 }
 
 // TestRuleSetDirNoEnv: with TENEBRA_SINGBOX unset there is no resources dir to
-// probe, so ruleSetDir declines.
+// probe, so ruleSetDir declines rather than falling back to the working
+// directory.
 func TestRuleSetDirNoEnv(t *testing.T) {
 	t.Setenv("TENEBRA_SINGBOX", "")
+	// On a platform whose search reaches system install directories (Linux), a
+	// machine that already has Tenebra installed holds a complete bundle in one
+	// of them, and finding it is the correct answer — there is no "nothing to
+	// probe" case left to assert. Say so rather than fail on a real install.
+	for _, dir := range ruleSetCandidates() {
+		if hasRuleSets(dir) {
+			t.Skipf("a system-wide rule-set bundle at %s leaves no empty case to observe", dir)
+		}
+	}
 	if got := ruleSetDir(); got != "" {
 		t.Errorf("ruleSetDir with no env = %q, want empty", got)
 	}

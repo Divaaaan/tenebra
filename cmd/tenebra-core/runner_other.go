@@ -1,4 +1,4 @@
-//go:build !darwin
+//go:build !darwin && !linux
 
 package main
 
@@ -7,11 +7,12 @@ import (
 	"github.com/Divaaaan/tenebra/core/control"
 )
 
-// newRunner builds the tunnel supervisor for every non-macOS target the core
-// builds for. The windows adapter is the generic sidecar supervisor — it only
-// touches wintun when the OS is actually Windows — so it backs Windows (the
-// shipped desktop target) as well as the Linux build the CI compiles and tests.
-// macOS overrides this in runner_darwin.go.
+// newRunner builds the tunnel supervisor for Windows, the shipped desktop target
+// this adapter is named for, and for any other platform the core still compiles
+// on: the windows adapter uses nothing OS-specific at the source level and only
+// touches wintun when the OS is actually Windows. macOS and Linux, which need
+// their own privilege notes and diagnostics, override this in runner_darwin.go
+// and runner_linux.go.
 func newRunner() control.Runner {
 	return windows.New()
 }
