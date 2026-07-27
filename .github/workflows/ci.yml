@@ -84,6 +84,90 @@ jobs:
         with:
           name: tenebra-windows-installer
           path: ui-desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+  linux:
+    # Proves the Linux desktop shell builds: the unix-socket backend that drives
+    # the systemd daemon, and the deb bundle itself. The `core` job above already
+    # runs the Go suite on Linux — including the linux-tagged control socket and
+    # the SO_PEERCRED peer check — so this job covers the Rust and bundler half.
+    #
+    # Pinned to 22.04 rather than ubuntu-latest deliberately. The bundled
+    # binaries link against the runner's glibc, and anything built on 24.04
+    # refuses to start on an older distribution; the rolling Arch target would
+    # not care, but the deb is precisely what Debian-family users install.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install the GTK and WebKit build dependencies
+        # Tauri v2 links against webkit2gtk-4.1; the appindicator package backs
+        # the tray, and patchelf is what the bundler uses to rewrite rpaths.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf file
+      - name: Check Rust formatting
+        working-directory: ui-desktop/src-tauri
+        run: cargo fmt --check
+      - name: Fetch sing-box and the rule-sets
+        run: bash scripts/fetch-resources.sh --arch amd64
+      - name: Build core sidecar
+        # tauri-build validates the externalBin at compile time, so the sidecar
+        # has to exist under its target triple before cargo runs at all.
+        run: go build -o ui-desktop/src-tauri/binaries/tenebra-core-x86_64-unknown-linux-gnu ./cmd/tenebra-core
+      - name: Lint the Rust backend
+        working-directory: ui-desktop/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test the Rust backend
+        working-directory: ui-desktop/src-tauri
+        run: cargo test --all-targets
+      - name: Install front-end dependencies
+        working-directory: ui-desktop
+        run: npm ci
+      - name: Build the Debian package
+        # Same reasoning as the Windows job: CI only proves the bundle builds, so
+        # it overrides the config to skip updater artifacts and never touches the
+        # signing key. AppImage is left to the release workflow — it downloads a
+        # linuxdeploy toolchain on every run and would double this job's time for
+        # no extra coverage of our own code.
+        run: npm run tauri build -- --bundles deb --config src-tauri/tauri.ci.conf.json
+      - uses: actions/upload-artifact@v6
+        with:
+          name: tenebra-linux-deb
+          path: ui-desktop/src-tauri/target/release/bundle/deb/*.deb
+  arch-package:
+    # Lints the Arch packaging on every push. It stops short of a full makepkg on
+    # purpose: the PKGBUILD takes its source from a git tag, so building it only
+    # works on a tagged commit — that is the release workflow's job. What is
+    # cheap to catch here is the rest: broken shell, a malformed PKGBUILD, and
+    # the namcap complaints that would otherwise surface only at release time.
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Install the packaging tools
+        run: pacman -Syu --noconfirm --needed namcap git
+      - uses: actions/checkout@v6
+      - name: Parse the PKGBUILD
+        # makepkg refuses to run as root, so the checks run as a normal user.
+        # --printsrcinfo parses the whole file without fetching any source.
+        run: |
+          useradd -m builder
+          chown -R builder .
+          su builder -c 'cd packaging/arch && makepkg --printsrcinfo' > /tmp/SRCINFO
+          head -30 /tmp/SRCINFO
+      - name: Lint the PKGBUILD
+        run: |
+          cd packaging/arch
+          namcap PKGBUILD
   macos:
     # Proves the Go core plus the darwin-tagged macOS adapter (adapters/macos)
     # compile and pass their tests on a real Apple Silicon runner — the macOS
