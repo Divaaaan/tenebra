@@ -5,10 +5,10 @@
 [![CI](https://github.com/Divaaaan/tenebra/actions/workflows/ci.yml/badge.svg)](https://github.com/Divaaaan/tenebra/actions/workflows/ci.yml)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-ff3d00.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Latest release](https://img.shields.io/github/v/release/Divaaaan/tenebra?color=ff3d00&label=release)](https://github.com/Divaaaan/tenebra/releases/latest)
-[![Platform](https://img.shields.io/badge/platform-Windows_%7C_macOS-0e0e0e.svg)](#project-status)
+[![Platform](https://img.shields.io/badge/platform-Windows_%7C_macOS_%7C_Linux-0e0e0e.svg)](#project-status)
 
 **A cross-platform VPN client built on [sing-box](https://github.com/SagerNet/sing-box).**<br>
-Desktop first — Windows is user-ready; macOS ships but is for advanced users (see below). A shared Go core is meant to extend to Linux, Android and iOS.
+Desktop first — Windows is user-ready; macOS and Linux ship but are for advanced users (see below). A shared Go core is meant to extend to Android and iOS.
 
 <img src="docs/assets/eclipse.svg" alt="A total eclipse: intercepted noise enters the dark, one clean signal leaves it. In tenebris lux." width="100%">
 
@@ -95,7 +95,8 @@ get one:
 | Desktop UI (Tauri 2 + React) | Implemented: all screens, reactive tray, notifications, deep links, autostart, i18n, themes |
 | Windows tunnel (wintun + sing-box) | Implemented — a background **service** runs the tunnel, so the app connects without an elevated GUI; installer sets it up, the in-app updater refreshes both app and service |
 | macOS tunnel (utun + sing-box) | Builds and runs — universal `.app`/DMG — but see the **macOS note** below: it needs a hand-installed root daemon and is not yet a click-to-run product |
-| Linux / Android / iOS | Planned — the core is shared and platform-agnostic |
+| Linux tunnel (`/dev/net/tun` + sing-box) | Builds and runs — a root **systemd service** owns the tunnel, installed by an Arch package or a `sudo` script; see the **Linux note** below. No live-tunnel sign-off yet |
+| Android / iOS | Planned — the core is shared and platform-agnostic |
 | Release pipeline | Tag-triggered `release` workflow builds the Windows and macOS bundles, minisign-signs the in-app updater artifacts, and publishes a GitHub release |
 | Code-signing | Not set up — the Windows installer is Authenticode-unsigned (SmartScreen warns) and the macOS build is unsigned/un-notarized (Gatekeeper needs a manual "Open Anyway") |
 
@@ -124,6 +125,44 @@ use the DMG only if you're comfortable running the install script yourself.
 **Windows users are unaffected** — the Windows installer sets up the service and
 the updater keeps everything current automatically.
 
+### Linux note — the tunnel needs a root service
+
+Linux is the same shape as macOS: only a privileged process may open
+`/dev/net/tun` and install routes, so the app talks to a small root **systemd
+service** that owns the tunnel and serves the control protocol on
+`/run/tenebra.sock`. The app alone cannot connect. Two ways to set it up:
+
+- **Arch Linux — build the package.** [`packaging/arch/PKGBUILD`](packaging/arch/PKGBUILD)
+  builds the core, the desktop app and the unit from source and installs them
+  with `pacman`:
+
+  ```
+  cd packaging/arch && makepkg -si
+  sudo systemctl enable --now tenebra.service
+  ```
+
+  Updates come from `pacman`, not the in-app updater — it can only replace an
+  AppImage, never files a package manager owns.
+
+- **Any other distribution — the install script.** Fetch the bundled resources,
+  then install the daemon from your checkout:
+
+  ```
+  bash scripts/fetch-resources.sh
+  sudo bash scripts/linux/install-daemon.sh --dev
+  ```
+
+  It is safe to re-run to upgrade, rolls back if an upgrade fails, and
+  [`scripts/linux/uninstall-daemon.sh`](scripts/linux/uninstall-daemon.sh)
+  removes it. The GUI is a separate `.deb`/AppImage build.
+
+Two limits worth knowing before you install: **system-proxy mode does nothing on
+Linux** (it needs per-desktop settings a root daemon cannot reach, so it stays
+quietly disarmed — tun mode, the default, is unaffected), and the bundled
+sing-box binaries are **glibc-linked**, so musl distributions need their own.
+Full detail, including the systemd sandbox and what is deliberately left out of
+it, is in [docs/porting/linux.md](docs/porting/linux.md).
+
 If you want to help close the gap, the macOS `SMAppService` path and the
 non-desktop adapters are the highest-leverage places — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -145,8 +184,14 @@ tenebra/
 ├── cmd/
 │   └── tenebra-core/     The sidecar entry point (talks the protocol on stdin/stdout).
 ├── ui-desktop/           Tauri 2 app: Rust shell (src-tauri) + React/TS front end (src).
+├── deploy/               The privileged daemon's service definitions per platform.
+├── packaging/
+│   └── arch/             PKGBUILD building the whole thing for Arch Linux.
 ├── scripts/
-│   └── fetch-resources.ps1   Download pinned sing-box + wintun for bundling.
+│   ├── fetch-resources.ps1   Download pinned sing-box + wintun for bundling (Windows).
+│   ├── fetch-resources.sh    The same for macOS and Linux.
+│   ├── macos/            Install/remove the root LaunchDaemon.
+│   └── linux/            Install/remove the root systemd service.
 └── docs/                 Architecture, control protocol, and the dev guide.
 ```
 
@@ -176,6 +221,24 @@ cd ui-desktop
 npm install
 npm run tauri build
 ```
+
+Desktop app (Linux):
+
+```
+# fetch the sing-box binary and the rule-sets into src-tauri/resources
+bash scripts/fetch-resources.sh
+
+# build the core sidecar where Tauri bundles it
+go build -o ui-desktop/src-tauri/binaries/tenebra-core-x86_64-unknown-linux-gnu ./cmd/tenebra-core
+
+# build the .deb and AppImage
+cd ui-desktop
+npm install
+npm run tauri build
+```
+
+On Arch, `cd packaging/arch && makepkg -si` does all of the above and installs
+the result — see the [Linux note](#linux-note--the-tunnel-needs-a-root-service).
 
 ## Documentation
 

@@ -1,14 +1,52 @@
 #!/usr/bin/env bash
 # Fetches the sing-box binary and the RU rule-sets into
 # ui-desktop/src-tauri/resources so the desktop app can bundle them. This is the
-# macOS analog of fetch-resources.ps1; the pinned versions are kept in sync with
-# it. These binaries are not checked in; run this before building the macOS
-# bundle. Pinned versions keep builds reproducible.
+# Unix analog of fetch-resources.ps1 and serves both macOS and Linux: the pinned
+# version, the rule-sets, the retry policy and the checksum discipline are
+# identical on the two, and only the sing-box artifact differs, so one script
+# keeps a single copy of the .srs pins instead of letting two files drift apart.
+# The pinned versions are kept in sync with the PowerShell script. These binaries
+# are not checked in; run this before building the desktop bundle. Pinned
+# versions keep builds reproducible.
 #
-# There is no wintun on macOS. The tun device is utun, which sing-box opens
-# itself once it runs with privilege (see docs/porting/macos.md); nothing needs
-# to be placed beside the binary for it.
+# Neither Unix target needs a driver payload beside the binary the way Windows
+# needs wintun.dll: the tun device is utun on macOS and /dev/net/tun on Linux,
+# and sing-box opens either itself once it runs with privilege (see
+# docs/porting/macos.md and docs/porting/linux.md).
 set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: fetch-resources.sh [--arch <amd64|arm64>]
+
+Downloads the pinned sing-box build for this host plus the RU and ads rule-sets
+into ui-desktop/src-tauri/resources.
+
+  --arch  Linux only: fetch this architecture instead of the host's, for a cross
+          build. macOS always produces a universal (arm64 + amd64) binary, so it
+          rejects the flag.
+EOF
+}
+
+# Requested Linux architecture, empty for "whatever this host is".
+target_arch=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --arch)
+      target_arch="${2:-}"
+      [ -n "$target_arch" ] || { echo "--arch needs an architecture (amd64 or arm64)" >&2; exit 2; }
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "unknown argument: $1 (see --help)" >&2
+      exit 2
+      ;;
+  esac
+done
 
 # Keep in sync with scripts/fetch-resources.ps1 ($singboxVersion).
 singbox_version="1.13.13"
@@ -25,15 +63,20 @@ singbox_version="1.13.13"
 # the sing-box pins there are the Windows build and differ by platform.
 #
 # To refresh on a version/rule-set bump: bump the version, download the same URLs
-# these variables feed (the GitHub darwin tarballs and the raw .srs files), run
+# these variables feed (the GitHub darwin and linux tarballs and the raw .srs
+# files), run
 #   shasum -a 256 <file>
 # on each, and paste the digests here. The .srs sets are rebuilt periodically on
 # the SagerNet `rule-set` branch, so their digests move even without a version
 # change — re-pin them whenever the bundled copies are refreshed. Mirror every
 # change into scripts/fetch-resources.ps1 (identical .srs digests; Windows
-# sing-box digest for that script).
+# sing-box digest for that script) and into packaging/arch/PKGBUILD, which pins
+# the same linux-amd64 artifact and the same three rule-sets in its
+# source()/sha256sums() arrays so makepkg can verify them itself.
 singbox_sha256_darwin_arm64="4ac414d4ede9ec21bc79d8ccf40b4679429203b9e06ad96d2d8d34c0fe940558"
 singbox_sha256_darwin_amd64="477afd64ad7751214f01338ba244265ecc223966ddb58214963f526dca7f424e"
+singbox_sha256_linux_amd64="bb99cabf47694625db421ee17898f36cdc1f9c2cb5decf65b12bac8d8437e842"
+singbox_sha256_linux_arm64="d7fab87b921933eb281d8ee7bd5377cdd8228089f1f7c807c9363a6a2329286c"
 geoip_ru_sha256="8bc18433e5d5b0644ba2a9ff74cd03428ba4f4e388b3c409f182de930e3c3170"
 geosite_ru_sha256="3fb41849eefac86a4e65a86da3b868ecd40512e4d3f097ee325474f4cd401f76"
 geosite_ads_sha256="ca44c97fce76f4f889e08bbc28e80d497a43239328e09f760129844057a2780a"
@@ -77,46 +120,112 @@ verify_sha256() {
   fi
 }
 
-# Download and unpack a single-arch darwin sing-box, echoing the path to the
-# extracted binary. sing-box ships one tarball per arch; the desktop bundle wants
-# one universal binary, so both are fetched and lipo'd together below. The
-# tarball is checksum-verified before it is unpacked.
+# Download and unpack a single-arch sing-box release tarball, echoing the path to
+# the extracted binary. sing-box ships one tarball per (os, arch); the tarball is
+# checksum-verified before it is unpacked, so nothing unverified is ever written
+# where the bundle step will pick it up.
+#
+# The archive carries a LICENSE and a libcronet.so/.dylib beside the executable.
+# libcronet is dlopen'd only by sing-box's Naive outbound, a protocol Tenebra's
+# generator never emits, so it is deliberately left out of the bundle rather than
+# shipped as a ~40 MB unused blob.
 fetch_arch() {
-  local arch="$1"
-  local expected="$2"
-  local tarball="$work/sing-box-$arch.tar.gz"
-  local url="https://github.com/SagerNet/sing-box/releases/download/v$singbox_version/sing-box-$singbox_version-darwin-$arch.tar.gz"
+  local os="$1" arch="$2" expected="$3"
+  local tarball="$work/sing-box-$os-$arch.tar.gz"
+  local url="https://github.com/SagerNet/sing-box/releases/download/v$singbox_version/sing-box-$singbox_version-$os-$arch.tar.gz"
   fetch "$url" "$tarball"
   verify_sha256 "$tarball" "$expected"
-  local out="$work/$arch"
+  local out="$work/$os-$arch"
   mkdir -p "$out"
   tar -xzf "$tarball" -C "$out"
-  # The tarball extracts to sing-box-<version>-darwin-<arch>/sing-box.
+  # The tarball extracts to sing-box-<version>-<os>-<arch>/sing-box.
   find "$out" -type f -name sing-box | head -n 1
 }
 
-arm64_bin="$(fetch_arch arm64 "$singbox_sha256_darwin_arm64")"
-amd64_bin="$(fetch_arch amd64 "$singbox_sha256_darwin_amd64")"
+# fetch_singbox_darwin stitches the two darwin slices into the one universal
+# binary Tauri's universal-apple-darwin target expects of every bundled binary.
+fetch_singbox_darwin() {
+  local arm64_bin amd64_bin
+  arm64_bin="$(fetch_arch darwin arm64 "$singbox_sha256_darwin_arm64")"
+  amd64_bin="$(fetch_arch darwin amd64 "$singbox_sha256_darwin_amd64")"
 
-if command -v lipo >/dev/null 2>&1; then
-  # Tauri's universal-apple-darwin target expects every bundled binary to be
-  # universal too, so stitch the two slices into one fat binary.
-  lipo -create "$arm64_bin" "$amd64_bin" -output "$dest/sing-box"
+  if command -v lipo >/dev/null 2>&1; then
+    lipo -create "$arm64_bin" "$amd64_bin" -output "$dest/sing-box"
+    chmod +x "$dest/sing-box"
+    echo "Built universal (arm64+amd64) sing-box $singbox_version"
+  else
+    # No lipo (not on a macOS host, or the command-line tools are absent): keep
+    # the per-arch binaries and fall back to the arm64 slice as the default,
+    # since the hosted macOS runners are all Apple Silicon. A universal bundle
+    # still needs a lipo pass on a real macOS host.
+    # TODO(macos): run the lipo step on a macOS host/runner to produce a
+    # universal sing-box before shipping a universal bundle.
+    cp "$arm64_bin" "$dest/sing-box-arm64"
+    cp "$amd64_bin" "$dest/sing-box-amd64"
+    cp "$arm64_bin" "$dest/sing-box"
+    chmod +x "$dest/sing-box" "$dest/sing-box-arm64" "$dest/sing-box-amd64"
+    echo "lipo unavailable; wrote per-arch sing-box $singbox_version and defaulted to arm64 (TODO: lipo into a universal binary on macOS)"
+  fi
+}
+
+# linux_arch maps `uname -m` onto sing-box's release naming, or echoes an
+# explicitly requested architecture back after validating it. Only the two 64-bit
+# desktop architectures are pinned: sing-box also publishes 386 and armv7 builds,
+# but the bundle they would go into is a webkit2gtk Tauri app, and 32-bit Linux
+# desktops are not a target — pinning a digest nobody exercises would be dead
+# weight that still has to be re-cut on every version bump.
+linux_arch() {
+  local requested="$1" machine
+  if [ -n "$requested" ]; then
+    case "$requested" in
+      amd64|arm64) echo "$requested"; return 0 ;;
+      *) echo "unsupported --arch $requested; this script pins amd64 and arm64" >&2; return 1 ;;
+    esac
+  fi
+  machine="$(uname -m)"
+  case "$machine" in
+    x86_64|amd64) echo "amd64" ;;
+    aarch64|arm64) echo "arm64" ;;
+    *)
+      echo "unsupported Linux architecture $machine; this script pins amd64 and arm64" >&2
+      echo "pass --arch to cross-fetch one of them, or add a pin for $machine" >&2
+      return 1
+      ;;
+  esac
+}
+
+# fetch_singbox_linux installs the single-architecture ELF for the target. There
+# is no lipo equivalent on Linux — an ELF holds exactly one architecture — so the
+# bundle is per-arch by construction and the host's architecture is the default.
+# The bundled name stays plain `sing-box`, matching the darwin layout the core's
+# TENEBRA_SINGBOX resolution and the installers expect.
+fetch_singbox_linux() {
+  local arch bin expected
+  arch="$(linux_arch "$target_arch")"
+  case "$arch" in
+    amd64) expected="$singbox_sha256_linux_amd64" ;;
+    arm64) expected="$singbox_sha256_linux_arm64" ;;
+  esac
+  bin="$(fetch_arch linux "$arch" "$expected")"
+  cp "$bin" "$dest/sing-box"
   chmod +x "$dest/sing-box"
-  echo "Built universal (arm64+amd64) sing-box $singbox_version"
-else
-  # No lipo (not on a macOS host, or the command-line tools are absent): keep the
-  # per-arch binaries and fall back to the arm64 slice as the default, since the
-  # hosted macOS runners are all Apple Silicon. A universal bundle still needs a
-  # lipo pass on a real macOS host.
-  # TODO(macos): run the lipo step on a macOS host/runner to produce a universal
-  # sing-box before shipping a universal bundle.
-  cp "$arm64_bin" "$dest/sing-box-arm64"
-  cp "$amd64_bin" "$dest/sing-box-amd64"
-  cp "$arm64_bin" "$dest/sing-box"
-  chmod +x "$dest/sing-box" "$dest/sing-box-arm64" "$dest/sing-box-amd64"
-  echo "lipo unavailable; wrote per-arch sing-box $singbox_version and defaulted to arm64 (TODO: lipo into a universal binary on macOS)"
-fi
+  echo "Fetched linux-$arch sing-box $singbox_version"
+}
+
+host_os="$(uname -s)"
+case "$host_os" in
+  Darwin)
+    [ -z "$target_arch" ] || { echo "--arch is Linux-only; the macOS bundle is always universal" >&2; exit 2; }
+    fetch_singbox_darwin
+    ;;
+  Linux)
+    fetch_singbox_linux
+    ;;
+  *)
+    echo "unsupported host $host_os; use scripts/fetch-resources.ps1 on Windows" >&2
+    exit 1
+    ;;
+esac
 
 # RU geo rule-sets, shipped locally so smart routing loads them from disk instead
 # of downloading them from GitHub at startup (the download blocks sing-box for

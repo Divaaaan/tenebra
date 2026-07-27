@@ -11,8 +11,11 @@ Project overview and quick-start live in the top-level
 - **[development.md](development.md)** — the full set-up, build, run and test
   walkthrough, the environment variables, coding conventions and troubleshooting.
 
-Platform ports (plans, not yet shipped):
+Platform ports:
 
+- **[porting/linux.md](porting/linux.md)** — the Linux desktop build: the root
+  systemd service that owns the tunnel and its sandbox, the two install paths
+  (Arch package and hand-install script), and what Linux does not support.
 - **[porting/macos.md](porting/macos.md)** — the macOS desktop port: same sidecar
   model as Windows, with a privileged helper for the `utun` tunnel and a
   DMG/notarization distribution path.
