@@ -110,7 +110,11 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .icon(icon_for(ConnectionState::Idle))
         .tooltip(tooltip_for(lang, ConnectionState::Idle))
         // We handle left-click ourselves to toggle the window; the menu opens on
-        // a right-click, the platform-conventional behaviour on Windows.
+        // a right-click, the platform-conventional behaviour on Windows. Both
+        // this and the click handler below are inert on Linux, where the tray is
+        // an app indicator that reports no clicks and always opens its menu — so
+        // "Show Tenebra" in that menu is the only way back to the window there,
+        // which is why it is the first item.
         .show_menu_on_left_click(false)
         .menu(&menu)
         .on_menu_event(on_menu_event)

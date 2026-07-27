@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { checkForUpdate, installUpdate } from "./updates";
+import { checkForUpdate, inAppUpdatesSupported, installUpdate } from "./updates";
 import {
   check,
   type DownloadEvent,
@@ -191,5 +191,28 @@ describe("checkForUpdate channel resolution", () => {
 
     await expect(checkForUpdate()).resolves.toBeNull();
     expect(check).not.toHaveBeenCalled();
+  });
+});
+
+// The updater can only replace the artifact the app was installed from, which on
+// Linux means an AppImage and nothing else. The backend answers that question;
+// the UI leans on it to decide whether to offer the flow at all, so a wrong
+// answer here is either a dead button or a hidden updater.
+describe("inAppUpdatesSupported", () => {
+  it("passes the backend's answer through", async () => {
+    vi.mocked(invoke).mockResolvedValue(true);
+    await expect(inAppUpdatesSupported()).resolves.toBe(true);
+    expect(invoke).toHaveBeenCalledWith("in_app_updates_supported");
+
+    vi.mocked(invoke).mockResolvedValue(false);
+    await expect(inAppUpdatesSupported()).resolves.toBe(false);
+  });
+
+  it("assumes a self-updating install when nothing answers", async () => {
+    // No backend (an older shell, a test host): hiding a working updater would
+    // be the worse of the two mistakes, so the answer defaults to the behaviour
+    // every build had before the question existed.
+    vi.mocked(invoke).mockRejectedValue(new Error("no such command"));
+    await expect(inAppUpdatesSupported()).resolves.toBe(true);
   });
 });

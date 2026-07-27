@@ -9,12 +9,17 @@
 // background service), so applying it mid-session drops the VPN. So an install
 // is gated on the tunnel state — auto-install only while the tunnel is down, and
 // a manual install while it is up asks first. See tunnelBusy.
+//
+// The check is skipped entirely on an install that cannot replace itself (a
+// Linux package manager owns those files, see inAppUpdatesSupported): a banner
+// whose only action would fail is worse than no banner, and Settings still says
+// where updates come from.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Update } from "@tauri-apps/plugin-updater";
 
 import type { ConnectionState } from "../api";
-import { checkForUpdate, installUpdate } from "./updates";
+import { checkForUpdate, inAppUpdatesSupported, installUpdate } from "./updates";
 import { getAutoInstallUpdates } from "./settings";
 import { tunnelBusy } from "./tunnel";
 
@@ -89,6 +94,9 @@ export function useUpdateCheck(phase: ConnectionState): UpdatePrompt {
     }
     checked.current = true;
     void (async () => {
+      if (!(await inAppUpdatesSupported())) {
+        return;
+      }
       let found: Update | null;
       try {
         found = await checkForUpdate();

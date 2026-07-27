@@ -3,9 +3,9 @@
 // of three transports: by default the core is a sidecar speaking on stdin/stdout
 // (stdout carries protocol traffic only and every diagnostic goes to stderr);
 // on Windows it can instead serve the protocol on a named pipe — as a Windows
-// service, or in a console with --pipe — and on macOS on a unix domain socket
-// (a root LaunchDaemon, or a console with --socket), so the tunnel can outlive
-// any one UI process. See docs/control-protocol.md for the transports.
+// service, or in a console with --pipe — and on macOS and Linux on a unix domain
+// socket (the privileged daemon, or a console with --socket), so the tunnel can
+// outlive any one UI process. See docs/control-protocol.md for the transports.
 package main
 
 import (
@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/Divaaaan/tenebra/core/control"
@@ -29,9 +30,9 @@ import (
 var pipeMode = flag.Bool("pipe", false, "serve the control protocol on the named pipe instead of stdin/stdout (Windows only)")
 
 // socketMode switches the console process from stdin/stdout to the unix-socket
-// transport (macOS only): the development way to exercise the LaunchDaemon's
-// transport without installing a daemon, and what that daemon itself runs with.
-var socketMode = flag.Bool("socket", false, "serve the control protocol on a unix domain socket instead of stdin/stdout (macOS only)")
+// transport (macOS and Linux): the development way to exercise the privileged
+// daemon's transport without installing one, and what that daemon runs with.
+var socketMode = flag.Bool("socket", false, "serve the control protocol on a unix domain socket instead of stdin/stdout (macOS and Linux only)")
 
 func main() {
 	flag.Parse()
@@ -65,10 +66,11 @@ func run(usePipe, useSocket bool) error {
 		return errors.New("choose one transport: --pipe or --socket, not both")
 	}
 
-	// A root LaunchDaemon serving --socket needs the machine-scoped store and
-	// bundled sing-box pinned before buildDaemon reads them — the same ordering
-	// the Windows service uses for configureServicePaths. This is a no-op for a
-	// non-root --socket dev run and off macOS (where serveSocket rejects --socket).
+	// A root daemon serving --socket needs the machine-scoped store and bundled
+	// sing-box pinned before buildDaemon reads them — the same ordering the
+	// Windows service uses for configureServicePaths. This is a no-op for a
+	// non-root --socket dev run and on platforms where serveSocket rejects
+	// --socket outright.
 	if useSocket {
 		if err := configureSocketPaths(); err != nil {
 			return err
@@ -118,7 +120,7 @@ func buildDaemon() (*control.Daemon, error) {
 	}
 
 	// newRunner is chosen at build time per platform (runner_darwin.go for macOS,
-	// runner_other.go for Windows and the Linux CI build).
+	// runner_linux.go for Linux, runner_other.go for Windows).
 	runner := newRunner()
 	daemon := control.NewDaemon(store, runner)
 	// Persist last-good per profile next to the store so the node that last
@@ -182,23 +184,39 @@ func buildDaemon() (*control.Daemon, error) {
 var ruleSetFiles = []string{"geoip-ru.srs", "geosite-ru.srs", "geosite-ads.srs"}
 
 // ruleSetDir returns the directory to load the RU rule-sets from, or "" to keep
-// the remote-download fallback. The resources directory is the one holding the
-// sing-box binary (TENEBRA_SINGBOX); the .srs ship alongside it. It returns a
-// path only when every required rule-set file is actually present there, so a
-// dev build or an incomplete install transparently falls back to remote instead
-// of pointing sing-box at a missing path (which would FATAL).
+// the remote-download fallback. It walks the platform's resource directories in
+// order (ruleSetCandidates) and takes the first that holds every required
+// rule-set file, so a dev build or an incomplete install transparently falls
+// back to remote instead of pointing sing-box at a missing path (which would
+// FATAL). A miss names everywhere it looked: the alternative — one line saying
+// only that connects will now stall on a download — leaves the operator with
+// nowhere to put the files.
 func ruleSetDir() string {
-	bin := os.Getenv("TENEBRA_SINGBOX")
-	if bin == "" {
-		return ""
-	}
-	dir := filepath.Dir(bin)
-	for _, f := range ruleSetFiles {
-		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
-			return ""
+	candidates := ruleSetCandidates()
+	for _, dir := range candidates {
+		if hasRuleSets(dir) {
+			return dir
 		}
 	}
-	return dir
+	if len(candidates) > 0 {
+		log.Printf("tenebra-core: no complete RU rule-set bundle in any of: %s", strings.Join(candidates, ", "))
+	}
+	return ""
+}
+
+// hasRuleSets reports whether dir holds every file in ruleSetFiles. The empty
+// directory is never a hit, so a candidate list carrying one (an unset
+// TENEBRA_SINGBOX) cannot resolve to the process's working directory.
+func hasRuleSets(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	for _, f := range ruleSetFiles {
+		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // configDir returns the directory the profile store lives in. It prefers the

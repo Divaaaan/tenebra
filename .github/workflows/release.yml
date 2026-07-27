@@ -73,7 +73,7 @@ jobs:
           # resolving new versions, so a signed release always matches the lockfile.
           args: --bundles nsis -- --locked
           releaseBody: |
-            Desktop builds of Tenebra for Windows and macOS.
+            Desktop builds of Tenebra for Windows, macOS and Linux.
 
             **Windows** is user-ready: run the installer (SmartScreen warns on an
             unsigned build -> More info -> Run anyway); it sets up the background
@@ -86,6 +86,16 @@ jobs:
             launch: System Settings -> Privacy & Security -> Open Anyway). Read
             the "macOS note" in the README before downloading. A signed,
             click-to-run macOS build is planned.
+
+            **Linux**: the Arch package (.pkg.tar.zst) is the click-to-run one
+            — `pacman -U` installs the app, the core and the systemd unit, and
+            `systemctl enable --now tenebra` starts the tunnel service. The .deb
+            and the AppImage install only the app and the core: the privileged
+            service still has to be set up once by hand with
+            scripts/linux/install-daemon.sh, because the Debian bundle cannot run
+            a post-install script. Updates for a packaged install come from your
+            package manager, not the in-app updater, which only works for the
+            AppImage.
 
             Updates are delivered in-app and verified against the project's
             minisign key before they install (on macOS the updater refreshes the
@@ -169,7 +179,7 @@ jobs:
           includeUpdaterJson: true
           args: --target universal-apple-darwin --bundles app,dmg -- --locked
           releaseBody: |
-            Desktop builds of Tenebra for Windows and macOS.
+            Desktop builds of Tenebra for Windows, macOS and Linux.
 
             **Windows** is user-ready: run the installer (SmartScreen warns on an
             unsigned build -> More info -> Run anyway); it sets up the background
@@ -183,6 +193,16 @@ jobs:
             the "macOS note" in the README before downloading. A signed,
             click-to-run macOS build is planned.
 
+            **Linux**: the Arch package (.pkg.tar.zst) is the click-to-run one
+            — `pacman -U` installs the app, the core and the systemd unit, and
+            `systemctl enable --now tenebra` starts the tunnel service. The .deb
+            and the AppImage install only the app and the core: the privileged
+            service still has to be set up once by hand with
+            scripts/linux/install-daemon.sh, because the Debian bundle cannot run
+            a post-install script. Updates for a packaged install come from your
+            package manager, not the in-app updater, which only works for the
+            AppImage.
+
             Updates are delivered in-app and verified against the project's
             minisign key before they install (on macOS the updater refreshes the
             app, not the hand-installed daemon).
@@ -194,3 +214,144 @@ jobs:
         # latest.json carrying both platforms; the Windows job already published
         # a Windows-only interim copy, which this overwrite supersedes.
         run: node scripts/publish-beta-manifest.mjs "$GITHUB_REF_NAME" "${{ steps.channel.outputs.prerelease }}"
+  linux:
+    # Third in the chain for the same reason macOS is second: all three jobs
+    # upload to one release and tauri-action merges its platform entries into
+    # that release's latest.json, so running them in sequence keeps the
+    # read-modify-write deterministic. A failure here leaves the Windows and
+    # macOS assets standing; Linux follows in a fix-forward tag.
+    #
+    # 22.04 rather than ubuntu-latest: the AppImage and the deb link against the
+    # runner's glibc, and a 24.04 build refuses to start on anything older.
+    needs: [ci, version-check, macos]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install the GTK and WebKit build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf file
+      - name: Fetch sing-box and the rule-sets
+        run: bash scripts/fetch-resources.sh --arch amd64
+      - name: Build core sidecar
+        run: go build -o ui-desktop/src-tauri/binaries/tenebra-core-x86_64-unknown-linux-gnu ./cmd/tenebra-core
+      - name: Install front-end dependencies
+        working-directory: ui-desktop
+        run: npm ci
+      - name: Resolve the release channel from the tag
+        id: channel
+        shell: bash
+        run: |
+          # Same rule as the other two jobs: a SemVer prerelease suffix marks the
+          # GitHub release prerelease, keeping /releases/latest/ on the last full
+          # release so stable clients are unaffected.
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build, sign, and publish the release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: ui-desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: Tenebra ${{ github.ref_name }}
+          releaseDraft: false
+          prerelease: ${{ steps.channel.outputs.prerelease }}
+          # Only the AppImage carries an updater artifact — the Tauri updater
+          # cannot replace a package-managed install, which is why the app hides
+          # its update controls when it was installed from a package.
+          includeUpdaterJson: true
+          args: --bundles deb,appimage -- --locked
+          releaseBody: |
+            Desktop builds of Tenebra for Windows, macOS and Linux.
+
+            **Windows** is user-ready: run the installer (SmartScreen warns on an
+            unsigned build -> More info -> Run anyway); it sets up the background
+            service, and the in-app updater keeps both app and service current.
+
+            **macOS is for advanced users, not click-to-run yet.** The DMG alone
+            will NOT give you a working tunnel: macOS needs a root helper daemon
+            that is currently installed by hand with a sudo script
+            (scripts/macos/install-daemon.sh), and the build is unsigned (first
+            launch: System Settings -> Privacy & Security -> Open Anyway). Read
+            the "macOS note" in the README before downloading. A signed,
+            click-to-run macOS build is planned.
+
+            **Linux**: the Arch package (.pkg.tar.zst) is the click-to-run one
+            — `pacman -U` installs the app, the core and the systemd unit, and
+            `systemctl enable --now tenebra` starts the tunnel service. The .deb
+            and the AppImage install only the app and the core: the privileged
+            service still has to be set up once by hand with
+            scripts/linux/install-daemon.sh, because the Debian bundle cannot run
+            a post-install script. Updates for a packaged install come from your
+            package manager, not the in-app updater, which only works for the
+            AppImage.
+
+            Updates are delivered in-app and verified against the project's
+            minisign key before they install (on macOS the updater refreshes the
+            app, not the hand-installed daemon).
+      - name: Publish the beta channel manifest
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Final overwrite of beta.json, now that latest.json carries all three
+        # platforms; the Windows and macOS jobs published interim copies.
+        run: node scripts/publish-beta-manifest.mjs "$GITHUB_REF_NAME" "${{ steps.channel.outputs.prerelease }}"
+  arch-package:
+    # Builds the pacman package the Arch users actually want, so they do not have
+    # to run makepkg themselves. It is a separate job from the Tauri bundles
+    # because it builds inside an Arch container: the package links against
+    # Arch's own glibc and webkit, which is the whole point — a deb built on
+    # Ubuntu would drag the wrong library names along.
+    #
+    # The PKGBUILD takes its source from the git tag, so this can only run once
+    # the tag exists; it also means the package is built from exactly what was
+    # tagged rather than from the runner's working copy.
+    needs: [ci, version-check, linux]
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Install the packaging tools
+        run: pacman -Syu --noconfirm --needed git github-cli
+      - uses: actions/checkout@v6
+      - name: Build the package
+        # The revision comes from the PKGBUILD's own pkgver, which
+        # scripts/set-version.mjs keeps in step with the tag; version-check has
+        # already asserted they agree before this job runs.
+        run: |
+          set -euo pipefail
+          # makepkg refuses to run as root, so build as an unprivileged user that
+          # is allowed to install the build dependencies it resolves.
+          useradd -m builder
+          echo 'builder ALL=(ALL) NOPASSWD: /usr/bin/pacman' > /etc/sudoers.d/builder
+          chown -R builder .
+          su builder -c 'cd packaging/arch && makepkg --syncdeps --noconfirm --needed'
+          ls -la packaging/arch/*.pkg.tar.zst
+      - name: Verify the package installs
+        run: |
+          set -euo pipefail
+          pacman -U --noconfirm packaging/arch/*.pkg.tar.zst
+          # Prove the layout the daemon and the UI resolve against is really there.
+          test -x /usr/bin/tenebra-core
+          test -x /usr/lib/tenebra/sing-box
+          test -f /usr/lib/systemd/system/tenebra.service
+      - name: Attach the package to the release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: gh release upload "$TAG" packaging/arch/*.pkg.tar.zst --clobber

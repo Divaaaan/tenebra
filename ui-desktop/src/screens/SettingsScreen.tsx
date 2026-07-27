@@ -22,7 +22,12 @@ import {
 } from "../lib/settings";
 import { isValidDnsServer } from "../lib/dns";
 import { isValidDomainSuffix } from "../lib/rules";
-import { checkForUpdate, installUpdate, type UpdateStatus } from "../lib/updates";
+import {
+  checkForUpdate,
+  inAppUpdatesSupported,
+  installUpdate,
+  type UpdateStatus,
+} from "../lib/updates";
 import { tunnelBusy } from "../lib/tunnel";
 import { useReducedMotion } from "../lib/useReducedMotion";
 
@@ -293,6 +298,11 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   // waits on a confirm; this holds that dialog open.
   const [confirmingInstall, setConfirmingInstall] = useState(false);
   const [appVersion, setAppVersion] = useState("");
+  // Whether this install can replace itself at all. False only for a Linux copy
+  // that came from a package manager, where the whole updater flow is inert and
+  // the row says where updates come from instead. Starts optimistic so the
+  // controls never flicker from disabled to enabled on the common platforms.
+  const [selfUpdating, setSelfUpdating] = useState(true);
 
   useEffect(() => {
     getVersion()
@@ -300,6 +310,18 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
       .catch(() => {
         // The version line is cosmetic; leave it blank if the host call fails.
       });
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void inAppUpdatesSupported().then((supported) => {
+      if (active) {
+        setSelfUpdating(supported);
+      }
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -548,6 +570,11 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   const updateBusy =
     updateStatus.kind === "checking" || updateStatus.kind === "downloading";
   const updateStatusText = ((): string => {
+    // A packaged install has no flow to report on: say where updates do come
+    // from, in place of every other status this row would show.
+    if (!selfUpdating) {
+      return t.settings.updatesPackaged;
+    }
     switch (updateStatus.kind) {
       case "checking":
         return t.settings.updatesChecking;
@@ -1606,7 +1633,8 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
               <span className="set-row-label">{t.settings.updatesCheck}</span>
               <span className="set-row-hint">{updateStatusText}</span>
             </span>
-            {pendingUpdate &&
+            {selfUpdating &&
+            pendingUpdate &&
             (updateStatus.kind === "available" || updateStatus.kind === "error") ? (
               <button
                 type="button"
@@ -1620,7 +1648,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
                 type="button"
                 className="set-btn"
                 onClick={() => void checkUpdates()}
-                disabled={updateBusy}
+                disabled={updateBusy || !selfUpdating}
               >
                 {updateStatus.kind === "checking"
                   ? t.settings.updatesChecking
@@ -1640,6 +1668,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
               aria-checked={autoInstall}
               className={`set-switch${autoInstall ? " is-on" : ""}`}
               onClick={toggleAutoInstall}
+              // Nothing to arm on a packaged install: the launch check does not
+              // run there, so the preference could only ever be a dead switch.
+              disabled={!selfUpdating}
             >
               <span className="set-switch-box" aria-hidden="true">
                 {autoInstall ? "▣" : "▢"}

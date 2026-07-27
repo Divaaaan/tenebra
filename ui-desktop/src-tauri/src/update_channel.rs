@@ -10,7 +10,7 @@
 //! byte-for-byte the stable path.
 
 use serde::Serialize;
-use tauri::{Manager, ResourceId, Webview};
+use tauri::{AppHandle, Manager, ResourceId, Webview};
 use tauri_plugin_updater::UpdaterExt;
 use url::Url;
 
@@ -80,6 +80,34 @@ pub async fn check_update_for_channel(
             Ok(Some(meta))
         }
         None => Ok(None),
+    }
+}
+
+/// Whether this build can install its own updates, so the front end can offer
+/// the update flow only where it actually leads somewhere.
+///
+/// The updater works by replacing the artifact the app was installed from, and
+/// on Linux there is exactly one it can replace: an AppImage, a single file the
+/// user owns. A .deb or a native package belongs to the system package manager —
+/// its files live under root-owned system paths, and even with the rights to
+/// overwrite them the result would be an install the manager no longer matches.
+/// So on those the update comes from the package manager, and the honest thing
+/// for the app to do is say so rather than offer a button that fails. Tauri
+/// reports the AppImage it is running from (the `APPIMAGE` variable the runtime
+/// sets), and its absence is what tells the two apart.
+///
+/// Everywhere else the in-app updater is the supported path — the NSIS installer
+/// and the macOS .app both update themselves — so the answer is a plain yes.
+#[tauri::command]
+pub fn in_app_updates_supported(app: AppHandle) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        app.env().appimage.is_some()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = app;
+        true
     }
 }
 

@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build darwin || linux
 
 package control
 
@@ -11,10 +11,10 @@ import (
 	"time"
 )
 
-// shortSocketPath returns a unix-socket path short enough to satisfy macOS's
-// ~104-byte sun_path limit — t.TempDir() embeds the (long) test name and can
-// overflow it, so a bind there fails with EINVAL. The dir is cleaned up with the
-// test.
+// shortSocketPath returns a unix-socket path short enough to satisfy the
+// sun_path limit (~104 bytes on macOS, 108 on Linux) — t.TempDir() embeds the
+// (long) test name and can overflow it, so a bind there fails with EINVAL. The
+// dir is cleaned up with the test.
 func shortSocketPath(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "tnb")
@@ -25,7 +25,8 @@ func shortSocketPath(t *testing.T) string {
 	return filepath.Join(dir, "s")
 }
 
-// TestPeerCredUIDOverUnixSocket drives the real LOCAL_PEERCRED read: it binds a
+// TestPeerCredUIDOverUnixSocket drives the real peer-credential read — the
+// platform's own syscall, LOCAL_PEERCRED on macOS and SO_PEERCRED on Linux: it binds a
 // unix socket, dials it, and asserts peerCredUID reports the connecting
 // process's uid — which, for a client dialled from this same test process, is
 // our own uid. This is the syscall the production policy relies on to identify a

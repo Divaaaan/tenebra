@@ -1,6 +1,8 @@
-﻿//! The unix-domain-socket transport: a client of the core running detached from
-//! the GUI as a root LaunchDaemon — `tenebra-core --socket`, which serves the
-//! control protocol on `/var/run/tenebra.sock`.
+//! The unix-domain-socket transport: a client of the core running detached from
+//! the GUI as a privileged daemon — `tenebra-core --socket`, which serves the
+//! control protocol on a well-known socket: the root LaunchDaemon's
+//! `/var/run/tenebra.sock` on macOS, the systemd service's `/run/tenebra.sock`
+//! on Linux (see [`SOCKET_PATH`]).
 //!
 //! The daemon listens on that socket through the same transport-agnostic
 //! `ServeListener` the Windows pipe uses (see `core/control/listener.go` and the
@@ -11,6 +13,11 @@
 //! and the unprivileged GUI needs no elevation of its own because the privileged
 //! tunnel already lives in the daemon.
 //!
+//! - **Patience on the first dial.** Where the daemon comes up alongside the
+//!   desktop session rather than long before it, the opening dial waits a
+//!   bounded [`DIAL_ABSENT_WAIT`] for a listener to appear rather than reading
+//!   its absence as "no daemon on this machine" — the transport is chosen once
+//!   per run, so that single answer decides the whole session.
 //! - **Re-sync on connect.** The socket delivers no backlog of events on attach,
 //!   so the state on connect is whatever it already is. Every new session
 //!   therefore opens with a `status` request and pushes the answer at the UI.
@@ -45,7 +52,7 @@
 //!   file's own permissions, which the daemon (the core) sets when it binds. The
 //!   GUI only dials, and cannot be tricked into lending an identity it never had.
 
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -57,9 +64,14 @@ use std::time::{Duration, Instant};
 use super::wire::{obj, read_loop, WireClient, WireSession};
 use super::{ConnectionState, EventSink, State};
 
-/// The well-known control socket, mirroring the path the macOS LaunchDaemon
-/// binds on the Go side.
+/// The well-known control socket, mirroring `control.DefaultSocketPath` on the
+/// Go side. The two platforms put a runtime socket in different places: macOS
+/// daemons still bind under `/var/run`, while on Linux `/run` is the canonical
+/// tmpfs systemd itself uses and `/var/run` is only a compatibility symlink.
+#[cfg(target_os = "macos")]
 pub const SOCKET_PATH: &str = "/var/run/tenebra.sock";
+#[cfg(target_os = "linux")]
+pub const SOCKET_PATH: &str = "/run/tenebra.sock";
 
 /// Reconnect backoff: first retry comes quickly (the common loss is a daemon
 /// restart or a displaced session, both back within a second), then doubles to
@@ -75,6 +87,33 @@ const MAX_BACKOFF: Duration = Duration::from_secs(5);
 /// (backoff puts them ~0.25 s to ~7.75 s after the loss), while still reporting
 /// a genuinely stopped daemon in single-digit seconds.
 const RECONNECT_GRACE: Duration = Duration::from_secs(8);
+
+/// How long the *first* dial keeps asking for a socket nothing is answering on
+/// yet. The GUI picks its transport exactly once (`make_backend` in `lib.rs`),
+/// so losing a start-up race here does not cost a beat but the whole run: the
+/// app spends it on an unprivileged core with its own profile store, where the
+/// profile list is empty and Connect appears to do nothing.
+///
+/// On Linux that race is ordinary. The daemon is a systemd unit started
+/// alongside everything else the machine brings up, while the GUI is launched by
+/// the desktop session — at login they start concurrently, and the core still
+/// has to load its store before it binds. Five seconds covers that with room to
+/// spare while staying under the eight-second [`RECONNECT_GRACE`] the mid-run
+/// path already treats as "not a failure yet", and the dial re-attempts every
+/// [`DIAL_RETRY_TICK`], so a listener that arrives early is picked up within
+/// tens of milliseconds.
+///
+/// macOS gets no budget. launchd loads the daemon at boot, long before anyone
+/// opens the app, so a socket that is absent at launch means it was never
+/// installed — the ordinary state for a client running its own core — and
+/// waiting would delay every one of those launches for an answer already known.
+#[cfg(target_os = "linux")]
+const DIAL_ABSENT_WAIT: Duration = Duration::from_secs(5);
+#[cfg(not(target_os = "linux"))]
+const DIAL_ABSENT_WAIT: Duration = Duration::ZERO;
+
+/// How often a dial re-attempts while it is waiting out a transient failure.
+const DIAL_RETRY_TICK: Duration = Duration::from_millis(50);
 
 /// The socket path the GUI should dial, or `None` to skip the unix-socket
 /// transport entirely. Honors `TENEBRA_SOCKET`: unset or empty means the
@@ -92,6 +131,45 @@ fn path_from(value: Option<&str>) -> Option<String> {
         Some("off") | Some("0") => None,
         Some(path) => Some(path.to_string()),
     }
+}
+
+/// Whether a daemon is accepting on `path` right now, asked without connecting.
+///
+/// A dial would answer the same question, at a price this must not pay: sessions
+/// are last-writer-wins (see the Transports section of
+/// `docs/control-protocol.md`), so a dial used as a probe would displace
+/// whichever client currently holds the daemon. `/proc/net/unix` lists every
+/// unix socket the kernel holds, and `SO_ACCEPTCON` is set on exactly the ones a
+/// server is accepting on, so the answer comes out of a read that touches
+/// nothing.
+///
+/// Linux-only, because it is the one platform that publishes that table; macOS
+/// has no equivalent, which is why the late-daemon watch in `lib.rs` is
+/// Linux-only too. The answer is a snapshot: callers should read `false` as "not
+/// this instant", never as "there is no daemon on this machine".
+#[cfg(target_os = "linux")]
+pub fn is_listening(path: &str) -> bool {
+    std::fs::read_to_string("/proc/net/unix").is_ok_and(|table| listening_in(&table, path))
+}
+
+/// The `/proc/net/unix` reading behind [`is_listening`], split out so the table
+/// format can be checked without a live socket.
+///
+/// Columns are `Num RefCount Protocol Flags Type St Inode Path`, with Flags in
+/// hex; a socket a server is accepting on carries `SO_ACCEPTCON` there. The path
+/// is the last column and is absent for anonymous sockets, so a short line is
+/// simply not ours — as is the header, whose non-numeric Flags cannot parse.
+#[cfg(target_os = "linux")]
+fn listening_in(table: &str, path: &str) -> bool {
+    const SO_ACCEPTCON: u32 = 0x0001_0000;
+    table.lines().any(|line| {
+        let mut columns = line.split_whitespace();
+        // Flags is column 3; the path is column 7, three past it.
+        let (Some(flags), Some(entry)) = (columns.nth(3), columns.nth(3)) else {
+            return false;
+        };
+        entry == path && u32::from_str_radix(flags, 16).is_ok_and(|f| f & SO_ACCEPTCON != 0)
+    })
 }
 
 /// One dialed connection, as the halves the wire client consumes plus the spare
@@ -142,10 +220,28 @@ impl UnixBackend {
     /// caller can fall back to another transport when no core is listening;
     /// after that the connection is supervised — lost sessions reconnect with
     /// backoff and re-sync — until the backend is dropped.
+    ///
+    /// It is as patient as the platform warrants: a daemon that is merely still
+    /// starting answers within [`DIAL_ABSENT_WAIT`], and only a socket nobody
+    /// serves in that window is reported as "no core here" for the caller to
+    /// fall back on.
     pub fn connect(path: &str, sink: Arc<dyn EventSink>) -> Result<Self, String> {
+        Self::connect_within(path, sink, DIAL_ABSENT_WAIT)
+    }
+
+    /// [`connect`](Self::connect) with an explicit budget for a socket nothing
+    /// answers on yet — [`DIAL_ABSENT_WAIT`] in production, set by the tests
+    /// that pin both the patient and the fail-fast behaviour on either platform.
+    fn connect_within(
+        path: &str,
+        sink: Arc<dyn EventSink>,
+        absent_wait: Duration,
+    ) -> Result<Self, String> {
         let stop = Arc::new(AtomicBool::new(false));
         let mut dialer = UnixDialer {
             path: path.to_string(),
+            stop: Arc::clone(&stop),
+            absent_wait,
         };
         let first = dialer.dial()?;
         Self::start(first, dialer, sink, stop, RECONNECT_GRACE)
@@ -253,7 +349,7 @@ fn reconnecting_state() -> State {
         preset_ru_gov: None,
         crash_reports: None,
         crash_reports_asked: false,
-        error: Some("Reconnecting to the Tenebra daemonвЂ¦".to_string()),
+        error: Some("Reconnecting to the Tenebra daemon…".to_string()),
     }
 }
 
@@ -430,18 +526,25 @@ fn serve_session(conn: Conn, shared: &Arc<UnixShared>, sink: &Arc<dyn EventSink>
 /// writer over one connection, plus a spare clone kept for `shutdown`.
 struct UnixDialer {
     path: String,
+    stop: Arc<AtomicBool>,
+    /// How long the *next* dial waits for a socket nothing answers on yet. The
+    /// first dial spends it and leaves it at zero: startup is the one moment an
+    /// absent daemon is worth waiting out, because the choice of transport hangs
+    /// on that single answer. The supervisor's redials must come back promptly
+    /// instead — they already have their own backoff, and the grace escalation
+    /// is timed against the moment each redial is due, so a dial that parked for
+    /// seconds inside that schedule would delay the honest "the daemon is still
+    /// unreachable" report it exists to produce.
+    absent_wait: Duration,
 }
 
 impl Dial for UnixDialer {
     fn dial(&mut self) -> Result<Conn, String> {
-        // `connect` either succeeds or fails at once — a missing socket file is
-        // `ENOENT`, a bound-but-unserved one `ECONNREFUSED` — so unlike the
-        // named pipe there is no "server exists but has no free instance"
-        // transient to wait through. A failure here is the caller's to judge: at
-        // startup it selects the sidecar fallback, mid-run it feeds the
-        // reconnect backoff.
-        let stream =
-            UnixStream::connect(&self.path).map_err(|e| format!("connect {}: {e}", self.path))?;
+        // A failure here is the caller's to judge: at startup it selects the
+        // sidecar fallback, mid-run it feeds the reconnect backoff.
+        let absent_wait = std::mem::take(&mut self.absent_wait);
+        let stream = open_socket(&self.path, &self.stop, absent_wait)
+            .map_err(|e| format!("connect {}: {e}", self.path))?;
         // Both halves and the wake handle are clones of one socket: the kernel
         // reference-counts them, and a blocking read on one never blocks a write
         // on another (full-duplex), so no polling is needed to keep writes live.
@@ -457,6 +560,44 @@ impl Dial for UnixDialer {
             wake: Some(wake),
         })
     }
+}
+
+/// Connect to `path`, waiting out the failures that mean "ask again in a
+/// moment" for `absent_wait` — [`DIAL_ABSENT_WAIT`] on the first dial, zero on
+/// every later one, see [`UnixDialer::absent_wait`]. Any other failure is
+/// returned at once: unlike the two below it describes a standing condition
+/// (`EACCES` on the socket above all), which a retry loop would only turn into a
+/// stall.
+fn open_socket(
+    path: &str,
+    stop: &Arc<AtomicBool>,
+    absent_wait: Duration,
+) -> io::Result<UnixStream> {
+    let started = Instant::now();
+    loop {
+        match UnixStream::connect(path) {
+            Err(e)
+                if is_transient(&e)
+                    && started.elapsed() < absent_wait
+                    && !stop.load(Ordering::SeqCst) =>
+            {
+                thread::sleep(DIAL_RETRY_TICK)
+            }
+            other => return other,
+        }
+    }
+}
+
+/// Whether a failed dial is one to wait out. Both shapes are what a daemon that
+/// is still starting looks like from here: `ENOENT` while nothing has bound the
+/// path yet, `ECONNREFUSED` for the moment a socket node exists but nobody is
+/// accepting on it — a daemon between `bind` and `listen`, or a node a killed
+/// one left behind and a restart is about to replace.
+fn is_transient(e: &io::Error) -> bool {
+    matches!(
+        e.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+    )
 }
 
 #[cfg(test)]
@@ -483,6 +624,20 @@ mod tests {
             path_from(Some("/tmp/tenebra-test.sock")).as_deref(),
             Some("/tmp/tenebra-test.sock")
         );
+    }
+
+    #[test]
+    fn a_transient_dial_failure_is_only_the_startup_race() {
+        // The two shapes a daemon that is still starting wears, and nothing
+        // else: a standing refusal must go straight back to the caller rather
+        // than be retried for seconds.
+        assert!(is_transient(&io::Error::from(io::ErrorKind::NotFound)));
+        assert!(is_transient(&io::Error::from(
+            io::ErrorKind::ConnectionRefused
+        )));
+        assert!(!is_transient(&io::Error::from(
+            io::ErrorKind::PermissionDenied
+        )));
     }
 
     #[test]
@@ -993,11 +1148,14 @@ mod tests {
 
     #[test]
     fn connect_fails_cleanly_with_nobody_listening() {
-        // A path nothing ever binds: the dial must fail (not hang), and name the
-        // socket so the fallback log is actionable.
+        // With no patience budget (the production one is exercised below), a
+        // path nothing has bound must fail at once rather than wait: this is the
+        // answer `make_backend` turns into the sidecar fallback, and a machine
+        // that simply has no daemon should not pay for the verdict twice.
         let path = unique_socket_path("absent");
         let sink: Arc<dyn EventSink> = Arc::new(Rec::default());
-        let err = match UnixBackend::connect(&path, sink) {
+        let started = Instant::now();
+        let err = match UnixBackend::connect_within(&path, sink, Duration::ZERO) {
             Ok(_) => panic!("dialing a nonexistent socket must fail"),
             Err(e) => e,
         };
@@ -1005,5 +1163,98 @@ mod tests {
             err.contains(&path),
             "the error should name the socket: {err}"
         );
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "a dial with no patience budget must fail fast, took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn the_first_dial_waits_out_a_daemon_that_is_still_starting() {
+        // The production race this transport lives with on Linux: the service
+        // manager has been told to start the daemon but it has not bound the
+        // socket yet, so the very first dial hits ENOENT. Giving up there is not
+        // a small miss — the GUI picks its transport exactly once, so it spends
+        // the whole run on an unprivileged sidecar with a different profile
+        // store.
+        let path = unique_socket_path("late");
+        let _cleanup = RemoveOnDrop(path.clone());
+        let server_path = path.clone();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let server_requests = Arc::clone(&requests);
+        let server = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(400));
+            let listener = bind_listener(&server_path);
+            let (stream, _addr) = listener.accept().expect("accept a client");
+            serve_requests(&stream, &server_requests, None, None);
+        });
+
+        let sink = Arc::new(Rec::default());
+        let backend = UnixBackend::connect_within(
+            &path,
+            Arc::clone(&sink) as Arc<dyn EventSink>,
+            Duration::from_secs(5),
+        )
+        .expect("the first dial must wait out a daemon that is still starting");
+
+        // And the session that came out of it is a real one: the re-sync landed.
+        let states = sink.wait_for_states(1, WAIT);
+        assert_eq!(states[0].state, ConnectionState::Connected);
+
+        drop(backend);
+        server.join().expect("socket server thread");
+    }
+
+    // --- the listener probe ---------------------------------------------------
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_probe_reads_a_listener_out_of_the_kernel_table() {
+        // A real socket this process is accepting on must read as listening,
+        // and the probe must not have taken the session away from anyone: the
+        // client that follows still gets served.
+        let path = unique_socket_path("probe");
+        let _cleanup = RemoveOnDrop(path.clone());
+        assert!(!is_listening(&path), "nothing has bound {path} yet");
+
+        let listener = bind_listener(&path);
+        assert!(is_listening(&path), "a bound listener must be visible");
+        assert!(
+            is_listening(&path),
+            "the probe must not consume the listener"
+        );
+        drop(listener);
+        assert!(
+            !is_listening(&path),
+            "a closed listener must stop reading as one"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_probe_needs_the_accept_flag_and_the_exact_path() {
+        // The table's own shape: the header parses as nothing, a connected
+        // (non-accepting) socket on the same path is not a listener, and a
+        // different path never matches.
+        let table = "\
+Num       RefCount Protocol Flags    Type St Inode Path
+ffff9a0001: 00000002 00000000 00010000 0001 01 26031 /run/tenebra.sock
+ffff9a0002: 00000003 00000000 00000000 0001 03 26044 /run/other.sock
+ffff9a0003: 00000003 00000000 00000000 0001 03 26055 /run/tenebra.sock
+ffff9a0004: 00000002 00000000 00010000 0001 01 26066
+";
+        assert!(listening_in(table, "/run/tenebra.sock"));
+        // Only the accepting line matches: strip it and the two remaining
+        // /run/tenebra.sock entries (connected, and an anonymous short line)
+        // must not be mistaken for a daemon.
+        let connected_only: String = table
+            .lines()
+            .filter(|l| !l.contains("26031"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!listening_in(&connected_only, "/run/tenebra.sock"));
+        assert!(!listening_in(table, "/run/nothing.sock"));
+        assert!(!listening_in("", "/run/tenebra.sock"));
     }
 }

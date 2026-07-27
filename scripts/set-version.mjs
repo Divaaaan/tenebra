@@ -7,11 +7,11 @@
 //   node scripts/set-version.mjs 1.2.3 --check  # assert every file is 1.2.3
 //
 // The files are the desktop package manifest, the Tauri bundle config, the Rust
-// crate manifest and its lockfile entry. The release workflow reads the version
-// from tauri.conf.json and the updater's latest.json inherits it, so a stale
-// copy would advertise the wrong version to installed clients or leave the
-// lockfile behind (build with --locked to catch that). Run this instead of
-// editing the four files by hand.
+// crate manifest and its lockfile entry, the Go core's build info, and the Arch
+// PKGBUILD. The release workflow reads the version from tauri.conf.json and the
+// updater's latest.json inherits it, so a stale copy would advertise the wrong
+// version to installed clients or leave the lockfile behind (build with --locked
+// to catch that). Run this instead of editing the files by hand.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -36,6 +36,12 @@ const targets = [
   // The Go core's own copy: the daemon reports it in every State snapshot so a
   // GUI can spot a stale hand-installed daemon (the macOS LaunchDaemon path).
   { file: "core/buildinfo/buildinfo.go", re: /(^const Version = ")([^"]+)(")/m },
+  // The Arch package's version doubles as the git tag its source is taken from,
+  // so a stale copy here does not merely mislabel the package — makepkg would
+  // check out the wrong release, or fail outright on a tag that does not exist
+  // yet. Anchored to the line so the pinned sing-box version below it is left
+  // alone.
+  { file: "packaging/arch/PKGBUILD", re: /(^pkgver=)([^\s]+)()/m },
 ];
 
 const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
