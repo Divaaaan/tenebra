@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fetches the sing-box binary and the RU rule-sets into
+# Fetches the sing-box binary, the ByeDPI engine and the RU rule-sets into
 # ui-desktop/src-tauri/resources so the desktop app can bundle them. This is the
 # Unix analog of fetch-resources.ps1 and serves both macOS and Linux: the pinned
 # version, the rule-sets, the retry policy and the checksum discipline are
@@ -13,6 +13,10 @@
 # needs wintun.dll: the tun device is utun on macOS and /dev/net/tun on Linux,
 # and sing-box opens either itself once it runs with privilege (see
 # docs/porting/macos.md and docs/porting/linux.md).
+#
+# The two Unix targets do differ on ByeDPI: upstream publishes Windows and Linux
+# builds and no darwin one, so only the Linux branch fetches it — see the Darwin
+# case at the bottom of this script.
 set -euo pipefail
 
 usage() {
@@ -20,7 +24,8 @@ usage() {
 Usage: fetch-resources.sh [--arch <amd64|arm64>]
 
 Downloads the pinned sing-box build for this host plus the RU and ads rule-sets
-into ui-desktop/src-tauri/resources.
+into ui-desktop/src-tauri/resources. On Linux it also downloads the pinned ByeDPI
+engine (ciadpi); upstream has no macOS build, so that step is skipped there.
 
   --arch  Linux only: fetch this architecture instead of the host's, for a cross
           build. macOS always produces a universal (arm64 + amd64) binary, so it
@@ -51,6 +56,13 @@ done
 # Keep in sync with scripts/fetch-resources.ps1 ($singboxVersion).
 singbox_version="1.13.13"
 
+# ByeDPI, the DPI-bypass engine; keep in sync with fetch-resources.ps1
+# ($byedpiVersion) and with packaging/arch/PKGBUILD. Upstream tags the release
+# `v0.17.3` but names its archives `byedpi-17.3-*`, so the archive name is derived
+# from the tag instead of being a second literal that can fall out of step.
+byedpi_version="0.17.3"
+byedpi_asset_version="${byedpi_version#0.}"
+
 # SHA-256 pins for every artifact fetched below. These downloads are bundled
 # verbatim into the signed release, so a swapped upstream artifact — a poisoned
 # GitHub release, a cache-poisoned raw.githubusercontent.com, or a
@@ -63,20 +75,22 @@ singbox_version="1.13.13"
 # the sing-box pins there are the Windows build and differ by platform.
 #
 # To refresh on a version/rule-set bump: bump the version, download the same URLs
-# these variables feed (the GitHub darwin and linux tarballs and the raw .srs
-# files), run
+# these variables feed (the GitHub darwin and linux sing-box tarballs, the ByeDPI
+# linux tarballs and the raw .srs files), run
 #   shasum -a 256 <file>
 # on each, and paste the digests here. The .srs sets are rebuilt periodically on
 # the SagerNet `rule-set` branch, so their digests move even without a version
 # change — re-pin them whenever the bundled copies are refreshed. Mirror every
 # change into scripts/fetch-resources.ps1 (identical .srs digests; Windows
-# sing-box digest for that script) and into packaging/arch/PKGBUILD, which pins
-# the same linux-amd64 artifact and the same three rule-sets in its
+# sing-box and ByeDPI digests for that script) and into packaging/arch/PKGBUILD,
+# which pins the same linux-amd64 artifacts and the same three rule-sets in its
 # source()/sha256sums() arrays so makepkg can verify them itself.
 singbox_sha256_darwin_arm64="4ac414d4ede9ec21bc79d8ccf40b4679429203b9e06ad96d2d8d34c0fe940558"
 singbox_sha256_darwin_amd64="477afd64ad7751214f01338ba244265ecc223966ddb58214963f526dca7f424e"
 singbox_sha256_linux_amd64="bb99cabf47694625db421ee17898f36cdc1f9c2cb5decf65b12bac8d8437e842"
 singbox_sha256_linux_arm64="d7fab87b921933eb281d8ee7bd5377cdd8228089f1f7c807c9363a6a2329286c"
+byedpi_sha256_linux_amd64="98f73c32eacb571ebd88d790f6376ed9e70f02d44c1fe862472ecea75cd7117d"
+byedpi_sha256_linux_arm64="d5806504e159e8119ede5af1164a609251b0520cd4483a7db611b6d238b9404b"
 geoip_ru_sha256="8bc18433e5d5b0644ba2a9ff74cd03428ba4f4e388b3c409f182de930e3c3170"
 geosite_ru_sha256="3fb41849eefac86a4e65a86da3b868ecd40512e4d3f097ee325474f4cd401f76"
 geosite_ads_sha256="ca44c97fce76f4f889e08bbc28e80d497a43239328e09f760129844057a2780a"
@@ -212,14 +226,46 @@ fetch_singbox_linux() {
   echo "Fetched linux-$arch sing-box $singbox_version"
 }
 
+# fetch_byedpi_linux installs ByeDPI (ciadpi), the userspace DPI-bypass engine the
+# core spawns beside sing-box when the bypass is on. It needs no driver and no
+# privilege — it is a plain loopback SOCKS5 proxy — but it is bundled next to
+# sing-box because the core resolves the two the same way. Upstream ships one
+# statically linked executable per architecture, named after that architecture
+# inside the tarball; the bundled name is the plain `ciadpi` the core looks for.
+fetch_byedpi_linux() {
+  local arch asset expected tarball out
+  arch="$(linux_arch "$target_arch")"
+  case "$arch" in
+    amd64) asset="x86_64"; expected="$byedpi_sha256_linux_amd64" ;;
+    arm64) asset="aarch64"; expected="$byedpi_sha256_linux_arm64" ;;
+  esac
+  tarball="$work/byedpi-$asset.tar.gz"
+  fetch "https://github.com/hufrea/byedpi/releases/download/v$byedpi_version/byedpi-$byedpi_asset_version-$asset.tar.gz" "$tarball"
+  verify_sha256 "$tarball" "$expected"
+  out="$work/byedpi-$asset"
+  mkdir -p "$out"
+  tar -xzf "$tarball" -C "$out"
+  cp "$out/ciadpi-$asset" "$dest/ciadpi"
+  chmod +x "$dest/ciadpi"
+  echo "Fetched linux-$arch ByeDPI $byedpi_version"
+}
+
 host_os="$(uname -s)"
 case "$host_os" in
   Darwin)
     [ -z "$target_arch" ] || { echo "--arch is Linux-only; the macOS bundle is always universal" >&2; exit 2; }
     fetch_singbox_darwin
+    # No ByeDPI on macOS. Upstream publishes Windows, Linux, and nothing for
+    # darwin, and compiling it here would give up the property every other
+    # bundled artifact has — a pinned digest over an upstream binary — while
+    # making the bundle depend on the build host's toolchain. So the macOS bundle
+    # ships without the engine and the DPI bypass reports itself unsupported
+    # there rather than turning on and doing nothing; see docs/architecture.md.
+    echo "Skipped ByeDPI: upstream publishes no macOS build, so the DPI bypass is not bundled on darwin"
     ;;
   Linux)
     fetch_singbox_linux
+    fetch_byedpi_linux
     ;;
   *)
     echo "unsupported host $host_os; use scripts/fetch-resources.ps1 on Windows" >&2

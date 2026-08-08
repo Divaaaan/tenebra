@@ -30,11 +30,25 @@ const licenseText = (name) =>
 // Verified license + copyright metadata (July 2026). Keyed by the exact name
 // that appears in the manifest. `license` uses SPDX identifiers; `OR` marks a
 // dual-licensed component the distributor may use under either license.
+//
+// Entries marked `bundled: true` are runtime binaries fetched by
+// scripts/fetch-resources.* rather than resolved from a manifest, so they are
+// keyed by the display name section 1 uses. The drift check below only covers
+// manifest dependencies, but the license roll-ups in section 6 cover both, so a
+// bundled component still gets listed under the license text it is shipped under.
 // ---------------------------------------------------------------------------
 const META = {
+  // Bundled runtime binaries (scripts/fetch-resources.ps1 / .sh)
+  ByeDPI: { license: "MIT", copyright: "Copyright (c) 2024 hufrea", bundled: true },
+
   // Go modules (go.mod)
   "github.com/Microsoft/go-winio": { license: "MIT", copyright: "Copyright (c) 2015 Microsoft" },
   "golang.org/x/sys": { license: "BSD-3-Clause", copyright: "Copyright 2009 The Go Authors" },
+  "github.com/sagernet/gomobile": {
+    license: "BSD-3-Clause",
+    copyright: "Copyright 2009 The Go Authors",
+    note: "SagerNet's fork of golang.org/x/mobile, pinned so the Android bind resolves its `bind` package; a build-time code generator, not linked into the desktop binaries.",
+  },
 
   // Rust crates (src-tauri/Cargo.toml)
   tauri: { license: "Apache-2.0 OR MIT", copyright: "Copyright (c) 2017 - Present Tauri Apps Contributors" },
@@ -138,6 +152,14 @@ const npmDeps = parsePkgDeps(read(join(root, "ui-desktop", "package.json")));
 const fetchScript = read(join(root, "scripts", "fetch-resources.ps1"));
 const singboxVersion = scalar(fetchScript, "singboxVersion");
 const wintunVersion = scalar(fetchScript, "wintunVersion");
+const byedpiVersion = scalar(fetchScript, "byedpiVersion");
+
+// The bundled binaries, in the same shape as a parsed dependency so the license
+// roll-ups can treat them uniformly. They carry no manifest version — the fetch
+// script's pin is the version, and section 1 states it.
+const bundledDeps = Object.entries(META)
+  .filter(([, meta]) => meta.bundled)
+  .map(([name]) => ({ name, version: null }));
 
 // Drift guard: every parsed dependency must have metadata.
 const allDeps = [...goDeps, ...cargoDeps, ...npmDeps];
@@ -149,8 +171,10 @@ if (missing.length) {
 }
 // Reverse check: flag metadata that no longer matches any parsed dependency, which
 // usually means a dropped dependency (remove it from META) or a parser miss.
+// Bundled binaries are exempt: they are pinned in the fetch scripts, not in a
+// manifest, so there is nothing here for them to match.
 const parsedNames = new Set(allDeps.map((d) => d.name));
-const orphaned = Object.keys(META).filter((k) => !parsedNames.has(k));
+const orphaned = Object.keys(META).filter((k) => !META[k].bundled && !parsedNames.has(k));
 if (orphaned.length) {
   console.warn("Warning: META has entries not found in any manifest: " + orphaned.join(", "));
 }
@@ -175,7 +199,7 @@ function depLines(deps) {
 function usersOf(token) {
   const names = [];
   const seen = new Set();
-  for (const group of [goDeps, cargoDeps, npmDeps]) {
+  for (const group of [bundledDeps, goDeps, cargoDeps, npmDeps]) {
     for (const d of group) {
       if (seen.has(d.name)) continue;
       if (META[d.name].license.split(/\s+OR\s+/).includes(token)) {
@@ -257,6 +281,19 @@ p("  > In addition, no derivative work may use the name or imply association");
 p("  > with this application without prior consent.");
 p();
 
+p("### ByeDPI");
+p();
+p(`- Component: \`ciadpi.exe\` / \`ciadpi\` (ByeDPI ${byedpiVersion}, official release build)`);
+p("- License: MIT");
+p(`- Copyright: ${META.ByeDPI.copyright}`);
+p("- Source: <https://github.com/hufrea/byedpi>");
+p("- Attribution: The binary is bundled unmodified and run as a separate,");
+p("  unprivileged process that serves a loopback SOCKS5 proxy; Tenebra links");
+p("  against none of its code. It is shipped in the Windows and Linux bundles");
+p("  only — upstream publishes no macOS build — so the macOS bundle carries no");
+p("  copy of it. The MIT License text appears in section 6.");
+p();
+
 p("### GeoIP rule-set");
 p();
 p("- Component: `geoip-ru.srs`");
@@ -289,8 +326,10 @@ p();
 // --- 2. Go core dependencies ---
 p("## 2. Go core dependencies");
 p();
-p("Direct dependencies from `go.mod`. The module graph contains no other");
-p("dependencies (`go.sum` lists only these two modules).");
+p("Direct dependencies from `go.mod`. The remaining `go.sum` entries are");
+p("indirect: they arrive with the pinned gomobile fork's own module graph, which");
+p("only the Android bind builds against, and are not compiled into the desktop");
+p("binaries.");
 p();
 p(depLines(goDeps));
 p();
@@ -369,5 +408,5 @@ writeFileSync(join(root, "THIRD-PARTY-NOTICES.md"), out.join("\n").replace(/\n+$
 console.log("Wrote THIRD-PARTY-NOTICES.md");
 console.log(
   `Components: ${goDeps.length} Go, ${cargoDeps.length} Rust, ${npmDeps.length} npm; ` +
-    `bundled sing-box ${singboxVersion}, wintun ${wintunVersion}.`,
+    `bundled sing-box ${singboxVersion}, wintun ${wintunVersion}, ByeDPI ${byedpiVersion}.`,
 );

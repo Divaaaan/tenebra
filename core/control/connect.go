@@ -132,6 +132,14 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 	mh := d.multihop
 	d.mu.Unlock()
 
+	// The DPI-bypass engine has to be listening before sing-box starts, because the
+	// config built below already routes part of the traffic into its socks port.
+	// It is not part of this connection: it keeps running across node switches and
+	// is only stopped by disarming the toggle or by Close (see dpi.go). An engine
+	// that cannot start folds the bypass back out of these options, so the config
+	// never points at a dead port.
+	ro, tun = d.prepareDPIBypass(ro, tun)
+
 	nodes := profileNodes(p)
 	nodeIDs := serverIDs(p)
 	tags := serverTags(p)
@@ -998,9 +1006,9 @@ func (d *Daemon) AutoconnectOnStart() bool {
 // It converges: the hot-swap's own connect re-runs this check, and once the
 // options settle it finds no divergence and stops — so a burst of toggles costs at
 // most one extra swap per settled value, not an endless loop. Only the live-reapply
-// options (kill switch, TLS fragmentation, tun stack) are compared; routing mode
-// and split are deferred-to-next-connect by design, matching what reapplyLive
-// itself applies.
+// options (kill switch, TLS fragmentation, DPI bypass, tun stack) are compared;
+// routing mode and split are deferred-to-next-connect by design, matching what
+// reapplyLive itself applies.
 func (d *Daemon) reconcileConnectingOptions(loop fallbackLoop, nodeID string) {
 	d.mu.Lock()
 	curRo := d.routing
@@ -1011,8 +1019,15 @@ func (d *Daemon) reconcileConnectingOptions(loop fallbackLoop, nodeID string) {
 	// way the loop resolved its own snapshot, so a multihop toggle landing mid-connect
 	// is compared like for like and, when it differs, hot-swapped in.
 	curRo = resolveMultihop(curRo, curMh, loop.tags)
+	// The bypass is compared on its effective value — armed AND the engine actually
+	// running — rather than on the preference alone. An engine that refused to start
+	// is folded out of every config this daemon builds, so comparing the bare
+	// preference would report a divergence no hot swap could ever close and bounce
+	// the tunnel forever.
+	curDPI := curRo.DPIBypass && d.dpiUp()
 	if loop.ro.KillSwitch == curRo.KillSwitch &&
 		loop.ro.TLSFragment == curRo.TLSFragment &&
+		loop.ro.DPIBypass == curDPI &&
 		loop.tun.Stack == curTun.Stack &&
 		multihopResolved(loop.ro, curRo) {
 		return // nothing that applies live changed during the connecting window
@@ -1112,6 +1127,10 @@ func (d *Daemon) setState(s State) {
 	// reporting them correctly across connect/disconnect transitions without
 	// every call site restating them.
 	applySettingsToState(&s, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
+	// The bypass engine's status is daemon-wide runtime state, not a preference and
+	// not per-connection: it outlives every transition this function publishes, so
+	// carry it over rather than let a fresh State value blank it.
+	s.DPIStatus = d.dpiStatus
 	d.state = s
 	emit := d.emit
 	d.mu.Unlock()
@@ -1216,6 +1235,12 @@ func (d *Daemon) Close() error {
 	// The entitlement lookups were cancelled above; wait for them to unwind so
 	// none outlives us writing to the store.
 	d.entWG.Wait()
+	// The bypass engine sits outside the connection's generation protocol, so the
+	// teardown above left it running. Stop it here — after the relaunch goroutines
+	// have unwound, since one of them could otherwise have spawned it again — and
+	// wait for its watcher, so no process and no goroutine outlives the daemon.
+	d.stopDPIBypass()
+	d.dpiWG.Wait()
 	return nil
 }
 

@@ -25,12 +25,16 @@ target/
 /packaging/arch/*.pkg.tar.*
 /packaging/arch/*.srs
 /packaging/arch/sing-box-*.tar.gz
+/packaging/arch/byedpi-*.tar.gz
 
 # sing-box and tunnel binaries are fetched at build time, never committed
 /bin/
 sing-box
 sing-box.exe
 wintun.dll
+# ByeDPI, the DPI-bypass engine, fetched by the same scripts
+ciadpi
+ciadpi.exe
 
 # gomobile bind leftover: the ARM core binary produced during Android bind work.
 # Anchored to the repository root on purpose — an unanchored pattern also matches

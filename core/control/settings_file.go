@@ -38,6 +38,12 @@ type persistedSettings struct {
 	// fragmentation. Absent in files written before the field existed, which reads
 	// back as false — off, matching the pre-fragmentation behaviour.
 	TLSFragment bool `json:"tls_fragment,omitempty"`
+	// DPIBypass remembers whether the user armed the local DPI-bypass engine.
+	// Absent in files written before the field existed, which reads back as false —
+	// off, matching the pre-bypass behaviour, so the field needs no version bump.
+	// The preference is stored even though the engine may be unavailable on the
+	// next start: whether it can run is decided per session, not per settings file.
+	DPIBypass bool `json:"dpi_bypass,omitempty"`
 	// TunStack remembers the chosen tun network stack (system/gvisor/mixed).
 	// Absent or unrecognized keeps the default; SetSettings validates it.
 	TunStack string `json:"tun_stack,omitempty"`

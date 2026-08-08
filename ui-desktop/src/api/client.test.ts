@@ -176,6 +176,20 @@ describe("api command wrappers", () => {
     expect(mockInvoke).toHaveBeenCalledWith("set_tls_fragment", { on: true });
   });
 
+  it("setDpiBypass forwards the flag and returns the State", async () => {
+    // The core answers with both fields: the armed flag and the bypass's own
+    // liveness, which the UI reads separately (armed but "failed" is a real
+    // combination).
+    const armed: State = {
+      state: "connected",
+      dpi_bypass: true,
+      dpi_status: "starting",
+    };
+    mockInvoke.mockResolvedValueOnce(armed);
+    await expect(api.setDpiBypass(true)).resolves.toEqual(armed);
+    expect(mockInvoke).toHaveBeenCalledWith("set_dpi_bypass", { on: true });
+  });
+
   it("setMultihop maps the camelCase args to snake_case wire keys", async () => {
     const armed: State = {
       state: "connected",

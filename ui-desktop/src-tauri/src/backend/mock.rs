@@ -68,6 +68,10 @@ impl MockBackend {
                 kill_switch: None,
                 // Fragmentation is an opt-in override, off until armed.
                 tls_fragment: None,
+                // The DPI bypass is opt-in too, and reports no status of its own
+                // until something has been asked of it.
+                dpi_bypass: None,
+                dpi_status: String::new(),
                 // No two-hop chain until the user picks one.
                 multihop: None,
                 // The core always names the stack once normalized; mirror that.
@@ -484,6 +488,28 @@ impl Backend for MockBackend {
                 "TLS fragmentation forced on"
             } else {
                 "TLS fragmentation off"
+            },
+        );
+        Ok(snapshot)
+    }
+
+    fn set_dpi_bypass(&self, on: bool) -> Result<State, String> {
+        // Mirror the core: record and report, off dropping the field (absent =
+        // off). The real core spawns a bypass process and walks the status from
+        // "starting" to "running" (or "failed") as it learns the outcome; the mock
+        // has nothing to spawn, so it reports the settled value at once.
+        let mut inner = self.shared.inner.lock().unwrap();
+        inner.state.dpi_bypass = if on { Some(true) } else { None };
+        inner.state.dpi_status = if on { "running".into() } else { String::new() };
+        let snapshot = inner.state.clone();
+        drop(inner);
+        self.shared.emit_state(&snapshot);
+        self.shared.sink.log(
+            "info",
+            if on {
+                "DPI bypass on for direct traffic"
+            } else {
+                "DPI bypass off"
             },
         );
         Ok(snapshot)
@@ -1222,6 +1248,27 @@ mod tests {
         // Disarming drops the field entirely (off is reported as absent).
         let s = b.set_tls_fragment(false).unwrap();
         assert_eq!(s.tls_fragment, None);
+    }
+
+    #[test]
+    fn set_dpi_bypass_arms_and_disarms() {
+        let (b, sink) = backend();
+        // Off by default: neither the flag nor a status on a fresh state.
+        let fresh = b.status().unwrap();
+        assert_eq!(fresh.dpi_bypass, None);
+        assert_eq!(fresh.dpi_status, "");
+
+        let s = b.set_dpi_bypass(true).unwrap();
+        assert_eq!(s.dpi_bypass, Some(true));
+        assert_eq!(s.dpi_status, "running");
+        let pushed = sink.last_state().unwrap();
+        assert_eq!(pushed.dpi_bypass, Some(true));
+        assert_eq!(pushed.dpi_status, "running");
+
+        // Disarming drops the flag entirely and clears the status with it.
+        let s = b.set_dpi_bypass(false).unwrap();
+        assert_eq!(s.dpi_bypass, None);
+        assert_eq!(s.dpi_status, "");
     }
 
     #[test]

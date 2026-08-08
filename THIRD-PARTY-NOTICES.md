@@ -137,6 +137,18 @@ Prebuilt Binaries License
   > In addition, no derivative work may use the name or imply association
   > with this application without prior consent.
 
+### ByeDPI
+
+- Component: `ciadpi.exe` / `ciadpi` (ByeDPI 0.17.3, official release build)
+- License: MIT
+- Copyright: Copyright (c) 2024 hufrea
+- Source: <https://github.com/hufrea/byedpi>
+- Attribution: The binary is bundled unmodified and run as a separate,
+  unprivileged process that serves a loopback SOCKS5 proxy; Tenebra links
+  against none of its code. It is shipped in the Windows and Linux bundles
+  only — upstream publishes no macOS build — so the macOS bundle carries no
+  copy of it. The MIT License text appears in section 6.
+
 ### GeoIP rule-set
 
 - Component: `geoip-ru.srs`
@@ -166,10 +178,13 @@ Prebuilt Binaries License
 
 ## 2. Go core dependencies
 
-Direct dependencies from `go.mod`. The module graph contains no other
-dependencies (`go.sum` lists only these two modules).
+Direct dependencies from `go.mod`. The remaining `go.sum` entries are
+indirect: they arrive with the pinned gomobile fork's own module graph, which
+only the Android bind builds against, and are not compiled into the desktop
+binaries.
 
 - **github.com/Microsoft/go-winio** `v0.6.2` — MIT — Copyright (c) 2015 Microsoft
+- **github.com/sagernet/gomobile** `v0.1.12` — BSD-3-Clause — Copyright 2009 The Go Authors — SagerNet's fork of golang.org/x/mobile, pinned so the Android bind resolves its `bind` package; a build-time code generator, not linked into the desktop binaries.
 - **golang.org/x/sys** `v0.41.0` — BSD-3-Clause — Copyright 2009 The Go Authors
 
 ## 3. Rust (Tauri) dependencies
@@ -231,7 +246,7 @@ GPL-3.0 text that covers Tenebra and the bundled sing-box components is in
 
 ### MIT License
 
-Applies to: github.com/Microsoft/go-winio, tauri-build, tauri, tauri-plugin-dialog, tauri-plugin-shell, tauri-plugin-autostart, tauri-plugin-single-instance, tauri-plugin-deep-link, tauri-plugin-notification, tauri-plugin-updater, tauri-plugin-process, serde, serde_json, url, open, windows-sys, @tauri-apps/api, @tauri-apps/plugin-autostart, @tauri-apps/plugin-dialog, @tauri-apps/plugin-process, @tauri-apps/plugin-shell, @tauri-apps/plugin-updater, react, react-dom.
+Applies to: ByeDPI, github.com/Microsoft/go-winio, tauri-build, tauri, tauri-plugin-dialog, tauri-plugin-shell, tauri-plugin-autostart, tauri-plugin-single-instance, tauri-plugin-deep-link, tauri-plugin-notification, tauri-plugin-updater, tauri-plugin-process, serde, serde_json, url, open, windows-sys, @tauri-apps/api, @tauri-apps/plugin-autostart, @tauri-apps/plugin-dialog, @tauri-apps/plugin-process, @tauri-apps/plugin-shell, @tauri-apps/plugin-updater, react, react-dom.
 
 ```text
 MIT License
@@ -260,7 +275,7 @@ SOFTWARE.
 
 ### BSD 3-Clause License
 
-Applies to: golang.org/x/sys.
+Applies to: github.com/sagernet/gomobile, golang.org/x/sys.
 
 ```text
 Copyright 2009 The Go Authors.

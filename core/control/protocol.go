@@ -39,6 +39,7 @@ const (
 	CmdSetSplit           = "set_split"
 	CmdSetKillSwitch      = "set_kill_switch"
 	CmdSetTLSFragment     = "set_tls_fragment"
+	CmdSetDPIBypass       = "set_dpi_bypass"
 	CmdSetMultihop        = "set_multihop"
 	CmdSetProxyMode       = "set_proxy_mode"
 	CmdSetTun             = "set_tun"
@@ -106,6 +107,17 @@ const (
 	LogError = "error"
 )
 
+// DPI-bypass engine statuses reported in State.DPIStatus. They describe the local
+// helper process, not the user's preference (State.DPIBypass): the preference can
+// be armed while the engine is down, which is exactly what "failed" reports. Off
+// is the empty string, so a daemon that never ran the engine omits the field.
+const (
+	DPIStatusOff      = ""
+	DPIStatusStarting = "starting"
+	DPIStatusRunning  = "running"
+	DPIStatusFailed   = "failed"
+)
+
 // Request is a UI -> core message. The fields used depend on Cmd; unused ones
 // stay zero. Raw payloads are decoded straight into this flat struct because the
 // command set is small and the fields don't collide.
@@ -141,10 +153,10 @@ type Request struct {
 	// Apps is the executable-name list for set_split, e.g. ["chrome.exe"].
 	Apps []string `json:"apps,omitempty"`
 	// On arms (true) or disarms (false) the kill switch for set_kill_switch, the
-	// connect-on-start preference for set_autoconnect, and the health-failover
-	// watchdog for set_auto_failover. An omitted field decodes to false, so
-	// "disarm" and "field left out" coincide — which is the safe reading for a
-	// command that grants, not removes, behaviour.
+	// connect-on-start preference for set_autoconnect, the health-failover
+	// watchdog for set_auto_failover and the DPI bypass for set_dpi_bypass. An
+	// omitted field decodes to false, so "disarm" and "field left out" coincide —
+	// which is the safe reading for a command that grants, not removes, behaviour.
 	On bool `json:"on,omitempty"`
 	// Stack is the tun network stack for set_tun (system/gvisor/mixed).
 	Stack string `json:"stack,omitempty"`
@@ -241,6 +253,18 @@ type State struct {
 	// kill switch. The adaptive walk still reaches fragmentation per-node on a
 	// censored handshake regardless of this global override.
 	TLSFragment bool `json:"tls_fragment,omitempty"`
+	// DPIBypass reports whether the local DPI-bypass engine is armed: the
+	// destinations smart routing keeps off the tunnel are handed to a loopback
+	// helper that reshapes them instead of going out untouched. Omitted when off,
+	// like the kill switch. It is a preference, so it stays true while the engine
+	// itself is down — DPIStatus is what reports the process.
+	DPIBypass bool `json:"dpi_bypass,omitempty"`
+	// DPIStatus reports the engine process behind DPIBypass: empty (not running),
+	// "starting", "running", or "failed" once it refused to start or died under us.
+	// Armed-but-failed is a real, reportable state: the tunnel keeps running and
+	// the affected destinations simply go out unreshaped, so the UI has to be able
+	// to show the difference rather than a toggle that silently means nothing.
+	DPIStatus string `json:"dpi_status,omitempty"`
 	// Multihop reports the two-hop chain selection: whether it is enabled and which
 	// entry/exit servers (by stable ID) it chains through. A pointer so the whole
 	// object is omitted while no selection has ever been made, and carried (even when

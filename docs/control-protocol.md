@@ -216,6 +216,7 @@ user are not defended against each other.
 | `set_split`            | `mode` (`off`/`exclude`/`include`), `apps?` | `State`            |
 | `set_kill_switch`      | `on` (boolean)                     | `State`                     |
 | `set_tls_fragment`     | `on` (boolean)                     | `State`                     |
+| `set_dpi_bypass`       | `on` (boolean)                     | `State`                     |
 | `set_multihop`         | `profile`, `enabled` (boolean), `entry_id`, `exit_id` | `State`  |
 | `set_tun`              | `stack` (`system`/`gvisor`/`mixed`) | `State`                    |
 | `set_proxy_mode`       | `proxy_mode` (`tun`/`system-proxy`), `proxy_port?` (int) | `State` |
@@ -290,9 +291,10 @@ response: {"id":7,"ok":true,"data":{"profile":{ /* …two servers… */ },"impor
 new split takes effect on the **next connect** (live retuning would require
 restarting sing-box). The returned `State` reflects the stored choice.
 
-`set_kill_switch`, `set_tls_fragment`, `set_multihop`, `set_tun` and
-`set_proxy_mode` go further: all are recorded and persisted the same way, but when
-a tunnel is **live** the core also re-applies them in place — see below.
+`set_kill_switch`, `set_tls_fragment`, `set_dpi_bypass`, `set_multihop`,
+`set_tun` and `set_proxy_mode` go further: all are recorded and persisted the same
+way, but when a tunnel is **live** the core also re-applies them in place — see
+below.
 
 `set_autoconnect` is recorded and persisted the same way but changes nothing
 about a live tunnel; it takes effect when the daemon itself next starts (see
@@ -341,6 +343,54 @@ arming does not wait for a reconnect. It is independent of the adaptive walk,
 which already reaches fragmentation per-node when a node's handshake looks
 censored (the last rung of the transport-strategy cascade); this toggle is the
 user's unconditional override for a network that blocks the SNI outright.
+
+### DPI bypass (`set_dpi_bypass`)
+
+`on: true` arms the DPI bypass; `false` (or an omitted field) disarms it. Armed,
+the core starts a small helper process — ByeDPI (`ciadpi`), bundled beside
+sing-box — that listens on loopback as a SOCKS5 proxy and reshapes the start of
+each connection it forwards: splitting or reordering the first TCP segments,
+desynchronising them, and rewriting the case and spacing of HTTP request headers.
+A middlebox that classifies a connection from its first packets then has nothing
+it recognises to match on. The helper needs no driver and no privilege of its own;
+the core owns its lifecycle and stops it on disarm and at shutdown.
+
+The bypass is not a second mode beside the tunnel — it is a property of the
+**direct** half of routing. Everything the current routing mode already keeps off
+the tunnel (the RU split in `smart`, custom direct rules, excluded apps, and all
+traffic in `direct` mode) goes through the helper instead of straight out; what
+the mode sends through the tunnel is untouched. So the tunnel and the bypass run
+at the same time and do not interfere. Two things stay strictly direct in both
+cases: **private (LAN) addresses**, which have no business inside a bypass, and
+the **helper's own traffic**, which would otherwise loop back into itself.
+
+Be honest with users about what this does and does not give them: it changes
+**how** connections look on the wire, not **where** they come from. No address is
+hidden, nothing is encrypted that was not already, the destination sees the user's
+own IP, and filtering that works by IP address or by blocking a whole protocol is
+unaffected. It is a way around inspection in transit, not anonymity, and it is not
+a substitute for the tunnel.
+
+`dpi_status` reports the helper process on its own: omitted while the bypass is
+off, `starting` while the process is coming up, `running` once it is up, and
+`failed` if it died or never started. A helper that fails **does not take the
+tunnel down** — the state records it, a `log` event says why, and the direct half
+falls back to going out unmodified.
+
+Like the kill switch the setting re-applies to a **live** tunnel in place (the
+config that names the helper's port is rebuilt for the node already in use and
+sing-box is hot-swapped), and it is persisted in `settings.json` and reported back
+as `dpi_bypass` in `State`.
+
+The engine is bundled on **Windows and Linux only** — upstream publishes no macOS
+build (see [architecture.md](architecture.md)) — so on macOS the command answers
+with an error and `dpi_bypass` stays off, rather than reporting a bypass that is
+not running.
+
+```
+request:  {"id":13,"cmd":"set_dpi_bypass","on":true}
+response: {"id":13,"ok":true,"data":{"state":"connected","profile":"p1","dpi_bypass":true,"dpi_status":"running"}}
+```
 
 ### Multihop (`set_multihop`)
 
@@ -745,6 +795,8 @@ type State = {
   split_apps?: string[];          // normalized executable names; omitted when off
   kill_switch?: boolean;          // omitted when off
   tls_fragment?: boolean;         // forced TLS ClientHello fragmentation; omitted when off
+  dpi_bypass?: boolean;           // direct traffic sent through the local bypass helper; omitted when off
+  dpi_status?: "starting" | "running" | "failed"; // the helper process; omitted while the bypass is off
   multihop?: {                    // two-hop chain selection; omitted until a pair is picked
     enabled: boolean;
     entry_id?: string;            // entry server id (first hop); omitted when unset

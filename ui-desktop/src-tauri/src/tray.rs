@@ -461,6 +461,8 @@ mod tests {
             split_apps: None,
             kill_switch: None,
             tls_fragment: None,
+            dpi_bypass: None,
+            dpi_status: String::new(),
             multihop: None,
             tun_stack: None,
             proxy_mode: None,

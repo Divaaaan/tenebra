@@ -22,6 +22,8 @@ Everything that isn't tied to a specific OS lives here:
 - **singbox** — turn selected nodes plus routing into a sing-box config.
 - **fallback** — the state machine that, on block or timeout, walks
   REALITY → Hysteria2 → AmneziaWG and remembers the last good one.
+- **dpi** — the DPI-bypass layer: the strategies the bundled bypass helper is
+  run under and the argument list it is started with.
 - **control** — the JSON protocol the UI uses to drive the core.
 
 The core's only third-party dependencies are `github.com/Microsoft/go-winio`
@@ -77,6 +79,40 @@ is the only arrangement, since opening `/dev/net/tun` and claiming the default
 route need `CAP_NET_ADMIN`. Transports, peer authentication and the endpoints'
 security models are described in
 [control-protocol.md](control-protocol.md#transports).
+
+### DPI bypass
+
+The optional DPI bypass is not a second connection mode; it is a **property of
+the direct half of routing**. When it is armed the core starts one more
+unprivileged child process beside sing-box — ByeDPI (`ciadpi`), bundled the same
+way sing-box is — which listens on loopback as a SOCKS5 proxy and reshapes the
+opening of every connection it forwards. sing-box is then generated with an extra
+`socks` outbound pointing at that port, and the destinations the routing mode
+already keeps **off** the tunnel are sent to it instead of straight out:
+
+```
+ destination ──┬── through the tunnel  ──►  sing-box outbound  ──►  exit node
+               ├── direct, bypassed    ──►  ciadpi (127.0.0.1)  ──►  origin
+               └── direct, plain       ──►  origin
+```
+
+The tunnel and the bypass therefore run **at the same time** and never sit in
+each other's path. Two destinations stay in the last row unconditionally:
+**private (LAN) addresses**, and the **helper's own traffic** — matched by process
+name, ahead of every other rule, because routing it back into the helper would be
+a loop. The runner lives in `adapters/byedpi` and is kept on its own lifecycle, so
+a node switch or a config hot-swap does not restart it, and a helper that dies is
+reported without taking the tunnel with it.
+
+It changes how connections look on the wire, not where they come from: no address
+is hidden and nothing new is encrypted, so it is a way past inspection in transit,
+not anonymity.
+
+**Not on macOS.** Upstream publishes Windows and Linux builds of the helper and no
+darwin one. Building it from source would give up the property every other bundled
+artifact has — a pinned digest over an upstream binary — so the macOS bundle ships
+without it and the core rejects the command there instead of accepting a setting
+that would do nothing. Re-check upstream before promising macOS support.
 
 ### Mobile (later)
 

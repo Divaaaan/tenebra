@@ -17,10 +17,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 
+	"github.com/Divaaaan/tenebra/adapters/byedpi"
 	"github.com/Divaaaan/tenebra/core/control"
+	"github.com/Divaaaan/tenebra/core/dpi"
 	"github.com/Divaaaan/tenebra/core/profile"
 )
 
@@ -150,6 +153,14 @@ func buildDaemon() (*control.Daemon, error) {
 	} else {
 		log.Printf("tenebra-core: bundled RU rule-sets not found; falling back to remote download")
 	}
+	// The DPI bypass engine is optional and ships on Windows and Linux only, so a
+	// build without it has to keep running. Attaching it only when the binary is
+	// really on disk is what makes the absent case honest: the daemon answers
+	// set_dpi_bypass with "no engine installed" instead of arming a preference
+	// whose config would point traffic at a loopback port nothing listens on.
+	if err := attachDPIEngine(daemon); err != nil {
+		log.Printf("tenebra-core: DPI bypass unavailable (%v)", err)
+	}
 	// System-proxy backstop: clear any OS proxy a previous run left pointing at our
 	// loopback mixed inbound (a hard kill can't run the in-process cleanup). It only
 	// clears a proxy matching our exact loopback address, never a corporate one, and
@@ -170,6 +181,74 @@ func buildDaemon() (*control.Daemon, error) {
 		log.Printf("tenebra-core: autoconnect: reconnecting the last profile")
 	}
 	return daemon, nil
+}
+
+// attachDPIEngine hands the daemon a bypass engine when one is installed. The
+// port is picked here rather than inside the daemon because the generated
+// sing-box config has to name the same port the engine binds, and the config is
+// built long before the engine starts.
+//
+// Not finding the binary is a normal outcome, not a failure: macOS ships no
+// upstream build, and a dev checkout may simply not have fetched it.
+func attachDPIEngine(d *control.Daemon) error {
+	bin, err := findBundledDPIEngine()
+	if err != nil {
+		return err
+	}
+	// Publish the resolved path the same way the service publishes the sing-box
+	// one. The runner resolves the binary through dpi.ResolveBinary at spawn
+	// time, and that only knows the environment override and the directory
+	// holding the executable — in an installed layout the engine sits in
+	// resources\ instead, so without this the spawn would fail at the moment the
+	// user arms the toggle.
+	if err := os.Setenv(dpi.BinaryEnv, bin); err != nil {
+		return fmt.Errorf("publish engine path: %w", err)
+	}
+	port := dpi.FreePort()
+	// DefaultStrategies[0] is the upstream-recommended preset and the only one
+	// the UI can currently arm; per-strategy selection is a later step, and this
+	// is the one place that would change when it lands.
+	args, err := dpi.BuildArgs(dpi.LoopbackHost, port, dpi.DefaultStrategies[0].Args)
+	if err != nil {
+		return fmt.Errorf("render engine arguments: %w", err)
+	}
+	d.SetDPIRunner(byedpi.New(), port, args)
+	log.Printf("tenebra-core: DPI bypass engine %s ready on loopback port %d", bin, port)
+	return nil
+}
+
+// findBundledDPIEngine resolves the ByeDPI binary across the layouts Tenebra is
+// installed in, mirroring how the sing-box binary is located: the environment
+// override wins, then the bundle's resources directory beside the executable,
+// then a flat layout, and on Linux the package path the systemd unit runs from.
+// Returns an error naming the paths tried, so an install that shipped without
+// the engine says so in the log rather than failing later at connect time.
+func findBundledDPIEngine() (string, error) {
+	if p := os.Getenv(dpi.BinaryEnv); p != "" {
+		if _, err := os.Stat(p); err != nil {
+			return "", fmt.Errorf("%s points at %s: %w", dpi.BinaryEnv, p, err)
+		}
+		return p, nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("locate executable: %w", err)
+	}
+	dir := filepath.Dir(exe)
+	name := dpi.BinaryName()
+	candidates := []string{
+		filepath.Join(dir, "resources", name),
+		filepath.Join(dir, name),
+	}
+	if runtime.GOOS == "linux" {
+		candidates = append(candidates, filepath.Join("/usr/lib/tenebra", name))
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("engine not found in %s", strings.Join(candidates, ", "))
 }
 
 // ruleSetFiles are the bundled rule-set binaries expected next to the sing-box

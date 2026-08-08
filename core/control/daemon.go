@@ -88,6 +88,30 @@ type Daemon struct {
 	// guarded by mu.
 	proxy systemProxyController
 
+	// The DPI-bypass engine (see dpi.go) is the daemon's second process, and it is
+	// deliberately kept out of the connection's generation protocol: dpi is the
+	// runner (nil when the platform or build has no engine, a normal state), dpiPort
+	// and dpiArgs the loopback port and argv SetDPIRunner was given, dpiRunning
+	// whether it is up, dpiGen the instance counter its watcher checks so a stopped
+	// instance stays quiet, dpiCancel the process context and dpiWG the watcher
+	// goroutine Close drains. All are guarded by dpiMu — a lock taken without mu
+	// held that may itself take mu, making the daemon-wide order connMu -> dpiMu ->
+	// mu. Hanging the engine off teardown/d.generation instead would have killed and
+	// respawned it on every node switch.
+	dpiMu      sync.Mutex
+	dpi        dpiRunner
+	dpiPort    int
+	dpiArgs    []string
+	dpiRunning bool
+	dpiGen     uint64
+	dpiCancel  context.CancelFunc
+	dpiWG      sync.WaitGroup
+	// dpiStop is closed when the running instance is stopped, so its watcher
+	// unwinds even if the runner reaps the process without ever signalling Done.
+	// Without it, shutdown would hang on a watcher parked in a receive nobody is
+	// contractually obliged to satisfy after a Stop.
+	dpiStop chan struct{}
+
 	mu      sync.Mutex
 	routing routing.Options
 	state   State
@@ -96,6 +120,12 @@ type Daemon struct {
 	// pointed at our mixed inbound, so disarmSystemProxy clears it exactly once and
 	// never touches a proxy we didn't set. Guarded by mu.
 	proxyArmed bool
+	// dpiStatus is the DPI-bypass engine's live status (see State.DPIStatus). It
+	// lives here, next to the reported state rather than with the engine's other
+	// fields, because it is read on every state snapshot: setDPIStatus writes it
+	// under mu (while holding dpiMu) and setState re-stamps it onto each fresh
+	// State so a connection transition can't blank a daemon-wide runtime fact.
+	dpiStatus string
 
 	// emit is set by the server via SetEmitter before serving; the daemon calls
 	// it to publish state/traffic/log events. Guarded by mu.
@@ -382,6 +412,10 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	d.routing.SplitApps = apps
 	d.routing.KillSwitch = ps.KillSwitch
 	d.routing.TLSFragment = ps.TLSFragment
+	// The bypass preference is restored, but nothing is spawned here: like every
+	// other stored setting this only decides what the next connect builds, and the
+	// engine comes up with that connect (or an explicit toggle).
+	d.routing.DPIBypass = ps.DPIBypass
 	d.routing.AdBlock = ps.AdBlock
 	d.routing.IPv4Only = ps.IPv4Only
 	// Empty resolvers (absent in an old file, or never customized) are left for
@@ -472,6 +506,7 @@ func (d *Daemon) settingsLocked() persistedSettings {
 		SplitApps:       d.routing.SplitApps,
 		KillSwitch:      d.routing.KillSwitch,
 		TLSFragment:     d.routing.TLSFragment,
+		DPIBypass:       d.routing.DPIBypass,
 		TunStack:        d.tun.Stack,
 		ProxyMode:       d.tun.Mode,
 		ProxyPort:       d.tun.MixedPort,
@@ -528,6 +563,8 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleSetKillSwitch(req)
 	case CmdSetTLSFragment:
 		return d.handleSetTLSFragment(req)
+	case CmdSetDPIBypass:
+		return d.handleSetDPIBypass(req)
 	case CmdSetMultihop:
 		return d.handleSetMultihop(req)
 	case CmdSetProxyMode:
@@ -1505,6 +1542,9 @@ func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, 
 	s.SplitApps = append([]string(nil), ro.SplitApps...)
 	s.KillSwitch = ro.KillSwitch
 	s.TLSFragment = ro.TLSFragment
+	// Only the preference: the engine's live status is runtime state the daemon
+	// owns, so setState stamps it separately (see Daemon.dpiStatus).
+	s.DPIBypass = ro.DPIBypass
 	s.TunStack = tun.Stack
 	// Report the effective connection mode and mixed port. The daemon seeds both
 	// concrete at construction and SetSettings/handleSetProxyMode keep them so, but

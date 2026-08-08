@@ -14,6 +14,12 @@ import (
 // This emits the 1.12+ DNS schema: each server is a typed object with a "type"
 // discriminator (the legacy string "address" form was removed in the 1.13/1.14
 // line).
+//
+// The DPI bypass deliberately has no footprint here. Both resolvers are already
+// encrypted (DoT over the proxy, DoH direct), so there is no plaintext query for a
+// DPI box to act on and nothing for the helper to shape; detouring lookups through
+// it would only add a hop and make resolution depend on a second process being up.
+// Nothing in this block may name the helper's outbound.
 func (o Options) DNS() map[string]any {
 	dns := map[string]any{
 		"servers": []map[string]any{

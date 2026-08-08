@@ -34,6 +34,7 @@
     "resources": [
       "resources/sing-box.exe",
       "resources/wintun.dll",
+      "resources/ciadpi.exe",
       "resources/geoip-ru.srs",
       "resources/geosite-ru.srs",
       "resources/geosite-ads.srs",

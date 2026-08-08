@@ -353,6 +353,7 @@ jobs:
           for path in \
             /usr/lib/tenebra/tenebra-core \
             /usr/lib/tenebra/sing-box \
+            /usr/lib/tenebra/ciadpi \
             /usr/bin/tenebra; do
             test -x "$path" || { echo "missing or not executable: $path" >&2; exit 1; }
           done

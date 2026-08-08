@@ -34,6 +34,15 @@ export type TunStack = "system" | "gvisor" | "mixed";
  */
 export type ConnectionMode = "tun" | "system-proxy";
 
+/**
+ * How the local DPI bypass is doing. It runs as a process of its own, so being
+ * armed and being up are two different facts: `""` (not armed), `"starting"`
+ * (asked for, not up yet), `"running"` (carrying direct traffic), `"failed"` (it
+ * did not come up — direct traffic is leaving untouched, which the UI has to say
+ * out loud rather than leave the toggle looking armed).
+ */
+export type DpiStatus = "" | "starting" | "running" | "failed";
+
 export type NodeProtocol =
   | "vless"
   | "hysteria2"
@@ -67,6 +76,19 @@ export interface State {
    * override); omitted (treated as off) when it isn't.
    */
   tls_fragment?: boolean;
+  /**
+   * Whether the local DPI bypass is armed — the leg of the routing that leaves
+   * the machine directly is pointed at it instead of going out untouched.
+   * Omitted (treated as off) when it isn't.
+   */
+  dpi_bypass?: boolean;
+  /**
+   * How that bypass is doing, independently of the armed flag (see
+   * {@link DpiStatus}). Omitted while empty, so a missing field reads as "not
+   * armed" — and `"failed"` next to an armed flag is the case the UI must not
+   * present as working.
+   */
+  dpi_status?: DpiStatus;
   /**
    * The two-hop chain selection: whether it is enabled and which entry/exit
    * servers (by stable id) it chains through. Omitted until the user has picked a

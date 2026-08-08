@@ -200,6 +200,12 @@ bash scripts/fetch-resources.sh                # this host's architecture
 bash scripts/fetch-resources.sh --arch arm64   # cross-fetch (Linux only)
 ```
 
+Linux also gets the DPI-bypass engine (ByeDPI's `ciadpi`), pinned by digest like
+everything else and installed beside sing-box. macOS does not: upstream publishes
+Windows and Linux builds and no darwin one, and building it from source would give
+up the pinned-digest property the other artifacts have, so the script says so and
+skips it there — see [architecture.md](../architecture.md).
+
 `amd64` and `arm64` are pinned. sing-box also publishes `386` and `armv7` builds;
 they are deliberately not pinned, because the bundle they would go into is a
 webkit2gtk Tauri app and 32-bit Linux desktops are not a target. The release

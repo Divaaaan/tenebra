@@ -165,6 +165,18 @@ pub struct State {
     /// override); absent (treated as off) when it isn't.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tls_fragment: Option<bool>,
+    /// Whether the local DPI-bypass hop is armed — the leg of the routing that
+    /// leaves the machine directly is pointed at a loopback bypass instead of
+    /// going out untouched; absent (treated as off) when it isn't.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dpi_bypass: Option<bool>,
+    /// How that bypass is doing, independently of the armed flag: "" (off),
+    /// "starting", "running", or "failed" — it runs as its own process, so
+    /// arming it and it actually being up are two different facts. Kept as a
+    /// plain string so an unrecognized future value still deserializes rather
+    /// than dropping the whole snapshot; the core omits it while empty.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub dpi_status: String,
     /// The two-hop chain selection (entry/exit servers plus the enabled flag);
     /// absent until the user has picked a pair, carried even when disabled so the
     /// UI can prefill its selectors.
@@ -540,6 +552,16 @@ pub trait Backend: Send + Sync + 'static {
     /// the core persists the choice and hot-swaps sing-box on the same node when a
     /// tunnel is live; when idle the choice applies on the next connect.
     fn set_tls_fragment(&self, on: bool) -> Result<State, String>;
+    /// Arm or disarm the local DPI-bypass hop. The core runs a loopback bypass
+    /// and points the direct leg of its routing at it, so traffic that stays off
+    /// the tunnel is reshaped past the filter on its way out. It is not a tunnel:
+    /// the address the destination sees is unchanged and nothing is encrypted to
+    /// our servers. Same live re-apply semantics as the kill switch — the core
+    /// persists the choice and hot-swaps sing-box on the same node when a tunnel
+    /// is live; when idle the choice applies on the next connect. Whether the
+    /// bypass itself came up is reported separately in `State::dpi_status`, since
+    /// arming it and it running are two different facts.
+    fn set_dpi_bypass(&self, on: bool) -> Result<State, String>;
     /// Record the multihop chain selection: the two-hop toggle plus the entry and
     /// exit server IDs it runs through (entry first), within the named profile. The
     /// core validates the pair when enabling — both present, distinct, and stored in
@@ -800,6 +822,8 @@ mod tests {
             split_apps: Some(vec!["chrome.exe".into(), "steam.exe".into()]),
             kill_switch: Some(true),
             tls_fragment: Some(true),
+            dpi_bypass: Some(true),
+            dpi_status: "running".into(),
             multihop: Some(Multihop {
                 enabled: true,
                 entry_id: "entry-id".into(),
@@ -839,6 +863,8 @@ mod tests {
             split_apps: None,
             kill_switch: None,
             tls_fragment: None,
+            dpi_bypass: None,
+            dpi_status: String::new(),
             multihop: None,
             tun_stack: None,
             proxy_mode: None,
@@ -869,6 +895,8 @@ mod tests {
             "split_apps",
             "kill_switch",
             "tls_fragment",
+            "dpi_bypass",
+            "dpi_status",
             "multihop",
             "tun_stack",
             "proxy_mode",

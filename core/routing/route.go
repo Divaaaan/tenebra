@@ -1,6 +1,10 @@
 package routing
 
-import "path/filepath"
+import (
+	"path/filepath"
+
+	"github.com/Divaaaan/tenebra/core/dpi"
+)
 
 // RouteRuleSets returns the rule_set definitions the route/dns blocks reference
 // by tag. Only smart mode needs them (global/direct match no geodata), so the
@@ -62,17 +66,18 @@ func (o Options) RouteRuleSets() []map[string]any {
 }
 
 // RouteRules returns the ordered "route".rules. Order matters: DNS hijack and
-// sniffing come first, then per-app split tunnelling, then the mode-specific
-// split, and the proxy selector is the route "final" (set by the singbox
-// package), so anything unmatched here flows through the route final.
+// sniffing come first, then the bypass helper's own loop guard, then per-app
+// split tunnelling, then the mode-specific split, and the proxy selector is the
+// route "final" (set by the singbox package), so anything unmatched here flows
+// through the route final.
 //
 // Split tunnelling sits above the geo split so a per-app decision wins over the
 // smart/global RU rules:
-//   - exclude: listed apps are pinned to direct early; everything else keeps
-//     following the base mode.
+//   - exclude: listed apps are pinned to the untunnelled outbound early (see
+//     internetDirect); everything else keeps following the base mode.
 //   - include: listed apps are pinned to the proxy early and the base proxy
-//     split is dropped, because in include mode the route final is direct (see
-//     FinalOutbound) so only the listed apps reach the proxy. The LAN bypass
+//     split is dropped, because in include mode the route final is untunnelled
+//     (see FinalOutbound) so only the listed apps reach the proxy. The LAN bypass
 //     still applies — it only ever sends traffic direct, which include already
 //     does for everything unlisted, so it stays harmless and consistent.
 func (o Options) RouteRules() []map[string]any {
@@ -83,13 +88,25 @@ func (o Options) RouteRules() []map[string]any {
 		{"protocol": "dns", "action": "hijack-dns"},
 	}
 
+	// The bypass helper's own sockets must leave on the plain direct outbound. Its
+	// traffic enters the tun like any other process, so without this rule the
+	// connections it opens on behalf of the tunnel's direct half would be handed
+	// straight back to it — a loop that hangs every untunnelled destination. It sits
+	// ahead of every routing rule because there is no case where the helper's own
+	// traffic should be routed by them.
+	if o.DPIBypass {
+		rules = append(rules,
+			route(map[string]any{"process_name": []string{dpiBinaryName()}}, tagDirect),
+		)
+	}
+
 	// Per-app split tunnelling. process_name matches the executable file name,
 	// e.g. "chrome.exe". Placed before the geo split so an app rule wins.
 	switch o.SplitMode {
 	case SplitExclude:
 		if len(o.SplitApps) > 0 {
 			rules = append(rules,
-				route(map[string]any{"process_name": o.SplitApps}, tagDirect),
+				route(map[string]any{"process_name": o.SplitApps}, o.internetDirect()),
 			)
 		}
 	case SplitInclude:
@@ -100,7 +117,7 @@ func (o Options) RouteRules() []map[string]any {
 		}
 	}
 
-	// In include mode the route final is direct and only the listed apps are
+	// In include mode the route final is untunnelled and only the listed apps are
 	// pinned to the proxy above, so the base proxy split must not run — it would
 	// otherwise hand unlisted traffic to the proxy and defeat "only these apps".
 	includeOnly := o.SplitMode == SplitInclude && len(o.SplitApps) > 0
@@ -112,7 +129,7 @@ func (o Options) RouteRules() []map[string]any {
 	// nothing is tunnelled.
 	if direct := o.directRuleSuffixes(); len(direct) > 0 {
 		rules = append(rules,
-			route(map[string]any{"domain_suffix": direct}, tagDirect),
+			route(map[string]any{"domain_suffix": direct}, o.internetDirect()),
 		)
 	}
 	if proxy := o.proxyRuleSuffixes(); len(proxy) > 0 {
@@ -124,28 +141,60 @@ func (o Options) RouteRules() []map[string]any {
 	if !includeOnly {
 		switch o.Mode {
 		case ModeDirect:
-			// Everything direct; nothing else needs a rule, final stays proxy but
-			// the singbox layer points final at direct for this mode.
+			// Everything untunnelled; nothing else needs a rule, the final carries it
+			// (see FinalOutbound) — direct, or the bypass helper when it is armed.
 		case ModeGlobal:
 			// Everything via proxy; LAN may still be excused below.
 		case ModeSmart:
 			// RU IPs and RU domains go direct.
 			rules = append(rules,
-				route(map[string]any{"rule_set": []string{ruleSetGeoIPRU, ruleSetGeositeRU}}, tagDirect),
+				route(map[string]any{"rule_set": []string{ruleSetGeoIPRU, ruleSetGeositeRU}}, o.internetDirect()),
 			)
 		}
 	}
 
-	if o.BypassLAN {
-		// Private/LAN destinations should never traverse the tunnel. Match the
-		// well-known private ranges directly instead of relying on a rule-set so
-		// this works offline before any download completes.
+	// Private/LAN destinations should never traverse the tunnel. Match the
+	// well-known private ranges directly instead of relying on a rule-set so
+	// this works offline before any download completes.
+	//
+	// The same rule doubles as the LAN guard for the bypass: when unmatched traffic
+	// falls through to the helper (direct mode, or include split where everything
+	// unlisted falls through) LAN would ride along with it, and a helper that
+	// reshapes TCP for a DPI box on the way to the internet has nothing to offer a
+	// printer or a NAS — it only breaks them. So it is emitted regardless of the LAN
+	// toggle in that case. That is not a change of routing: the traffic it catches
+	// is exactly the traffic that left on the direct outbound before the bypass
+	// existed, and it can only ever pull traffic back to direct, never out of the
+	// tunnel.
+	if o.BypassLAN || o.FinalOutbound() == tagDPI {
 		rules = append(rules,
 			route(map[string]any{"ip_is_private": true}, tagDirect),
 		)
 	}
 
 	return rules
+}
+
+// internetDirect is the outbound for destinations this config keeps off the
+// tunnel. Normally that is the plain direct outbound; with the bypass armed the
+// same traffic goes through the local helper instead, so "not tunnelled" stops
+// meaning "dialled raw at whatever is inspecting the line". LAN is deliberately
+// not routed through here — see the ip_is_private rule.
+func (o Options) internetDirect() string {
+	if o.DPIBypass {
+		return tagDPI
+	}
+	return tagDirect
+}
+
+// dpiBinaryName is the file name of the bypass helper for the current platform,
+// which is what the loop-guard rule matches on (sing-box's process_name matches
+// the executable file name, case-insensitively). It delegates to core/dpi rather
+// than repeating the name: a guard that drifts from the binary the runner
+// actually spawns matches nothing, and the helper silently loops back into
+// itself — a failure with no error message anywhere.
+func dpiBinaryName() string {
+	return dpi.BinaryName()
 }
 
 // route builds a single "action":"route" rule with the given match fields and
@@ -173,15 +222,20 @@ func (o Options) DefaultDomainResolver() map[string]any {
 // Smart and global default to the proxy; direct sends unmatched traffic out
 // the direct outbound.
 //
-// Include split tunnelling forces the final to direct: only the explicitly
+// Include split tunnelling forces the final off the proxy: only the explicitly
 // listed apps are routed to the proxy (by an early process_name rule), so
-// everything that falls through must go direct to honour "only these apps".
+// everything that falls through must stay untunnelled to honour "only these apps".
+//
+// Both untunnelled cases follow internetDirect, so with the bypass armed the
+// traffic that falls through reaches the internet through the helper rather than
+// raw — it is the same traffic the geo and user rules hand to it, just matched by
+// the final instead of by a rule.
 func (o Options) FinalOutbound() string {
 	if o.SplitMode == SplitInclude && len(o.SplitApps) > 0 {
-		return tagDirect
+		return o.internetDirect()
 	}
 	if o.Mode == ModeDirect {
-		return tagDirect
+		return o.internetDirect()
 	}
 	return tagProxy
 }

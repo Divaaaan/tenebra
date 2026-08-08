@@ -36,6 +36,7 @@ const mockApi = vi.hoisted(() => ({
   setRouting: vi.fn(),
   setSplit: vi.fn(),
   setKillSwitch: vi.fn(),
+  setDpiBypass: vi.fn(),
   setTun: vi.fn(),
   setAutoconnect: vi.fn(),
   setRules: vi.fn(),
@@ -500,6 +501,27 @@ describe("actions", () => {
 
     expect(mockApi.setKillSwitch).toHaveBeenCalledWith(true);
     expect(result.current.state.kill_switch).toBe(true);
+  });
+
+  it("setDpiBypass calls api.setDpiBypass and applies the returned state", async () => {
+    // Both fields have to land: the armed flag drives the switch, the status
+    // drives what the screen says about it, and a UI holding only the first
+    // would show a working bypass over traffic that is going out untouched.
+    const next: State = {
+      state: "idle",
+      dpi_bypass: true,
+      dpi_status: "failed",
+    };
+    mockApi.setDpiBypass.mockResolvedValue(next);
+    const { result } = await mountReady();
+
+    await act(async () => {
+      await result.current.setDpiBypass(true);
+    });
+
+    expect(mockApi.setDpiBypass).toHaveBeenCalledWith(true);
+    expect(result.current.state.dpi_bypass).toBe(true);
+    expect(result.current.state.dpi_status).toBe("failed");
   });
 
   it("setTun calls api.setTun and applies the returned state", async () => {

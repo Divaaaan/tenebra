@@ -680,6 +680,11 @@ async fn set_tls_fragment(state: TauriState<'_, AppState>, on: bool) -> Result<S
     off_thread(Arc::clone(&state.backend), move |b| b.set_tls_fragment(on)).await
 }
 
+#[tauri::command]
+async fn set_dpi_bypass(state: TauriState<'_, AppState>, on: bool) -> Result<State, String> {
+    off_thread(Arc::clone(&state.backend), move |b| b.set_dpi_bypass(on)).await
+}
+
 // rename_all keeps the JS-side argument keys snake_case (entry_id, exit_id),
 // matching this file's multi-word command convention (see set_dns) — Tauri v2
 // would otherwise expect camelCase.
@@ -896,6 +901,7 @@ pub fn run() {
             set_split,
             set_kill_switch,
             set_tls_fragment,
+            set_dpi_bypass,
             set_multihop,
             set_tun,
             set_proxy_mode,
@@ -1126,6 +1132,8 @@ mod tests {
             split_apps: None,
             kill_switch: None,
             tls_fragment: None,
+            dpi_bypass: None,
+            dpi_status: String::new(),
             multihop: None,
             tun_stack: None,
             proxy_mode: None,

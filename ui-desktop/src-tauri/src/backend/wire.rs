@@ -328,6 +328,7 @@ const CMD_SET_ROUTING: &str = "set_routing";
 const CMD_SET_SPLIT: &str = "set_split";
 const CMD_SET_KILL_SWITCH: &str = "set_kill_switch";
 const CMD_SET_TLS_FRAGMENT: &str = "set_tls_fragment";
+const CMD_SET_DPI_BYPASS: &str = "set_dpi_bypass";
 const CMD_SET_MULTIHOP: &str = "set_multihop";
 const CMD_SET_TUN: &str = "set_tun";
 const CMD_SET_PROXY_MODE: &str = "set_proxy_mode";
@@ -455,6 +456,11 @@ impl<T: WireSession> Backend for T {
     fn set_tls_fragment(&self, on: bool) -> Result<State, String> {
         self.session()?
             .request_into(CMD_SET_TLS_FRAGMENT, obj([("on", json!(on))]))
+    }
+
+    fn set_dpi_bypass(&self, on: bool) -> Result<State, String> {
+        self.session()?
+            .request_into(CMD_SET_DPI_BYPASS, obj([("on", json!(on))]))
     }
 
     fn set_multihop(
@@ -1056,6 +1062,49 @@ mod tests {
         let state = backend.set_tls_fragment(true).expect("a response");
         assert_eq!(state.state, ConnectionState::Connecting);
         assert_eq!(state.tls_fragment, Some(true));
+
+        server.join().expect("server thread");
+        stop.store(true, Ordering::SeqCst); // unstick the reader
+        reader.join().expect("reader thread");
+    }
+
+    #[test]
+    fn set_dpi_bypass_maps_to_the_protocol_command() {
+        // Drive Backend::set_dpi_bypass through the blanket impl and assert the
+        // exact wire line, plus that both echoed fields round-trip: the armed flag
+        // and the separate liveness of the bypass process.
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ours, theirs) = duplex(&stop);
+
+        let client = WireClient::new(ours.writer);
+        let sink: Arc<dyn EventSink> = Arc::new(Rec::default());
+        let reader_client = Arc::clone(&client);
+        let reader = thread::spawn(move || read_loop(ours.reader, reader_client, sink));
+
+        let mut server_writer = theirs.writer;
+        let server = thread::spawn(move || {
+            let mut lines = BufReader::new(theirs.reader).lines();
+            let line = lines.next().expect("a request line").expect("readable");
+            let req: Value = serde_json::from_str(&line).expect("request is JSON");
+            assert_eq!(req["cmd"].as_str(), Some("set_dpi_bypass"));
+            assert_eq!(req["on"].as_bool(), Some(true));
+            let id = req["id"].as_u64().expect("request carries an id");
+            let response = json!({
+                "id": id, "ok": true,
+                "data": {
+                    "state": "connected",
+                    "dpi_bypass": true,
+                    "dpi_status": "starting",
+                },
+            });
+            writeln!(server_writer, "{response}").expect("write response");
+        });
+
+        let backend = FixedSession(Arc::clone(&client));
+        let state = backend.set_dpi_bypass(true).expect("a response");
+        assert_eq!(state.state, ConnectionState::Connected);
+        assert_eq!(state.dpi_bypass, Some(true));
+        assert_eq!(state.dpi_status, "starting");
 
         server.join().expect("server thread");
         stop.store(true, Ordering::SeqCst); // unstick the reader

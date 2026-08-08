@@ -9,6 +9,7 @@
     ],
     "resources": [
       "resources/sing-box",
+      "resources/ciadpi",
       "resources/geoip-ru.srs",
       "resources/geosite-ru.srs",
       "resources/geosite-ads.srs",

@@ -1,10 +1,11 @@
 # Maintainer: Tenebra contributors <https://github.com/Divaaaan/tenebra/issues>
 
 # Builds Tenebra from source for Arch Linux: the privileged core daemon, the
-# Tauri desktop UI, the systemd unit and the bundled sing-box the generated
-# configs are cut against. Tauri's bundler has no pacman target — its config
-# schema only knows deb, rpm, appimage, msi, nsis, app and dmg — so the desktop
-# binary is built with --no-bundle and packaged here instead.
+# Tauri desktop UI, the systemd unit, the bundled sing-box the generated configs
+# are cut against, and the bundled DPI-bypass engine those configs can point at.
+# Tauri's bundler has no pacman target — its config schema only knows deb, rpm,
+# appimage, msi, nsis, app and dmg — so the desktop binary is built with
+# --no-bundle and packaged here instead.
 #
 # Build and install straight from a checkout:
 #   cd packaging/arch && makepkg -si
@@ -66,12 +67,22 @@ options=('!lto' '!debug')
 # into this package's private directory rather than /usr/bin, so a user who
 # already has the AUR sing-box installed keeps it and nothing collides.
 #
-# makepkg verifies the digest below before anything is unpacked. Keep this
-# version and the three rule-set commits in step with scripts/fetch-resources.sh
+# makepkg verifies the digests below before anything is unpacked. Keep these
+# versions and the three rule-set commits in step with scripts/fetch-resources.sh
 # and scripts/fetch-resources.ps1 — all three files pin the same artifacts.
 _singboxver=1.13.13
 _geoipcommit=a508a0a09d30111e0ab5a0d9a3de1aff832d72b4
 _geositecommit=02b7bc85184c7fa94ccdfe9a35b7f4a169b28b4d
+
+# ByeDPI, the DPI-bypass engine, bundled for the same reason sing-box is: it is
+# not in Arch's repositories, and the core is written against a known version of
+# its command line. It is an unprivileged userspace SOCKS5 proxy — no driver, no
+# capabilities — that the daemon starts only while the bypass is on, and it goes
+# into the same private directory. Upstream tags the release v0.17.3 but names its
+# archives byedpi-17.3-*, so the tag and the file name need separate variables;
+# bump them together.
+_byedpiver=0.17.3
+_byedpifile=17.3
 
 # The rule-sets are shipped locally so smart routing loads them from disk instead
 # of downloading them at every connect (a throttled raw.githubusercontent.com
@@ -81,6 +92,7 @@ _geositecommit=02b7bc85184c7fa94ccdfe9a35b7f4a169b28b4d
 source=(
   "git+${url}.git#tag=v${pkgver}"
   "sing-box-${_singboxver}-linux-amd64.tar.gz::https://github.com/SagerNet/sing-box/releases/download/v${_singboxver}/sing-box-${_singboxver}-linux-amd64.tar.gz"
+  "byedpi-${_byedpifile}-x86_64.tar.gz::https://github.com/hufrea/byedpi/releases/download/v${_byedpiver}/byedpi-${_byedpifile}-x86_64.tar.gz"
   "geoip-ru-${_geoipcommit}.srs::https://raw.githubusercontent.com/SagerNet/sing-geoip/${_geoipcommit}/geoip-ru.srs"
   "geosite-ru-${_geositecommit}.srs::https://raw.githubusercontent.com/SagerNet/sing-geosite/${_geositecommit}/geosite-category-ru.srs"
   "geosite-ads-${_geositecommit}.srs::https://raw.githubusercontent.com/SagerNet/sing-geosite/${_geositecommit}/geosite-category-ads-all.srs"
@@ -91,6 +103,7 @@ source=(
 sha256sums=(
   'SKIP'
   'bb99cabf47694625db421ee17898f36cdc1f9c2cb5decf65b12bac8d8437e842'
+  '98f73c32eacb571ebd88d790f6376ed9e70f02d44c1fe862472ecea75cd7117d'
   '8bc18433e5d5b0644ba2a9ff74cd03428ba4f4e388b3c409f182de930e3c3170'
   '3fb41849eefac86a4e65a86da3b868ecd40512e4d3f097ee325474f4cd401f76'
   'ca44c97fce76f4f889e08bbc28e80d497a43239328e09f760129844057a2780a'
@@ -137,10 +150,13 @@ build() {
   install -Dm755 build/tenebra-core \
     "ui-desktop/src-tauri/binaries/tenebra-core-${triple}"
 
-  # The bundled sing-box and rule-sets have to sit where the Tauri config
-  # declares its resources, or the build fails on a missing resource.
+  # The bundled sing-box, the bypass engine and the rule-sets have to sit where
+  # the Tauri config declares its resources, or the build fails on a missing
+  # resource. The ByeDPI tarball holds a single executable named after its
+  # architecture; the bundled name is the plain `ciadpi` the core looks for.
   install -Dm755 "${srcdir}/sing-box-${_singboxver}-linux-amd64/sing-box" \
     ui-desktop/src-tauri/resources/sing-box
+  install -Dm755 "${srcdir}/ciadpi-x86_64" ui-desktop/src-tauri/resources/ciadpi
   install -Dm644 "${srcdir}/geoip-ru-${_geoipcommit}.srs" ui-desktop/src-tauri/resources/geoip-ru.srs
   install -Dm644 "${srcdir}/geosite-ru-${_geositecommit}.srs" ui-desktop/src-tauri/resources/geosite-ru.srs
   install -Dm644 "${srcdir}/geosite-ads-${_geositecommit}.srs" ui-desktop/src-tauri/resources/geosite-ads.srs
@@ -155,10 +171,14 @@ build() {
 package() {
   cd "${pkgname}"
 
-  # The privileged half. Core, sing-box and the rule-sets live together because
-  # the core resolves the rule-sets from the directory of TENEBRA_SINGBOX.
+  # The privileged half. Core, sing-box, the bypass engine and the rule-sets live
+  # together because the core resolves the rest from the directory of
+  # TENEBRA_SINGBOX. ciadpi is installed executable but is not privileged: the
+  # daemon starts it as an ordinary child process and only while the DPI bypass
+  # is on.
   install -Dm755 build/tenebra-core "${pkgdir}/usr/lib/${pkgname}/tenebra-core"
   install -Dm755 ui-desktop/src-tauri/resources/sing-box "${pkgdir}/usr/lib/${pkgname}/sing-box"
+  install -Dm755 ui-desktop/src-tauri/resources/ciadpi "${pkgdir}/usr/lib/${pkgname}/ciadpi"
   install -Dm644 ui-desktop/src-tauri/resources/geoip-ru.srs "${pkgdir}/usr/lib/${pkgname}/geoip-ru.srs"
   install -Dm644 ui-desktop/src-tauri/resources/geosite-ru.srs "${pkgdir}/usr/lib/${pkgname}/geosite-ru.srs"
   install -Dm644 ui-desktop/src-tauri/resources/geosite-ads.srs "${pkgdir}/usr/lib/${pkgname}/geosite-ads.srs"

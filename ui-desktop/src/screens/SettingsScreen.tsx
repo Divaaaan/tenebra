@@ -387,6 +387,28 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     void tenebra.setTlsFragment(!tlsFragment).catch(reportRefusal);
   }
 
+  // The local DPI bypass for traffic that leaves directly instead of through the
+  // tunnel. Core-owned like the toggles above, with one difference that matters:
+  // it is a process of its own, so being armed and being up are separate facts.
+  // The switch follows the armed flag, and dpi_status says what actually
+  // happened — a failure has to be spelled out rather than left as a switch
+  // sitting on ON over traffic that is going out untouched.
+  const dpiBypass = tenebra.state.dpi_bypass ?? false;
+  const dpiStatus = tenebra.state.dpi_status ?? "";
+  const dpiFailed = dpiStatus === "failed";
+  const dpiNotice =
+    dpiStatus === "starting"
+      ? t.settings.dpiStarting
+      : dpiStatus === "running"
+        ? t.settings.dpiRunning
+        : dpiFailed
+          ? t.settings.dpiFailed
+          : "";
+
+  function toggleDpiBypass() {
+    void tenebra.setDpiBypass(!dpiBypass).catch(reportRefusal);
+  }
+
   // Multihop two-hop chain. Core-owned like the other toggles: off with no
   // selection until the user picks an entry and an exit node. The choices are
   // drawn from the active profile (the connected one, else the first stored) and
@@ -1329,6 +1351,33 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
                 {tlsFragment ? "▣" : "▢"}
               </span>
               {tlsFragment ? "ON" : "OFF"}
+            </button>
+          </div>
+
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.dpiBypass}</span>
+              <span className="set-row-hint">{t.settings.dpiBypassHint}</span>
+              {dpiNotice && (
+                <span
+                  className={dpiFailed ? "set-error" : "set-row-hint"}
+                  role={dpiFailed ? "alert" : "status"}
+                >
+                  {dpiNotice}
+                </span>
+              )}
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={dpiBypass}
+              className={`set-switch${dpiBypass ? " is-on" : ""}`}
+              onClick={toggleDpiBypass}
+            >
+              <span className="set-switch-box" aria-hidden="true">
+                {dpiBypass ? "▣" : "▢"}
+              </span>
+              {dpiBypass ? "ON" : "OFF"}
             </button>
           </div>
         </section>

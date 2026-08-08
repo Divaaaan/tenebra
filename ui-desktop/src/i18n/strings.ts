@@ -481,6 +481,23 @@ export interface Strings {
     tlsFragment: string;
     tlsFragmentHint: string;
     /**
+     * The local DPI bypass applied to the traffic that leaves the machine
+     * directly rather than through the tunnel. It changes nothing about the
+     * address the destination sees and encrypts nothing towards our servers, so
+     * the copy must not read as a tunnel or as anonymity.
+     */
+    dpiBypass: string;
+    dpiBypassHint: string;
+    /**
+     * What the bypass is doing right now, shown under the toggle. Arming it and
+     * it actually running are two different facts: `dpiFailed` is the case where
+     * the switch reads ON while direct traffic is in fact leaving untouched, and
+     * saying nothing there is what makes a control feel dead.
+     */
+    dpiStarting: string;
+    dpiRunning: string;
+    dpiFailed: string;
+    /**
      * Multihop section: the optional two-hop chain that routes through an entry
      * node and then an exit node, so the exit never sees the user's address.
      */
@@ -944,10 +961,17 @@ const en: Strings = {
       "Get prereleases early, plus every stable release. May be rougher around the edges.",
     bypass: "Censorship bypass",
     bypassHint:
-      "Defeat deep-packet inspection that fingerprints and blocks the tunnel handshake.",
+      "Get past deep-packet inspection — both the filters that fingerprint the tunnel handshake and the ones that block or slow traffic going out directly.",
     tlsFragment: "DPI bypass — TLS fragmentation",
     tlsFragmentHint:
       "Split the TLS ClientHello across packets so filters can't match it whole. Applies to every TLS-bearing outbound; connects get a touch slower.",
+    dpiBypass: "DPI bypass for direct traffic",
+    dpiBypassHint:
+      "Reshape the connections that stay off the tunnel so filters can't recognise them, undoing blocks and throttling on that traffic. Your address doesn't change and nothing is encrypted on the way — it is not a tunnel and not anonymity.",
+    dpiStarting: "Starting…",
+    dpiRunning: "Running — direct traffic goes through the bypass.",
+    dpiFailed:
+      "The bypass didn't start, so direct traffic is leaving untouched. Check the logs, then switch it on again.",
     multihop: "Multihop",
     multihopHint:
       "Route through two of your nodes in a chain, so the exit server never sees your real address.",
@@ -1377,10 +1401,17 @@ const ru: Strings = {
       "Ранний доступ к предрелизам и все стабильные версии. Может быть сырее.",
     bypass: "Обход блокировок",
     bypassHint:
-      "Обойти глубокую инспекцию пакетов (DPI), которая распознаёт и блокирует рукопожатие туннеля.",
+      "Обойти глубокую инспекцию пакетов (DPI) — и ту, что распознаёт рукопожатие туннеля, и ту, что блокирует или замедляет трафик, идущий напрямую.",
     tlsFragment: "Обход DPI — фрагментация TLS",
     tlsFragmentHint:
       "Режет TLS-рукопожатие (ClientHello) на пакеты, чтобы фильтры не могли распознать его целиком. Применяется ко всем TLS-соединениям; коннект чуть медленнее.",
+    dpiBypass: "Обход DPI для прямого трафика",
+    dpiBypassHint:
+      "Меняет форму соединений, которые идут мимо туннеля, чтобы фильтры их не распознавали — снимает блокировки и замедление на этом трафике. IP не меняется и ничего по дороге не шифруется: это не туннель и не анонимность.",
+    dpiStarting: "Запускается…",
+    dpiRunning: "Работает — прямой трафик идёт через обходчик.",
+    dpiFailed:
+      "Обходчик не запустился, прямой трафик идёт как есть. Загляните в логи и включите ещё раз.",
     multihop: "Multihop",
     multihopHint:
       "Пропустить трафик через две ваши ноды цепочкой, чтобы выходной сервер не видел ваш настоящий адрес.",

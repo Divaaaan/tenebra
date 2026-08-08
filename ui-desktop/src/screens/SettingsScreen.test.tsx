@@ -789,6 +789,98 @@ describe("SettingsScreen", () => {
       await user.click(tlsToggle());
       expect(tenebra.setTlsFragment).toHaveBeenCalledWith(false);
     });
+
+    function dpiRow(): HTMLElement {
+      const row = screen
+        .getByText("DPI bypass for direct traffic")
+        .closest(".set-row");
+      if (!row) {
+        throw new Error("dpi-bypass row not found");
+      }
+      return row as HTMLElement;
+    }
+
+    function dpiToggle(): HTMLElement {
+      const toggle = dpiRow().querySelector('[role="switch"]');
+      if (!toggle) {
+        throw new Error("dpi-bypass switch not found");
+      }
+      return toggle as HTMLElement;
+    }
+
+    it("sits in the same section as the fragmentation toggle", () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+      expect(dpiRow().closest("#set-sec-bypass")).not.toBeNull();
+    });
+
+    it("starts off when the core omits the bypass field", () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+      expect(dpiToggle()).toHaveAttribute("aria-checked", "false");
+    });
+
+    it("arms the bypass through the core", async () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(dpiToggle());
+      expect(tenebra.setDpiBypass).toHaveBeenCalledWith(true);
+    });
+
+    it("disarms from the reported armed state", async () => {
+      const tenebra = makeTenebra({
+        state: {
+          state: "idle",
+          dpi_bypass: true,
+          dpi_status: "running",
+        } as State,
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(dpiToggle()).toHaveAttribute("aria-checked", "true");
+      await user.click(dpiToggle());
+      expect(tenebra.setDpiBypass).toHaveBeenCalledWith(false);
+    });
+
+    it("says the bypass is still coming up", () => {
+      const tenebra = makeTenebra({
+        state: {
+          state: "idle",
+          dpi_bypass: true,
+          dpi_status: "starting",
+        } as State,
+      });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+      expect(dpiRow()).toHaveTextContent(dictionaries.en.settings.dpiStarting);
+    });
+
+    // The failure that must never be silent: the switch reads ON because the
+    // setting is armed, while the bypass itself did not come up and direct
+    // traffic is leaving untouched.
+    it("spells out a bypass that failed to start", () => {
+      const tenebra = makeTenebra({
+        state: {
+          state: "idle",
+          dpi_bypass: true,
+          dpi_status: "failed",
+        } as State,
+      });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(dpiToggle()).toHaveAttribute("aria-checked", "true");
+      const alert = within(dpiRow()).getByRole("alert");
+      expect(alert).toHaveTextContent(dictionaries.en.settings.dpiFailed);
+    });
+
+    it("says nothing about a bypass nobody asked for", () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+      expect(within(dpiRow()).queryByRole("alert")).toBeNull();
+      expect(within(dpiRow()).queryByRole("status")).toBeNull();
+    });
   });
 
   describe("reliability", () => {
@@ -1513,6 +1605,24 @@ describe("SettingsScreen", () => {
       renderWithProviders(<SettingsScreen tenebra={tenebra} />);
 
       await user.click(switchIn("DPI bypass — TLS fragmentation"));
+
+      await waitFor(() => expect(toasts).toContain(en.daemon.commandUnknown));
+    });
+
+    it("blames the out-of-date service when the DPI bypass is refused as unknown", async () => {
+      // The command is newer than every installed service, so this is the first
+      // refusal a user meets after updating the app alone.
+      const tenebra = makeTenebra({
+        state: { state: "idle" } as State,
+        setDpiBypass: vi
+          .fn()
+          .mockRejectedValue('unknown command "set_dpi_bypass"'),
+      });
+      const toasts = captureToasts();
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(switchIn("DPI bypass for direct traffic"));
 
       await waitFor(() => expect(toasts).toContain(en.daemon.commandUnknown));
     });

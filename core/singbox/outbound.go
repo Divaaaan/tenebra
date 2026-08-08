@@ -142,6 +142,23 @@ func vmessOutbound(n model.Node, tag string) map[string]any {
 	return o
 }
 
+// dpiOutbound builds the outbound for the DPI-bypass helper. It is not derived
+// from a node: the helper is a local process, reached over plain SOCKS5 on
+// loopback, and it carries no TLS or transport of its own — the whole point is
+// that it dials the real destination itself and only reshapes how those packets
+// go out. The version is pinned to 5 because the helper speaks SOCKS5 only, and
+// leaving it unset would let sing-box negotiate SOCKS4 against a listener that
+// never answers it.
+func dpiOutbound(port int) map[string]any {
+	return map[string]any{
+		"type":        "socks",
+		"tag":         dpiTag,
+		"server":      "127.0.0.1",
+		"server_port": port,
+		"version":     "5",
+	}
+}
+
 // tlsObject renders a model.TLS into the sing-box tls sub-object, or nil when
 // TLS is absent/disabled. REALITY and uTLS are only added when present so we
 // never emit empty enabled:false sub-objects.

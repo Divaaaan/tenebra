@@ -89,6 +89,7 @@ export interface Tenebra {
   setSplit: (mode: SplitMode, apps: string[]) => Promise<void>;
   setKillSwitch: (on: boolean) => Promise<void>;
   setTlsFragment: (on: boolean) => Promise<void>;
+  setDpiBypass: (on: boolean) => Promise<void>;
   setMultihop: (
     profile: string,
     enabled: boolean,
@@ -321,6 +322,11 @@ export function useTenebra(): Tenebra {
     setState(next);
   }, []);
 
+  const setDpiBypass = useCallback(async (on: boolean) => {
+    const next = await api.setDpiBypass(on);
+    setState(next);
+  }, []);
+
   const setMultihop = useCallback(
     async (profile: string, enabled: boolean, entryId: string, exitId: string) => {
       const next = await api.setMultihop(profile, enabled, entryId, exitId);
@@ -401,6 +407,7 @@ export function useTenebra(): Tenebra {
     setSplit,
     setKillSwitch,
     setTlsFragment,
+    setDpiBypass,
     setMultihop,
     setTun,
     setProxyMode,

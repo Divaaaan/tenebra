@@ -9,6 +9,26 @@ All notable changes to Tenebra are documented here. The format follows
 > [project status](README.md#project-status). Expect breaking changes between
 > 0.x releases.
 
+## [Unreleased]
+
+### Added
+
+- **An optional DPI bypass, running alongside the tunnel.** Some networks do not
+  block a destination outright — they inspect the opening of each connection and
+  drop or slow what they recognise. The new setting starts a small local helper
+  (ByeDPI, bundled with the app) that reshapes those first packets, and sends the
+  traffic that routing already keeps **off** the tunnel through it. Nothing about
+  the tunnel changes: the two run at the same time, and LAN traffic and the
+  helper's own traffic are never routed into it. If the helper fails to start or
+  dies, the state says so and the tunnel stays up.
+
+  It changes how connections look on the wire, not where they come from — no
+  address is hidden and nothing new is encrypted — so it is not a substitute for
+  the tunnel and does nothing against filtering that blocks by IP address. The
+  helper is bundled on **Windows and Linux only**, because upstream publishes no
+  macOS build; on macOS the setting is unavailable rather than quietly doing
+  nothing.
+
 ## [0.4.6] - 2026-07-27
 
 ### Added

@@ -49,6 +49,10 @@ const (
 const (
 	tagProxy  = "proxy"
 	tagDirect = "direct"
+	// tagDPI is the local SOCKS5 outbound of the DPI-bypass helper. It only exists
+	// in the config when Options.DPIBypass is set (singbox emits it then), so no
+	// rule may name it unless that toggle is on.
+	tagDPI = "dpi"
 )
 
 // DNS server tags used within the generated dns block.
@@ -108,6 +112,14 @@ type Options struct {
 	TLSFragment bool   // force TLS ClientHello fragmentation on every TLS outbound
 	DNSRemote   string // resolver for proxied destinations, e.g. tls://1.1.1.1
 	DNSDirect   string // resolver for direct destinations, e.g. https://77.88.8.8/dns-query
+
+	// DPIBypass routes the traffic this config keeps off the tunnel through a local
+	// bypass helper (a loopback SOCKS5 listener) instead of dialling it raw, so a
+	// DPI box on the path cannot act on the connection. It changes nothing about
+	// where traffic goes — only how the untunnelled half is dialled — and it never
+	// applies to LAN destinations or to the helper's own sockets. Off by default;
+	// with it off the emitted config is identical to one built without the feature.
+	DPIBypass bool
 
 	// AdBlock opts into DNS-level ad/tracker blocking: matching lookups are
 	// sinkholed (answered REFUSED) before any routing rule, in every mode. It is

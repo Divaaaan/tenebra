@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/Divaaaan/tenebra/core/dpi"
 	"github.com/Divaaaan/tenebra/core/model"
 	"github.com/Divaaaan/tenebra/core/routing"
 )
@@ -37,6 +38,11 @@ const (
 	directTag = "direct"
 	blockTag  = "block"
 
+	// dpiTag is the outbound for the DPI-bypass helper: a loopback SOCKS5 listener
+	// run alongside sing-box. It is emitted only when routing.Options.DPIBypass is
+	// set, which is also the only case in which the route block names it.
+	dpiTag = "dpi"
+
 	// System-proxy mode replaces the tun inbound with a single mixed inbound
 	// (HTTP + SOCKS on one port) bound to loopback; the client then points the OS
 	// at that address. mixedListen is loopback-only on purpose — the inbound must
@@ -52,6 +58,14 @@ const (
 // can report and point the OS proxy at the same effective address the builder
 // emits. Chosen away from the clash API's 9090.
 const DefaultMixedPort = 2080
+
+// DefaultDPIPort is the loopback port the DPI-bypass helper listens on when none
+// is configured. It is exported because the config and the process that binds the
+// port are wired up by two different layers: the builder dials it, the control
+// layer launches the helper on it, and a drift between them is a tunnel that
+// silently refuses every untunnelled connection. For that reason it is an alias
+// of the engine package's own default rather than a second copy of the number.
+const DefaultDPIPort = dpi.DefaultPort
 
 // Connection modes. ModeTun carries all traffic through a tun device with
 // auto_route (the default, needs the tun driver). ModeSystemProxy skips the tun
@@ -126,7 +140,12 @@ type TunOptions struct {
 	// MixedPort is the loopback port the mixed inbound listens on in
 	// ModeSystemProxy. Zero is filled with DefaultMixedPort by normalize; it is
 	// inert in tun mode.
-	MixedPort     int
+	MixedPort int
+	// DPIPort is the loopback port the DPI-bypass helper listens on. Zero is filled
+	// with DefaultDPIPort by normalize. It is read only when
+	// routing.Options.DPIBypass is set, and it is the port the emitted socks
+	// outbound dials — so it must be the port the helper was actually started on.
+	DPIPort       int
 	InterfaceName string
 	MTU           int
 	Stack         string // system, gvisor, or mixed
@@ -156,6 +175,9 @@ func (t TunOptions) normalize() TunOptions {
 	}
 	if t.MixedPort == 0 {
 		t.MixedPort = DefaultMixedPort
+	}
+	if t.DPIPort == 0 {
+		t.DPIPort = DefaultDPIPort
 	}
 	if t.InterfaceName == "" {
 		// Empty stays empty on macOS (platformTUNName == ""), which tells sing-box
@@ -252,6 +274,14 @@ func Build(nodes []model.Node, selectedTag string, ro routing.Options, tun TunOp
 		map[string]any{"type": "direct", "tag": directTag},
 		map[string]any{"type": "block", "tag": blockTag},
 	)
+
+	// The DPI-bypass helper is reached as an ordinary SOCKS5 proxy on loopback. It
+	// is emitted only when the toggle is on, so a config built without the feature
+	// carries no reference to a process that isn't running: an outbound pointing at
+	// a dead local port would swallow every connection the route block sends it.
+	if ro.DPIBypass {
+		outbounds = append(outbounds, dpiOutbound(tun.DPIPort))
+	}
 
 	// A per-run secret gates the clash API's external controller. Without it any
 	// local process could read the user's live connections (GET /connections) or

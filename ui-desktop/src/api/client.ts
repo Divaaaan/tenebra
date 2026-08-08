@@ -113,6 +113,18 @@ export const api = {
     return invoke<State>("set_tls_fragment", { on });
   },
 
+  // Arm/disarm the local DPI bypass: the core runs a loopback bypass and sends
+  // the direct leg of its routing through it, so traffic that stays off the
+  // tunnel is reshaped past the filter on its way out. Not a tunnel — the
+  // address stays the same and nothing is encrypted to our servers. Same live
+  // re-apply semantics as the kill switch; when idle it applies on the next
+  // connect. Whether the bypass actually came up arrives separately in the
+  // returned State's `dpi_status`, so a resolved promise is not by itself proof
+  // that it is running.
+  setDpiBypass(on: boolean): Promise<State> {
+    return invoke<State>("set_dpi_bypass", { on });
+  },
+
   // Set the multihop chain: enable/disable the two-hop route and name the entry
   // and exit servers (by stable id, within `profile`) it runs through — entry
   // first. The core validates the pair when enabling and, when a tunnel is live,
