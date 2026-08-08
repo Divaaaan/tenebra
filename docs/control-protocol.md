@@ -228,6 +228,7 @@ user are not defended against each other.
 | `leak_check`           | —                                  | `LeakCheck`                 |
 | `run_stun_check`       | —                                  | `StunCheck`                 |
 | `run_speed_test`       | —                                  | `SpeedTest` (connected only) |
+| `list_connections`     | —                                  | `{connections: LiveConnection[]}` (connected only) |
 
 ```
 request:  {"id":7,"cmd":"connect","profile":"p1","node":"n3"}
@@ -684,6 +685,47 @@ response: {"id":9,"ok":true,"data":{
   "dns":{"status":"inconclusive","resolvers":["1.1.1.1"],
          "message":"Observed resolver(s) shown; reported as inconclusive rather than a pass."}
 }}
+```
+
+### Live hosts (`list_connections`)
+
+A snapshot of where traffic is going right now, so a user can send a site past
+the tunnel by picking it from a list instead of having to know and type its
+domain. It takes no fields.
+
+The core reads sing-box's clash API (the same endpoint the traffic counters come
+from) and folds every current connection into **one row per host**:
+
+- `host` — the sniffed domain, lowercased. It is the value a routing rule would
+  be written from verbatim.
+- `is_ip` — set when sniffing never learned a name and the row is a destination
+  address instead. Clients must show this, because a rule written from an address
+  covers only that address.
+- `up` / `down` — the summed byte counts of the folded connections.
+- `process` — the executables behind them, busiest first, comma-separated when
+  several share a host.
+- `outbound` — the sing-box outbound the host's heaviest connection took
+  (`proxy`, `direct`, …), i.e. whether it is tunnelled at this moment.
+
+Rows are sorted by total traffic, heaviest first, and the list is capped at 200
+— it is a menu for a person, not a dump of every socket. The clash API's secret
+authenticates the read inside the core and never appears in the response.
+
+The command is gated on a live connection: with no tunnel up there is no API to
+ask, and it answers with that reason rather than an empty success. A connected
+tunnel with no traffic answers `ok` with an empty list.
+
+**Privacy:** the host list is the most sensitive data the app handles. The core
+never logs it, never emits it as an event, and never includes it in diagnostics;
+clients must hold it to the same rule.
+
+```
+request:  {"id":13,"cmd":"list_connections"}
+response: {"id":13,"ok":true,"data":{"connections":[
+  {"host":"example.com","process":"browser.exe","up":1234,"down":56789,"outbound":"proxy"},
+  {"host":"203.0.113.9","process":"game.exe","up":10,"down":20,"outbound":"direct","is_ip":true}
+]}}
+error:    {"id":13,"ok":false,"error":"live connections require an active connection"}
 ```
 
 ### Network diagnostics (`run_stun_check`, `run_speed_test`)

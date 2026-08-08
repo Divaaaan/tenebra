@@ -24,9 +24,9 @@ use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
 use super::{
-    AttemptsSnapshot, Backend, ConnectionMode, EventSink, ImportLinksResult, LeakCheck, PingResult,
-    Profile, RoutingMode, SpeedTest, SplitMode, State, StunCheck, TunStack, EVENT_ATTEMPTS,
-    EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
+    AttemptsSnapshot, Backend, ConnectionMode, EventSink, ImportLinksResult, LeakCheck,
+    LiveConnection, PingResult, Profile, RoutingMode, SpeedTest, SplitMode, State, StunCheck,
+    TunStack, EVENT_ATTEMPTS, EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
 /// How long a request waits for its correlated response before giving up. The
@@ -337,6 +337,7 @@ const CMD_SET_AUTO_FAILOVER: &str = "set_auto_failover";
 const CMD_SET_CRASH_REPORTS: &str = "set_crash_reports";
 const CMD_SET_DNS: &str = "set_dns";
 const CMD_SET_RULES: &str = "set_rules";
+const CMD_LIST_CONNECTIONS: &str = "list_connections";
 const CMD_LEAK_CHECK: &str = "leak_check";
 const CMD_RUN_STUN_CHECK: &str = "run_stun_check";
 const CMD_RUN_SPEED_TEST: &str = "run_speed_test";
@@ -551,6 +552,17 @@ impl<T: WireSession> Backend for T {
         )
     }
 
+    fn list_connections(&self) -> Result<Vec<LiveConnection>, String> {
+        // The core reads the engine's connection table and folds it per host, so
+        // there is nothing to assemble here. It refuses while idle, which arrives
+        // as the ordinary protocol error and is what the UI turns into "nothing
+        // is connected" rather than an empty list.
+        let wrap: ConnectionList = self
+            .session()?
+            .request_into(CMD_LIST_CONNECTIONS, obj([]))?;
+        Ok(wrap.connections)
+    }
+
     fn leak_check(&self) -> Result<LeakCheck, String> {
         // The core runs the IP/DNS probes itself and returns the assembled
         // verdict; we just deserialize it. It can touch the network, but the core
@@ -580,6 +592,11 @@ impl<T: WireSession> Backend for T {
 #[derive(serde::Deserialize)]
 struct ProfileList {
     profiles: Vec<Profile>,
+}
+
+#[derive(serde::Deserialize)]
+struct ConnectionList {
+    connections: Vec<LiveConnection>,
 }
 
 #[derive(serde::Deserialize)]

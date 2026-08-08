@@ -6,6 +6,7 @@
 //! named pipe when one is listening, the spawned sidecar otherwise, or the
 //! in-process mock on request).
 
+mod apps;
 mod backend;
 mod crash;
 mod deeplink;
@@ -23,8 +24,8 @@ use tauri_plugin_notification::NotificationExt;
 
 use backend::{
     AttemptsSnapshot, Backend, ConnectionMode, ConnectionState, EventSink, ImportLinksResult,
-    LeakCheck, PingResult, Profile, RoutingMode, SpeedTest, SplitMode, State, StunCheck, TunStack,
-    EVENT_ATTEMPTS, EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
+    LeakCheck, LiveConnection, PingResult, Profile, RoutingMode, SpeedTest, SplitMode, State,
+    StunCheck, TunStack, EVENT_ATTEMPTS, EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
 /// Held in Tauri's managed state and shared by every command handler. The
@@ -772,6 +773,34 @@ async fn leak_check(state: TauriState<'_, AppState>) -> Result<LeakCheck, String
 }
 
 #[tauri::command]
+async fn list_connections(state: TauriState<'_, AppState>) -> Result<Vec<LiveConnection>, String> {
+    off_thread(Arc::clone(&state.backend), |b| b.list_connections()).await
+}
+
+/// Scan the machine for applications the split rules can name.
+///
+/// This one does not go through the backend: the core runs as a LocalSystem
+/// service on Windows, and a service can see neither the user's registry hive
+/// nor their Start menu, so a catalogue gathered there would describe a
+/// different account. The app process is the only one standing in the right
+/// place to answer.
+#[tauri::command]
+async fn list_installed_apps() -> Result<Vec<apps::AppEntry>, String> {
+    apps::list_installed_apps().await
+}
+
+/// The other executables shipped beside a chosen one.
+///
+/// A rule naming only a launcher silently does nothing when the process that
+/// actually opens sockets is a different file in the same folder, so the picker
+/// offers these once something is selected. It is a separate command because
+/// walking a directory is only worth paying for on demand.
+#[tauri::command]
+async fn list_sibling_apps(path: String) -> Result<Vec<apps::AppEntry>, String> {
+    apps::list_sibling_apps(path).await
+}
+
+#[tauri::command]
 async fn run_stun_check(state: TauriState<'_, AppState>) -> Result<StunCheck, String> {
     off_thread(Arc::clone(&state.backend), |b| b.run_stun_check()).await
 }
@@ -911,6 +940,9 @@ pub fn run() {
             set_rules,
             set_crash_reports,
             leak_check,
+            list_connections,
+            list_installed_apps,
+            list_sibling_apps,
             run_stun_check,
             run_speed_test,
             quit_app,

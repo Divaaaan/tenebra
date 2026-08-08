@@ -3,8 +3,18 @@ import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getVersion } from "@tauri-apps/api/app";
 import type { Update } from "@tauri-apps/plugin-updater";
 
-import type { ConnectionMode, RoutingMode, SplitMode, TunStack } from "../api";
+import type {
+  AppEntry,
+  ConnectionMode,
+  LiveHost,
+  RoutingMode,
+  SplitMode,
+  TunStack,
+} from "../api";
 import type { Tenebra } from "../state/useTenebra";
+import { listConnections, listInstalledApps } from "../api/client";
+import { AppPicker } from "../components/AppPicker";
+import { HostPicker } from "../components/HostPicker";
 import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import { UpdateConfirm } from "../components/UpdateConfirm";
 import { useI18n } from "../i18n/I18nContext";
@@ -652,6 +662,57 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   const splitApps = tenebra.state.split_apps ?? [];
   const [appDraft, setAppDraft] = useState("");
 
+  // The scanned catalogue behind the "choose" button. It is fetched when the
+  // picker opens rather than on mount: scanning touches the registry, the Start
+  // menu and every running process, and most visits to this screen never open
+  // it.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [scannedApps, setScannedApps] = useState<AppEntry[]>([]);
+  const [appsLoading, setAppsLoading] = useState(false);
+  const [appsError, setAppsError] = useState<string | undefined>();
+
+  function scanApps() {
+    setAppsLoading(true);
+    setAppsError(undefined);
+    listInstalledApps()
+      .then((found) => setScannedApps(found))
+      .catch((e: unknown) => setAppsError(describeCoreError(e, t)))
+      .finally(() => setAppsLoading(false));
+  }
+
+  function openAppPicker() {
+    setPickerOpen(true);
+    // Re-scan on every open: applications get installed and closed between
+    // visits, and a stale catalogue is worse than a short wait — it silently
+    // omits the thing the person came to add.
+    scanApps();
+  }
+
+  // Executables already in the rule that no scan returned — hand-typed entries,
+  // uninstalled apps, anything portable that wasn't running during the scan.
+  // Without these the picker would show them as unticked and inviting a second
+  // click, or hide them entirely while they keep routing traffic.
+  const pickerApps: AppEntry[] = (() => {
+    const seen = new Set(scannedApps.map((a) => a.exe.toLowerCase()));
+    const missing = splitApps
+      .filter((exe) => !seen.has(exe.toLowerCase()))
+      .map<AppEntry>((exe) => ({
+        name: exe,
+        exe,
+        running: false,
+        source: "process",
+      }));
+    return [...scannedApps, ...missing];
+  })();
+
+  function toggleAppFromPicker(exe: string) {
+    const normalized = exe.trim().toLowerCase();
+    const next = splitApps.includes(normalized)
+      ? splitApps.filter((a) => a !== normalized)
+      : [...splitApps, normalized];
+    void tenebra.setSplit(splitMode, next).catch(reportRefusal);
+  }
+
   const splitOptions: { mode: SplitMode; label: string; hint: string }[] = [
     { mode: "off", label: t.settings.splitOff, hint: t.settings.splitOffHint },
     { mode: "exclude", label: t.settings.splitExclude, hint: t.settings.splitExcludeHint },
@@ -871,6 +932,43 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     pushRules(rulesDirect, rulesProxy, presetRuBanking, !presetRuGov);
   }
 
+  // The live connection snapshot offered beside the rule lists. Never on a
+  // timer: rows that reorder under the pointer are unusable, so a reading is
+  // only ever taken because someone asked for one.
+  const [hosts, setHosts] = useState<LiveHost[]>([]);
+  const [hostsLoading, setHostsLoading] = useState(false);
+  const [hostsError, setHostsError] = useState<string | undefined>();
+
+  function refreshHosts() {
+    setHostsLoading(true);
+    setHostsError(undefined);
+    listConnections()
+      .then((found) => setHosts(found))
+      .catch((e: unknown) => {
+        // An idle core refuses this outright, and that refusal is the answer:
+        // there is no connection table without a connection. Clearing the rows
+        // keeps a stale snapshot from reading as the current one.
+        setHosts([]);
+        setHostsError(describeCoreError(e, t));
+      })
+      .finally(() => setHostsLoading(false));
+  }
+
+  function pickHost(host: string) {
+    // Rules match domain suffixes, so an address can never match one. The picker
+    // labels those rows, but the guard belongs here too: quietly adding a rule
+    // that can never fire is worse than refusing it out loud.
+    const row = hosts.find((h) => h.host === host);
+    if (row?.is_ip) {
+      pushToast(t.hostPicker.ipHint);
+      return;
+    }
+    if (rulesDirect.includes(host)) {
+      return;
+    }
+    pushRules([...rulesDirect, host], rulesProxy, presetRuBanking, presetRuGov);
+  }
+
   const themeOptions: { value: "dark" | "light"; label: string }[] = [
     { value: "dark", label: t.settings.themeDark },
     { value: "light", label: t.settings.themeLight },
@@ -1022,6 +1120,13 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
                 >
                   {t.settings.splitAdd}
                 </button>
+                <button
+                  type="button"
+                  className="set-btn"
+                  onClick={openAppPicker}
+                >
+                  {t.settings.splitBrowse}
+                </button>
               </div>
 
               {splitApps.length === 0 ? (
@@ -1044,6 +1149,19 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
                 </ul>
               )}
             </div>
+          )}
+
+          {pickerOpen && (
+            <AppPicker
+              apps={pickerApps}
+              selected={splitApps}
+              loading={appsLoading}
+              error={appsError}
+              onToggle={toggleAppFromPicker}
+              onClose={() => setPickerOpen(false)}
+              onRescan={scanApps}
+              strings={t.appPicker}
+            />
           )}
         </section>
 
@@ -1116,6 +1234,15 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
                 presetRuGov,
               )
             }
+          />
+
+          <HostPicker
+            hosts={hosts}
+            loading={hostsLoading}
+            error={hostsError}
+            onPick={pickHost}
+            onRefresh={refreshHosts}
+            strings={t.hostPicker}
           />
 
           <RuleListEditor

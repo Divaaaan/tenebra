@@ -411,6 +411,33 @@ pub struct DnsResult {
     pub message: String,
 }
 
+/// One destination the running tunnel is carrying traffic to, mirroring the
+/// core's `LiveConnection`. It exists so a routing rule can be made by pointing
+/// at traffic that is actually happening, instead of guessing which domain a
+/// service resolves to.
+///
+/// This never reaches a log or the diagnostics bundle: the set of hosts someone
+/// is talking to is the most revealing thing this application holds, and the
+/// bundle is meant to be pasteable to a stranger.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LiveConnection {
+    pub host: String,
+    /// Executables owning the connections folded into this row, busiest first;
+    /// absent when the engine could not attribute them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process: Option<String>,
+    pub up: i64,
+    pub down: i64,
+    /// Where this destination goes today — the tunnel or the direct leg — which
+    /// is the question worth answering before writing a rule about it.
+    #[serde(default)]
+    pub outbound: String,
+    /// The connection never carried a hostname, so `host` holds an address. The
+    /// UI has to say so: a rule matching domain suffixes will never match it.
+    #[serde(default, rename = "is_ip", skip_serializing_if = "std::ops::Not::not")]
+    pub is_ip: bool,
+}
+
 /// Result of the `leak_check` command. Mirrors the core's `LeakCheck` byte for
 /// byte (see `docs/control-protocol.md`): the observed public IP and a verdict
 /// on whether traffic is leaving through the tunnel exit, plus a best-effort DNS
@@ -627,6 +654,10 @@ pub trait Backend: Send + Sync + 'static {
         preset_ru_gov: bool,
     ) -> Result<State, String>;
     fn leak_check(&self) -> Result<LeakCheck, String>;
+    /// Read the destinations the tunnel is carrying right now. Errors while
+    /// idle: there is no connection table without a connection, and an empty
+    /// list would read as "nothing to see" rather than "nothing is connected".
+    fn list_connections(&self) -> Result<Vec<LiveConnection>, String>;
     /// Probe the current network path with a STUN Binding Request: whether
     /// outbound UDP works, the reflexive public IP, and a best-effort NAT
     /// classification. Takes no fields and is not gated on a connection.

@@ -376,6 +376,8 @@ export interface Strings {
     splitAppsEmpty: string;
     splitAddPlaceholder: string;
     splitAdd: string;
+    /** Opens the scanned catalogue instead of typing a file name by hand. */
+    splitBrowse: string;
     splitRemove: string;
     mode: string;
     modeHint: string;
@@ -622,6 +624,50 @@ export interface Strings {
     importBadStatus: string;
     importBadContent: string;
   };
+  /**
+   * The application catalogue. Its copy carries one idea the rest of the UI
+   * doesn't have to: a rule names an executable, not a program, and those come
+   * apart often enough (a launcher and the game it starts) that hiding the file
+   * name would quietly cost people their routing.
+   */
+  appPicker: {
+    title: string;
+    hint: string;
+    searchPlaceholder: string;
+    searchLabel: string;
+    running: string;
+    installed: string;
+    loading: string;
+    empty: string;
+    noMatches: string;
+    rescan: string;
+    scanning: string;
+    close: string;
+    /** "{n} selected" — {n} is replaced with the count. */
+    selectedCount: string;
+  };
+  /**
+   * The live connection list. Its copy has to keep saying that this is a
+   * snapshot of a running tunnel: an empty list here means "nothing is
+   * connected", and without that said plainly it reads as a broken feature.
+   */
+  hostPicker: {
+    title: string;
+    hint: string;
+    /** "{n} connections" — {n} is replaced with the count. */
+    count: string;
+    refresh: string;
+    refreshing: string;
+    loading: string;
+    empty: string;
+    emptyHint: string;
+    ipBadge: string;
+    ipHint: string;
+    unknownProcess: string;
+    routeHint: string;
+    /** "Add {host} to the rules" — {host} is replaced with the row's host. */
+    pick: string;
+  };
 }
 
 const en: Strings = {
@@ -864,6 +910,7 @@ const en: Strings = {
     splitAppsEmpty: "No apps yet. Add an executable like chrome.exe.",
     splitAddPlaceholder: "chrome.exe",
     splitAdd: "Add",
+    splitBrowse: "Choose…",
     splitRemove: "Remove",
     mode: "Connection mode",
     modeHint:
@@ -1061,6 +1108,36 @@ const en: Strings = {
     importBadStatus: "The subscription server returned an error. Check the link.",
     importBadContent:
       "Couldn't read the subscription — no servers found, or the format isn't supported.",
+  },
+  appPicker: {
+    title: "Choose applications",
+    hint: "Rules match the executable file, not the application — a launcher and the program it starts are separate files.",
+    searchPlaceholder: "Search by name or file",
+    searchLabel: "Search applications",
+    running: "Running now",
+    installed: "Installed",
+    loading: "Looking for applications…",
+    empty: "No applications found. You can still type an executable name yourself.",
+    noMatches: "Nothing matches that search.",
+    rescan: "Scan again",
+    scanning: "Scanning…",
+    close: "Close",
+    selectedCount: "{n} selected",
+  },
+  hostPicker: {
+    title: "Current connections",
+    hint: "A snapshot of where traffic is going right now. It doesn't refresh by itself, and it is empty while the tunnel is off.",
+    count: "{n} connections",
+    refresh: "Refresh",
+    refreshing: "Reading…",
+    loading: "Reading connections…",
+    empty: "Nothing is connected right now.",
+    emptyHint: "Connect the tunnel and use something for a moment, then refresh.",
+    ipBadge: "IP",
+    ipHint: "This connection never carried a hostname, so it is an address rather than a domain.",
+    unknownProcess: "unknown",
+    routeHint: "Where this connection goes today",
+    pick: "Add {host} to the rules",
   },
 };
 
@@ -1304,6 +1381,7 @@ const ru: Strings = {
     splitAppsEmpty: "Пока нет приложений. Добавьте исполняемый файл, например chrome.exe.",
     splitAddPlaceholder: "chrome.exe",
     splitAdd: "Добавить",
+    splitBrowse: "Выбрать…",
     splitRemove: "Удалить",
     mode: "Режим подключения",
     modeHint:
@@ -1501,6 +1579,36 @@ const ru: Strings = {
     importBadStatus: "Сервер подписки ответил ошибкой. Проверьте ссылку.",
     importBadContent:
       "Не удалось разобрать подписку — серверы не найдены или формат не поддерживается.",
+  },
+  appPicker: {
+    title: "Выбор приложений",
+    hint: "Правило работает по исполняемому файлу, а не по приложению: лаунчер и запускаемая им программа — разные файлы.",
+    searchPlaceholder: "Поиск по названию или файлу",
+    searchLabel: "Поиск приложений",
+    running: "Запущены сейчас",
+    installed: "Установленные",
+    loading: "Ищем приложения…",
+    empty: "Приложения не найдены. Имя файла можно ввести вручную.",
+    noMatches: "Ничего не найдено.",
+    rescan: "Искать снова",
+    scanning: "Ищем…",
+    close: "Закрыть",
+    selectedCount: "Выбрано: {n}",
+  },
+  hostPicker: {
+    title: "Текущие соединения",
+    hint: "Снимок того, куда идёт трафик прямо сейчас. Сам не обновляется, и пуст, пока туннель выключен.",
+    count: "Соединений: {n}",
+    refresh: "Обновить",
+    refreshing: "Читаем…",
+    loading: "Читаем соединения…",
+    empty: "Сейчас соединений нет.",
+    emptyHint: "Подключите туннель, поработайте немного и обновите список.",
+    ipBadge: "IP",
+    ipHint: "У этого соединения не было имени хоста — это адрес, а не домен.",
+    unknownProcess: "неизвестно",
+    routeHint: "Куда это соединение идёт сейчас",
+    pick: "Добавить {host} в правила",
   },
 };
 

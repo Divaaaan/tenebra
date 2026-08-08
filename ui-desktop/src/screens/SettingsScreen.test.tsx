@@ -131,6 +131,119 @@ describe("SettingsScreen", () => {
     });
   });
 
+  describe("choosing apps and hosts from a list", () => {
+    // The catalogue and the connection snapshot both arrive over the command
+    // channel, which is already stubbed; these tests only decide what it answers.
+    function answerWith(apps: unknown[], connections: unknown[]) {
+      vi.mocked(invoke).mockImplementation((cmd: string) => {
+        if (cmd === "list_installed_apps") {
+          return Promise.resolve(apps);
+        }
+        if (cmd === "list_connections") {
+          return Promise.resolve(connections);
+        }
+        return Promise.resolve(true);
+      });
+    }
+
+    it("opens the catalogue and offers what the scan found", async () => {
+      answerWith(
+        [{ name: "Telegram Desktop", exe: "telegram.exe", running: true, source: "registry" }],
+        [],
+      );
+      const tenebra = makeTenebra({
+        state: { state: "idle", split: "exclude", split_apps: [] } as State,
+      });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await userEvent.click(screen.getByRole("button", { name: "Choose…" }));
+
+      const dialog = await screen.findByRole("dialog");
+      expect(await within(dialog).findByText("Telegram Desktop")).toBeInTheDocument();
+      // The file name is what the rule matches, so it has to be on screen too.
+      expect(within(dialog).getByText("telegram.exe")).toBeInTheDocument();
+    });
+
+    it("still shows an executable the scan never returned", async () => {
+      // Hand-typed or uninstalled entries keep routing traffic; hiding them
+      // would leave a rule nobody can see, let alone remove.
+      answerWith([], []);
+      const tenebra = makeTenebra({
+        state: {
+          state: "idle",
+          split: "exclude",
+          split_apps: ["portable-thing.exe"],
+        } as State,
+      });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await userEvent.click(screen.getByRole("button", { name: "Choose…" }));
+
+      const dialog = await screen.findByRole("dialog");
+      // Twice over: an entry the scan never returned has no display name, so the
+      // row shows the file name in both the name and the file slot.
+      const shown = await within(dialog).findAllByText("portable-thing.exe");
+      expect(shown.length).toBeGreaterThan(0);
+    });
+
+    it("adds a picked host to the direct rules", async () => {
+      answerWith(
+        [],
+        [
+          {
+            host: "example.com",
+            process: "firefox.exe",
+            up: 10,
+            down: 20,
+            outbound: "proxy",
+          },
+        ],
+      );
+      const tenebra = makeTenebra({
+        state: { state: "connected", rules_direct: [] } as State,
+      });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      await userEvent.click(await screen.findByRole("button", { name: /example\.com/ }));
+
+      await waitFor(() =>
+        expect(tenebra.setRules).toHaveBeenCalledWith(
+          ["example.com"],
+          [],
+          false,
+          false,
+        ),
+      );
+    });
+
+    it("refuses to make a rule out of a bare address", async () => {
+      // Rules match domain suffixes; an address can never match one, so adding
+      // it would look like it worked and quietly never fire.
+      answerWith(
+        [],
+        [
+          {
+            host: "203.0.113.7",
+            up: 10,
+            down: 20,
+            outbound: "proxy",
+            is_ip: true,
+          },
+        ],
+      );
+      const tenebra = makeTenebra({
+        state: { state: "connected", rules_direct: [] } as State,
+      });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      await userEvent.click(await screen.findByRole("button", { name: /203\.0\.113\.7/ }));
+
+      expect(tenebra.setRules).not.toHaveBeenCalled();
+    });
+  });
+
   describe("split tunnelling", () => {
     it("hides the apps editor while off", () => {
       const tenebra = makeTenebra({ state: { state: "idle" } as State });

@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use super::{
     Backend, ConnectionMode, ConnectionState, DnsResult, DnsStatus, EventSink, ExitMatch,
-    ImportLinksResult, LeakCheck, Multihop, NatType, Node, PingResult, Profile, Protocol,
-    RoutingMode, Source, SpeedTest, SplitMode, State, StunCheck, TunStack, Verdict,
+    ImportLinksResult, LeakCheck, LiveConnection, Multihop, NatType, Node, PingResult, Profile,
+    Protocol, RoutingMode, Source, SpeedTest, SplitMode, State, StunCheck, TunStack, Verdict,
 };
 
 /// How long the fake "dial" takes before flipping to connected.
@@ -671,6 +671,46 @@ impl Backend for MockBackend {
         drop(inner);
         self.shared.emit_state(&snapshot);
         Ok(snapshot)
+    }
+
+    fn list_connections(&self) -> Result<Vec<LiveConnection>, String> {
+        // The real core refuses this while idle, because a connection table
+        // without a connection is not an empty answer but a missing one. The mock
+        // reproduces the refusal rather than an empty list, so the UI path that
+        // distinguishes them is exercised without a tunnel.
+        let inner = self.shared.inner.lock().unwrap();
+        if inner.state.state != ConnectionState::Connected {
+            return Err("live connections require an active connection".into());
+        }
+        // Documentation-range hosts and plausible volumes, matching the rest of
+        // the demo data. One row deliberately carries no hostname so the address
+        // path stays visible in the mock.
+        Ok(vec![
+            LiveConnection {
+                host: "example.com".into(),
+                process: Some("firefox.exe".into()),
+                up: 148_223,
+                down: 4_882_119,
+                outbound: "proxy".into(),
+                is_ip: false,
+            },
+            LiveConnection {
+                host: "cdn.example.net".into(),
+                process: Some("firefox.exe".into()),
+                up: 21_004,
+                down: 1_204_882,
+                outbound: "direct".into(),
+                is_ip: false,
+            },
+            LiveConnection {
+                host: "203.0.113.7".into(),
+                process: None,
+                up: 9_112,
+                down: 40_233,
+                outbound: "proxy".into(),
+                is_ip: true,
+            },
+        ])
     }
 
     fn leak_check(&self) -> Result<LeakCheck, String> {

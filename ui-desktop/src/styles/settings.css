@@ -569,3 +569,343 @@
 .overlay-panel:has(.set-shell) .overlay-close {
   display: none;
 }
+
+/* ==========================================================================
+   APP PICKER — the split-tunnelling app chooser, stacked over the settings
+   overlay. It borrows the import dialog's shell (.prof-modal-scrim /
+   .prof-modal / .prof-modal-actions) and the search field (.set-field), so only
+   the list vocabulary is new. No at-rules and no sticky/fixed layers here: the
+   guard test in settings.css.test.ts reads this sheet with a flat parser.
+   ========================================================================== */
+.app-picker {
+  width: min(560px, 100%);
+  gap: var(--sp-4);
+}
+.app-picker-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+/* The one line that carries the whole point: a rule matches the file, not the
+   app, so the file name under each row is the thing to read. */
+.app-picker-hint {
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  letter-spacing: var(--track-body);
+  color: var(--text-dim);
+}
+
+/* .set-field grows to fill its row; inside this column that would stretch the
+   field vertically, so the picker's copy holds its natural height. */
+.app-picker-search {
+  flex: none;
+}
+
+/* The scroller. A floor as well as a ceiling: loading, empty and error states
+   then occupy the same box as the list, so the dialog does not resize under the
+   pointer as a scan resolves. */
+.app-picker-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 132px;
+  max-height: 44vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.app-picker-note {
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  letter-spacing: var(--track-body);
+  color: var(--text-dim);
+  padding: var(--sp-4) 0;
+}
+.app-picker-error {
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  letter-spacing: var(--track-body);
+  color: var(--signal);
+  padding: var(--sp-2) 0;
+}
+
+/* ── groups: running now, then the rest ── */
+.app-picker-group + .app-picker-group {
+  margin-top: var(--sp-4);
+}
+.app-picker-group-head {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding-bottom: var(--sp-2);
+}
+.app-picker-group-n {
+  color: var(--text-dim-2);
+}
+
+.app-picker-list {
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* Merged borders, like the app list this replaces. content-visibility lets the
+   engine skip rendering rows scrolled out of view — an inventory can run to
+   several hundred entries, and this keeps the scroll cheap without windowing.
+   contain-intrinsic-size holds the row's slot so the scrollbar stays still;
+   engines without support simply render every row as before. */
+.app-picker-row {
+  border: var(--bw) solid var(--line);
+  margin-bottom: -1px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 44px;
+}
+.app-picker-item {
+  display: grid;
+  grid-template-columns: auto 20px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  height: 42px;
+  padding: 0 11px;
+  /* Stated rather than inherited: global.css resets buttons with `all: unset`,
+     which also drops the universal border-box back to content-box, and the
+     specificity of that reset beats the `*` rule. Without this the row is its
+     full width plus the padding and overhangs its own border. */
+  box-sizing: border-box;
+  color: var(--text-dim);
+  transition:
+    color var(--t-fast),
+    background var(--t-fast);
+}
+.app-picker-item:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+.app-picker-item.is-on {
+  color: var(--text);
+  background: var(--radio-selected-bg);
+}
+
+.app-picker-mark {
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  line-height: 1;
+  color: var(--text-dim-2);
+}
+.app-picker-item.is-on .app-picker-mark {
+  color: var(--signal);
+}
+
+.app-picker-icon {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}
+/* No icon is a normal outcome, not a failure: the initial holds the column so
+   rows with and without one stay aligned. */
+.app-picker-icon--blank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: var(--bw) solid var(--line);
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  line-height: 1;
+  color: var(--text-dim-2);
+}
+
+.app-picker-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.app-picker-name {
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--track-body);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The string that actually goes into the rule — dimmer than the display name,
+   but never absent. */
+.app-picker-exe {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-body);
+  color: var(--text-dim-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-picker-count {
+  margin-right: auto;
+  align-self: center;
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* ==========================================================================
+   HOST PICKER — the engine's live connection table, one row per host, inside
+   the Rules section. It deliberately reuses the node-list row vocabulary (a
+   name with a sub-line, a right-aligned figure, a trailing tag) rather than
+   inventing a second table language, and .set-btn / .set-empty / .set-error for
+   its chrome. No at-rules and no sticky/fixed layers here: the guard test in
+   settings.css.test.ts reads this sheet with a flat parser.
+   ========================================================================== */
+.set-hosts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.set-hosts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+/* Label and count travel together on the left; the button stays pinned right
+   however long either of them runs, and the count simply drops out when there is
+   nothing to count. */
+.set-hosts-label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.set-hosts-count {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--text-dim-2);
+  white-space: nowrap;
+}
+
+/* The standing note (a snapshot, taken by hand) and the empty-state reason share
+   one quiet voice — both explain, neither alarms. */
+.set-hosts-note {
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  letter-spacing: var(--track-body);
+  color: var(--text-dim);
+}
+.set-hosts-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.set-host-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* A stale frame while the next read runs: dimmed so nobody reads it as fresh,
+   but left exactly where it was — pulling rows out from under the pointer is the
+   very thing the manual refresh exists to prevent. */
+.set-host-list[aria-busy="true"] {
+  opacity: 0.55;
+}
+
+/* Adjacent borders merge into one rule, as in the app list above. */
+.set-host-row {
+  margin-bottom: -1px;
+}
+/* global.css resets buttons with `all: unset`, which also takes box-sizing back
+   to content-box — so a full-width row would otherwise overflow its own padding
+   and border. */
+.set-host-pick {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: 9px 12px;
+  border: var(--bw) solid var(--line);
+  text-align: left;
+  transition:
+    border-color var(--t-fast),
+    background var(--t-fast);
+}
+.set-host-pick:hover {
+  border-color: var(--signal);
+  background: var(--radio-selected-bg);
+  position: relative;
+  z-index: 1;
+}
+
+.set-host-name {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.set-host-top {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.set-host-id {
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  letter-spacing: var(--track-body);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* An address where a domain was expected is a heads-up, not a fault: it takes
+   --warn-soft, leaving --signal rationed for the things that really are. */
+.set-host-ip {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  line-height: 1.4;
+  color: var(--warn-soft);
+  border: var(--bw) solid var(--warn-soft);
+  padding: 0 4px;
+}
+.set-host-proc {
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  letter-spacing: var(--track-body);
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.set-host-bytes {
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  letter-spacing: var(--track-body);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  text-align: right;
+  white-space: nowrap;
+}
+/* Where the connection goes right now — the tag slot the node rows use for the
+   protocol, kept quiet so the host and the figure stay first to read. */
+.set-host-route {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--text-dim-2);
+  white-space: nowrap;
+}

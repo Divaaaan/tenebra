@@ -2,10 +2,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
+  AppEntry,
   AttemptsEvent,
   BatchImportResult,
   ConnectionMode,
   CrashReport,
+  LiveHost,
   LogEvent,
   PingResult,
   Profile,
@@ -419,4 +421,45 @@ export function onDeepLink(
  */
 export function takeLaunchDeepLinks(): Promise<DeepLinkAction[]> {
   return invoke<DeepLinkAction[]>("take_launch_deep_links");
+}
+
+/**
+ * Scan the machine for applications the split rules can name. This runs in the
+ * app process rather than the core on purpose: on Windows the core is a
+ * LocalSystem service, and a service sees neither the user's registry hive nor
+ * their Start menu, so a catalogue gathered there would be someone else's.
+ *
+ * The scan is best-effort and bounded — a slow source is dropped rather than
+ * allowed to hang the window — so a short list means "this is what we found in
+ * time", not "this is everything installed". Manual entry stays available for
+ * whatever the scan misses.
+ */
+export function listInstalledApps(): Promise<AppEntry[]> {
+  return invoke<AppEntry[]>("list_installed_apps");
+}
+
+/**
+ * Read the destinations the tunnel is carrying right now, so a rule can be made
+ * by pointing at real traffic instead of guessing a domain. This one does go
+ * through the core: the connection table belongs to the engine, and the
+ * credential guarding it must never reach the renderer.
+ *
+ * Empty is the normal answer while the tunnel is down — there are no
+ * connections to report — and the UI has to say that rather than showing an
+ * empty list that reads as breakage.
+ */
+export function listConnections(): Promise<LiveHost[]> {
+  return invoke<LiveHost[]>("list_connections");
+}
+
+/**
+ * The other executables shipped alongside a chosen one.
+ *
+ * An application is often several binaries, and the one that opens sockets is
+ * not always the one a person recognises — a launcher starts the game, and a
+ * rule naming only the launcher quietly does nothing. Offered after a pick
+ * rather than up front, because walking a directory is only worth it on demand.
+ */
+export function listSiblingApps(path: string): Promise<AppEntry[]> {
+  return invoke<AppEntry[]>("list_sibling_apps", { path });
 }

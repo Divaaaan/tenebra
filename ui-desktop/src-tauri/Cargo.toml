@@ -44,12 +44,24 @@ open = "5"
 # backend/pipe.rs), and the tests stand up an in-process pipe server with
 # CreateNamedPipeW/ConnectNamedPipe. Already in the tree via tauri; pinned here
 # as a direct use.
+#
+# The apps/ scanner adds the rest: Registry for the uninstall hives, ToolHelp
+# plus Threading for the running-process list, Ioctl to read a Store app's
+# execution-alias reparse point, and Shell/WindowsAndMessaging/Gdi to lift an
+# executable's icon out into pixels.
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Gdi",
     "Win32_Security",
     "Win32_Storage_FileSystem",
+    "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_IO",
+    "Win32_System_Ioctl",
     "Win32_System_Pipes",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [profile.release]

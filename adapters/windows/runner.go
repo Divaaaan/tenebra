@@ -41,6 +41,17 @@ const logRingSize = 200
 // is slow or not yet listening.
 const statsTimeout = 2 * time.Second
 
+// maxConnectionsBody bounds every read of the /connections document. It has to
+// be generous because both readers parse the body as one JSON value: the totals
+// live at the head of the object, but json.Unmarshal still has to walk the whole
+// connection list to get there, so a body cut short is a parse error and not a
+// shorter answer. A machine with a few thousand live sockets — a torrent client,
+// a browser with a hundred tabs — exceeds a megabyte easily, and under the old
+// limit the traffic counters simply stopped updating with nothing said. Eight
+// megabytes is far past that while still refusing to read unbounded from a
+// process that has stopped making sense.
+const maxConnectionsBody = 8 << 20
+
 // probeURL is the target the clash API delay test fetches through the outbound.
 // A 204 means real traffic reached the internet through that proxy; it is the
 // canonical reachability check sing-box's own clash API exposes. HTTPS is used
@@ -242,11 +253,49 @@ func (r *Runner) Stats() (up, down int64, err error) {
 	if resp.StatusCode != http.StatusOK {
 		return 0, 0, fmt.Errorf("windows: clash stats: status %s", resp.Status)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxConnectionsBody))
 	if err != nil {
 		return 0, 0, fmt.Errorf("windows: clash stats: read: %w", err)
 	}
 	return parseConnections(body)
+}
+
+// ConnectionsJSON fetches the clash API's /connections document whole: the live
+// per-connection list the UI folds into "which hosts is traffic going to right
+// now", where Stats reads only the two byte totals from the same response. The
+// body is returned unparsed because the payload's shape belongs to the control
+// package that consumes it, while the API's address and secret belong here.
+//
+// ctx bounds the call so a UI that gave up doesn't leave it outstanding. The
+// read limit is far above the stats one: this body carries every live socket,
+// and a truncated document would fail to parse rather than list fewer hosts.
+func (r *Runner) ConnectionsJSON(ctx context.Context) ([]byte, error) {
+	port := r.ClashPort
+	if port == 0 {
+		port = defaultClashPort
+	}
+	url := fmt.Sprintf("http://127.0.0.1:%d/connections", port)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("windows: clash connections: %w", err)
+	}
+	setClashAuth(req, r.clashAuth())
+
+	client := &http.Client{Timeout: statsTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("windows: clash connections: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("windows: clash connections: status %s", resp.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxConnectionsBody))
+	if err != nil {
+		return nil, fmt.Errorf("windows: clash connections: read: %w", err)
+	}
+	return body, nil
 }
 
 // Probe asks the clash API to run a delay test through the named outbound: it

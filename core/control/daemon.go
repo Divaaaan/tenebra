@@ -40,6 +40,15 @@ type Runner interface {
 	// Stats returns cumulative upload/download byte counts from the clash API.
 	// An error (e.g. the API not yet listening) is non-fatal to the daemon.
 	Stats() (up, down int64, err error)
+	// ConnectionsJSON returns the clash API's /connections document verbatim —
+	// the live per-connection list, where Stats reads only the two byte totals
+	// from the same endpoint. The raw body crosses this boundary rather than a
+	// parsed type so the payload's shape is described in exactly one place (see
+	// connections.go) instead of once per adapter, while the API's address and
+	// secret stay where they already live: inside the runner. ctx bounds the
+	// call. An error means the API could not be read (sing-box not up yet, gone,
+	// or refusing) and the caller has no list to show.
+	ConnectionsJSON(ctx context.Context) (body []byte, err error)
 	// Probe runs a clash API delay test through the outbound named tag, returning
 	// the measured round-trip in milliseconds. A nil error means traffic actually
 	// flows through that outbound; any error (blocked protocol, dead upstream, API
@@ -587,6 +596,8 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleRunStunCheck(ctx, req)
 	case CmdRunSpeedTest:
 		return d.handleRunSpeedTest(ctx, req)
+	case CmdListConnections:
+		return d.handleListConnections(ctx, req)
 	default:
 		return newError(req.ID, fmt.Sprintf("unknown command %q", req.Cmd))
 	}

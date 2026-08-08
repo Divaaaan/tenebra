@@ -41,6 +41,14 @@ type fakeRunner struct {
 	up, down int64
 	statsErr error
 
+	// connectionsJSON is the clash /connections body ConnectionsJSON hands back
+	// and connectionsErr the failure it reports instead; connectionsN counts the
+	// calls, so a test can prove the daemon never reached the API when there was
+	// no tunnel to ask about.
+	connectionsJSON []byte
+	connectionsErr  error
+	connectionsN    int
+
 	// logs is the sing-box output tail Logs returns. Tests seed it to exercise the
 	// diagnostic tail the daemon emits when a connect exhausts; empty by default.
 	logs []string
@@ -100,6 +108,16 @@ func (f *fakeRunner) Stats() (int64, int64, error) {
 	return f.up, f.down, f.statsErr
 }
 
+func (f *fakeRunner) ConnectionsJSON(ctx context.Context) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.connectionsN++
+	if f.connectionsErr != nil {
+		return nil, f.connectionsErr
+	}
+	return append([]byte(nil), f.connectionsJSON...), nil
+}
+
 func (f *fakeRunner) Done() <-chan error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -147,6 +165,22 @@ func (f *fakeRunner) setStats(up, down int64) {
 	f.mu.Lock()
 	f.up, f.down = up, down
 	f.mu.Unlock()
+}
+
+// setConnections seeds what ConnectionsJSON answers: a clash /connections body,
+// or an error standing in for an API that is not there.
+func (f *fakeRunner) setConnections(body []byte, err error) {
+	f.mu.Lock()
+	f.connectionsJSON = append([]byte(nil), body...)
+	f.connectionsErr = err
+	f.mu.Unlock()
+}
+
+// connectionsCalls reports how many times ConnectionsJSON was asked.
+func (f *fakeRunner) connectionsCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.connectionsN
 }
 
 // setLogs seeds the sing-box output tail Logs returns.

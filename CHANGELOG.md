@@ -29,6 +29,28 @@ All notable changes to Tenebra are documented here. The format follows
   macOS build; on macOS the setting is unavailable rather than quietly doing
   nothing.
 
+- **Pick the apps that stay off the tunnel from a list.** Split tunnelling used
+  to require typing an executable's file name from memory, which meant knowing it
+  in the first place. The setting now offers the machine's applications —
+  gathered from the installed-programs records, the Start menu (its equivalents
+  on macOS and Linux) and whatever is running right now — with search, icons and
+  the running ones first. Typing a name by hand still works for anything the scan
+  misses, and an executable already in the rule stays visible even when no scan
+  returns it, so a rule can always be found and removed.
+
+  Every row shows the executable's file name next to its display name, because
+  that file name is what a rule actually matches: a launcher and the program it
+  starts are separate files, and naming only the launcher does nothing.
+
+- **Make a routing rule out of traffic that is actually happening.** The rules
+  editor can now show where the tunnel is carrying traffic right now — read from
+  the engine's own connection table — with the volume moved and the owning
+  application, so a destination becomes a rule with one click instead of a
+  guessed domain. It is a snapshot taken on request and never refreshes on its
+  own; a connection that never carried a hostname is labelled as an address,
+  since a rule matching domain suffixes can never match one. Neither this list
+  nor the application list is written to a log or included in diagnostics.
+
 ## [0.4.6] - 2026-07-27
 
 ### Added

@@ -51,6 +51,7 @@ const (
 	CmdLeakCheck          = "leak_check"
 	CmdRunStunCheck       = "run_stun_check"
 	CmdRunSpeedTest       = "run_speed_test"
+	CmdListConnections    = "list_connections"
 )
 
 // ConnState is the connection lifecycle state reported in State and state

@@ -357,3 +357,44 @@ export interface AttemptsEvent {
   items: Attempt[];
   outcome: "" | "ok" | "exhausted";
 }
+
+/**
+ * One entry in the catalogue of applications the picker offers. `exe` is the
+ * only field the routing rule ever sees: sing-box matches `process_name`, which
+ * is the executable's file name, so the human-facing `name` exists purely to be
+ * recognised. Both are shown in the list, because an application and an
+ * executable are not the same thing — a launcher and the program it starts are
+ * separate files, and picking the wrong one silently leaves traffic tunnelled.
+ *
+ * `icon` is a data URI when one could be extracted and absent otherwise; a
+ * missing icon is ordinary, not an error. `running` marks executables seen alive
+ * right now, which is also the only way portable applications — the ones no
+ * installer ever registered — reach this list at all.
+ */
+export interface AppEntry {
+  name: string;
+  exe: string;
+  path?: string;
+  icon?: string;
+  running: boolean;
+  source: "registry" | "startmenu" | "process" | "bundle" | "desktop";
+}
+
+/**
+ * One destination the tunnel is currently carrying traffic to, read from the
+ * engine's own connection table. It exists so a rule can be made by pointing at
+ * real traffic instead of guessing a domain: the name a service actually
+ * resolves to is rarely the one a person would type.
+ *
+ * `is_ip` marks a connection that never carried a hostname, so the UI can say
+ * that plainly rather than presenting an address as if it were a domain. Byte
+ * counts are cumulative for the life of the connection, not a rate.
+ */
+export interface LiveHost {
+  host: string;
+  process?: string;
+  up: number;
+  down: number;
+  outbound: string;
+  is_ip?: boolean;
+}
