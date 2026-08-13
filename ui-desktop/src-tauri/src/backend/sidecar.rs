@@ -41,19 +41,41 @@ impl SidecarBackend {
         singbox_path: impl Into<PathBuf>,
         sink: Arc<dyn EventSink>,
     ) -> Result<Self, String> {
+        // Send the core's stderr diagnostics to a log file rather than
+        // inheriting our own. A GUI app has no console, so its stderr handle is
+        // invalid; inheriting it makes CreateProcess fail with
+        // STARTF_USESTDHANDLES and the sidecar never starts. A real file (or the
+        // null device) is always a valid handle, and the log is handy when a
+        // user reports a problem.
+        Self::spawn_with_stderr(program, singbox_path, sink, core_log_stderr())
+    }
+
+    /// The body of [`spawn`](Self::spawn) with the child's stderr target passed
+    /// in rather than opened here.
+    ///
+    /// It exists so the spawn-failure test can hand in the null device. Opening
+    /// the log is what writes its session separator, and that happens while the
+    /// `Command` is built — before the spawn is attempted, and therefore also
+    /// when the spawn fails. A test that exercises the failure path through
+    /// `spawn` would append a contentless separator to the real
+    /// `%LOCALAPPDATA%\Tenebra\core.log` on the developer's own machine on every
+    /// `cargo test`, burying the sessions that carry diagnostics in a wall of
+    /// empty ones — in the one file users are asked to share when reporting a
+    /// problem. Production keeps going through `spawn`, so the log behaviour
+    /// users see is unchanged.
+    fn spawn_with_stderr(
+        program: impl Into<PathBuf>,
+        singbox_path: impl Into<PathBuf>,
+        sink: Arc<dyn EventSink>,
+        stderr: Stdio,
+    ) -> Result<Self, String> {
         let program = program.into();
         let mut command = Command::new(&program);
         command
             .env("TENEBRA_SINGBOX", singbox_path.into())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            // Send the core's stderr diagnostics to a log file rather than
-            // inheriting our own. A GUI app has no console, so its stderr handle
-            // is invalid; inheriting it makes CreateProcess fail with
-            // STARTF_USESTDHANDLES and the sidecar never starts. A real file (or
-            // the null device) is always a valid handle, and the log is handy
-            // when a user reports a problem.
-            .stderr(core_log_stderr());
+            .stderr(stderr);
         // Don't flash a console window when the GUI spawns the console-subsystem
         // core; the pipes carry everything we need.
         #[cfg(windows)]
@@ -290,10 +312,14 @@ mod tests {
     #[test]
     fn spawn_failure_reports_the_program() {
         let sink: Arc<dyn EventSink> = Arc::new(Rec::default());
-        let err = match SidecarBackend::spawn(
+        // Null, not the core log: going through `spawn` here would append an
+        // empty session separator to the developer's own core.log on every run
+        // (see spawn_with_stderr). The failure surface under test is the same.
+        let err = match SidecarBackend::spawn_with_stderr(
             "tenebra-core-that-does-not-exist",
             "sing-box-irrelevant",
             sink,
+            Stdio::null(),
         ) {
             Ok(_) => panic!("spawning a nonexistent program must fail"),
             Err(e) => e,
