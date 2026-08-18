@@ -599,7 +599,18 @@ pub trait Backend: Send + Sync + 'static {
     /// exit. Without one, `auto` chooses the candidate ordering the core walks:
     /// `false` keeps the protocol-fallback order, `true` selects the fastest node
     /// by measured ping. `auto` is ignored when `node` is set.
-    fn connect(&self, profile: String, node: Option<String>, auto: bool) -> Result<State, String>;
+    /// `allow_tun_conflict` overrides the guard that refuses to raise our tun
+    /// while another VPN owns the machine's default route. It is per-connect and
+    /// never defaulted on: "I know these two tunnels do not overlap" is a
+    /// judgement about the machine right now, and a sticky flag would keep waving
+    /// connects through long after the other VPN changed.
+    fn connect(
+        &self,
+        profile: String,
+        node: Option<String>,
+        auto: bool,
+        allow_tun_conflict: bool,
+    ) -> Result<State, String>;
     fn disconnect(&self) -> Result<State, String>;
     fn ping(&self, profile: String) -> Result<Vec<PingResult>, String>;
     fn set_routing(&self, mode: RoutingMode) -> Result<State, String>;

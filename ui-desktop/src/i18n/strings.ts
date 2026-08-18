@@ -212,6 +212,15 @@ export interface Strings {
     commandUnknown: string;
     /** Any other refused command: the setting simply did not take effect. */
     commandFailed: string;
+    /**
+     * The connect the tun guard refused: another VPN already owns the machine's
+     * default route. Named specifically because the fix is specific — turn the
+     * other tunnel off — and because the generic "refused" wording sends the user
+     * looking for a fault in this app instead.
+     */
+    tunConflict: string;
+    /** Offered after tunConflict: connect anyway, overriding the guard. */
+    tunConflictOverride: string;
   };
 
   /**
@@ -790,6 +799,10 @@ const en: Strings = {
       "The background service is older than this app and doesn't know this setting — update or reinstall the service.",
     commandFailed:
       "The setting didn't apply — the background service refused it. See the log for details.",
+    tunConflict:
+      "Another VPN already owns the default route, so the tunnel was not raised — two tunnels routing everything take the machine offline rather than sharing. Turn the other one off and try again.",
+    tunConflictOverride:
+      "Connect anyway? Do this only if you know the two tunnels do not overlap.",
   },
   crash: {
     consentText:
@@ -1266,6 +1279,10 @@ const ru: Strings = {
       "Фоновая служба старее приложения и не знает эту настройку — обновите или переустановите службу.",
     commandFailed:
       "Настройка не применилась — фоновая служба отклонила команду. Подробности в журнале.",
+    tunConflict:
+      "Маршрут по умолчанию уже держит другой VPN, туннель не поднят — два туннеля не делят машину, а оставляют её без сети. Выключи второй и попробуй снова.",
+    tunConflictOverride:
+      "Подключиться всё равно? Только если точно знаешь, что туннели не пересекаются.",
   },
   crash: {
     consentText:
@@ -1639,7 +1656,28 @@ export const dictionaries: Record<Language, Strings> = { en, ru };
  */
 export function describeCoreError(e: unknown, t: Strings): string {
   const raw = e instanceof Error ? e.message : String(e ?? "");
-  return raw.toLowerCase().includes("unknown command")
-    ? t.daemon.commandUnknown
-    : t.daemon.commandFailed;
+  const lower = raw.toLowerCase();
+  if (lower.includes("unknown command")) {
+    return t.daemon.commandUnknown;
+  }
+  // The tun-conflict refusal has a fix the user can act on, and it is not in
+  // this app — say which situation they are in rather than "the command was
+  // refused", which reads as a bug here.
+  if (isTunConflict(e)) {
+    return t.daemon.tunConflict;
+  }
+  return t.daemon.commandFailed;
+}
+
+/**
+ * Whether an error is the core's tun-conflict refusal: another VPN already owns
+ * the default route.
+ *
+ * Matched on the core's wording because the protocol carries no error codes. It
+ * is deliberately narrow — the phrase names the exact guard — so an unrelated
+ * failure never offers an override that would raise a second tunnel.
+ */
+export function isTunConflict(e: unknown): boolean {
+  const raw = (e instanceof Error ? e.message : String(e ?? "")).toLowerCase();
+  return raw.includes("default route");
 }

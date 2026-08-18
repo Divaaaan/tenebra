@@ -407,17 +407,29 @@ impl<T: WireSession> Backend for T {
         Ok(wrap.profile)
     }
 
-    fn connect(&self, profile: String, node: Option<String>, auto: bool) -> Result<State, String> {
-        // `auto` is sent only when set: omitting it (the common case) keeps the
-        // line minimal and the core defaults a missing field to false, the
-        // original protocol-fallback behaviour. With an explicit node the core
-        // ignores it, so there is no need to special-case that here.
+    fn connect(
+        &self,
+        profile: String,
+        node: Option<String>,
+        auto: bool,
+        allow_tun_conflict: bool,
+    ) -> Result<State, String> {
         self.session()?.request_into(
             CMD_CONNECT,
             obj([
                 ("profile", json!(profile)),
                 ("node", node.map(Value::from).unwrap_or(Value::Null)),
                 ("auto", if auto { json!(true) } else { Value::Null }),
+                // Omitted unless set: the core reads a missing field as "guard on",
+                // which is the only safe reading for a flag that grants behaviour.
+                (
+                    "allow_tun_conflict",
+                    if allow_tun_conflict {
+                        json!(true)
+                    } else {
+                        Value::Null
+                    },
+                ),
             ]),
         )
     }

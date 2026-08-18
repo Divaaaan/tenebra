@@ -362,7 +362,13 @@ impl Backend for MockBackend {
         Ok(updated)
     }
 
-    fn connect(&self, profile: String, node: Option<String>, auto: bool) -> Result<State, String> {
+    fn connect(
+        &self,
+        profile: String,
+        node: Option<String>,
+        auto: bool,
+        _allow_tun_conflict: bool,
+    ) -> Result<State, String> {
         let mut inner = self.shared.inner.lock().unwrap();
         let p = inner
             .profiles
@@ -1615,7 +1621,7 @@ mod tests {
     #[test]
     fn connect_transitions_to_connecting() {
         let (b, sink) = backend();
-        let s = b.connect("demo-sub".into(), None, false).unwrap();
+        let s = b.connect("demo-sub".into(), None, false, false).unwrap();
         assert_eq!(s.state, ConnectionState::Connecting);
         // Default (non-auto) node selection picks the head of the list.
         assert_eq!(s.node, Some("demo-nl".into()));
@@ -1633,7 +1639,7 @@ mod tests {
     fn connect_honours_an_explicit_node() {
         let (b, _) = backend();
         let s = b
-            .connect("demo-sub".into(), Some("demo-de".into()), false)
+            .connect("demo-sub".into(), Some("demo-de".into()), false, false)
             .unwrap();
         assert_eq!(s.node, Some("demo-de".into()));
         let _ = b.disconnect();
@@ -1645,7 +1651,7 @@ mod tests {
         // matching the core, where auto is ignored when a node is named.
         let (b, _) = backend();
         let s = b
-            .connect("demo-sub".into(), Some("demo-de".into()), true)
+            .connect("demo-sub".into(), Some("demo-de".into()), true, false)
             .unwrap();
         assert_eq!(s.node, Some("demo-de".into()));
         let _ = b.disconnect();
@@ -1660,7 +1666,7 @@ mod tests {
         let sub = profiles.iter().find(|p| p.id == "demo-sub").unwrap();
         let expected = fastest_node(sub).expect("at least one reachable demo node");
 
-        let s = b.connect("demo-sub".into(), None, true).unwrap();
+        let s = b.connect("demo-sub".into(), None, true, false).unwrap();
         assert_eq!(s.node, Some(expected));
         let _ = b.disconnect();
     }
@@ -1669,20 +1675,20 @@ mod tests {
     fn connect_rejects_unknown_node_and_profile() {
         assert!(b_connect_err(Some("nope".into())));
         let (b, _) = backend();
-        assert!(b.connect("does-not-exist".into(), None, false).is_err());
+        assert!(b.connect("does-not-exist".into(), None, false, false).is_err());
     }
 
     /// Helper: a connect to demo-sub with the given node that is expected to
     /// fail, returning whether it did. Keeps the rejection test terse.
     fn b_connect_err(node: Option<String>) -> bool {
         let (b, _) = backend();
-        b.connect("demo-sub".into(), node, false).is_err()
+        b.connect("demo-sub".into(), node, false, false).is_err()
     }
 
     #[test]
     fn disconnect_returns_to_idle() {
         let (b, _) = backend();
-        let _ = b.connect("demo-sub".into(), None, false).unwrap();
+        let _ = b.connect("demo-sub".into(), None, false, false).unwrap();
         let s = b.disconnect().unwrap();
         assert_eq!(s.state, ConnectionState::Idle);
         assert_eq!(s.node, None);
@@ -1762,7 +1768,7 @@ mod tests {
     fn run_speed_test_reports_throughput_when_connected() {
         // Once the mock's dial completes, the probe returns a believable sample.
         let (b, _) = backend();
-        b.connect("demo-sub".into(), None, false).unwrap();
+        b.connect("demo-sub".into(), None, false, false).unwrap();
 
         // The mock flips to connected on a timer; wait for it rather than sleeping
         // a fixed span, so the test is neither flaky nor slower than it must be.
@@ -1787,7 +1793,7 @@ mod tests {
     #[test]
     fn removing_the_active_profile_tears_down_the_tunnel() {
         let (b, sink) = backend();
-        let _ = b.connect("demo-sub".into(), None, false).unwrap();
+        let _ = b.connect("demo-sub".into(), None, false, false).unwrap();
         let states_before = sink.state_count();
         b.remove_profile("demo-sub".into()).unwrap();
         // Removing the connected profile emits an extra idle state event.

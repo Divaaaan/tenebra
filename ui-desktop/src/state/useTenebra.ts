@@ -83,7 +83,12 @@ export interface Tenebra {
    */
   attempts: AttemptsEvent | null;
 
-  connect: (profile: string, node?: string, auto?: boolean) => Promise<void>;
+  connect: (
+    profile: string,
+    node?: string,
+    auto?: boolean,
+    allowTunConflict?: boolean,
+  ) => Promise<void>;
   disconnect: () => Promise<void>;
   setRouting: (mode: RoutingMode) => Promise<void>;
   setSplit: (mode: SplitMode, apps: string[]) => Promise<void>;
@@ -289,8 +294,13 @@ export function useTenebra(): Tenebra {
   }, [appendLog]);
 
   const connect = useCallback(
-    async (profile: string, node?: string, auto?: boolean) => {
-      const next = await api.connect(profile, node, auto);
+    async (
+      profile: string,
+      node?: string,
+      auto?: boolean,
+      allowTunConflict?: boolean,
+    ) => {
+      const next = await api.connect(profile, node, auto, allowTunConflict);
       setState(next);
     },
     [],

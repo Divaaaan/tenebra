@@ -633,13 +633,16 @@ async fn connect(
     state: TauriState<'_, AppState>,
     profile: String,
     node: Option<String>,
-    // Optional so an older/leaner caller can omit it; Tauri maps a missing arg to
-    // None, which we treat as "not auto" — the protocol's default order.
     auto: Option<bool>,
+    allow_tun_conflict: Option<bool>,
 ) -> Result<State, String> {
-    let auto = auto.unwrap_or(false);
     off_thread(Arc::clone(&state.backend), move |b| {
-        b.connect(profile, node, auto)
+        b.connect(
+            profile,
+            node,
+            auto.unwrap_or(false),
+            allow_tun_conflict.unwrap_or(false),
+        )
     })
     .await
 }
@@ -1084,7 +1087,9 @@ fn connect_backend(app: &AppHandle, profile: String, node: Option<String>) {
     let backend = Arc::clone(&state.backend);
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        if let Err(e) = backend.connect(profile, node, false) {
+        // The tray connect never overrides the tun-conflict guard: there is no
+        // window in front of the user to explain what it would be overriding.
+        if let Err(e) = backend.connect(profile, node, false, false) {
             let _ = app.emit(
                 EVENT_LOG,
                 json!({ "level": "error", "msg": format!("connect failed: {e}") }),

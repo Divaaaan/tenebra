@@ -24,7 +24,7 @@ import { SimpleSetup } from "./components/SimpleSetup";
 import { EclipseOverlay } from "./components/EclipseOverlay";
 import { useTenebra } from "./state/useTenebra";
 import { useI18n } from "./i18n/I18nContext";
-import { describeCoreError } from "./i18n/strings";
+import { describeCoreError, isTunConflict } from "./i18n/strings";
 import { pushToast } from "./lib/toast";
 import type { RoutingMode } from "./api";
 import {
@@ -426,10 +426,27 @@ export function App() {
           // selected, auto is moot — the core honours the explicit exit.
           const node = selectedNodeId || undefined;
           const auto = node ? undefined : getAutoFastest();
-          await tenebra.connect(selectedProfileId, node, auto);
+          try {
+            await tenebra.connect(selectedProfileId, node, auto);
+          } catch (e) {
+            // The guard refuses to raise our tun while another VPN owns the
+            // default route. That refusal is correct by default — two tunnels
+            // routing everything leave the machine offline — but it must not be
+            // a dead end: the user is the only one who knows whether the other
+            // tunnel overlaps, so ask, and honour the answer for this connect
+            // only.
+            if (!isTunConflict(e)) throw e;
+            pushToast(describeCoreError(e, t));
+            if (!window.confirm(t.daemon.tunConflictOverride)) throw e;
+            await tenebra.connect(selectedProfileId, node, auto, true);
+          }
         }
-      } catch {
-        // Surfaced on the state/log channels.
+      } catch (e) {
+        // Say why nothing happened. A refused connect leaves the button exactly
+        // where it was, and swallowing the reason (the old behaviour) turned
+        // every refusal — a guard, a vanished node, a core that will not answer —
+        // into "the button does not work", which is unanswerable from the outside.
+        pushToast(describeCoreError(e, t));
       } finally {
         setBusy(false);
       }
