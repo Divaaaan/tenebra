@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"os"
@@ -21,6 +22,20 @@ const zapretDirName = "zapret"
 // renderer should not have. The daemon already holds the privileged side of
 // this app; unpacking here keeps that boundary intact.
 func (d *Daemon) handleImportZapret(req Request) Response {
+	dir := filepath.Join(d.store.Dir(), zapretDirName)
+
+	// A path is accepted too: Tauri's drag-drop hands the UI real filesystem
+	// paths, which is the only way a dropped FOLDER can be taken at all — a
+	// webview File carries bytes, and a folder has none. Someone who already
+	// unpacked the release should not have to re-zip it.
+	if req.Path != "" {
+		strategies, err := zapret.Install(req.Path, dir)
+		if err != nil {
+			return newError(req.ID, err.Error())
+		}
+		return zapretBundleResponse(req.ID, dir, strategies)
+	}
+
 	if req.Data == "" {
 		return newError(req.ID, "import_zapret: пустой архив")
 	}
@@ -47,20 +62,81 @@ func (d *Daemon) handleImportZapret(req Request) Response {
 		return newError(req.ID, fmt.Sprintf("import_zapret: %v", err))
 	}
 
-	dir := filepath.Join(d.store.Dir(), zapretDirName)
 	strategies, err := zapret.Install(tmpPath, dir)
 	if err != nil {
 		return newError(req.ID, err.Error())
 	}
+	return zapretBundleResponse(req.ID, dir, strategies)
+}
 
+// zapretBundleResponse renders the installed-bundle reply shared by the archive
+// and folder paths, so the two cannot drift apart in what they report.
+func zapretBundleResponse(id int64, dir string, strategies []zapret.Strategy) Response {
 	names := make([]string, len(strategies))
 	for i, s := range strategies {
 		names[i] = s.Name
 	}
-	out := struct {
+	resp, err := newResult(id, struct {
 		Dir        string   `json:"dir"`
 		Strategies []string `json:"strategies"`
-	}{Dir: dir, Strategies: names}
+	}{Dir: dir, Strategies: names})
+	if err != nil {
+		return newError(id, err.Error())
+	}
+	return resp
+}
+
+// handlePickZapret probes every installed strategy and reports which one to use.
+//
+// It runs synchronously and takes minutes: each strategy needs the packet filter
+// attached, five control requests, and a clean detach before the next. That is
+// the honest cost of the answer — the alternative is asking the user to try
+// twenty batch files by hand.
+func (d *Daemon) handlePickZapret(ctx context.Context, req Request) Response {
+	dir := filepath.Join(d.store.Dir(), zapretDirName)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return newError(req.ID, "pick_zapret: сначала загрузи сборку zapret")
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	strategies := zapret.Discover(dir, names)
+	if len(strategies) == 0 {
+		return newError(req.ID, "pick_zapret: в сборке нет стратегий")
+	}
+
+	runner := zapret.NewRunner(dir)
+	results, baseline, err := runner.Pick(ctx, strategies, zapret.DefaultTargets(), func(r zapret.Result) {
+		// Report as it goes: a silent multi-minute operation reads as a hang,
+		// and the user should see which strategy is being tried.
+		d.emitLog(LogInfo, fmt.Sprintf("zapret: %s — %d/%d", r.Name, r.OKCount(), len(r.Targets)))
+	})
+	if err != nil {
+		return newError(req.ID, err.Error())
+	}
+
+	best, found := zapret.Best(results, baseline)
+	ranked := zapret.Rank(results)
+
+	out := struct {
+		Baseline int             `json:"baseline"`
+		Targets  int             `json:"targets"`
+		Best     string          `json:"best,omitempty"`
+		Improved bool            `json:"improved"`
+		Results  []zapret.Result `json:"results"`
+	}{
+		Baseline: baseline,
+		Targets:  len(zapret.DefaultTargets()),
+		Improved: found,
+		Results:  ranked,
+	}
+	if found {
+		out.Best = best.Name
+	}
 
 	resp, err := newResult(req.ID, out)
 	if err != nil {

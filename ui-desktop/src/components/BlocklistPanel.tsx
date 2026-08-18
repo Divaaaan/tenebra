@@ -1,4 +1,6 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 import { useI18n } from "../i18n/I18nContext";
 import { HelpHint } from "./HelpHint";
@@ -14,6 +16,14 @@ export interface BlocklistSource {
 
 interface BlocklistPanelProps {
   sources: BlocklistSource[];
+  /**
+   * Import from filesystem paths — how a dropped FOLDER arrives.
+   *
+   * A folder dropped into a webview produces no File objects at all, so the
+   * HTML drop path cannot see it. Tauri reports the real paths instead, which
+   * is the only way to accept "here is the folder I already unpacked".
+   */
+  onImportPaths?: (paths: string[]) => Promise<void>;
   /** Import a blocklist from dropped or picked files (one archive, or a whole
    *  unpacked folder at once). */
   onImportFiles: (files: File[]) => Promise<void>;
@@ -46,6 +56,7 @@ const HINTED_FORMATS = ["zip", "txt", "hosts", "json"];
 export function BlocklistPanel({
   sources,
   onImportFiles,
+  onImportPaths,
   onRemove,
   onClose,
 }: BlocklistPanelProps) {
@@ -79,6 +90,58 @@ export function BlocklistPanel({
     },
     [busy, onImportFiles],
   );
+
+  // Tauri delivers OS-level drags separately from the webview's own drop event.
+  // Subscribing here is what makes a dropped folder work at all; the HTML
+  // handler below still covers files dragged from inside the app and the file
+  // picker.
+  useEffect(() => {
+    if (!onImportPaths) return;
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+
+    void getCurrentWebview()
+      .onDragDropEvent(async (event) => {
+        if (event.payload.type === "over" || event.payload.type === "enter") {
+          setDragging(true);
+          return;
+        }
+        if (event.payload.type === "leave") {
+          setDragging(false);
+          return;
+        }
+        if (event.payload.type === "drop") {
+          setDragging(false);
+          const paths = event.payload.paths ?? [];
+          if (paths.length === 0) return;
+          setBusy(true);
+          setError(null);
+          try {
+            await onImportPaths(paths);
+          } catch (e) {
+            setError(e instanceof Error ? e.message : String(e));
+          } finally {
+            setBusy(false);
+          }
+        }
+      })
+      .then((fn) => {
+        if (cancelled) {
+          fn();
+          return;
+        }
+        unlisten = fn;
+      })
+      .catch(() => {
+        // Not running under Tauri (tests, browser dev): the HTML drop path
+        // still works, so this is not worth surfacing.
+      });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [onImportPaths]);
 
   return (
     <div className="bl-scrim" onClick={onClose} role="presentation">

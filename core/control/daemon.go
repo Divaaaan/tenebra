@@ -546,6 +546,8 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleImportZapret(req)
 	case CmdListZapret:
 		return d.handleListZapret(req)
+	case CmdPickZapret:
+		return d.handlePickZapret(ctx, req)
 	case CmdSetRouting:
 		return d.handleSetRouting(req)
 	case CmdSetSplit:

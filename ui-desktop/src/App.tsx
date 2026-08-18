@@ -89,12 +89,7 @@ export function App() {
     if (files.length === 1 && (await looksLikeZapretBundle(files[0]))) {
       const bytes = new Uint8Array(await files[0].arrayBuffer());
       const bundle = await api.importZapret(bytes);
-      const count = bundle.strategies?.length ?? 0;
-      setBlocklists((prev) => [
-        ...prev.filter((s) => s.label !== files[0].name),
-        { id: files[0].name, label: files[0].name, rules: count },
-      ]);
-      pushToast(`zapret: ${count} стратегий`);
+      await afterZapretImport(files[0].name, bundle.strategies?.length ?? 0);
       return;
     }
 
@@ -113,6 +108,56 @@ export function App() {
       { id: label, label, rules: parsed.rules.length },
     ]);
   }, []);
+
+  /**
+   * Shared tail of a bundle import: record it, then find the strategy that
+   * works here.
+   *
+   * The probe is started automatically because the answer is not guessable — a
+   * bundle ships ~20 strategies precisely because which one defeats a given
+   * ISP's DPI cannot be known in advance. Leaving the user to pick from a list
+   * of names would hand them the exact problem the import was meant to solve.
+   */
+  const afterZapretImport = useCallback(async (label: string, strategies: number) => {
+    setBlocklists((prev) => [
+      ...prev.filter((s) => s.label !== label),
+      { id: label, label, rules: strategies },
+    ]);
+    pushToast(`zapret: ${strategies} стратегий, подбираю рабочую…`);
+
+    try {
+      const pick = await api.pickZapret();
+      if (pick.improved && pick.best) {
+        pushToast(`zapret: выбрана ${pick.best}`);
+      } else {
+        // Saying "nothing helped" is more useful than silently keeping the
+        // least-bad option and letting the user believe the block is handled.
+        pushToast(
+          `zapret: ни одна стратегия не улучшила (уже работает ${pick.baseline}/${pick.targets})`,
+        );
+      }
+    } catch (e) {
+      pushToast(describeCoreError(e, t));
+    }
+  }, [t]);
+
+  /**
+   * Import from paths — an archive or an already-unpacked folder.
+   *
+   * The core decides what a path is: it checks for bin/winws.exe and strategy
+   * .bat files rather than trusting the name, so "zapret", "zapret (1)" and a
+   * folder the user renamed all work the same. A path that is not a bundle
+   * comes back as an error the panel shows.
+   */
+  const importFromPaths = useCallback(
+    async (paths: string[]) => {
+      if (paths.length === 0) return;
+      const bundle = await api.importZapretPath(paths[0]);
+      const label = paths[0].split(/[\\/]/).pop() ?? paths[0];
+      await afterZapretImport(label, bundle.strategies?.length ?? 0);
+    },
+    [afterZapretImport],
+  );
 
   const removeBlocklist = useCallback(
     (id: string) => setBlocklists((prev) => prev.filter((s) => s.id !== id)),
@@ -706,6 +751,7 @@ export function App() {
         <BlocklistPanel
           sources={blocklists}
           onImportFiles={importBlocklist}
+          onImportPaths={importFromPaths}
           onRemove={removeBlocklist}
           onClose={() => setBlocklistOpen(false)}
         />

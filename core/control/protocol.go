@@ -43,6 +43,8 @@ const (
 	CmdImportZapret = "import_zapret"
 	// CmdListZapret reports the installed bundle's strategies.
 	CmdListZapret = "list_zapret"
+	// CmdPickZapret probes every installed strategy and reports which to use.
+	CmdPickZapret = "pick_zapret"
 	CmdSetRouting         = "set_routing"
 	CmdSetSplit           = "set_split"
 	CmdSetKillSwitch      = "set_kill_switch"
@@ -147,6 +149,10 @@ type Request struct {
 	// zapret bundle. It is base64 rather than a path because the UI runs in a
 	// webview, where a dropped file has contents but no filesystem path.
 	Data string `json:"data,omitempty"`
+	// Path is a filesystem path for commands that can take one instead of bytes:
+	// import_zapret accepts either an archive or an already-unpacked FOLDER, and a
+	// folder has no byte payload to send.
+	Path string `json:"path,omitempty"`
 	// URL is the subscription URL for import_subscription.
 	URL string `json:"url,omitempty"`
 	// Link is the single share link for import_link.

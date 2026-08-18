@@ -371,3 +371,26 @@ export interface ZapretBundle {
   /** Strategy names, best-guess default first; empty when nothing is installed. */
   strategies: string[] | null;
 }
+
+/** One strategy's measured outcome. */
+export interface ZapretResult {
+  strategy: string;
+  /** Whether winws actually came up — distinct from "came up and did not help". */
+  started: boolean;
+  targets: { target: string; ok: boolean; rtt_ms: number }[] | null;
+}
+
+/**
+ * The outcome of probing every strategy.
+ *
+ * `baseline` is how many targets already worked with zapret off; `improved` is
+ * false when nothing beat it, which means the block is elsewhere — or there is
+ * no block — and enabling a packet filter would buy nothing.
+ */
+export interface ZapretPick {
+  baseline: number;
+  targets: number;
+  best?: string;
+  improved: boolean;
+  results: ZapretResult[] | null;
+}
