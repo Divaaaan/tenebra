@@ -35,6 +35,14 @@ const (
 	CmdConnect            = "connect"
 	CmdDisconnect         = "disconnect"
 	CmdPing               = "ping"
+	// CmdCheckNodes measures what actually survives each node end to end, rather
+	// than whether its address accepts TCP (which CmdPing does). See
+	// core/nodecheck for why a TCP-reachable node can still be a black hole.
+	CmdCheckNodes = "check_nodes"
+	// CmdImportZapret installs a zapret DPI-bypass bundle sent as base64 zip.
+	CmdImportZapret = "import_zapret"
+	// CmdListZapret reports the installed bundle's strategies.
+	CmdListZapret = "list_zapret"
 	CmdSetRouting         = "set_routing"
 	CmdSetSplit           = "set_split"
 	CmdSetKillSwitch      = "set_kill_switch"
@@ -135,6 +143,10 @@ type Request struct {
 	// now, and a sticky flag would keep waving connects through long after the
 	// other VPN's configuration changed.
 	AllowTunConflict bool `json:"allow_tun_conflict,omitempty"`
+	// Data carries a base64 payload for commands that ship a file — currently the
+	// zapret bundle. It is base64 rather than a path because the UI runs in a
+	// webview, where a dropped file has contents but no filesystem path.
+	Data string `json:"data,omitempty"`
 	// URL is the subscription URL for import_subscription.
 	URL string `json:"url,omitempty"`
 	// Link is the single share link for import_link.

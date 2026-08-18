@@ -100,6 +100,16 @@ type Daemon struct {
 	// the check has not been ported to.
 	ifaceProbe func() ([]tunguard.Iface, error)
 
+	// newProbeRunner builds a throwaway Runner for a node check: a second
+	// sing-box that exposes every node as its own loopback proxy (see
+	// singbox.BuildProbe) and is stopped when the check ends.
+	//
+	// A separate process rather than the live tunnel's clash API, because the
+	// check exists precisely to decide *where to connect* — it has to work while
+	// the tunnel is down, and while it is up it must not disturb it. Set once at
+	// construction, then only read. nil disables the check.
+	newProbeRunner func() Runner
+
 	mu      sync.Mutex
 	routing routing.Options
 	state   State
@@ -532,6 +542,10 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleDisconnect(req)
 	case CmdPing:
 		return d.handlePing(ctx, req)
+	case CmdImportZapret:
+		return d.handleImportZapret(req)
+	case CmdListZapret:
+		return d.handleListZapret(req)
 	case CmdSetRouting:
 		return d.handleSetRouting(req)
 	case CmdSetSplit:

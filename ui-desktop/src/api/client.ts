@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
+  ZapretBundle,
   AttemptsEvent,
   BatchImportResult,
   ConnectionMode,
@@ -225,6 +226,23 @@ export const api = {
   },
 
   /**
+   * Install a zapret DPI-bypass bundle, given the .zip exactly as downloaded.
+   *
+   * The archive travels as base64 rather than a path: a file dropped into the
+   * webview has contents but no filesystem path, and having the renderer write
+   * a temp file would need filesystem permissions it should not hold. The core
+   * already owns the privileged side, so it unpacks.
+   */
+  importZapret(zip: Uint8Array): Promise<ZapretBundle> {
+    return invoke<ZapretBundle>("import_zapret", { data: toBase64(zip) });
+  },
+
+  /** The installed bundle's strategies; empty when nothing is imported yet. */
+  listZapret(): Promise<ZapretBundle> {
+    return invoke<ZapretBundle>("list_zapret");
+  },
+
+  /**
    * Probe the current network path with a STUN Binding Request: whether outbound
    * UDP works, the reflexive public IP, and a best-effort NAT classification (see
    * {@link StunResult}). Not gated on a connection.
@@ -407,4 +425,20 @@ export function onDeepLink(
  */
 export function takeLaunchDeepLinks(): Promise<DeepLinkAction[]> {
   return invoke<DeepLinkAction[]>("take_launch_deep_links");
+}
+
+/**
+ * Base64-encodes bytes without blowing the call stack.
+ *
+ * String.fromCharCode(...bytes) is the obvious one-liner and fails on a bundle
+ * of any size — the spread turns a multi-megabyte array into that many
+ * arguments. Chunking keeps it linear and bounded.
+ */
+function toBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
 }
