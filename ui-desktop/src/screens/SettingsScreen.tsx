@@ -5,10 +5,8 @@ import type { Update } from "@tauri-apps/plugin-updater";
 
 import type { ConnectionMode, RoutingMode, SplitMode, TunStack } from "../api";
 import type { Tenebra } from "../state/useTenebra";
-import { BlocklistPanel, type BlocklistSource } from "../components/BlocklistPanel";
 import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import { UpdateConfirm } from "../components/UpdateConfirm";
-import { readBlocklist } from "../lib/blocklist";
 import { useI18n } from "../i18n/I18nContext";
 import { useTheme } from "../theme/ThemeContext";
 import { describeCoreError, type Language } from "../i18n/strings";
@@ -212,25 +210,6 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   // Report it on the toast bus the rest of the app already uses, naming an
   // out-of-date service when that is what the refusal actually was.
   const reportRefusal = (e: unknown) => pushToast(describeCoreError(e, t));
-
-  // Blocklist import. The overlay lives here rather than in its own screen so it
-  // sits next to the routing presets it affects — a list the user imports is
-  // only meaningful alongside the rules that consume it.
-  const [blocklistOpen, setBlocklistOpen] = useState(false);
-  const [blocklists, setBlocklists] = useState<BlocklistSource[]>([]);
-
-  const importBlocklist = async (file: File) => {
-    const parsed = await readBlocklist(file);
-    setBlocklists((prev) => [
-      // Re-importing the same file replaces it instead of stacking duplicates,
-      // which is what happens when a user re-drops an updated list.
-      ...prev.filter((s) => s.label !== file.name),
-      { id: file.name, label: file.name, rules: parsed.rules.length },
-    ]);
-  };
-
-  const removeBlocklist = (id: string) =>
-    setBlocklists((prev) => prev.filter((s) => s.id !== id));
 
   // Section navigation. The content column owns its own scroll; the rail tracks
   // which section is in view and jumps to one on click. A layout-free picker
@@ -1058,20 +1037,6 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
 
           <div className="set-row">
             <span className="set-row-text">
-              <span className="set-row-label">{t.blocklist.title}</span>
-              <span className="set-row-hint">
-                {blocklists.length === 0
-                  ? t.blocklist.hint
-                  : `${blocklists.length} · ${blocklists.reduce((n, s) => n + (s.rules ?? 0), 0)} ${t.blocklist.rules}`}
-              </span>
-            </span>
-            <button type="button" className="set-btn" onClick={() => setBlocklistOpen(true)}>
-              {t.blocklist.open}
-            </button>
-          </div>
-
-          <div className="set-row">
-            <span className="set-row-text">
               <span className="set-row-label">{t.settings.presetRuBanking}</span>
               <span className="set-row-hint">{t.settings.presetRuBankingHint}</span>
             </span>
@@ -1739,15 +1704,6 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
         <UpdateConfirm
           onConfirm={() => void runUpdateInstall()}
           onCancel={() => setConfirmingInstall(false)}
-        />
-      )}
-
-      {blocklistOpen && (
-        <BlocklistPanel
-          sources={blocklists}
-          onImportFile={importBlocklist}
-          onRemove={removeBlocklist}
-          onClose={() => setBlocklistOpen(false)}
         />
       )}
     </div>

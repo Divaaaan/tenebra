@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 
 import { useI18n } from "../i18n/I18nContext";
+import { HelpHint } from "./HelpHint";
 
 export interface BlocklistSource {
   /** Stable id, used as the React key and for removal. */
@@ -87,7 +88,14 @@ export function BlocklistPanel({
         onClick={(e) => e.stopPropagation()}
       >
         <header className="bl-panel__head">
-          <h2 className="bl-panel__title">{t.blocklist.title}</h2>
+          <h2 className="bl-panel__title">
+            {t.blocklist.title}
+            <HelpHint
+              label={t.blocklist.helpLabel}
+              title={t.blocklist.helpTitle}
+              lines={t.blocklist.helpLines}
+            />
+          </h2>
           <button
             type="button"
             className="bl-panel__close"
