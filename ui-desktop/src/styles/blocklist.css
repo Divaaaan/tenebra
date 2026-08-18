@@ -282,3 +282,57 @@
     animation: none;
   }
 }
+
+/* ── on/off ────────────────────────────────────────────────────────────── */
+
+.bl-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-3);
+  border-top: var(--bw) solid var(--line);
+}
+
+/* The running strategy is named rather than shown as a dot: "on" is not the
+   useful fact, WHICH bypass is running is — they behave differently, and the
+   user just watched a probe choose one. */
+.bl-state {
+  overflow: hidden;
+  color: var(--text-dim-2);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bl-state.is-on {
+  color: var(--good);
+}
+
+.bl-toggle {
+  padding: var(--sp-2) var(--sp-4);
+  color: var(--text);
+  background: none;
+  border: var(--bw) solid var(--line-2);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    border-color var(--t-fast) var(--t-base),
+    color var(--t-fast) var(--t-base);
+}
+
+.bl-toggle:hover:not(:disabled) {
+  color: var(--signal);
+  border-color: var(--signal);
+}
+
+.bl-toggle:disabled {
+  color: var(--text-dim-2);
+  cursor: progress;
+}

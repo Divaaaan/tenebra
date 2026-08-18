@@ -601,6 +601,12 @@ export interface Strings {
     close: string;
     /** Label of the settings row that opens the panel. */
     open: string;
+    /** Button that switches the bypass on. */
+    enable: string;
+    /** Button that switches it off. */
+    disable: string;
+    /** Shown while the strategy probe runs. */
+    picking: string;
     /** Accessible label of the "?" trigger. */
     helpLabel: string;
     /** Title inside the hint popover. */
@@ -1076,6 +1082,9 @@ const en: Strings = {
     remove: "Remove",
     close: "Close",
     open: "Open",
+    enable: "Turn on",
+    disable: "Turn off",
+    picking: "Finding a working strategy…",
     helpLabel: "How this works",
     helpTitle: "What this is",
     helpLines: [
@@ -1544,6 +1553,9 @@ const ru: Strings = {
     remove: "Убрать",
     close: "Закрыть",
     open: "Открыть",
+    enable: "Включить",
+    disable: "Выключить",
+    picking: "Подбираю рабочую стратегию…",
     helpLabel: "Как это работает",
     helpTitle: "Что это и что сюда класть",
     helpLines: [

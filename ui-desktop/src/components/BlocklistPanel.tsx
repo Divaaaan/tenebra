@@ -27,6 +27,12 @@ interface BlocklistPanelProps {
   /** Import a blocklist from dropped or picked files (one archive, or a whole
    *  unpacked folder at once). */
   onImportFiles: (files: File[]) => Promise<void>;
+  /** Turn the bypass on (empty name = the strategy the last probe picked). */
+  onEnable?: () => Promise<void>;
+  /** Turn it off. */
+  onDisable?: () => Promise<void>;
+  /** Strategy currently running, or empty when the bypass is off. */
+  active?: string;
   onRemove: (id: string) => void;
   /** Close the panel (it is opened as an overlay from the settings row). */
   onClose: () => void;
@@ -57,6 +63,9 @@ export function BlocklistPanel({
   sources,
   onImportFiles,
   onImportPaths,
+  onEnable,
+  onDisable,
+  active,
   onRemove,
   onClose,
 }: BlocklistPanelProps) {
@@ -224,6 +233,29 @@ export function BlocklistPanel({
             }}
           />
         </div>
+
+        {(onEnable || onDisable) && sources.length > 0 && (
+          <div className="bl-actions">
+            <span className={`bl-state${active ? " is-on" : ""}`}>
+              {active ? active : "—"}
+            </span>
+            <button
+              type="button"
+              className="bl-toggle"
+              disabled={busy}
+              onClick={() => {
+                setError(null);
+                setBusy(true);
+                const run = active ? onDisable?.() : onEnable?.();
+                void Promise.resolve(run)
+                  .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+                  .finally(() => setBusy(false));
+              }}
+            >
+              {active ? t.blocklist.disable : t.blocklist.enable}
+            </button>
+          </div>
+        )}
 
         {error && (
           <p className="bl-error" role="alert">

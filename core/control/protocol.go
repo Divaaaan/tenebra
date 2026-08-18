@@ -45,6 +45,9 @@ const (
 	CmdListZapret = "list_zapret"
 	// CmdPickZapret probes every installed strategy and reports which to use.
 	CmdPickZapret = "pick_zapret"
+	// CmdStartZapret turns the bypass on; CmdStopZapret turns it off.
+	CmdStartZapret = "start_zapret"
+	CmdStopZapret  = "stop_zapret"
 	CmdSetRouting         = "set_routing"
 	CmdSetSplit           = "set_split"
 	CmdSetKillSwitch      = "set_kill_switch"
