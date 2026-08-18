@@ -14,14 +14,14 @@ function makeFile(name: string): File {
 
 interface PanelOverrides {
   sources?: BlocklistSource[];
-  onImportFile?: (file: File) => Promise<void>;
+  onImportFiles?: (files: File[]) => Promise<void>;
   onRemove?: (id: string) => void;
   onClose?: () => void;
 }
 
 function renderPanel(over: PanelOverrides = {}) {
   // Typed as the mocks they are, so a test can assert on .mock without casting.
-  const onImportFile = vi.fn(over.onImportFile ?? (async () => {}));
+  const onImportFiles = vi.fn(over.onImportFiles ?? (async () => {}));
   const onRemove = vi.fn(over.onRemove ?? noop);
   const onClose = vi.fn(over.onClose ?? noop);
   const sources = over.sources ?? [];
@@ -29,12 +29,12 @@ function renderPanel(over: PanelOverrides = {}) {
   const utils = renderWithProviders(
     <BlocklistPanel
       sources={sources}
-      onImportFile={onImportFile}
+      onImportFiles={onImportFiles}
       onRemove={onRemove}
       onClose={onClose}
     />,
   );
-  return { ...utils, props: { onImportFile, onRemove, onClose } };
+  return { ...utils, props: { onImportFiles, onRemove, onClose } };
 }
 
 describe("BlocklistPanel", () => {
@@ -45,20 +45,39 @@ describe("BlocklistPanel", () => {
 
     fireEvent.drop(zone, { dataTransfer: { files: [file] } });
 
-    await waitFor(() => expect(props.onImportFile).toHaveBeenCalledTimes(1));
-    expect(props.onImportFile.mock.calls[0][0].name).toBe("blocklist.zip");
+    await waitFor(() => expect(props.onImportFiles).toHaveBeenCalledTimes(1));
+    expect((props.onImportFiles.mock.calls[0][0] as File[])[0].name).toBe("blocklist.zip");
   });
 
-  it("refuses a file it cannot read and says so in place", async () => {
+  it("hands every dropped file to the importer without filtering by name", async () => {
+    // No extension gate: a release archive names its lists anything at all
+    // (`hosts`, `list.aa`), and refusing at the door is how a folder full of
+    // good lists ends up importing nothing. What is a list is decided by
+    // whether it parses, which is the reader's job, not the drop zone's.
     const { props, container } = renderPanel();
     const zone = container.querySelector(".bl-drop")!;
 
-    fireEvent.drop(zone, { dataTransfer: { files: [makeFile("holiday.jpg")] } });
+    fireEvent.drop(zone, {
+      dataTransfer: { files: [makeFile("hosts"), makeFile("list.aa")] },
+    });
 
-    // The message belongs next to the zone the user just used, not in a toast
-    // somewhere else, and the bad file must never reach the importer.
-    expect(await screen.findByRole("alert")).toBeTruthy();
-    expect(props.onImportFile).not.toHaveBeenCalled();
+    await waitFor(() => expect(props.onImportFiles).toHaveBeenCalledTimes(1));
+    const passed = props.onImportFiles.mock.calls[0][0] as File[];
+    expect(passed.map((f) => f.name)).toEqual(["hosts", "list.aa"]);
+  });
+
+  it("passes a whole unpacked folder in one go", async () => {
+    const { props, container } = renderPanel();
+    const zone = container.querySelector(".bl-drop")!;
+
+    fireEvent.drop(zone, {
+      dataTransfer: {
+        files: [makeFile("hosts"), makeFile("README.md"), makeFile("LICENSE")],
+      },
+    });
+
+    await waitFor(() => expect(props.onImportFiles).toHaveBeenCalledTimes(1));
+    expect((props.onImportFiles.mock.calls[0][0] as File[])).toHaveLength(3);
   });
 
   it("highlights while a file is over the zone and stops when it leaves", () => {
@@ -86,8 +105,8 @@ describe("BlocklistPanel", () => {
   });
 
   it("surfaces an import failure instead of failing silently", async () => {
-    const onImportFile = vi.fn().mockRejectedValue(new Error("archive is corrupt"));
-    const { container } = renderPanel({ onImportFile });
+    const onImportFiles = vi.fn().mockRejectedValue(new Error("archive is corrupt"));
+    const { container } = renderPanel({ onImportFiles });
     const zone = container.querySelector(".bl-drop")!;
 
     fireEvent.drop(zone, { dataTransfer: { files: [makeFile("bad.zip")] } });

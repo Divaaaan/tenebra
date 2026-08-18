@@ -14,20 +14,22 @@ export interface BlocklistSource {
 
 interface BlocklistPanelProps {
   sources: BlocklistSource[];
-  /** Import a blocklist from a dropped or picked archive. */
-  onImportFile: (file: File) => Promise<void>;
+  /** Import a blocklist from dropped or picked files (one archive, or a whole
+   *  unpacked folder at once). */
+  onImportFiles: (files: File[]) => Promise<void>;
   onRemove: (id: string) => void;
   /** Close the panel (it is opened as an overlay from the settings row). */
   onClose: () => void;
 }
 
-/** Archive and list formats the importer accepts. */
-const ACCEPTED = [".zip", ".txt", ".lst", ".srs"];
-
-function hasAcceptedExtension(name: string): boolean {
-  const lower = name.toLowerCase();
-  return ACCEPTED.some((ext) => lower.endsWith(ext));
-}
+/**
+ * Formats named in the zone, as a hint to the user — NOT a filter.
+ *
+ * The input deliberately carries no `accept`: a release archive names its lists
+ * anything at all, and an accept filter would grey them out in the file picker.
+ * What is and is not a list is decided by whether it parses.
+ */
+const HINTED_FORMATS = ["zip", "txt", "lst", "srs"];
 
 /**
  * The blocklist import surface: drop an archive here, or click to pick one.
@@ -43,7 +45,7 @@ function hasAcceptedExtension(name: string): boolean {
  */
 export function BlocklistPanel({
   sources,
-  onImportFile,
+  onImportFiles,
   onRemove,
   onClose,
 }: BlocklistPanelProps) {
@@ -58,24 +60,24 @@ export function BlocklistPanel({
   // depth counter tracks enter/leave pairs instead.
   const dragDepth = useRef(0);
 
-  const submitFile = useCallback(
-    async (file: File) => {
-      if (busy) return;
-      if (!hasAcceptedExtension(file.name)) {
-        setError(t.blocklist.badFile);
-        return;
-      }
+  // No extension gate here on purpose. The user is told to drop the archive
+  // exactly as downloaded, and a release names its files anything at all; the
+  // reader decides what is a list by whether it parses. Refusing up front on a
+  // name is how a folder full of good lists gets rejected at the door.
+  const submitFiles = useCallback(
+    async (files: File[]) => {
+      if (busy || files.length === 0) return;
       setBusy(true);
       setError(null);
       try {
-        await onImportFile(file);
+        await onImportFiles(files);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
         setBusy(false);
       }
     },
-    [busy, onImportFile, t.blocklist.badFile],
+    [busy, onImportFiles],
   );
 
   return (
@@ -137,25 +139,25 @@ export function BlocklistPanel({
             e.preventDefault();
             dragDepth.current = 0;
             setDragging(false);
-            const file = e.dataTransfer?.files?.[0];
-            if (file) void submitFile(file);
+            const files = Array.from(e.dataTransfer?.files ?? []);
+            if (files.length > 0) void submitFiles(files);
           }}
         >
           <span className="bl-drop__ring" aria-hidden="true" />
           <span className="bl-drop__label">
             {busy ? t.blocklist.loading : t.blocklist.dropHint}
           </span>
-          <span className="bl-drop__formats">{ACCEPTED.join("   ")}</span>
+          <span className="bl-drop__formats">{HINTED_FORMATS.join("   ")}</span>
           <input
             ref={fileRef}
             type="file"
             className="bl-file"
-            accept={ACCEPTED.join(",")}
+            multiple
             onChange={(e) => {
-              const file = e.target.files?.[0];
+              const files = Array.from(e.target.files ?? []);
               // Clear the value so picking the same file twice fires onChange.
               e.target.value = "";
-              if (file) void submitFile(file);
+              if (files.length > 0) void submitFiles(files);
             }}
           />
         </div>
