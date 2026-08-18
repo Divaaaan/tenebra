@@ -61,15 +61,7 @@ func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 	// path. Whether it actually started decides where those services are routed —
 	// tunnelling them anyway would pay a round trip they no longer need, and
 	// routing them direct without the bypass would leave them blocked.
-	zapretUp := d.autoStartZapret(ctx)
-	d.mu.Lock()
-	d.routing.ZapretActive = zapretUp
-	if !zapretUp {
-		// Stale coverage from an earlier run would keep routing services direct
-		// with nothing carrying them there.
-		d.routing.ZapretCovered = nil
-	}
-	d.mu.Unlock()
+	d.raiseZapretForConnect(ctx)
 
 	// A user-driven connect opens a fresh kill-switch relaunch budget.
 	d.mu.Lock()
@@ -999,6 +991,17 @@ func (d *Daemon) AutoconnectOnStart() bool {
 		return false
 	}
 	d.emitLog(LogInfo, "autoconnect: reconnecting the last profile")
+	// Raise the bypass here too, exactly as a user-driven connect does. Without
+	// it, an autoconnected session is a different product from a hand-pressed one:
+	// the tunnel comes up, the bypass does not, and YouTube and Discord are
+	// tunnelled at full round-trip latency (or, if a previous run left the routing
+	// expecting the bypass, not carried at all). Autoconnect is how the app starts
+	// on most days, so "one button does the whole job" has to hold on the path
+	// where no button is pressed.
+	//
+	// Ordered before the connect, like handleConnect: the flag it sets decides
+	// where the censored services are routed in the config the connect builds.
+	d.raiseZapretForConnect(context.Background())
 	// A start failure (e.g. the pinned node vanished from the profile) is
 	// logged and leaves the state untouched: startConnect fails before any
 	// teardown, so the daemon stays idle rather than reporting an error for a

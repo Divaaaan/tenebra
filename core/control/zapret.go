@@ -190,6 +190,31 @@ func (d *Daemon) applyZapretState(running bool, strategy string) {
 	}
 }
 
+// raiseZapretForConnect brings the bypass up as part of connecting and records
+// where that leaves the routing.
+//
+// Shared by the user-driven connect and autoconnect so the two cannot drift:
+// an autoconnected session that skipped this would tunnel YouTube and Discord at
+// full round-trip latency, or — if an earlier run left the routing expecting the
+// bypass — leave them uncarried entirely, which is the same app behaving like two
+// different products depending on whether a button was pressed.
+//
+// It does not rebuild a live tunnel: both callers are about to build one, and the
+// flag set here is what that build reads.
+func (d *Daemon) raiseZapretForConnect(ctx context.Context) bool {
+	up := d.autoStartZapret(ctx)
+	d.mu.Lock()
+	d.routing.ZapretActive = up
+	if !up {
+		// Stale coverage from an earlier run would keep routing services direct
+		// with nothing carrying them there.
+		d.routing.ZapretCovered = nil
+	}
+	d.refreshZapretStateLocked()
+	d.mu.Unlock()
+	return up
+}
+
 // handlePickZapret probes every installed strategy and reports which one to use.
 //
 // It runs synchronously and takes minutes: each strategy needs the packet filter
