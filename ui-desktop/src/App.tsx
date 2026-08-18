@@ -20,6 +20,7 @@ import { SettingsScreen } from "./screens/SettingsScreen";
 import { LogsScreen } from "./screens/LogsScreen";
 import { ToastHost } from "./components/ToastHost";
 import { SimpleView } from "./components/SimpleView";
+import { SimpleSetup } from "./components/SimpleSetup";
 import { EclipseOverlay } from "./components/EclipseOverlay";
 import { useTenebra } from "./state/useTenebra";
 import { useI18n } from "./i18n/I18nContext";
@@ -53,11 +54,11 @@ type Overlay = "profiles" | "settings" | "logs" | null;
 const SIMPLE_MODE_KEY = "tenebra.simpleMode";
 function readSimpleMode(): boolean {
   const v = localStorage.getItem(SIMPLE_MODE_KEY);
-  // Simple mode is the DEFAULT: the product is a link, an archive and one
-  // button, and a control panel on first run would be the opposite of that.
-  // Only an explicit opt-out ("0"/"false", written by the Advanced-view button)
-  // brings the full shell back, so an untouched install starts simple.
-  if (v === null) return true;
+  // The full shell is the default. Simple mode stays available for anyone who
+  // wants one button and nothing else, but the shell is not the problem it was
+  // taken for: what a first-run user lacked was not fewer controls, it was the
+  // two setup steps being somewhere else. Those now live on the main screen
+  // (see SimpleSetup), so the rich view is approachable without being stripped.
   return v === "1" || v === "true";
 }
 
@@ -737,6 +738,18 @@ export function App() {
           onDismiss={crash.dismiss}
         />
       )}
+
+      {/* The two setup steps live on the main screen, not behind a menu: what a
+          first-run user lacked was never fewer controls, it was these being
+          somewhere else. The strip removes itself the moment both are done, so
+          it costs a returning user nothing. */}
+      <SimpleSetup
+        hasProfile={profiles.length > 0}
+        hasBypass={blocklists.length > 0}
+        onSubscribe={handleSimpleSubscribe}
+        onBypassFiles={importBlocklist}
+        onBypassPaths={importFromPaths}
+      />
 
       <div className="app-body">
         <ConnectionPanel

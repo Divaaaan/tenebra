@@ -115,13 +115,14 @@ describe("App simple mode", () => {
     });
   });
 
-  it("starts in simple mode on a fresh install", async () => {
-    // The product is a link, an archive and one button; a control panel on
-    // first run would be the opposite of that. Only an explicit opt-out brings
-    // the shell back, so an untouched install must land here.
+  it("starts in the full shell on a fresh install, with the setup steps in it", async () => {
+    // The rich view is the default. What a first-run user lacked was never
+    // fewer controls — it was the two setup steps being somewhere else, so they
+    // are on the main screen instead of the shell being stripped.
     localStorage.removeItem(SIMPLE_KEY);
     const { container } = await mountReady();
-    expect(container.querySelector(".app--simple")).toBeInTheDocument();
+    expect(container.querySelector(".app--simple")).not.toBeInTheDocument();
+    expect(container.querySelector(".setup")).toBeInTheDocument();
   });
 
   it("renders the full shell once the user has opted out", async () => {
