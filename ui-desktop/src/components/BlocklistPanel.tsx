@@ -39,7 +39,7 @@ interface BlocklistPanelProps {
  * anything at all, and an accept filter would grey them out in the file picker.
  * What is and is not a list is decided by whether it parses.
  */
-const HINTED_FORMATS = ["zip", "txt", "hosts", "json"];
+const HINTED_FORMATS = ["папка", "zip"];
 
 /**
  * The blocklist import surface: drop an archive here, or click to pick one.
