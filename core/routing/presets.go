@@ -1,6 +1,9 @@
 package routing
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // Routing presets: the splits that almost every user of a censored network ends
 // up assembling by hand, shipped so they are one switch instead of a dozen
@@ -98,33 +101,84 @@ func BlockedServiceSuffixes() []string {
 // unblockActive reports whether the blocked-services preset should emit rules.
 //
 // Inert in direct mode, where nothing is tunnelled and pinning a domain to the
-// proxy would be a contradiction — and inert while the DPI bypass is running,
-// which is the important case: the bypass unblocks these services ON THE DIRECT
-// PATH, at the ISP's own latency. Tunnelling them anyway would pay the full
-// round trip to another country for traffic that no longer needs it, which is
-// precisely the pinging-in-voice-chat problem the bypass exists to remove.
+// proxy would be a contradiction. It stays active while the DPI bypass runs:
+// the bypass covers only part of the preset (its host lists carry YouTube,
+// Google and Discord and nothing else), so the rest still needs the tunnel.
+// zapretCoveredSuffixes/proxySuffixesWithPresets split the list between the two
+// paths rather than handing all of it to one.
 func (o Options) unblockActive() bool {
-	return o.UnblockServices && o.Mode != ModeDirect && !o.ZapretActive
+	return o.UnblockServices && o.Mode != ModeDirect
 }
 
-// zapretDirectSuffixes are the services handed to the DPI bypass instead of the
-// tunnel while it is running.
+// defaultZapretCovered is the coverage assumed when the bundle's host lists
+// could not be read.
 //
-// It is the same list the tunnel would otherwise carry, used in the opposite
-// direction: with the bypass up these resolve and connect directly, so pinning
-// them direct keeps video and voice on the short path. Everything NOT on this
-// list still goes through the tunnel, because the bypass only covers what its
-// host lists cover.
+// It is deliberately the narrow, certain part: every published build of the
+// bypass is built around YouTube and Discord, so those are safe to route
+// direct even without reading the lists. Guessing wider would be the dangerous
+// direction — a service the bypass does not touch, pinned direct, is not slow
+// but broken.
+var defaultZapretCovered = []string{
+	"youtube.com", "youtu.be", "googlevideo.com", "ytimg.com", "ggpht.com",
+	"youtubei.googleapis.com",
+	"discord.com", "discordapp.com", "discordapp.net", "discord.gg",
+	"discord.media", "discordcdn.com", "discordstatus.com",
+}
+
+// coverage returns the domains the running bypass actually acts on.
+func (o Options) coverage() []string {
+	if len(o.ZapretCovered) > 0 {
+		return o.ZapretCovered
+	}
+	return defaultZapretCovered
+}
+
+// coveredByZapret reports whether domain (or a parent of it) appears in the
+// bypass's coverage. Parent matching is what makes `music.youtube.com` count as
+// covered by a list that only names `youtube.com`.
+func coveredByZapret(covered []string, domain string) bool {
+	for _, c := range covered {
+		if domain == c || strings.HasSuffix(domain, "."+c) {
+			return true
+		}
+	}
+	return false
+}
+
+// zapretDirectSuffixes are the preset services the running bypass covers, handed
+// to the direct path instead of the tunnel.
+//
+// With the bypass up these connect directly at the ISP's own latency, so
+// tunnelling them would pay the whole round trip for nothing — 239ms against
+// 9ms on the author's network. The intersection with the bundle's host lists is
+// the load-bearing part: the preset lists services the bypass has never heard of
+// (Anthropic, OpenAI, Instagram, X, Spotify), and routing those direct because
+// "the bypass is on" does not make them slow, it makes them fail — on this ISP
+// api.anthropic.com answers a forged 403 on the direct path, so every tool
+// talking to it reports an authentication error that does not exist.
 func (o Options) zapretDirectSuffixes() []string {
 	if !o.ZapretActive || o.Mode == ModeDirect {
 		return nil
 	}
-	return normalizeSuffixes(blockedServiceSuffixes)
+	covered := o.coverage()
+	out := make([]string, 0, len(blockedServiceSuffixes))
+	for _, s := range blockedServiceSuffixes {
+		if coveredByZapret(covered, s) {
+			out = append(out, s)
+		}
+	}
+	return normalizeSuffixes(out)
 }
 
 // proxySuffixesWithPresets merges the user's proxy-pinned domains with the
 // blocked-services preset. The user's own entries are preserved; the merge is
 // de-duplicated and sorted so the emitted rule is stable.
+//
+// While the bypass runs, the services it covers are removed from this list —
+// they are pinned direct by zapretDirectSuffixes instead, and emitting both
+// would be two rules claiming the same domain for opposite outbounds. What the
+// bypass does not cover stays here, in the tunnel, which is the whole point of
+// running the two together.
 func (o Options) proxySuffixesWithPresets() []string {
 	base := o.proxyRuleSuffixes()
 	if !o.unblockActive() {
@@ -132,7 +186,16 @@ func (o Options) proxySuffixesWithPresets() []string {
 	}
 	merged := make([]string, 0, len(base)+len(blockedServiceSuffixes))
 	merged = append(merged, base...)
-	merged = append(merged, blockedServiceSuffixes...)
+	if o.ZapretActive {
+		covered := o.coverage()
+		for _, s := range blockedServiceSuffixes {
+			if !coveredByZapret(covered, s) {
+				merged = append(merged, s)
+			}
+		}
+	} else {
+		merged = append(merged, blockedServiceSuffixes...)
+	}
 	// normalizeSuffixes lowercases, trims, de-duplicates and sorts, so the merge
 	// needs no bookkeeping of its own and stays consistent with user-entered rules.
 	return normalizeSuffixes(merged)

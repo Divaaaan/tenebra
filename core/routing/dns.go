@@ -118,6 +118,21 @@ func (o Options) dnsRules() []map[string]any {
 			"server":        dnsDirectTag,
 		})
 	}
+	// Services handed to the bypass resolve through the direct resolver, mirroring
+	// where their traffic goes. Without this the name is resolved over the proxy
+	// while the connection is made directly, and the answer describes the wrong
+	// vantage point: googlevideo.com resolved from Frankfurt returns a Frankfurt
+	// cache node, so the video streams from another country over the direct path —
+	// the exact latency the bypass exists to avoid — instead of the Google cache
+	// hosted at the ISP. It also makes the tunnel a dependency for resolving names
+	// that no longer need it.
+	if bypass := o.zapretDirectSuffixes(); len(bypass) > 0 {
+		rules = append(rules, map[string]any{
+			"domain_suffix": bypass,
+			"action":        "route",
+			"server":        dnsDirectTag,
+		})
+	}
 	// Includes the blocked-services preset, so a service pinned to the proxy also
 	// resolves through the proxy resolver. Without this the name would be resolved
 	// by the direct/ISP resolver — which for a censored service is exactly where a

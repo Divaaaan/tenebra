@@ -63,8 +63,11 @@ func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 	// routing them direct without the bypass would leave them blocked.
 	zapretUp := d.autoStartZapret(ctx)
 	d.mu.Lock()
-	if d.routing.ZapretActive != zapretUp {
-		d.routing.ZapretActive = zapretUp
+	d.routing.ZapretActive = zapretUp
+	if !zapretUp {
+		// Stale coverage from an earlier run would keep routing services direct
+		// with nothing carrying them there.
+		d.routing.ZapretCovered = nil
 	}
 	d.mu.Unlock()
 
@@ -1224,6 +1227,12 @@ func (d *Daemon) Close() error {
 	if d.entCancel != nil {
 		d.entCancel()
 	}
+	// Take the DPI bypass down with us. winws is launched detached (the strategy
+	// batch uses `start`), so nothing else ever stops it: without this it outlives
+	// the app that started it, keeping a kernel packet filter attached to every
+	// connection on the machine with no window, tray icon or setting to explain
+	// where it came from. Best-effort — a failure here must not hold up shutdown.
+	d.stopZapretQuietly()
 	d.connMu.Lock()
 	d.teardown(StateIdle, "", "")
 	d.connMu.Unlock()

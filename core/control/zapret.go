@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/Divaaaan/tenebra/core/zapret"
 )
@@ -86,6 +87,71 @@ func zapretBundleResponse(id int64, dir string, strategies []zapret.Strategy) Re
 	return resp
 }
 
+// excludeNodesFromZapret keeps the packet filter off the tunnel's own
+// connections by listing every stored node address in the bundle's exclusion
+// list, before a strategy is launched (winws reads the lists at startup).
+//
+// Every profile's nodes are listed, not just the connected one: the fallback
+// walk moves between nodes on its own, and an exclusion that only covered the
+// current exit would stop protecting the moment it failed over — precisely when
+// the tunnel can least afford a second, self-inflicted fault.
+//
+// Best-effort: a bundle we cannot write to is a reason to log, not to leave the
+// user without a bypass.
+func (d *Daemon) excludeNodesFromZapret(dir string) {
+	var servers []string
+	for _, p := range d.store.List() {
+		for _, n := range p.Servers {
+			servers = append(servers, n.Server)
+		}
+	}
+	if err := zapret.ExcludeNodes(dir, servers); err != nil {
+		d.emitLog(LogWarn, fmt.Sprintf("zapret: не удалось исключить адреса узлов из фильтра: %v", err))
+	}
+}
+
+// applyZapretState records that the bypass came up (or went down) and makes the
+// routing follow it.
+//
+// The two must move together. Routing sends YouTube and Discord down the direct
+// path *because* the bypass is carrying them there; leaving the flag set after
+// the bypass stops points those services at a censor with nothing to get them
+// through, so the user sees a connected VPN and dead video — worse than either
+// state alone. The reverse is milder but still wrong: a bypass running while
+// routing believes it is not tunnels traffic that no longer needs the detour.
+//
+// running strategies are re-read from the bundle every time it comes up, because
+// the user can re-import a different bundle between runs and the coverage decides
+// which services are safe to leave on the direct path.
+//
+// A live tunnel is rebuilt in place (reapplyLive) rather than waiting for a
+// reconnect: the config carries the split, so without the rebuild the switch the
+// user just pressed would do nothing until they disconnected and connected again.
+func (d *Daemon) applyZapretState(running bool, strategy string) {
+	dir := filepath.Join(d.store.Dir(), zapretDirName)
+
+	var covered []string
+	if running {
+		covered = zapret.Covered(dir)
+	}
+
+	d.mu.Lock()
+	if strategy != "" {
+		d.zapretActive = strategy
+	}
+	changed := d.routing.ZapretActive != running
+	d.routing.ZapretActive = running
+	d.routing.ZapretCovered = covered
+	d.routing = d.routing.Normalize()
+	d.mu.Unlock()
+
+	d.persistSettings()
+
+	if changed {
+		d.reapplyLive()
+	}
+}
+
 // handlePickZapret probes every installed strategy and reports which one to use.
 //
 // It runs synchronously and takes minutes: each strategy needs the packet filter
@@ -109,6 +175,11 @@ func (d *Daemon) handlePickZapret(ctx context.Context, req Request) Response {
 		return newError(req.ID, "pick_zapret: в сборке нет стратегий")
 	}
 
+	// Every strategy in the run attaches its own filter, so the exclusion has to be
+	// in place before the first one — a probe run that keeps knocking over the live
+	// tunnel would also poison its own measurements.
+	d.excludeNodesFromZapret(dir)
+
 	runner := zapret.NewRunner(dir)
 	results, baseline, err := runner.Pick(ctx, strategies, zapret.DefaultTargets(), func(r zapret.Result) {
 		// Report as it goes: a silent multi-minute operation reads as a hang,
@@ -131,9 +202,7 @@ func (d *Daemon) handlePickZapret(ctx context.Context, req Request) Response {
 		if started, sErr := runner.Start(ctx, best.Strategy); sErr != nil || !started {
 			d.emitLog(LogWarn, fmt.Sprintf("zapret: %s не запустилась после подбора", best.Name))
 		} else {
-			d.mu.Lock()
-			d.zapretActive = best.Name
-			d.mu.Unlock()
+			d.applyZapretState(true, best.Name)
 			d.emitLog(LogInfo, fmt.Sprintf("zapret: включена %s", best.Name))
 		}
 	}
@@ -246,6 +315,8 @@ func (d *Daemon) handleStartZapret(ctx context.Context, req Request) Response {
 		}
 	}
 
+	d.excludeNodesFromZapret(dir)
+
 	runner := zapret.NewRunner(dir)
 	started, err := runner.Start(ctx, chosen)
 	if err != nil {
@@ -259,9 +330,7 @@ func (d *Daemon) handleStartZapret(ctx context.Context, req Request) Response {
 			"start_zapret: %s не запустилась — winws требует прав администратора", chosen.Name))
 	}
 
-	d.mu.Lock()
-	d.zapretActive = chosen.Name
-	d.mu.Unlock()
+	d.applyZapretState(true, chosen.Name)
 	d.emitLog(LogInfo, fmt.Sprintf("zapret: включена %s", chosen.Name))
 
 	resp, err := newResult(req.ID, struct {
@@ -317,6 +386,8 @@ func (d *Daemon) autoStartZapret(ctx context.Context) bool {
 		}
 	}
 
+	d.excludeNodesFromZapret(dir)
+
 	runner := zapret.NewRunner(dir)
 	started, err := runner.Start(ctx, chosen)
 	if err != nil || !started {
@@ -328,22 +399,49 @@ func (d *Daemon) autoStartZapret(ctx context.Context) bool {
 		return false
 	}
 
+	// The routing flag is set by the caller (handleConnect), which is mid-connect
+	// and rebuilds the config immediately after — going through applyZapretState
+	// here would fire a reapplyLive into a connect that has not happened yet. Only
+	// the choice is recorded.
 	d.mu.Lock()
 	d.zapretActive = chosen.Name
+	d.routing.ZapretCovered = zapret.Covered(dir)
+	d.routing = d.routing.Normalize()
 	d.mu.Unlock()
+	d.persistSettings()
 	d.emitLog(LogInfo, fmt.Sprintf("zapret: включена %s — YouTube и Discord идут напрямую", chosen.Name))
 	return true
 }
 
+// stopZapretQuietly stops the bypass without touching routing or reporting, for
+// shutdown: there is no live tunnel left to re-apply to and no client left to
+// tell. It is a no-op when no bundle was ever installed.
+//
+// The stop is bounded: Runner.Stop waits for the packet filter to detach, and a
+// wait that outlived shutdown would hang the process on exit.
+func (d *Daemon) stopZapretQuietly() {
+	dir := filepath.Join(d.store.Dir(), zapretDirName)
+	if _, err := os.Stat(dir); err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	_ = zapret.NewRunner(dir).Stop(ctx)
+}
+
 // handleStopZapret turns the bypass off.
+//
+// The picked strategy is kept, not cleared: turning the bypass off is not a
+// decision to un-pick the strategy that was measured to work, and a later
+// start_zapret with no name must bring back that one rather than the bundle
+// default. Routing is told, so the censored services return to the tunnel
+// instead of being left pointing at the direct path the bypass no longer covers.
 func (d *Daemon) handleStopZapret(ctx context.Context, req Request) Response {
 	runner := zapret.NewRunner(filepath.Join(d.store.Dir(), zapretDirName))
 	if err := runner.Stop(ctx); err != nil {
 		return newError(req.ID, err.Error())
 	}
-	d.mu.Lock()
-	d.zapretActive = ""
-	d.mu.Unlock()
+	d.applyZapretState(false, "")
 	d.emitLog(LogInfo, "zapret: выключен")
 	return newResult0(req.ID)
 }
