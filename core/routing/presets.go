@@ -72,6 +72,15 @@ var blockedServiceSuffixes = []string{
 	"instagram.com", "cdninstagram.com", "facebook.com", "fbcdn.net", "whatsapp.com",
 	// X / Twitter
 	"twitter.com", "x.com", "twimg.com",
+	// AI services. These are not merely slow without the tunnel — the direct path
+	// is actively poisoned: api.anthropic.com answers a forged 403 in ~40ms on the
+	// author's ISP, and the genuine response only arrives through the proxy. A
+	// forged answer is worse than a timeout, because every client above treats it
+	// as a real refusal from the service and reports an auth problem that does not
+	// exist. Developer tooling that talks to these APIs breaks in a way that looks
+	// like the tool's fault.
+	"anthropic.com", "claude.ai", "claudeusercontent.com",
+	"openai.com", "chatgpt.com", "oaistatic.com",
 	// Other commonly-blocked
 	"soundcloud.com", "spotify.com", "scdn.co", "linkedin.com", "licdn.com",
 	"medium.com", "patreon.com", "signal.org",
