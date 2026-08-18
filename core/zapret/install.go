@@ -24,6 +24,12 @@ import (
 // format is a dependency to audit forever — the upstream project publishes zip
 // releases, so the honest answer to a .rar is to say so.
 func Install(archivePath, dir string) ([]Strategy, error) {
+	// A directory is accepted as readily as an archive: the user may have
+	// unpacked the release already, and telling them to re-zip it would be
+	// busywork the program can do itself.
+	if info, err := os.Stat(archivePath); err == nil && info.IsDir() {
+		return InstallDir(archivePath, dir)
+	}
 	if strings.EqualFold(filepath.Ext(archivePath), ".rar") {
 		return nil, errors.New("zapret: RAR не поддерживается — возьми .zip с страницы релизов")
 	}
@@ -87,6 +93,119 @@ func Install(archivePath, dir string) ([]Strategy, error) {
 		return nil, errors.New("zapret: в архиве нет bin/winws.exe — это точно сборка zapret?")
 	}
 	return strategies, nil
+}
+
+// InstallDir copies an already-unpacked bundle into dir.
+//
+// It follows the same rule as the archive path: if the given folder is just a
+// wrapper holding the real bundle (which is what unpacking a release usually
+// produces — `zapret-discord-youtube-1.10.1/` inside the folder you unpacked
+// into), descend into it, so the installed layout is identical either way and
+// stored strategy paths keep working.
+func InstallDir(src, dir string) ([]Strategy, error) {
+	root, err := bundleRoot(src)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("zapret: не очистить каталог: %w", err)
+	}
+	if err := copyTree(root, dir); err != nil {
+		return nil, err
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	strategies := Discover(dir, names)
+	if len(strategies) == 0 {
+		return nil, errors.New("zapret: в папке нет стратегий (.bat) — это точно сборка zapret?")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "bin", "winws.exe")); err != nil {
+		return nil, errors.New("zapret: в папке нет bin/winws.exe — это точно сборка zapret?")
+	}
+	return strategies, nil
+}
+
+// bundleRoot returns the directory that actually holds the bundle: src itself,
+// or its single subdirectory when src is a wrapper.
+func bundleRoot(src string) (string, error) {
+	if hasBundleMarkers(src) {
+		return src, nil
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return "", fmt.Errorf("zapret: не прочитать папку: %w", err)
+	}
+	var dirs []string
+	for _, e := range entries {
+		if e.IsDir() {
+			dirs = append(dirs, filepath.Join(src, e.Name()))
+		}
+	}
+	// Exactly one candidate: descending is unambiguous. With several, guessing
+	// would be worse than reporting that this is not a bundle.
+	if len(dirs) == 1 && hasBundleMarkers(dirs[0]) {
+		return dirs[0], nil
+	}
+	return src, nil
+}
+
+// hasBundleMarkers reports whether a directory looks like an unpacked bundle.
+func hasBundleMarkers(dir string) bool {
+	if _, err := os.Stat(filepath.Join(dir, "bin", "winws.exe")); err != nil {
+		return false
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() && strings.EqualFold(filepath.Ext(e.Name()), ".bat") {
+			return true
+		}
+	}
+	return false
+}
+
+// copyTree copies a directory recursively.
+func copyTree(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
+		if err != nil {
+			return err
+		}
+		defer out.Close()
+		_, err = io.Copy(out, in)
+		return err
+	})
 }
 
 // extractFile writes one archive member to dest.

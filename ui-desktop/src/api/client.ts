@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
+  ZapretPick,
   ZapretBundle,
   AttemptsEvent,
   BatchImportResult,
@@ -237,9 +238,31 @@ export const api = {
     return invoke<ZapretBundle>("import_zapret", { data: toBase64(zip) });
   },
 
+  /**
+   * Install a bundle from a filesystem path — an archive or an already-unpacked
+   * folder.
+   *
+   * A dropped folder has no bytes to send, so this is the only way to accept
+   * one; Tauri's drag-drop supplies the real path.
+   */
+  importZapretPath(path: string): Promise<ZapretBundle> {
+    return invoke<ZapretBundle>("import_zapret", { path });
+  },
+
   /** The installed bundle's strategies; empty when nothing is imported yet. */
   listZapret(): Promise<ZapretBundle> {
     return invoke<ZapretBundle>("list_zapret");
+  },
+
+  /**
+   * Probe every installed strategy and report which one to use.
+   *
+   * Slow by nature — each strategy needs the packet filter attached, the control
+   * requests made, and a clean detach before the next — so the caller should
+   * show progress rather than block silently.
+   */
+  pickZapret(): Promise<ZapretPick> {
+    return invoke<ZapretPick>("pick_zapret");
   },
 
   /**
