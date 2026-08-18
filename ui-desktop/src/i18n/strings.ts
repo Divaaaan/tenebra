@@ -584,6 +584,25 @@ export interface Strings {
     leakDnsResolvers: string;
   };
 
+  blocklist: {
+    title: string;
+    /** One line explaining what the panel takes and where server links go. */
+    hint: string;
+    /** Text inside the drop zone. */
+    dropHint: string;
+    loading: string;
+    /** Shown when the dropped file is not an accepted format. */
+    badFile: string;
+    /** Unit after a rule count, e.g. "12 400 rules". */
+    rules: string;
+    /** Placeholder while a list is still being parsed. */
+    counting: string;
+    remove: string;
+    close: string;
+    /** Label of the settings row that opens the panel. */
+    open: string;
+  };
+
   check: {
     /** Label of the action that probes every node end to end. */
     run: string;
@@ -1040,6 +1059,19 @@ const en: Strings = {
     leakDnsUnavailable: "Couldn't run the DNS probe. This is not a pass.",
     leakDnsResolvers: "Resolvers",
   },
+  blocklist: {
+    title: "Blocklist",
+    hint: "Drop an archive here. Server subscriptions go in the link field on the servers pane.",
+    dropHint: "Drop a blocklist archive, or click to pick one",
+    loading: "Reading…",
+    badFile: "Unsupported file. Expected .zip, .txt, .lst or .srs.",
+    rules: "rules",
+    counting: "reading…",
+    remove: "Remove",
+    close: "Close",
+    open: "Open",
+  },
+
   check: {
     run: "Check nodes",
     running: "Checking",
@@ -1485,6 +1517,19 @@ const ru: Strings = {
     leakDnsUnavailable: "Не удалось выполнить проверку DNS. Это не гарантия.",
     leakDnsResolvers: "Резолверы",
   },
+  blocklist: {
+    title: "Запрет",
+    hint: "Перетащи сюда архив со списком. Ссылка на подписку VPN — в поле на вкладке серверов.",
+    dropHint: "Перетащи архив запрета или нажми, чтобы выбрать",
+    loading: "Читаю…",
+    badFile: "Такой файл не подойдёт. Нужен .zip, .txt, .lst или .srs.",
+    rules: "правил",
+    counting: "читаю…",
+    remove: "Убрать",
+    close: "Закрыть",
+    open: "Открыть",
+  },
+
   check: {
     run: "Проверить узлы",
     running: "Проверяю",
