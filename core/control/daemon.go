@@ -20,6 +20,7 @@ import (
 	"github.com/Divaaaan/tenebra/core/singbox"
 	"github.com/Divaaaan/tenebra/core/subscription"
 	"github.com/Divaaaan/tenebra/core/tunguard"
+	"github.com/Divaaaan/tenebra/core/zapret"
 )
 
 // Runner owns one sing-box process. It is defined here, not in an adapter
@@ -116,11 +117,31 @@ type Daemon struct {
 	// again. It records the CHOICE, not the running state: whether the bypass is
 	// up lives in routing.ZapretActive, which is what routing reads. Guarded by mu.
 
+	// zapretAutoUpdate arms the background bundle updater (see
+	// RunZapretAutoUpdate). On by default: the bypass is the one component that
+	// expires — the censor learns the tricks a release shipped with — and a stale
+	// bundle fails exactly like a broken VPN, so leaving it to the user to notice
+	// is leaving them a symptom with no visible cause. Guarded by mu.
+	zapretAutoUpdate bool
+
+	// zapretLatest and zapretApply are the bundle-update mechanism, injected so a
+	// test can exercise the update path without reaching GitHub or writing a
+	// megabyte of archive. Set once at construction, then only read.
+	zapretLatest func(context.Context) (zapret.Release, error)
+	zapretApply  func(context.Context, string, zapret.Release) error
+
+	// zapretOpMu serializes every operation that drives the bypass: probing,
+	// starting, stopping and updating. They share one winws process and one
+	// directory on disk, and overlapping them replaces a bundle under a running
+	// filter. It is separate from mu, which must never be held across the minutes
+	// a probe run takes.
+	zapretOpMu sync.Mutex
+
 	mu           sync.Mutex
 	zapretActive string
-	routing routing.Options
-	state   State
-	tun     singbox.TunOptions
+	routing      routing.Options
+	state        State
+	tun          singbox.TunOptions
 	// proxyArmed records whether the daemon currently has the OS system proxy
 	// pointed at our mixed inbound, so disarmSystemProxy clears it exactly once and
 	// never touches a proxy we didn't set. Guarded by mu.
@@ -298,9 +319,9 @@ type Daemon struct {
 // with the stack pinned explicitly so the reported state always names it.
 func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 	d := &Daemon{
-		store:   store,
-		runner:  runner,
-		proxy:   realSystemProxy{},
+		store:  store,
+		runner: runner,
+		proxy:  realSystemProxy{},
 		// The presets are ON by default, which is the product: the user buys a
 		// subscription, pastes a link, drops the bypass archive and presses one
 		// button. Shipping them off would mean that button leaves games tunnelled
@@ -317,6 +338,16 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 			GamesDirect:     true,
 			VoiceDirect:     true,
 		}.Normalize(),
+		// Bundle updates default on for the same reason the presets do: a bypass
+		// that is a few releases behind is not slower, it stops working, and the
+		// failure is indistinguishable from a dead node.
+		zapretAutoUpdate: true,
+		zapretLatest: func(ctx context.Context) (zapret.Release, error) {
+			return zapret.LatestRelease(ctx, nil)
+		},
+		zapretApply: func(ctx context.Context, dir string, rel zapret.Release) error {
+			return zapret.Apply(ctx, nil, dir, rel)
+		},
 		// CacheDir pins sing-box's cache file to the writable store directory so
 		// the root launchd daemon (cwd "/", read-only) doesn't abort at startup;
 		// see singbox.TunOptions.CacheDir. Mode/MixedPort are seeded concrete (tun,
@@ -441,6 +472,10 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	// connect re-raises the strategy the probe chose instead of the bundle
 	// default.
 	d.zapretActive = ps.ZapretStrategy
+	// Absent (an old file) keeps automatic bundle updates on; only an explicit
+	// stored false holds the installed version.
+	d.zapretAutoUpdate = ps.ZapretAutoUpdate == nil || *ps.ZapretAutoUpdate
+	d.refreshZapretStateLocked()
 	d.routing = d.routing.Normalize()
 	// A stack value from a corrupt or hand-edited file must not reach sing-box;
 	// anything unknown keeps the default.
@@ -515,6 +550,7 @@ func (d *Daemon) settingsLocked() persistedSettings {
 	// struct outlives the lock (Save reads it), so it must not alias the live
 	// field a later write would change.
 	autoFailover := d.autoFailover
+	zapretAutoUpdate := d.zapretAutoUpdate
 	return persistedSettings{
 		Version:         settingsVersion,
 		SplitMode:       string(d.routing.SplitMode),
@@ -541,6 +577,9 @@ func (d *Daemon) settingsLocked() persistedSettings {
 		LastProfile:     d.lastProfile,
 		LastNode:        d.lastNode,
 		ZapretStrategy:  d.zapretActive,
+		// Copied into a local first for the same reason as autoFailover: the
+		// returned struct outlives the lock.
+		ZapretAutoUpdate: &zapretAutoUpdate,
 	}
 }
 
@@ -580,6 +619,10 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleStartZapret(ctx, req)
 	case CmdStopZapret:
 		return d.handleStopZapret(ctx, req)
+	case CmdUpdateZapret:
+		return d.handleUpdateZapret(ctx, req)
+	case CmdSetZapretAutoUpdate:
+		return d.handleSetZapretAutoUpdate(req)
 	case CmdSetRouting:
 		return d.handleSetRouting(req)
 	case CmdSetSplit:

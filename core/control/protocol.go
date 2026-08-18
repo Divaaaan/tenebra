@@ -48,21 +48,27 @@ const (
 	// CmdStartZapret turns the bypass on; CmdStopZapret turns it off.
 	CmdStartZapret = "start_zapret"
 	CmdStopZapret  = "stop_zapret"
-	CmdSetRouting         = "set_routing"
-	CmdSetSplit           = "set_split"
-	CmdSetKillSwitch      = "set_kill_switch"
-	CmdSetTLSFragment     = "set_tls_fragment"
-	CmdSetMultihop        = "set_multihop"
-	CmdSetProxyMode       = "set_proxy_mode"
-	CmdSetTun             = "set_tun"
-	CmdSetAutoconnect     = "set_autoconnect"
-	CmdSetAutoFailover    = "set_auto_failover"
-	CmdSetDNS             = "set_dns"
-	CmdSetRules           = "set_rules"
-	CmdSetCrashReports    = "set_crash_reports"
-	CmdLeakCheck          = "leak_check"
-	CmdRunStunCheck       = "run_stun_check"
-	CmdRunSpeedTest       = "run_speed_test"
+	// CmdUpdateZapret checks for a newer published bundle and installs it,
+	// downloading one outright when none is installed. It answers with the
+	// installed and latest versions and whether anything changed.
+	CmdUpdateZapret = "update_zapret"
+	// CmdSetZapretAutoUpdate arms or disarms the background bundle updater.
+	CmdSetZapretAutoUpdate = "set_zapret_auto_update"
+	CmdSetRouting          = "set_routing"
+	CmdSetSplit            = "set_split"
+	CmdSetKillSwitch       = "set_kill_switch"
+	CmdSetTLSFragment      = "set_tls_fragment"
+	CmdSetMultihop         = "set_multihop"
+	CmdSetProxyMode        = "set_proxy_mode"
+	CmdSetTun              = "set_tun"
+	CmdSetAutoconnect      = "set_autoconnect"
+	CmdSetAutoFailover     = "set_auto_failover"
+	CmdSetDNS              = "set_dns"
+	CmdSetRules            = "set_rules"
+	CmdSetCrashReports     = "set_crash_reports"
+	CmdLeakCheck           = "leak_check"
+	CmdRunStunCheck        = "run_stun_check"
+	CmdRunSpeedTest        = "run_speed_test"
 )
 
 // ConnState is the connection lifecycle state reported in State and state
@@ -165,7 +171,12 @@ type Request struct {
 	// on newlines, drops blanks/comments/duplicates, and counts unparseable lines
 	// as skipped rather than failing the whole import.
 	Links []string `json:"links,omitempty"`
-	// Name names the profile for import_subscription, import_link and import_links.
+	// Name names the profile for import_subscription, import_link and import_links,
+	// the strategy for start_zapret, and — for import_zapret sent as bytes — the
+	// dropped file's name, which is where the bundle's version is read from
+	// (release archives are named after their version). Optional there: a bundle
+	// imported without a name simply has an unknown version until the updater
+	// resolves it.
 	Name string `json:"name,omitempty"`
 	// Mode is the routing mode for set_routing (smart/global/direct) and also the
 	// split mode for set_split (off/exclude/include).
@@ -327,9 +338,20 @@ type State struct {
 	// omitempty drops only the nil (not-asked) case, letting the GUI tell "off"
 	// apart from "not asked". CrashReportsAsked carries the same has-been-asked
 	// bit explicitly so a consumer never has to lean on that pointer subtlety.
-	CrashReports      *bool  `json:"crash_reports,omitempty"`
-	CrashReportsAsked bool   `json:"crash_reports_asked,omitempty"`
-	Error             string `json:"error,omitempty"`
+	CrashReports      *bool `json:"crash_reports,omitempty"`
+	CrashReportsAsked bool  `json:"crash_reports_asked,omitempty"`
+	// Zapret* report the DPI bypass: whether it is running, which strategy is
+	// picked, which release of the bundle is installed ("" when none is, or when
+	// it was installed from a source carrying no version), and whether the bundle
+	// updates itself. The version is what lets a UI say "bypass 1.10.1" instead of
+	// leaving the user to guess whether the thing that stopped unblocking YouTube
+	// is old — the failure mode of a stale bundle is indistinguishable from a dead
+	// node, so the version has to be visible somewhere.
+	ZapretActive     bool   `json:"zapret_active,omitempty"`
+	ZapretStrategy   string `json:"zapret_strategy,omitempty"`
+	ZapretVersion    string `json:"zapret_version,omitempty"`
+	ZapretAutoUpdate bool   `json:"zapret_auto_update,omitempty"`
+	Error            string `json:"error,omitempty"`
 }
 
 // PingResult is one node's dial-latency probe outcome.
