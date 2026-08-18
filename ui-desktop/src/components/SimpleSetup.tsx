@@ -16,16 +16,18 @@ interface SimpleSetupProps {
 }
 
 /**
- * The two things a new user has to supply, on the same screen as the button.
+ * The one thing a new user has to supply, on the same screen as the button.
+ *
+ * It used to be two: the subscription link and the bypass archive. The archive is
+ * no longer asked for — the core fetches and installs a bundle on the first
+ * connect when there is none, so requiring the user to find a release page, pick
+ * the right asset and drag it in was asking them to do work the program can do.
+ * The drop target survives as an opt-in for someone who wants a specific bundle,
+ * folded away rather than standing in the path.
  *
  * Everything here disappears once it is done. A setup step that stays visible
  * after it is satisfied is clutter, and clutter is what this screen exists to
  * avoid — the finished state is a status word and one control.
- *
- * The steps are numbered and shown together rather than as a wizard: both are
- * things the user already has in hand (a link they were sold, an archive they
- * downloaded), and hiding the second behind the first would make the app feel
- * longer than it is.
  */
 export function SimpleSetup({
   hasProfile,
@@ -40,7 +42,9 @@ export function SimpleSetup({
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
 
-  if (hasProfile && hasBypass) return null;
+  // Only the link gates the screen. A missing bundle is not a missing step: the
+  // first connect installs one.
+  if (hasProfile) return null;
 
   const run = async (fn: () => Promise<void>) => {
     if (busy) return;
@@ -95,10 +99,10 @@ export function SimpleSetup({
       )}
 
       {!hasBypass && (
-        <div className="setup-step">
-          <span className="setup-num" aria-hidden="true">
-            {hasProfile ? "1" : "2"}
-          </span>
+        <details className="setup-optional">
+          <summary className="setup-optional-summary">
+            {t.simple.setupBypassOptional}
+          </summary>
           <div className="setup-body">
             <span className="setup-title">{t.simple.setupBypass}</span>
             <label
@@ -141,7 +145,7 @@ export function SimpleSetup({
               hidden
             />
           </div>
-        </div>
+        </details>
       )}
 
       {error && (

@@ -283,6 +283,12 @@ export interface Strings {
     /** Step 2 label: drop the bypass bundle. */
     setupBypass: string;
     setupBypassHint: string;
+    /**
+     * Summary of the folded-away manual bundle import. It has to say the thing
+     * happens by itself, otherwise a user who remembers the old flow goes looking
+     * for the step that is no longer there.
+     */
+    setupBypassOptional: string;
     /** Sub-line under the status when the bypass is running. */
     bypassOn: string;
     /** Reassurance line under the status word while connected. */
@@ -849,6 +855,7 @@ const en: Strings = {
     setupLinkPlaceholder: "https://…",
     setupBypass: "Drop the bypass archive here",
     setupBypassHint: "zapret archive or folder — drag it in, or click",
+    setupBypassOptional: "The bypass installs itself — or add your own bundle",
     bypassOn: "bypass on",
     statusOn: "You're protected",
     statusOff: "You're not connected",
@@ -1332,6 +1339,7 @@ const ru: Strings = {
     setupLinkPlaceholder: "https://…",
     setupBypass: "Закинь сюда запрет",
     setupBypassHint: "Архив или папка zapret — перетащи или нажми",
+    setupBypassOptional: "Обход поставится сам — или подложи свою сборку",
     bypassOn: "запрет включён",
     statusOn: "Вы под защитой",
     statusOff: "Вы не подключены",

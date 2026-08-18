@@ -220,6 +220,7 @@ func (d *Daemon) applyZapretState(running bool, strategy string) {
 // It does not rebuild a live tunnel: both callers are about to build one, and the
 // flag set here is what that build reads.
 func (d *Daemon) raiseZapretForConnect(ctx context.Context) bool {
+	d.installZapretIfMissing(ctx)
 	up := d.autoStartZapret(ctx)
 	d.mu.Lock()
 	d.routing.ZapretActive = up
@@ -231,6 +232,65 @@ func (d *Daemon) raiseZapretForConnect(ctx context.Context) bool {
 	d.refreshZapretStateLocked()
 	d.mu.Unlock()
 	return up
+}
+
+// zapretInstallBudget bounds the first-run bundle download so a connect cannot
+// hang on it. The published archive is a couple of megabytes and installs in
+// about a second and a half on a working link; a minute is far past that and far
+// short of "the button did nothing".
+const zapretInstallBudget = 60 * time.Second
+
+// installZapretIfMissing fetches the bypass bundle when the user has none, so a
+// first connect does not need one dragged in by hand.
+//
+// This is the difference between the product as described — paste a link, press
+// one button — and one that first asks the user to find a release page, pick the
+// right asset and unpack it. The bundle is not optional equipment: without it
+// YouTube and Discord go through the tunnel at full round-trip latency, which is
+// the thing the app exists to avoid.
+//
+// Bounded and best-effort by construction. A failure here is not a failed
+// connect: the tunnel alone still carries everything, just slower, and the log
+// says why. Held to the user's auto-update choice as well — someone who turned
+// updates off did not ask this app to fetch anything.
+func (d *Daemon) installZapretIfMissing(ctx context.Context) {
+	dir := filepath.Join(d.store.Dir(), zapretDirName)
+	if len(zapret.Discover(dir, dirFileNames(dir))) > 0 {
+		return
+	}
+	d.mu.Lock()
+	allowed := d.zapretAutoUpdate
+	d.mu.Unlock()
+	if !allowed {
+		return
+	}
+
+	d.emitLog(LogInfo, "zapret: сборки нет — ставлю сам")
+	ctx, cancel := context.WithTimeout(ctx, zapretInstallBudget)
+	defer cancel()
+	if _, to, ok, err := d.updateZapret(ctx); err != nil {
+		d.emitLog(LogWarn, fmt.Sprintf(
+			"zapret: не удалось поставить сборку (%v) — туннель работает без обхода", err))
+	} else if ok {
+		d.emitLog(LogInfo, fmt.Sprintf("zapret: поставлена сборка %s", to))
+	}
+}
+
+// dirFileNames lists the file names in dir, or nothing when it cannot be read —
+// which Discover reads as "no strategies", the same answer an empty directory
+// gives.
+func dirFileNames(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	return names
 }
 
 // handlePickZapret probes every installed strategy and reports which one to use.
