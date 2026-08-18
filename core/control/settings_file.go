@@ -108,6 +108,19 @@ type persistedSettings struct {
 	// is tolerated at load time and simply leaves the daemon idle.
 	LastProfile string `json:"last_profile,omitempty"`
 	LastNode    string `json:"last_node,omitempty"`
+
+	// ZapretStrategy remembers which DPI-bypass strategy was picked, so the
+	// measurement that chose it is made once rather than at every launch.
+	//
+	// Without it a restart falls back to the bundle's default strategy, which on
+	// this author's ISP is not the one that won: the probe run scored
+	// "general (FAKE TLS AUTO)" at 4/5 targets while plain "general" — the
+	// alphabetical default — did not. The user would then watch the app start,
+	// report the bypass active, and still fail to load video, with nothing on
+	// screen to suggest that a five-minute measurement had been quietly discarded.
+	// Absent (an old file, or a bundle never probed) reads back empty, which keeps
+	// the previous behaviour of launching the bundle default.
+	ZapretStrategy string `json:"zapret_strategy,omitempty"`
 }
 
 // settingsVersion is the current persisted-settings format version.

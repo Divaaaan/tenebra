@@ -129,6 +129,22 @@ type Options struct {
 	// cover. The two split the work rather than duplicating it.
 	ZapretActive bool
 
+	// ZapretCovered is the set of domains the running bypass actually acts on,
+	// read from the installed bundle's host lists (see zapret.Covered).
+	//
+	// It is what keeps "the bypass is on" from meaning "everything censored now
+	// works directly". The bundle's lists carry YouTube, Google and Discord and
+	// nothing else, while the blocked-services preset also lists Instagram, X,
+	// Anthropic and OpenAI — handing those to the direct path because a bypass is
+	// running does not slow them down, it breaks them, and on this ISP
+	// api.anthropic.com answers a forged 403 rather than timing out, so the
+	// breakage surfaces as a false authentication error in every tool above it.
+	//
+	// Empty means "coverage unknown": the routing layer then falls back to the
+	// narrow YouTube/Discord set every published bundle is built around, rather
+	// than assuming full coverage.
+	ZapretCovered []string
+
 	// UnblockServices pins the commonly-censored services (YouTube, Discord,
 	// Meta, X and friends) to the proxy by domain, ahead of the geo split.
 	//
@@ -264,6 +280,10 @@ func (o Options) Normalize() Options {
 	// the emitted config stay stable regardless of input order or casing.
 	n.RulesDirect = normalizeSuffixes(n.RulesDirect)
 	n.RulesProxy = normalizeSuffixes(n.RulesProxy)
+	// The bypass coverage comes from files on disk, so it gets the same treatment
+	// as user input: lowercased, trimmed, de-duplicated and sorted, which also
+	// makes the suffix comparison in coveredByZapret a plain string match.
+	n.ZapretCovered = normalizeSuffixes(n.ZapretCovered)
 	return n
 }
 

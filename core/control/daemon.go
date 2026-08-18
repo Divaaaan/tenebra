@@ -110,11 +110,13 @@ type Daemon struct {
 	// construction, then only read. nil disables the check.
 	newProbeRunner func() Runner
 
-	// zapretActive is the DPI-bypass strategy currently running, or empty. It is
-	// what a plain start_zapret re-launches, so the user's picked strategy
-	// survives a stop/start without them naming it again. Guarded by mu.
+	// zapretActive is the DPI-bypass strategy the user settled on, or empty. It is
+	// what a plain start_zapret re-launches, so the picked strategy survives a
+	// stop/start — and a restart, since it is persisted — without them naming it
+	// again. It records the CHOICE, not the running state: whether the bypass is
+	// up lives in routing.ZapretActive, which is what routing reads. Guarded by mu.
 
-	mu      sync.Mutex
+	mu           sync.Mutex
 	zapretActive string
 	routing routing.Options
 	state   State
@@ -434,6 +436,11 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	d.routing.RulesProxy = ps.RulesProxy
 	d.routing.PresetRuBanking = ps.PresetRuBanking
 	d.routing.PresetRuGov = ps.PresetRuGov
+	// The picked bypass strategy is restored, not the fact that it was running:
+	// nothing is launched here (loading never starts anything), but the next
+	// connect re-raises the strategy the probe chose instead of the bundle
+	// default.
+	d.zapretActive = ps.ZapretStrategy
 	d.routing = d.routing.Normalize()
 	// A stack value from a corrupt or hand-edited file must not reach sing-box;
 	// anything unknown keeps the default.
@@ -533,6 +540,7 @@ func (d *Daemon) settingsLocked() persistedSettings {
 		MultihopExitID:  d.multihop.ExitID,
 		LastProfile:     d.lastProfile,
 		LastNode:        d.lastNode,
+		ZapretStrategy:  d.zapretActive,
 	}
 }
 
