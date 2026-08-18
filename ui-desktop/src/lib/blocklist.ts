@@ -65,8 +65,59 @@ export function parseRuleLine(line: string): string | null {
   return s;
 }
 
+/**
+ * Pulls domains out of a JSON list.
+ *
+ * Covers the shapes blocklists actually ship as JSON: a sing-box rule-set
+ * (`{"rules":[{"domain":[…],"domain_suffix":[…]}]}`), a bare array of strings,
+ * and an object with a `domains`/`hosts` array. Anything else yields nothing and
+ * the caller falls back to line parsing, so a JSON file that is not a list is
+ * simply skipped rather than throwing.
+ */
+export function parseBlocklistJson(text: string): string[] {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    return [];
+  }
+
+  const out = new Set<string>();
+  const take = (v: unknown) => {
+    if (typeof v !== "string") return;
+    const rule = parseRuleLine(v);
+    if (rule) out.add(rule);
+  };
+  const walk = (node: unknown, depth: number) => {
+    if (depth > 6 || node == null) return;
+    if (Array.isArray(node)) {
+      node.forEach((n) => (typeof n === "string" ? take(n) : walk(n, depth + 1)));
+      return;
+    }
+    if (typeof node === "object") {
+      for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+        // Only harvest keys that mean "a name", so an unrelated string field
+        // (version, description) cannot become a rule.
+        if (/^(domain|domain_suffix|domain_keyword|domains|hosts|rules)$/.test(key)) {
+          walk(value, depth + 1);
+        } else if (typeof value === "object") {
+          walk(value, depth + 1);
+        }
+      }
+    }
+  };
+  walk(doc, 0);
+  return [...out];
+}
+
 /** Parses a whole list body into unique domain rules. */
 export function parseBlocklistText(text: string): string[] {
+  // A JSON body parsed line-by-line yields nothing useful, so try it first.
+  const trimmed = text.trimStart();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    const fromJson = parseBlocklistJson(text);
+    if (fromJson.length > 0) return fromJson;
+  }
   const seen = new Set<string>();
   for (const line of text.split(/\r?\n/)) {
     const rule = parseRuleLine(line);
@@ -103,8 +154,17 @@ export async function readBlocklistFile(file: File): Promise<ParsedBlocklist> {
   const rules = new Set<string>();
   const sources: string[] = [];
 
-  if (file.name.toLowerCase().endsWith(".zip")) {
-    const members = await readZip(await file.arrayBuffer());
+  const buf = await file.arrayBuffer();
+  const head = new Uint8Array(buf.slice(0, 4));
+
+  // Detect a zip by its signature, not its name. A download can arrive as
+  // `list.zip.part`, `blocklist` with no extension, or renamed entirely, and
+  // reading such a file as text produces "no rules found" for what is actually
+  // a perfectly good archive — which is exactly the failure this replaces.
+  const isZip = head[0] === 0x50 && head[1] === 0x4b && (head[2] === 0x03 || head[2] === 0x05);
+
+  if (isZip) {
+    const members = await readZip(buf);
     if (members.length === 0) {
       throw new Error("Архив пуст или не читается");
     }
@@ -121,9 +181,25 @@ export async function readBlocklistFile(file: File): Promise<ParsedBlocklist> {
     return { rules: [...rules], sources };
   }
 
-  const found = parseBlocklistText(await file.text());
+  const data = new Uint8Array(buf);
+  if (looksBinary(data)) {
+    // A binary that is not a zip: most often a compiled .srs rule-set, which
+    // only sing-box itself can read. Saying so beats "no rules found", which
+    // sends the user looking for a problem in a file that is simply not text.
+    throw new Error(
+      `${file.name}: это двоичный файл, а не список. Нужен текстовый список или zip с ним`,
+    );
+  }
+
+  const text = decode(data);
+  const found = parseBlocklistText(text);
   if (found.length === 0) {
-    throw new Error("В файле не нашлось ни одного правила");
+    // Report what was actually read, so the user can tell "wrong file" from
+    // "right file, unsupported syntax" without guessing.
+    const lines = text.split(/\r?\n/).filter((l) => l.trim() !== "").length;
+    throw new Error(
+      `${file.name}: прочитано ${lines} строк, но доменов в них не найдено`,
+    );
   }
   found.forEach((r) => rules.add(r));
   return { rules: [...rules], sources: [file.name] };
