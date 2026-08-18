@@ -63,8 +63,40 @@ func looksLikeTunnel(name string) bool {
 	return false
 }
 
+// isTunnel reports whether the adapter classified this interface as a tunnel, or
+// failing that whether its name looks like one.
+func isTunnel(ifc Iface) bool { return ifc.IsTunnel || looksLikeTunnel(ifc.Name) }
+
+// uplinkMetric is the best (lowest) default-route metric among the non-tunnel
+// interfaces — i.e. how good the machine's ordinary internet path is. Returns
+// false when no physical uplink carries a default route.
+func uplinkMetric(ifaces []Iface) (int, bool) {
+	best, found := 0, false
+	for _, ifc := range ifaces {
+		if !ifc.HasDefaultRoute || isTunnel(ifc) {
+			continue
+		}
+		if !found || ifc.RouteMetric < best {
+			best, found = ifc.RouteMetric, true
+		}
+	}
+	return best, found
+}
+
 // Conflicts returns the interfaces that would fight our tun for the default
-// route: tunnel-like, carrying a default route, and not our own.
+// route: tunnel-like, carrying a default route, not our own, and actually
+// preferred by the routing stack.
+//
+// That last condition is what keeps the guard usable. Some VPNs park a
+// default route at a deliberately terrible metric so it only applies as a last
+// resort — Radmin VPN on the author's machine sits at metric 9257 against the
+// NIC's 25, and Windows will never route through it. Refusing to connect because
+// of such an entry is a false alarm the user cannot act on, and a guard that
+// cries wolf gets switched off, taking the real protection with it. So a tunnel
+// counts as a conflict only when its metric is at least as good as the physical
+// uplink's, meaning it can genuinely win the route. With no physical uplink
+// carrying a default route, every foreign tunnel qualifies — there is nothing
+// else for it to lose to.
 //
 // ownNames lists the interface names this process already owns (its current tun,
 // and the name it is about to create), matched case-insensitively — reconnecting
@@ -76,6 +108,7 @@ func Conflicts(ifaces []Iface, ownNames ...string) []Iface {
 			own[strings.ToLower(n)] = struct{}{}
 		}
 	}
+	uplink, hasUplink := uplinkMetric(ifaces)
 
 	var out []Iface
 	for _, ifc := range ifaces {
@@ -85,8 +118,11 @@ func Conflicts(ifaces []Iface, ownNames ...string) []Iface {
 		if _, ours := own[strings.ToLower(ifc.Name)]; ours {
 			continue
 		}
-		if !ifc.IsTunnel && !looksLikeTunnel(ifc.Name) {
+		if !isTunnel(ifc) {
 			continue // a physical uplink's default route is normal, not a conflict
+		}
+		if hasUplink && ifc.RouteMetric > uplink {
+			continue // parked as a last resort; the stack will not choose it
 		}
 		out = append(out, ifc)
 	}

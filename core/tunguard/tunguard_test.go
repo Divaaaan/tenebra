@@ -42,6 +42,32 @@ func TestConflictsIgnoresOurOwnInterfaces(t *testing.T) {
 	}
 }
 
+func TestConflictsIgnoresTunnelParkedAtAWorseMetric(t *testing.T) {
+	// Measured on the author's machine 2026-08-18: Radmin VPN keeps a default
+	// route at metric 9257 against the NIC's 25, so Windows never routes through
+	// it. Flagging that is a false alarm the user cannot act on — and a guard
+	// that cries wolf gets switched off, taking the real protection with it.
+	ifaces := []Iface{
+		physical, // Ethernet, metric 25
+		{Name: "Radmin VPN", HasDefaultRoute: true, RouteMetric: 9257},
+		{Name: "tun0", IsTunnel: true, HasDefaultRoute: true, RouteMetric: 0},
+	}
+
+	got := Conflicts(ifaces, "tenebra")
+	if len(got) != 1 || got[0].Name != "tun0" {
+		t.Fatalf("Conflicts = %+v, want only tun0 (Radmin is parked at a losing metric)", got)
+	}
+}
+
+func TestConflictsFlagsEveryTunnelWhenThereIsNoUplink(t *testing.T) {
+	// With no physical default route there is nothing for a tunnel to lose to,
+	// so even a high metric wins by default and must still be reported.
+	ifaces := []Iface{{Name: "tun0", IsTunnel: true, HasDefaultRoute: true, RouteMetric: 9000}}
+	if got := Conflicts(ifaces, "tenebra"); len(got) != 1 {
+		t.Fatalf("Conflicts = %+v, want tun0 flagged", got)
+	}
+}
+
 func TestConflictsIgnoresPhysicalUplink(t *testing.T) {
 	if got := Conflicts([]Iface{physical}); len(got) != 0 {
 		t.Fatalf("Conflicts = %+v, want none — a NIC's default route is normal", got)
