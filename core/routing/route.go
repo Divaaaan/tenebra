@@ -85,11 +85,15 @@ func (o Options) RouteRules() []map[string]any {
 
 	// Per-app split tunnelling. process_name matches the executable file name,
 	// e.g. "chrome.exe". Placed before the geo split so an app rule wins.
+	// The games preset merges into the exclude list, so a switched-on preset and a
+	// hand-added app land in the same rule. It only affects exclude: pinning games
+	// to the proxy in include mode would be the opposite of what the preset means.
+	excludeApps := o.splitAppsWithPresets()
 	switch o.SplitMode {
 	case SplitExclude:
-		if len(o.SplitApps) > 0 {
+		if len(excludeApps) > 0 {
 			rules = append(rules,
-				route(map[string]any{"process_name": o.SplitApps}, tagDirect),
+				route(map[string]any{"process_name": excludeApps}, tagDirect),
 			)
 		}
 	case SplitInclude:
@@ -98,6 +102,25 @@ func (o Options) RouteRules() []map[string]any {
 				route(map[string]any{"process_name": o.SplitApps}, tagProxy),
 			)
 		}
+	default:
+		// With split tunnelling off entirely, the games preset still has to work —
+		// otherwise "keep games direct" would silently require the user to also
+		// turn on split mode and understand what it is.
+		if o.gamesDirectActive() && len(excludeApps) > 0 {
+			rules = append(rules,
+				route(map[string]any{"process_name": excludeApps}, tagDirect),
+			)
+		}
+	}
+
+	// Real-time UDP goes direct before anything else can claim it, since the
+	// latency it is escaping is added by the tunnel regardless of which rule
+	// would otherwise match.
+	if o.voiceDirectActive() {
+		rules = append(rules, route(map[string]any{
+			"network":    "udp",
+			"port_range": []string{voicePortRange},
+		}, tagDirect))
 	}
 
 	// In include mode the route final is direct and only the listed apps are
@@ -115,7 +138,11 @@ func (o Options) RouteRules() []map[string]any {
 			route(map[string]any{"domain_suffix": direct}, tagDirect),
 		)
 	}
-	if proxy := o.proxyRuleSuffixes(); len(proxy) > 0 {
+	// Proxy-pinned domains include the blocked-services preset. This sits before
+	// the geo split on purpose: googlevideo.com and friends resolve to RU cache
+	// nodes, and the geo rule would otherwise pin the video direct while the VPN
+	// reports itself connected.
+	if proxy := o.proxySuffixesWithPresets(); len(proxy) > 0 {
 		rules = append(rules,
 			route(map[string]any{"domain_suffix": proxy}, tagProxy),
 		)

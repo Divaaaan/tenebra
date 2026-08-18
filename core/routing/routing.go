@@ -116,6 +116,65 @@ type Options struct {
 	// as a local rule-set and is never fetched remotely.
 	AdBlock bool
 
+	// UnblockServices pins the commonly-censored services (YouTube, Discord,
+	// Meta, X and friends) to the proxy by domain, ahead of the geo split.
+	//
+	// It exists because smart mode alone does not reliably get them through. Smart
+	// mode sends RU-resolved addresses direct, and several of these services
+	// answer from inside Russia: `googlevideo.com`, where YouTube video actually
+	// streams from, usually resolves to a Google cache node hosted at the ISP. The
+	// geo rule then pins the video direct, and the user sees a connected VPN with
+	// a spinner where the video should be — a failure that looks like the VPN is
+	// broken when it is doing exactly what it was told.
+	//
+	// Matching by domain before the geo split is the only ordering that survives
+	// that, which is why this is a preset rather than advice to add rules by hand.
+	UnblockServices bool
+
+	// GamesDirect keeps game clients and their launchers on the direct outbound,
+	// so a match is played over the ISP path instead of through the exit node.
+	//
+	// This is the one split every user of a Russian ISP ends up building by hand,
+	// and building it by hand is where it goes wrong: miss `steamwebhelper.exe`
+	// and the Steam overlay stalls the game, miss `javaw.exe` and Minecraft
+	// servers time out. The preset ships the list so the common case is one
+	// switch rather than a dozen remembered executable names.
+	//
+	// Games are the traffic that least needs a tunnel and suffers most from one:
+	// nothing about a match is censored, while the detour adds the same latency
+	// measured for voice (239ms tunnelled vs 9ms direct on the author's machine)
+	// straight onto every input. Anti-cheat systems also flag the sudden change of
+	// exit address, so tunnelling a game can cost a ban on top of the lag.
+	//
+	// It composes with SplitApps rather than replacing it: the preset's names are
+	// merged into the user's exclude list, so a manually added app keeps working.
+	// Inert in direct mode, and — like VoiceDirect — never applied under
+	// KillSwitch, whose promise is that nothing escapes the tunnel.
+	GamesDirect bool
+
+	// VoiceDirect keeps real-time UDP (voice chat, game traffic) on the direct
+	// outbound instead of tunnelling it, trading exit-IP hiding for latency.
+	//
+	// It exists because the tunnel is the wrong shape for real-time media. A
+	// measurement on the author's machine: STUN through the tunnel answered in
+	// 239ms while the direct path answered in 9ms — a ~26x difference that is the
+	// entire distance between a usable voice call and an unusable one. Nothing in
+	// the proxy chain can close that gap; the packets are simply travelling to
+	// another country and back.
+	//
+	// The trade is real and belongs to the user, which is why it is off by
+	// default: with it on, a voice peer sees the ISP address rather than the exit
+	// node's, and a censor that blocks the voice UDP outright will break the call
+	// that would otherwise have survived inside the tunnel. Signalling (the TCP/
+	// HTTPS side that actually gets blocked) is untouched and keeps going through
+	// the proxy, which is what makes the split useful rather than merely faster.
+	//
+	// It is inert in direct mode (nothing is tunnelled anyway) and is deliberately
+	// NOT applied when KillSwitch is set: the kill switch's promise is that
+	// nothing leaves outside the tunnel, and quietly exempting a whole class of
+	// traffic would turn that promise into a lie.
+	VoiceDirect bool
+
 	// SplitMode and SplitApps configure per-application split tunnelling. Apps
 	// are matched on their executable file name (process_name). SplitMode off
 	// (the zero-equivalent after Normalize) leaves base routing untouched.
