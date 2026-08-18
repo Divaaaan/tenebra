@@ -240,6 +240,19 @@ export interface NodeCheckResult {
 }
 
 /**
+ * The full verdict of a `check_nodes` run: every node ranked best-first, plus the
+ * one to connect to.
+ *
+ * `best` is empty when nothing works, and the UI must say exactly that. Falling
+ * back to the least-bad node is the failure the command exists to prevent — the
+ * node that broke on 2026-08-18 was the one a "least bad" rule would have picked.
+ */
+export interface NodeCheck {
+  results: NodeCheckResult[];
+  best: string;
+}
+
+/**
  * Result of a batch link import (`import_links`): the single profile built from
  * all the valid links, plus how many links were imported and how many were
  * skipped because they didn't parse. Mirror of the core's wrapped response — the

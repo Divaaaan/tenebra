@@ -23,8 +23,8 @@ use tauri_plugin_notification::NotificationExt;
 
 use backend::{
     AttemptsSnapshot, Backend, ConnectionMode, ConnectionState, EventSink, ImportLinksResult,
-    LeakCheck, PingResult, Profile, RoutingMode, SpeedTest, SplitMode, State, StunCheck, TunStack,
-    ZapretActive, ZapretBundle, ZapretPick, ZapretUpdate, EVENT_ATTEMPTS, EVENT_LOG,
+    LeakCheck, NodeCheck, PingResult, Profile, RoutingMode, SpeedTest, SplitMode, State, StunCheck,
+    TunStack, ZapretActive, ZapretBundle, ZapretPick, ZapretUpdate, EVENT_ATTEMPTS, EVENT_LOG,
     EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
@@ -660,6 +660,17 @@ async fn ping(state: TauriState<'_, AppState>, profile: String) -> Result<PingLi
     .await
 }
 
+/// Measure what actually survives each node. Unlike `ping` this opens real
+/// connections through every node, so it takes seconds rather than milliseconds —
+/// the UI must show it running rather than appear frozen.
+#[tauri::command]
+async fn check_nodes(
+    state: TauriState<'_, AppState>,
+    profile: String,
+) -> Result<NodeCheck, String> {
+    off_thread(Arc::clone(&state.backend), move |b| b.check_nodes(profile)).await
+}
+
 #[tauri::command]
 async fn set_routing(state: TauriState<'_, AppState>, mode: RoutingMode) -> Result<State, String> {
     off_thread(Arc::clone(&state.backend), move |b| b.set_routing(mode)).await
@@ -962,6 +973,7 @@ pub fn run() {
             connect,
             disconnect,
             ping,
+            check_nodes,
             set_routing,
             set_split,
             set_kill_switch,
