@@ -584,6 +584,28 @@ export interface Strings {
     leakDnsResolvers: string;
   };
 
+  check: {
+    /** Label of the action that probes every node end to end. */
+    run: string;
+    running: string;
+    /** Row state while this node is being probed. */
+    probing: string;
+    /** Node carried a majority of the control targets. */
+    usable: string;
+    /** Node never answered at its address. */
+    stageDial: string;
+    /** Address answered, proxy handshake never completed. */
+    stageHandshake: string;
+    /** Tunnel came up, traffic did not survive it. */
+    stageProbe: string;
+    /** Shown on the node auto-selection picked. */
+    best: string;
+    /** Shown when no node carried a majority of targets. */
+    noneUsable: string;
+    /** "3/5 targets" style summary. */
+    coverage: string;
+  };
+
   units: {
     ms: string;
   };
@@ -1018,6 +1040,18 @@ const en: Strings = {
     leakDnsUnavailable: "Couldn't run the DNS probe. This is not a pass.",
     leakDnsResolvers: "Resolvers",
   },
+  check: {
+    run: "Check nodes",
+    running: "Checking",
+    probing: "probing",
+    usable: "works",
+    stageDial: "no answer",
+    stageHandshake: "handshake failed",
+    stageProbe: "no traffic",
+    best: "best",
+    noneUsable: "No node carried traffic. Nothing to auto-select.",
+    coverage: "targets",
+  },
   units: {
     ms: "ms",
   },
@@ -1450,6 +1484,18 @@ const ru: Strings = {
     leakDnsInconclusive: "Неопределённо — данных для вердикта недостаточно. Это не гарантия.",
     leakDnsUnavailable: "Не удалось выполнить проверку DNS. Это не гарантия.",
     leakDnsResolvers: "Резолверы",
+  },
+  check: {
+    run: "Проверить узлы",
+    running: "Проверяю",
+    probing: "проверка",
+    usable: "работает",
+    stageDial: "не отвечает",
+    stageHandshake: "рукопожатие не прошло",
+    stageProbe: "трафик не идёт",
+    best: "лучший",
+    noneUsable: "Ни один узел не пропустил трафик. Выбирать нечего.",
+    coverage: "целей",
   },
   units: {
     ms: "мс",

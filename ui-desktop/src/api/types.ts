@@ -211,6 +211,35 @@ export interface PingResult {
 }
 
 /**
+ * How far a probe got before it failed. Mirrors the core's `nodecheck.Stage`.
+ *
+ * The distinction is what a plain ping cannot express: `dial` means the address
+ * never answered, `handshake` means it answered TCP and then never completed the
+ * proxy handshake — a node in that state passes a TCP ping and looks like the
+ * *fastest* one — and `probe` means the tunnel came up but traffic did not
+ * survive it.
+ */
+export type CheckStage = "ok" | "dial" | "handshake" | "probe";
+
+/** One control request through one node. */
+export interface CheckTarget {
+  target: string;
+  stage: CheckStage;
+  /** Time to first byte in ms; meaningful only when stage is "ok". */
+  rttMs: number;
+}
+
+/**
+ * Everything measured through a single node. A node counts as usable only when a
+ * strict majority of its targets succeeded — one lucky destination is exactly
+ * how a black-holed node passes a naive check.
+ */
+export interface NodeCheckResult {
+  node: string;
+  targets: CheckTarget[];
+}
+
+/**
  * Result of a batch link import (`import_links`): the single profile built from
  * all the valid links, plus how many links were imported and how many were
  * skipped because they didn't parse. Mirror of the core's wrapped response — the
