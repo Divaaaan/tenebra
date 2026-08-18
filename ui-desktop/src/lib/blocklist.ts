@@ -1,21 +1,27 @@
+import { readZip } from "./zip";
+
 /**
- * Reading a user-supplied blocklist.
+ * Reading user-supplied blocklists.
  *
- * Accepts a plain list (.txt/.lst/.srs) or a .zip holding one or more of them,
- * because that is how blocklists are actually distributed — a release page hands
- * you an archive, and asking the user to unpack it first is the kind of friction
- * that ends with the feature unused.
+ * Two shapes have to work without the user thinking about it: the archive
+ * exactly as downloaded (release pages hand you a .zip, and asking someone to
+ * unpack it first is the friction that ends with the feature unused), and the
+ * unpacked folder dropped in whole. Hence: no extension filtering inside the
+ * archive, and multiple files accepted in one drop.
  *
- * The zip path is implemented against the format directly rather than pulling in
- * a library: the app ships in a webview that already has DecompressionStream, and
- * a dependency added for one archive read is a dependency to audit and update
- * forever in a privacy tool.
+ * Nothing is selected by name. A release archive names its lists anything at
+ * all — `hosts`, `list.aa`, `domains-2026-08.dat` — so membership is decided by
+ * what parses: a member that yields rules is a list, a member that yields none
+ * is a readme or a licence and is skipped. Judging by extension is what made an
+ * archive full of perfectly good lists import zero of them.
  */
 
 /** One parsed blocklist. */
 export interface ParsedBlocklist {
   /** Domain rules, lowercased and de-duplicated. */
   rules: string[];
+  /** Files that actually contributed rules, for reporting. */
+  sources: string[];
 }
 
 /** A rule line that is a comment or blank contributes nothing. */
@@ -30,8 +36,7 @@ function isSkippable(line: string): boolean {
  * Handles the three shapes these files come in interchangeably: a bare domain,
  * a hosts-file line (`0.0.0.0 ads.example`), and an AdBlock-syntax line
  * (`||ads.example^`). A reader that understood only one of them would silently
- * import zero rules from a perfectly good list — the failure mode this parsing
- * exists to avoid.
+ * import zero rules from a perfectly good list.
  */
 export function parseRuleLine(line: string): string | null {
   if (isSkippable(line)) return null;
@@ -70,107 +75,96 @@ export function parseBlocklistText(text: string): string[] {
   return [...seen];
 }
 
-// ── zip ──────────────────────────────────────────────────────────────────────
-
-const SIG_LOCAL = 0x04034b50;
-
 /**
- * Pulls every text member out of a zip.
+ * Rejects binary members before they are treated as text.
  *
- * It walks local file headers from the start rather than parsing the central
- * directory: the members are laid out in order, the header carries everything
- * needed (method, sizes, name), and skipping the directory keeps this to one
- * pass without weakening anything — a malformed archive fails the same way
- * either route.
- *
- * Only stored (0) and deflate (8) are handled; those are what real archives use.
- * Anything else is skipped rather than throwing, so one exotic member cannot
- * take down an import whose other files are fine.
+ * An archive carries icons and compiled data next to the lists; decoding those
+ * as UTF-8 produces replacement characters that would never parse into rules
+ * anyway, but scanning megabytes of them is wasted work. A NUL byte in the head
+ * is the cheap, reliable tell.
  */
-async function readZipMembers(buf: ArrayBuffer): Promise<string[]> {
-  const view = new DataView(buf);
-  const bytes = new Uint8Array(buf);
-  const out: string[] = [];
-  let off = 0;
-
-  while (off + 30 <= view.byteLength) {
-    if (view.getUint32(off, true) !== SIG_LOCAL) break;
-
-    const method = view.getUint16(off + 8, true);
-    const flags = view.getUint16(off + 6, true);
-    let compressed = view.getUint32(off + 18, true);
-    const nameLen = view.getUint16(off + 26, true);
-    const extraLen = view.getUint16(off + 28, true);
-    const nameStart = off + 30;
-    const dataStart = nameStart + nameLen + extraLen;
-
-    const name = new TextDecoder().decode(bytes.subarray(nameStart, nameStart + nameLen));
-
-    // Bit 3 means the sizes live in a trailing data descriptor, not the header.
-    // Streaming that correctly needs the central directory; rather than guess a
-    // length and read garbage, stop and report what was recovered so far.
-    if (flags & 0x08) break;
-    if (dataStart + compressed > view.byteLength) break;
-
-    const isDir = name.endsWith("/");
-    const looksTextual = /\.(txt|lst|srs|list|dat|conf)$/i.test(name) || !name.includes(".");
-
-    if (!isDir && looksTextual && (method === 0 || method === 8)) {
-      const slice = bytes.subarray(dataStart, dataStart + compressed);
-      try {
-        const text =
-          method === 0
-            ? new TextDecoder().decode(slice)
-            : await inflateRaw(slice);
-        out.push(text);
-      } catch {
-        // A member that will not inflate is skipped; the rest of the archive is
-        // still worth importing.
-      }
-    }
-
-    if (compressed === 0 && method === 0) compressed = 0;
-    off = dataStart + compressed;
-  }
-
-  return out;
+function looksBinary(data: Uint8Array): boolean {
+  const head = data.subarray(0, Math.min(data.length, 512));
+  return head.includes(0);
 }
 
-/** Inflates a raw deflate member using the platform's DecompressionStream. */
-async function inflateRaw(data: Uint8Array): Promise<string> {
-  const ds = new DecompressionStream("deflate-raw");
-  const stream = new Blob([data as BlobPart]).stream().pipeThrough(ds);
-  return await new Response(stream).text();
+/** Decodes bytes as UTF-8, tolerating malformed input. */
+function decode(data: Uint8Array): string {
+  return new TextDecoder("utf-8", { fatal: false }).decode(data);
 }
 
 /**
- * Reads a dropped file into rules.
+ * Reads one file into rules: an archive, or a plain list.
  *
  * Throws with a message meant for the user rather than a stack: this runs on a
- * file they just chose, so the only useful thing to say is what is wrong with
- * that file.
+ * file they just chose, so the only useful thing to say is what is wrong with it.
  */
-export async function readBlocklist(file: File): Promise<ParsedBlocklist> {
-  const name = file.name.toLowerCase();
+export async function readBlocklistFile(file: File): Promise<ParsedBlocklist> {
+  const rules = new Set<string>();
+  const sources: string[] = [];
 
-  if (name.endsWith(".zip")) {
-    const members = await readZipMembers(await file.arrayBuffer());
+  if (file.name.toLowerCase().endsWith(".zip")) {
+    const members = await readZip(await file.arrayBuffer());
     if (members.length === 0) {
-      throw new Error("В архиве нет подходящих списков");
+      throw new Error("Архив пуст или не читается");
     }
-    const seen = new Set<string>();
-    for (const body of members) {
-      for (const rule of parseBlocklistText(body)) seen.add(rule);
+    for (const m of members) {
+      if (looksBinary(m.data)) continue;
+      const found = parseBlocklistText(decode(m.data));
+      if (found.length === 0) continue; // readme, licence, changelog
+      found.forEach((r) => rules.add(r));
+      sources.push(m.name);
     }
-    if (seen.size === 0) {
-      throw new Error("В архиве не нашлось ни одного правила");
+    if (rules.size === 0) {
+      throw new Error(`В архиве ${members.length} файлов, но правил не нашлось`);
     }
-    return { rules: [...seen] };
+    return { rules: [...rules], sources };
   }
 
-  const rules = parseBlocklistText(await file.text());
-  if (rules.length === 0) {
+  const found = parseBlocklistText(await file.text());
+  if (found.length === 0) {
     throw new Error("В файле не нашлось ни одного правила");
   }
-  return { rules };
+  found.forEach((r) => rules.add(r));
+  return { rules: [...rules], sources: [file.name] };
 }
+
+/**
+ * Reads a whole drop: one archive, or every file of an unpacked folder at once.
+ *
+ * Files that yield nothing are skipped silently — dropping an unpacked release
+ * means dropping its readme and licence too, and complaining about them would
+ * turn a successful import into an error message. Only a drop where NOTHING
+ * parsed is an error, because then the user genuinely dropped the wrong thing.
+ */
+export async function readBlocklistFiles(files: File[]): Promise<ParsedBlocklist> {
+  if (files.length === 0) {
+    throw new Error("Нечего читать");
+  }
+  if (files.length === 1) {
+    return readBlocklistFile(files[0]);
+  }
+
+  const rules = new Set<string>();
+  const sources: string[] = [];
+  let failures = 0;
+
+  for (const f of files) {
+    try {
+      const parsed = await readBlocklistFile(f);
+      parsed.rules.forEach((r) => rules.add(r));
+      sources.push(...(parsed.sources.length > 0 ? parsed.sources : [f.name]));
+    } catch {
+      failures += 1;
+    }
+  }
+
+  if (rules.size === 0) {
+    throw new Error(`Ни в одном из ${files.length} файлов не нашлось правил`);
+  }
+  void failures;
+  return { rules: [...rules], sources };
+}
+
+/** Back-compat alias for the single-file entry point. */
+export const readBlocklist = readBlocklistFile;

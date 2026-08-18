@@ -6,7 +6,7 @@ import { ConnectionPanel } from "./components/ConnectionPanel";
 import { ServerList, type ServerRow } from "./components/ServerList";
 import { BottomBar } from "./components/BottomBar";
 import { BlocklistPanel, type BlocklistSource } from "./components/BlocklistPanel";
-import { readBlocklist } from "./lib/blocklist";
+import { readBlocklistFiles } from "./lib/blocklist";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { UpdateConfirm } from "./components/UpdateConfirm";
 import { DaemonSkewBanner } from "./components/DaemonSkewBanner";
@@ -79,13 +79,20 @@ export function App() {
   const [blocklistOpen, setBlocklistOpen] = useState(false);
   const [blocklists, setBlocklists] = useState<BlocklistSource[]>([]);
 
-  const importBlocklist = useCallback(async (file: File) => {
-    const parsed = await readBlocklist(file);
+  const importBlocklist = useCallback(async (files: File[]) => {
+    const parsed = await readBlocklistFiles(files);
+    // One drop is one entry, however many files it held: dropping an unpacked
+    // release means dropping a dozen files, and listing each would bury the one
+    // number that matters — how many rules are now loaded.
+    const label =
+      files.length === 1
+        ? files[0].name
+        : `${files[0].name} + ${files.length - 1}`;
     setBlocklists((prev) => [
-      // Re-importing the same file replaces it instead of stacking duplicates,
+      // Re-importing the same source replaces it instead of stacking duplicates,
       // which is what happens when a user re-drops an updated list.
-      ...prev.filter((s) => s.label !== file.name),
-      { id: file.name, label: file.name, rules: parsed.rules.length },
+      ...prev.filter((s) => s.label !== label),
+      { id: label, label, rules: parsed.rules.length },
     ]);
   }, []);
 
@@ -680,7 +687,7 @@ export function App() {
       {blocklistOpen && (
         <BlocklistPanel
           sources={blocklists}
-          onImportFile={importBlocklist}
+          onImportFiles={importBlocklist}
           onRemove={removeBlocklist}
           onClose={() => setBlocklistOpen(false)}
         />
