@@ -17,9 +17,10 @@ import (
 // OS-specific pieces) and reports plainly that the feature is Windows-only
 // rather than failing somewhere deeper with a confusing error.
 type Runner struct {
-	Dir          string
-	Settle       time.Duration
-	ProbeTimeout time.Duration
+	Dir               string
+	Settle            time.Duration
+	ProbeTimeout      time.Duration
+	KeepVoiceInTunnel bool
 }
 
 var errUnsupported = errors.New("zapret: поддерживается только на Windows")

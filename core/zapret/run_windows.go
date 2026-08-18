@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
@@ -28,6 +29,12 @@ type Runner struct {
 	Settle time.Duration
 	// ProbeTimeout bounds one control request.
 	ProbeTimeout time.Duration
+	// KeepVoiceInTunnel launches the strategy with its real-time-UDP block removed
+	// (see StripVoiceUDP). Set it when a tunnel is up and carrying voice: the
+	// block's whole purpose is to punch Discord's voice through the DPI on the
+	// direct path, and doing that while a tunnel exists takes the voice out of the
+	// tunnel and lands it where its servers are blocked by address.
+	KeepVoiceInTunnel bool
 }
 
 // NewRunner builds a Runner with defaults that hold up on a slow machine.
@@ -40,7 +47,7 @@ func (r *Runner) Start(ctx context.Context, s Strategy) (bool, error) {
 	if err := r.Stop(ctx); err != nil {
 		return false, err
 	}
-	cmd := exec.CommandContext(ctx, "cmd.exe", "/c", s.Path)
+	cmd := exec.CommandContext(ctx, "cmd.exe", "/c", r.launchPath(s))
 	cmd.Dir = r.Dir
 	if err := cmd.Start(); err != nil {
 		return false, fmt.Errorf("zapret: не запустить %s: %w", s.Name, err)
@@ -49,6 +56,37 @@ func (r *Runner) Start(ctx context.Context, s Strategy) (bool, error) {
 	go func() { _ = cmd.Wait() }()
 
 	return r.waitForWinws(ctx, r.Settle), nil
+}
+
+// launchPath is the .bat Start actually runs: the strategy's own file, or a
+// derived copy with the real-time-UDP block removed when the tunnel is carrying
+// voice.
+//
+// The copy goes in the bundle directory because every shipped strategy resolves
+// winws and the host lists relative to its own location; a copy elsewhere starts
+// a bypass that covers nothing while reporting success.
+//
+// Every failure falls back to the original file rather than refusing to start.
+// A bypass running with one unwanted block still carries YouTube, whereas no
+// bypass at all is the outage the user notices — and the voice conflict is
+// recoverable by other means, an unstarted strategy is not.
+func (r *Runner) launchPath(s Strategy) string {
+	if !r.KeepVoiceInTunnel {
+		return s.Path
+	}
+	data, err := os.ReadFile(s.Path)
+	if err != nil {
+		return s.Path
+	}
+	stripped, changed := StripVoiceUDP(string(data))
+	if !changed {
+		return s.Path
+	}
+	derived := filepath.Join(r.Dir, derivedStrategyFile)
+	if err := os.WriteFile(derived, []byte(stripped), 0o644); err != nil {
+		return s.Path
+	}
+	return derived
 }
 
 // Stop terminates winws and waits for the packet filter to actually detach.

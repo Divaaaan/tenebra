@@ -62,6 +62,13 @@ func Discover(dir string, names []string) []Strategy {
 		if serviceScripts[strings.ToLower(base)] {
 			continue
 		}
+		// Files this app writes into the bundle start with a dot (see
+		// derivedStrategyFile). They are rewrites of a strategy already in the list,
+		// so listing them would offer the user the same bypass twice and make a probe
+		// run measure one candidate under two names.
+		if strings.HasPrefix(base, ".") {
+			continue
+		}
 		out = append(out, Strategy{Name: base, Path: filepath.Join(dir, n)})
 	}
 

@@ -124,6 +124,24 @@ func (d *Daemon) refreshZapretStateLocked() {
 	d.state.ZapretVersion = zapret.Version(filepath.Join(d.store.Dir(), zapretDirName))
 }
 
+// newZapretRunner builds a bypass runner that knows whether a tunnel is up.
+//
+// The one thing it decides is the bundle's real-time-UDP block (see
+// zapret.StripVoiceUDP). With no tunnel that block is what makes Discord's voice
+// work: it punches the UDP through the DPI on the direct path. With a tunnel up
+// it does the opposite — WinDivert takes those packets before the tunnel's
+// router ever sees them and reinjects them direct, onto a path where the voice
+// servers answer nothing, so the client reports "no route" while the routing
+// table says the tunnel should have carried it. Measured both ways on the
+// author's network: bypass running, voice UDP leaves from the ISP address and
+// never connects; bypass stopped, it leaves through the node and works — while
+// YouTube dies with it. Dropping just that block is what lets both work at once.
+func (d *Daemon) newZapretRunner(dir string) *zapret.Runner {
+	r := zapret.NewRunner(dir)
+	r.KeepVoiceInTunnel = d.snapshotState().State == StateConnected
+	return r
+}
+
 // excludeNodesFromZapret keeps the packet filter off the tunnel's own
 // connections by listing every stored node address in the bundle's exclusion
 // list, before a strategy is launched (winws reads the lists at startup).
@@ -248,7 +266,7 @@ func (d *Daemon) handlePickZapret(ctx context.Context, req Request) Response {
 	// tunnel would also poison its own measurements.
 	d.excludeNodesFromZapret(dir)
 
-	runner := zapret.NewRunner(dir)
+	runner := d.newZapretRunner(dir)
 	results, baseline, err := runner.Pick(ctx, strategies, zapret.DefaultTargets(), func(r zapret.Result) {
 		// Report as it goes: a silent multi-minute operation reads as a hang,
 		// and the user should see which strategy is being tried.
@@ -388,7 +406,7 @@ func (d *Daemon) handleStartZapret(ctx context.Context, req Request) Response {
 
 	d.excludeNodesFromZapret(dir)
 
-	runner := zapret.NewRunner(dir)
+	runner := d.newZapretRunner(dir)
 	started, err := runner.Start(ctx, chosen)
 	if err != nil {
 		return newError(req.ID, err.Error())
@@ -462,7 +480,7 @@ func (d *Daemon) autoStartZapret(ctx context.Context) bool {
 
 	d.excludeNodesFromZapret(dir)
 
-	runner := zapret.NewRunner(dir)
+	runner := d.newZapretRunner(dir)
 	started, err := runner.Start(ctx, chosen)
 	if err != nil || !started {
 		// The usual cause is elevation: WinDivert loads a driver, which an

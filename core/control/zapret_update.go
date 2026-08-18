@@ -99,7 +99,7 @@ func (d *Daemon) updateZapret(ctx context.Context) (from, to string, updated boo
 	strategy := d.zapretActive
 	d.mu.Unlock()
 
-	runner := zapret.NewRunner(dir)
+	runner := d.newZapretRunner(dir)
 	if wasRunning {
 		if stopErr := runner.Stop(ctx); stopErr != nil {
 			return from, rel.Version, false, stopErr
@@ -169,7 +169,7 @@ func (d *Daemon) restartZapretAfterUpdate(ctx context.Context, dir, strategy str
 	}
 
 	d.excludeNodesFromZapret(dir)
-	started, err := zapret.NewRunner(dir).Start(ctx, chosen)
+	started, err := d.newZapretRunner(dir).Start(ctx, chosen)
 	if err != nil || !started {
 		d.emitLog(LogWarn, fmt.Sprintf("zapret: %s не запустилась после обновления", chosen.Name))
 		d.applyZapretState(false, chosen.Name)
