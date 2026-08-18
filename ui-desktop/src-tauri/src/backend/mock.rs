@@ -9,10 +9,11 @@ use std::thread;
 use std::time::Duration;
 
 use super::{
-    Backend, ConnectionMode, ConnectionState, DnsResult, DnsStatus, EventSink, ExitMatch,
-    ImportLinksResult, LeakCheck, Multihop, NatType, Node, PingResult, Profile, Protocol,
-    RoutingMode, Source, SpeedTest, SplitMode, State, StunCheck, TunStack, Verdict, ZapretActive,
-    ZapretBundle, ZapretPick, ZapretResult, ZapretTarget, ZapretUpdate,
+    Backend, CheckStage, CheckTarget, ConnectionMode, ConnectionState, DnsResult, DnsStatus,
+    EventSink, ExitMatch, ImportLinksResult, LeakCheck, Multihop, NatType, Node, NodeCheck,
+    NodeCheckResult, PingResult, Profile, Protocol, RoutingMode, Source, SpeedTest, SplitMode,
+    State, StunCheck, TunStack, Verdict, ZapretActive, ZapretBundle, ZapretPick, ZapretResult,
+    ZapretTarget, ZapretUpdate,
 };
 
 /// How long the fake "dial" takes before flipping to connected.
@@ -435,6 +436,16 @@ impl Backend for MockBackend {
             .find(|p| p.id == profile)
             .ok_or("profile not found")?;
         Ok(synth_ping(p))
+    }
+
+    fn check_nodes(&self, profile: String) -> Result<NodeCheck, String> {
+        let inner = self.shared.inner.lock().unwrap();
+        let p = inner
+            .profiles
+            .iter()
+            .find(|p| p.id == profile)
+            .ok_or("profile not found")?;
+        Ok(synth_check(p))
     }
 
     fn set_routing(&self, mode: RoutingMode) -> Result<State, String> {
@@ -891,6 +902,63 @@ fn synth_ping(p: &Profile) -> Vec<PingResult> {
             }
         })
         .collect()
+}
+
+/// Deterministic synthetic node check, built so the demo shows the case the
+/// command exists for rather than a tidy one.
+///
+/// It reuses `synth_ping`, then deliberately breaks one node that the ping says
+/// is fine and fast: the "answers TCP, carries nothing" exit. Without such a node
+/// in the demo, the panel looks like a slower ping and the reason to run it is
+/// invisible. A node the ping calls unreachable fails at `dial`, which is the
+/// honest mapping.
+fn synth_check(p: &Profile) -> NodeCheck {
+    const TARGETS: [&str; 3] = [
+        "https://www.gstatic.com/generate_204",
+        "https://www.youtube.com/generate_204",
+        "https://discord.com/robots.txt",
+    ];
+    let pings = synth_ping(p);
+    // The black hole is the fastest *reachable* node, so the demo shows a check
+    // overruling the ping rather than agreeing with it.
+    let black_hole = pings
+        .iter()
+        .filter(|r| r.ok)
+        .min_by_key(|r| r.rtt_ms)
+        .map(|r| r.node.clone());
+
+    let results: Vec<NodeCheckResult> = pings
+        .iter()
+        .map(|r| {
+            let stage = if !r.ok {
+                CheckStage::Dial
+            } else if Some(&r.node) == black_hole.as_ref() {
+                CheckStage::Handshake
+            } else {
+                CheckStage::Ok
+            };
+            NodeCheckResult {
+                node: r.node.clone(),
+                targets: TARGETS
+                    .iter()
+                    .map(|t| CheckTarget {
+                        target: (*t).into(),
+                        stage,
+                        rtt_ms: if stage == CheckStage::Ok { r.rtt_ms } else { 0 },
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
+
+    let best = results
+        .iter()
+        .filter(|r| r.targets.iter().all(|t| t.stage == CheckStage::Ok))
+        .min_by_key(|r| r.targets.first().map(|t| t.rtt_ms).unwrap_or(i64::MAX))
+        .map(|r| r.node.clone())
+        .unwrap_or_default();
+
+    NodeCheck { results, best }
 }
 
 /// The id of the reachable node with the lowest synthetic ping, or `None` when
@@ -1675,7 +1743,9 @@ mod tests {
     fn connect_rejects_unknown_node_and_profile() {
         assert!(b_connect_err(Some("nope".into())));
         let (b, _) = backend();
-        assert!(b.connect("does-not-exist".into(), None, false, false).is_err());
+        assert!(b
+            .connect("does-not-exist".into(), None, false, false)
+            .is_err());
     }
 
     /// Helper: a connect to demo-sub with the given node that is expected to

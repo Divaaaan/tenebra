@@ -46,8 +46,11 @@ type TargetResult struct {
 	Target string `json:"target"`
 	Stage  Stage  `json:"stage"`
 	// RTTMs is the time to first byte in milliseconds; meaningful only when
-	// Stage is StageOK.
-	RTTMs int64 `json:"rtt_ms"`
+	// Stage is StageOK. Named on the wire the way the rest of the control
+	// protocol names it (see PingResult): the UI decodes both through the same
+	// bridge, and one snake_case field among camelCase ones decodes as zero
+	// rather than failing, so every measured latency would silently read as 0ms.
+	RTTMs int64 `json:"rttMs"`
 }
 
 // OK reports whether this target completed end to end.

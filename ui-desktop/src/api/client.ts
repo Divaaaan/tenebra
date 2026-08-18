@@ -9,6 +9,7 @@ import type {
   ConnectionMode,
   CrashReport,
   LogEvent,
+  NodeCheck,
   PingResult,
   Profile,
   RoutingMode,
@@ -101,6 +102,23 @@ export const api = {
     return invoke<{ results: PingResult[] }>("ping", { profile }).then(
       (r) => r.results,
     );
+  },
+
+  /**
+   * Measure what actually survives each node, and which one to connect to.
+   *
+   * Unlike {@link ping} this opens real connections through every node to
+   * several destinations, so it takes seconds, not milliseconds — call it behind
+   * a visible "checking" state. It is also the only one of the two whose answer
+   * can be trusted for picking an exit: a node whose proxy handshake has stopped
+   * answering still completes a TCP dial instantly and therefore *wins* a
+   * latency-ranked pick while carrying nothing.
+   *
+   * `best` is empty when nothing works, which must be surfaced as such rather
+   * than falling back to the least-bad node.
+   */
+  checkNodes(profile: string): Promise<NodeCheck> {
+    return invoke<NodeCheck>("check_nodes", { profile });
   },
 
   setRouting(mode: RoutingMode): Promise<State> {

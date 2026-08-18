@@ -24,10 +24,10 @@ use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
 use super::{
-    AttemptsSnapshot, Backend, ConnectionMode, EventSink, ImportLinksResult, LeakCheck, PingResult,
-    Profile, RoutingMode, SpeedTest, SplitMode, State, StunCheck, TunStack, ZapretActive,
-    ZapretBundle, ZapretPick, ZapretUpdate, EVENT_ATTEMPTS, EVENT_LOG, EVENT_PROFILES, EVENT_STATE,
-    EVENT_TRAFFIC,
+    AttemptsSnapshot, Backend, ConnectionMode, EventSink, ImportLinksResult, LeakCheck, NodeCheck,
+    PingResult, Profile, RoutingMode, SpeedTest, SplitMode, State, StunCheck, TunStack,
+    ZapretActive, ZapretBundle, ZapretPick, ZapretUpdate, EVENT_ATTEMPTS, EVENT_LOG,
+    EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
 /// How long a request waits for its correlated response before giving up. The
@@ -325,6 +325,7 @@ const CMD_REFRESH_SUBSCRIPTION: &str = "refresh_subscription";
 const CMD_CONNECT: &str = "connect";
 const CMD_DISCONNECT: &str = "disconnect";
 const CMD_PING: &str = "ping";
+const CMD_CHECK_NODES: &str = "check_nodes";
 const CMD_SET_ROUTING: &str = "set_routing";
 const CMD_SET_SPLIT: &str = "set_split";
 const CMD_SET_KILL_SWITCH: &str = "set_kill_switch";
@@ -443,6 +444,11 @@ impl<T: WireSession> Backend for T {
             .session()?
             .request_into(CMD_PING, obj([("profile", json!(profile))]))?;
         Ok(wrap.results)
+    }
+
+    fn check_nodes(&self, profile: String) -> Result<NodeCheck, String> {
+        self.session()?
+            .request_into(CMD_CHECK_NODES, obj([("profile", json!(profile))]))
     }
 
     fn set_routing(&self, mode: RoutingMode) -> Result<State, String> {

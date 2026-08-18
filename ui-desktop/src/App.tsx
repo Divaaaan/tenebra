@@ -36,6 +36,7 @@ import {
 } from "./api";
 import { dispatchDeepLink, type DeepLinkHandlers } from "./lib/deepLink";
 import { locate, type Region } from "./lib/region";
+import { useNodeCheck } from "./lib/useNodeCheck";
 import { useNodePings } from "./lib/useNodePings";
 import { useSessionClock, formatUptime } from "./lib/useSessionClock";
 import { useTrafficHistory } from "./lib/useTrafficHistory";
@@ -334,6 +335,9 @@ export function App() {
   // Latency probes for the browsed profile, feeding the per-row ping + the
   // dead flag, and the live ping stat for the connected node.
   const pings = useNodePings(selectedProfileId);
+  // What actually survives each node, measured on demand — the connect button
+  // runs it before choosing an exit (see handlePrimary).
+  const nodeCheck = useNodeCheck();
   const sessionSecs = useSessionClock(phase);
   const history = useTrafficHistory(phase, traffic.downRate, traffic.upRate);
 
@@ -424,8 +428,29 @@ export function App() {
           // order; it is read fresh (like autoconnect) so a Settings toggle takes
           // effect on the next connect without prop-threading. When a node is
           // selected, auto is moot — the core honours the explicit exit.
-          const node = selectedNodeId || undefined;
-          const auto = node ? undefined : getAutoFastest();
+          let node = selectedNodeId || undefined;
+          let auto = node ? undefined : getAutoFastest();
+
+          // Before letting latency decide, find out what actually carries
+          // traffic. A node whose proxy handshake has stopped answering still
+          // completes a TCP dial instantly, so it reads as the *fastest* node and
+          // wins a latency-ranked pick while every request through it hangs —
+          // which is precisely how a working-looking connect left the user with
+          // no internet. Measuring first costs seconds; picking blind costs the
+          // session.
+          if (!node) {
+            const best = await nodeCheck.run(selectedProfileId);
+            if (best) {
+              node = best;
+              auto = undefined;
+            } else {
+              // Nothing passed. Say so — and still try: the core's fallback walk
+              // tries nodes in turn and may get through where a one-shot probe
+              // did not, and refusing to connect at all would be a worse answer
+              // than a slow one.
+              pushToast(t.servers.noneUsable);
+            }
+          }
           try {
             await tenebra.connect(selectedProfileId, node, auto);
           } catch (e) {

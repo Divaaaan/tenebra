@@ -115,6 +115,14 @@ export interface Strings {
     insecureTitle: string;
     /** Per-profile summary; "{n}"/"{m}" interpolated (insecure / total nodes). */
     insecureSummary: string;
+    /** Shown while the connect button is measuring which nodes actually work. */
+    checking: string;
+    /**
+     * Shown when the measurement found no node that carries traffic. It says the
+     * connect is still being attempted, because it is — the core's fallback walk
+     * runs anyway, and a refusal would be a worse answer than a slow connect.
+     */
+    noneUsable: string;
   };
 
   /** Bottom bar: routing segmented control, kill-switch, quick actions. */
@@ -748,6 +756,8 @@ const en: Strings = {
     insecureTitle: "TLS verification off — on-path interception possible",
     insecureSummary:
       "{n} of {m} nodes skip TLS verification — on-path interception possible",
+    checking: "Checking which nodes actually work…",
+    noneUsable: "No node carried traffic — connecting anyway, node by node",
   },
   bottom: {
     routing: "Routing",
@@ -1228,6 +1238,8 @@ const ru: Strings = {
     insecureTitle: "Проверка TLS отключена — возможен перехват трафика",
     insecureSummary:
       "{n} из {m} узлов без проверки TLS — возможен перехват трафика",
+    checking: "Проверяю, какие узлы реально работают…",
+    noneUsable: "Ни один узел не пропустил трафик — подключаюсь перебором",
   },
   bottom: {
     routing: "Маршрут",

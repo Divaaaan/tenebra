@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   connect: vi.fn(),
   disconnect: vi.fn(),
   ping: vi.fn(),
+  checkNodes: vi.fn(),
   leakCheck: vi.fn(),
   onState: vi.fn(),
   onTraffic: vi.fn(),
@@ -53,6 +54,7 @@ vi.mock("./api", () => ({
     connect: mocks.connect,
     disconnect: mocks.disconnect,
     ping: mocks.ping,
+    checkNodes: mocks.checkNodes,
     leakCheck: mocks.leakCheck,
   },
   onState: mocks.onState,
@@ -205,6 +207,45 @@ describe("App simple mode", () => {
 
     await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
     expect(mocks.connect.mock.calls[0][0]).toBe("p1");
+  });
+
+  // The whole point of measuring before connecting: the exit is chosen by what
+  // carried traffic, not by what answered a TCP dial fastest. A node that dials
+  // instantly and then carries nothing is exactly what auto-select used to pick.
+  it("connects to the node the check picked, not to auto", async () => {
+    mocks.checkNodes.mockResolvedValue({
+      best: "n-alive",
+      results: [
+        {
+          node: "n-alive",
+          targets: [
+            { target: "https://a.example/204", stage: "ok", rttMs: 120 },
+          ],
+        },
+      ],
+    });
+    localStorage.setItem(SIMPLE_KEY, "1");
+    await mountReady();
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
+    expect(mocks.checkNodes).toHaveBeenCalledWith("p1");
+    expect(mocks.connect.mock.calls[0][1]).toBe("n-alive");
+  });
+
+  // With nothing usable the connect must still be attempted — the core's
+  // fallback walk tries nodes in turn and may get through where one probe did
+  // not. Refusing to connect would be a worse answer than a slow connect.
+  it("still connects when the check finds no usable node", async () => {
+    mocks.checkNodes.mockResolvedValue({ best: "", results: [] });
+    localStorage.setItem(SIMPLE_KEY, "1");
+    await mountReady();
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
+    expect(mocks.connect.mock.calls[0][1]).toBeUndefined();
   });
 
   it("escapes back to the full shell from the advanced-view link", async () => {

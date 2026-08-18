@@ -367,6 +367,61 @@ pub struct PingResult {
     pub ok: bool,
 }
 
+/// How far a probe got through a node before it failed. Mirrors the core's
+/// `nodecheck.Stage`.
+///
+/// The distinction is the point of the whole command: `dial` means the address
+/// never answered, `handshake` means it answered TCP and then never completed the
+/// proxy handshake — the state a node was in when it passed a TCP ping as the
+/// *fastest* node and carried nothing — and `probe` means the tunnel came up but
+/// traffic did not survive it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CheckStage {
+    Ok,
+    Dial,
+    Handshake,
+    Probe,
+}
+
+/// One control request through one node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckTarget {
+    /// The probed URL, kept so the UI can name what failed rather than showing a
+    /// bare red dot.
+    pub target: String,
+    pub stage: CheckStage,
+    /// Time to first byte in milliseconds; meaningful only when stage is `Ok`.
+    /// Widened to i64 for the same reason as `PingResult::rtt_ms`.
+    pub rtt_ms: i64,
+}
+
+/// Everything measured through a single node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeCheckResult {
+    pub node: String,
+    #[serde(default)]
+    pub targets: Vec<CheckTarget>,
+}
+
+/// The full verdict of a `check_nodes` run: every node ranked best-first, plus
+/// the one auto-selection should take.
+///
+/// `best` is empty when nothing works. That is deliberate and must survive to the
+/// UI: with every exit broken there is no meaningful "fastest", and quietly
+/// offering the least-bad one is exactly the failure this command exists to
+/// prevent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeCheck {
+    #[serde(default)]
+    pub results: Vec<NodeCheckResult>,
+    #[serde(default)]
+    pub best: String,
+}
+
 /// The IP-vs-exit comparison outcome, mirroring the core's `ExitVerdict`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -613,6 +668,11 @@ pub trait Backend: Send + Sync + 'static {
     ) -> Result<State, String>;
     fn disconnect(&self) -> Result<State, String>;
     fn ping(&self, profile: String) -> Result<Vec<PingResult>, String>;
+    /// Measure what actually survives each node, rather than whether its address
+    /// accepts TCP. Slower than `ping` by design — it opens a real connection
+    /// through every node to several destinations — and it is the only one of the
+    /// two whose answer can be trusted to pick an exit.
+    fn check_nodes(&self, profile: String) -> Result<NodeCheck, String>;
     fn set_routing(&self, mode: RoutingMode) -> Result<State, String>;
     fn set_split(&self, mode: SplitMode, apps: Vec<String>) -> Result<State, String>;
     /// Arm or disarm the kill switch. The core persists the choice and, when a
