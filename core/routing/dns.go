@@ -118,7 +118,12 @@ func (o Options) dnsRules() []map[string]any {
 			"server":        dnsDirectTag,
 		})
 	}
-	if proxy := o.proxyRuleSuffixes(); len(proxy) > 0 {
+	// Includes the blocked-services preset, so a service pinned to the proxy also
+	// resolves through the proxy resolver. Without this the name would be resolved
+	// by the direct/ISP resolver — which for a censored service is exactly where a
+	// poisoned or filtered answer comes from, so the traffic would be tunnelled to
+	// an address the censor chose.
+	if proxy := o.proxySuffixesWithPresets(); len(proxy) > 0 {
 		rules = append(rules, map[string]any{
 			"domain_suffix": proxy,
 			"action":        "route",
