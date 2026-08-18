@@ -34,6 +34,7 @@ func (d *Daemon) handleImportZapret(req Request) Response {
 		if err != nil {
 			return newError(req.ID, err.Error())
 		}
+		d.recordImportedZapret(dir, req.Path)
 		return zapretBundleResponse(req.ID, dir, strategies)
 	}
 
@@ -67,7 +68,28 @@ func (d *Daemon) handleImportZapret(req Request) Response {
 	if err != nil {
 		return newError(req.ID, err.Error())
 	}
+	// The temp file's name carries no version; the name the user dropped does.
+	d.recordImportedZapret(dir, req.Name)
 	return zapretBundleResponse(req.ID, dir, strategies)
+}
+
+// recordImportedZapret stamps an imported bundle with the version read from the
+// file or folder name it came from, and refreshes the reported state.
+//
+// Without the stamp the first update check sees "unknown" and re-downloads the
+// release the user just installed by hand — harmless but daft. The release
+// archives are named after their version, so the name is a real answer; a name
+// that carries none leaves the version empty, which the updater treats as "older
+// than anything published" and corrects on its next run.
+func (d *Daemon) recordImportedZapret(dir, source string) {
+	if v := zapret.VersionFromName(source); v != "" {
+		if err := zapret.WriteVersion(dir, v); err != nil {
+			d.emitLog(LogWarn, fmt.Sprintf("zapret: не записать версию сборки: %v", err))
+		}
+	}
+	d.mu.Lock()
+	d.refreshZapretStateLocked()
+	d.mu.Unlock()
 }
 
 // zapretBundleResponse renders the installed-bundle reply shared by the archive
@@ -85,6 +107,21 @@ func zapretBundleResponse(id int64, dir string, strategies []zapret.Strategy) Re
 		return newError(id, err.Error())
 	}
 	return resp
+}
+
+// refreshZapretStateLocked mirrors the bypass's state into the reported status.
+// Callers must hold d.mu.
+//
+// The version is read from disk here rather than cached in a field because the
+// bundle directory is the only place it can be authoritative: an update, an
+// import, or a user replacing the folder by hand all change it, and a cached
+// copy would keep reporting a version that is no longer installed. Status is not
+// hot enough for one small file read to matter.
+func (d *Daemon) refreshZapretStateLocked() {
+	d.state.ZapretActive = d.routing.ZapretActive
+	d.state.ZapretStrategy = d.zapretActive
+	d.state.ZapretAutoUpdate = d.zapretAutoUpdate
+	d.state.ZapretVersion = zapret.Version(filepath.Join(d.store.Dir(), zapretDirName))
 }
 
 // excludeNodesFromZapret keeps the packet filter off the tunnel's own
@@ -143,6 +180,7 @@ func (d *Daemon) applyZapretState(running bool, strategy string) {
 	d.routing.ZapretActive = running
 	d.routing.ZapretCovered = covered
 	d.routing = d.routing.Normalize()
+	d.refreshZapretStateLocked()
 	d.mu.Unlock()
 
 	d.persistSettings()
@@ -159,6 +197,11 @@ func (d *Daemon) applyZapretState(running bool, strategy string) {
 // the honest cost of the answer — the alternative is asking the user to try
 // twenty batch files by hand.
 func (d *Daemon) handlePickZapret(ctx context.Context, req Request) Response {
+	// One bypass at a time: a probe run stops and starts winws twenty times and
+	// must not race an update replacing the very files it is launching.
+	d.zapretOpMu.Lock()
+	defer d.zapretOpMu.Unlock()
+
 	dir := filepath.Join(d.store.Dir(), zapretDirName)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -278,6 +321,9 @@ func (d *Daemon) handleListZapret(req Request) Response {
 // This is the switch the user actually asked for. Probing answers "which one",
 // but the answer is worthless if nothing is running afterwards.
 func (d *Daemon) handleStartZapret(ctx context.Context, req Request) Response {
+	d.zapretOpMu.Lock()
+	defer d.zapretOpMu.Unlock()
+
 	dir := filepath.Join(d.store.Dir(), zapretDirName)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -358,6 +404,9 @@ func (d *Daemon) handleStartZapret(ctx context.Context, req Request) Response {
 // Returns whether the bypass ended up running, which decides where the censored
 // services are routed.
 func (d *Daemon) autoStartZapret(ctx context.Context) bool {
+	d.zapretOpMu.Lock()
+	defer d.zapretOpMu.Unlock()
+
 	dir := filepath.Join(d.store.Dir(), zapretDirName)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -420,6 +469,9 @@ func (d *Daemon) autoStartZapret(ctx context.Context) bool {
 // The stop is bounded: Runner.Stop waits for the packet filter to detach, and a
 // wait that outlived shutdown would hang the process on exit.
 func (d *Daemon) stopZapretQuietly() {
+	d.zapretOpMu.Lock()
+	defer d.zapretOpMu.Unlock()
+
 	dir := filepath.Join(d.store.Dir(), zapretDirName)
 	if _, err := os.Stat(dir); err != nil {
 		return
@@ -437,6 +489,9 @@ func (d *Daemon) stopZapretQuietly() {
 // default. Routing is told, so the censored services return to the tunnel
 // instead of being left pointing at the direct path the bypass no longer covers.
 func (d *Daemon) handleStopZapret(ctx context.Context, req Request) Response {
+	d.zapretOpMu.Lock()
+	defer d.zapretOpMu.Unlock()
+
 	runner := zapret.NewRunner(filepath.Join(d.store.Dir(), zapretDirName))
 	if err := runner.Stop(ctx); err != nil {
 		return newError(req.ID, err.Error())

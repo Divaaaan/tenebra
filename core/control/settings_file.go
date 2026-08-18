@@ -121,6 +121,13 @@ type persistedSettings struct {
 	// Absent (an old file, or a bundle never probed) reads back empty, which keeps
 	// the previous behaviour of launching the bundle default.
 	ZapretStrategy string `json:"zapret_strategy,omitempty"`
+
+	// ZapretAutoUpdate remembers whether the bundle updates itself. A *bool so the
+	// default can be on without a version bump: absent (an old file, or one written
+	// before the field existed) reads back as the on default, an explicit false is
+	// the user's choice to hold a version. Same shape, same reason, as
+	// AutoFailover.
+	ZapretAutoUpdate *bool `json:"zapret_auto_update,omitempty"`
 }
 
 // settingsVersion is the current persisted-settings format version.

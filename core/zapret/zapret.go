@@ -34,13 +34,13 @@ type Strategy struct {
 // the whole thing as a Windows service and would, if launched as a strategy,
 // silently change the system's configuration instead of testing anything.
 var serviceScripts = map[string]bool{
-	"service":        true,
-	"check_updates":  true,
-	"install_bin":    true,
-	"cleanup":        true,
-	"preset_russia":  true,
-	"blockcheck":     true,
-	"diagnostics":    true,
+	"service":       true,
+	"check_updates": true,
+	"install_bin":   true,
+	"cleanup":       true,
+	"preset_russia": true,
+	"blockcheck":    true,
+	"diagnostics":   true,
 }
 
 // Discover turns a directory listing into the strategies worth probing.
@@ -88,8 +88,8 @@ type TargetResult struct {
 
 // Result is a strategy's measured outcome.
 type Result struct {
-	Strategy Strategy       `json:"-"`
-	Name     string         `json:"strategy"`
+	Strategy Strategy `json:"-"`
+	Name     string   `json:"strategy"`
 	// Started reports whether winws actually came up. A strategy whose process
 	// never started scores zero for a reason worth telling apart from "started
 	// and did not help".

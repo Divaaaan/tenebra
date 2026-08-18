@@ -92,6 +92,13 @@ func run(usePipe, useSocket bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Keep the DPI-bypass bundle current in the background. It is the one piece
+	// whose value expires: the censor learns what a release does, upstream answers
+	// with new strategies, and a stale bundle fails exactly like a dead node — the
+	// user sees YouTube stop loading with nothing to point at. The loop ends with
+	// ctx and never blocks serving.
+	go daemon.RunZapretAutoUpdate(ctx)
+
 	switch {
 	case usePipe:
 		err = servePipe(ctx, daemon)
