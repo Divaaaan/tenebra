@@ -117,14 +117,27 @@ describe("App simple mode", () => {
     });
   });
 
-  it("starts in the full shell on a fresh install, with the setup steps in it", async () => {
+  it("starts in the full shell, with the setup step in it on a fresh install", async () => {
     // The rich view is the default. What a first-run user lacked was never
-    // fewer controls — it was the two setup steps being somewhere else, so they
-    // are on the main screen instead of the shell being stripped.
+    // fewer controls — it was the setup being somewhere else, so it is on the
+    // main screen instead of the shell being stripped.
+    localStorage.removeItem(SIMPLE_KEY);
+    mocks.listProfiles.mockResolvedValue([]);
+    const { container } = renderWithProviders(<App />);
+    await waitFor(() =>
+      expect(container.querySelector(".setup")).toBeInTheDocument(),
+    );
+    expect(container.querySelector(".app--simple")).not.toBeInTheDocument();
+  });
+
+  // The bypass bundle is no longer a setup step: the core installs one on the
+  // first connect. With a subscription in place there is nothing left to ask for,
+  // so the setup block must be gone entirely — a step that cannot be skipped is
+  // exactly what this screen was built to remove.
+  it("asks for nothing once a subscription exists, even with no bypass bundle", async () => {
     localStorage.removeItem(SIMPLE_KEY);
     const { container } = await mountReady();
-    expect(container.querySelector(".app--simple")).not.toBeInTheDocument();
-    expect(container.querySelector(".setup")).toBeInTheDocument();
+    expect(container.querySelector(".setup")).not.toBeInTheDocument();
   });
 
   it("renders the full shell once the user has opted out", async () => {

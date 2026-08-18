@@ -313,6 +313,42 @@
   cursor: default;
 }
 
+/* The manual bundle import, folded away. It is no longer a step — the core
+   installs a bundle on the first connect — so it reads as a quiet aside rather
+   than something standing between the user and the button. */
+.setup-optional {
+  margin-top: var(--sp-2);
+}
+
+.setup-optional-summary {
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  cursor: pointer;
+  list-style: none;
+  transition: color var(--t-fast) var(--t-base);
+}
+
+.setup-optional-summary::-webkit-details-marker {
+  display: none;
+}
+
+.setup-optional-summary::before {
+  content: "+ ";
+}
+
+.setup-optional[open] .setup-optional-summary::before {
+  content: "− ";
+}
+
+.setup-optional-summary:hover {
+  color: var(--text);
+}
+
+.setup-optional .setup-body {
+  margin-top: var(--sp-3);
+}
+
 .setup-drop {
   display: grid;
   place-items: center;
