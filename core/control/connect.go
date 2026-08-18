@@ -45,6 +45,16 @@ func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 		return newError(req.ID, "connect: profile has no servers")
 	}
 
+	// Refuse to raise a second tun over another VPN's default route. Checked here
+	// — on the user-driven connect only — rather than inside startConnect, whose
+	// other callers (kill-switch relaunch, reconcile) fire while our own tunnel is
+	// already up or mid-teardown; blocking those would turn a recoverable blip
+	// into a tunnel that cannot come back. The user can retry with
+	// AllowTunConflict once they have read which interface is in the way.
+	if err := d.checkTunConflict(req.AllowTunConflict); err != nil {
+		return newError(req.ID, err.Error())
+	}
+
 	// A user-driven connect opens a fresh kill-switch relaunch budget.
 	d.mu.Lock()
 	d.relaunches = 0
