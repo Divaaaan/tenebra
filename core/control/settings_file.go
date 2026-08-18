@@ -30,6 +30,22 @@ type persistedSettings struct {
 	SplitMode string   `json:"split_mode,omitempty"`
 	SplitApps []string `json:"split_apps,omitempty"`
 
+	// RoutingMode remembers smart/global/direct. Without it a user who switched
+	// to global got smart back on the next launch, with no indication that their
+	// choice had been dropped — the UI reported the mode the daemon had reset to.
+	RoutingMode string `json:"routing_mode,omitempty"`
+
+	// PresetGamesDirect, PresetVoiceDirect and PresetUnblockServices remember the
+	// three routing presets. They are *bool for the same reason AutoFailover is:
+	// all three default ON, so absent (an old file, or one written before the
+	// fields existed) has to read back as on, and only an explicit false is the
+	// user's choice to turn one off. Stored as plain bools these would have read
+	// as "off" on the first launch after an upgrade and quietly moved games and
+	// voice back into the tunnel.
+	PresetGamesDirect     *bool `json:"preset_games_direct,omitempty"`
+	PresetVoiceDirect     *bool `json:"preset_voice_direct,omitempty"`
+	PresetUnblockServices *bool `json:"preset_unblock_services,omitempty"`
+
 	// KillSwitch remembers whether the user armed the kill switch. Absent in
 	// files written before the field existed, which reads back as false — off,
 	// matching the pre-kill-switch behaviour.

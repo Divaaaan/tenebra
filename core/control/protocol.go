@@ -56,19 +56,23 @@ const (
 	CmdSetZapretAutoUpdate = "set_zapret_auto_update"
 	CmdSetRouting          = "set_routing"
 	CmdSetSplit            = "set_split"
-	CmdSetKillSwitch       = "set_kill_switch"
-	CmdSetTLSFragment      = "set_tls_fragment"
-	CmdSetMultihop         = "set_multihop"
-	CmdSetProxyMode        = "set_proxy_mode"
-	CmdSetTun              = "set_tun"
-	CmdSetAutoconnect      = "set_autoconnect"
-	CmdSetAutoFailover     = "set_auto_failover"
-	CmdSetDNS              = "set_dns"
-	CmdSetRules            = "set_rules"
-	CmdSetCrashReports     = "set_crash_reports"
-	CmdLeakCheck           = "leak_check"
-	CmdRunStunCheck        = "run_stun_check"
-	CmdRunSpeedTest        = "run_speed_test"
+	// CmdSetPresets toggles the routing presets: games direct, real-time UDP
+	// direct, censored services unblocked. All three default on and each is
+	// independently switchable; an omitted field leaves that preset unchanged.
+	CmdSetPresets      = "set_presets"
+	CmdSetKillSwitch   = "set_kill_switch"
+	CmdSetTLSFragment  = "set_tls_fragment"
+	CmdSetMultihop     = "set_multihop"
+	CmdSetProxyMode    = "set_proxy_mode"
+	CmdSetTun          = "set_tun"
+	CmdSetAutoconnect  = "set_autoconnect"
+	CmdSetAutoFailover = "set_auto_failover"
+	CmdSetDNS          = "set_dns"
+	CmdSetRules        = "set_rules"
+	CmdSetCrashReports = "set_crash_reports"
+	CmdLeakCheck       = "leak_check"
+	CmdRunStunCheck    = "run_stun_check"
+	CmdRunSpeedTest    = "run_speed_test"
 )
 
 // ConnState is the connection lifecycle state reported in State and state
@@ -234,6 +238,18 @@ type Request struct {
 	Enabled bool   `json:"enabled,omitempty"`
 	EntryID string `json:"entry_id,omitempty"`
 	ExitID  string `json:"exit_id,omitempty"`
+	// Games, Voice and Services toggle the three routing presets for set_presets:
+	// game clients direct, real-time UDP direct, and the censored-services list
+	// through the bypass or the tunnel.
+	//
+	// Pointers, not plain bools: all three default to ON, so an omitted field has
+	// to mean "leave it alone" rather than "turn it off". With plain bools a UI
+	// flipping one switch would silently disarm the other two — and the two it
+	// disarmed are the ones that keep games and voice off the tunnel, i.e. the
+	// user would fix one thing and lose their ping.
+	Games    *bool `json:"games,omitempty"`
+	Voice    *bool `json:"voice,omitempty"`
+	Services *bool `json:"services,omitempty"`
 }
 
 // Response is a core -> UI reply to a Request, correlated by ID. Exactly one of

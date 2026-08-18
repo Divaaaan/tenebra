@@ -492,6 +492,16 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	d.routing.RulesProxy = ps.RulesProxy
 	d.routing.PresetRuBanking = ps.PresetRuBanking
 	d.routing.PresetRuGov = ps.PresetRuGov
+	// A stored mode is honoured; anything unrecognised (an old file, a hand-edit)
+	// keeps the smart default rather than handing sing-box a mode it will refuse.
+	if m := routing.Mode(ps.RoutingMode); m == routing.ModeSmart || m == routing.ModeGlobal || m == routing.ModeDirect {
+		d.routing.Mode = m
+	}
+	// The three presets default on: absent means on, only an explicit false is a
+	// user turning one off.
+	d.routing.GamesDirect = ps.PresetGamesDirect == nil || *ps.PresetGamesDirect
+	d.routing.VoiceDirect = ps.PresetVoiceDirect == nil || *ps.PresetVoiceDirect
+	d.routing.UnblockServices = ps.PresetUnblockServices == nil || *ps.PresetUnblockServices
 	// The picked bypass strategy is restored, not the fact that it was running:
 	// nothing is launched here (loading never starts anything), but the next
 	// connect re-raises the strategy the probe chose instead of the bundle
@@ -586,32 +596,39 @@ func (d *Daemon) settingsLocked() persistedSettings {
 	// field a later write would change.
 	autoFailover := d.autoFailover
 	zapretAutoUpdate := d.zapretAutoUpdate
+	games := d.routing.GamesDirect
+	voice := d.routing.VoiceDirect
+	services := d.routing.UnblockServices
 	return persistedSettings{
-		Version:         settingsVersion,
-		SplitMode:       string(d.routing.SplitMode),
-		SplitApps:       d.routing.SplitApps,
-		KillSwitch:      d.routing.KillSwitch,
-		TLSFragment:     d.routing.TLSFragment,
-		TunStack:        d.tun.Stack,
-		ProxyMode:       d.tun.Mode,
-		ProxyPort:       d.tun.MixedPort,
-		Autoconnect:     d.autoconnect,
-		AutoFailover:    &autoFailover,
-		CrashReports:    d.crashReports,
-		AdBlock:         d.routing.AdBlock,
-		IPv4Only:        d.routing.IPv4Only,
-		DNSRemote:       d.routing.DNSRemote,
-		DNSDirect:       d.routing.DNSDirect,
-		RulesDirect:     d.routing.RulesDirect,
-		RulesProxy:      d.routing.RulesProxy,
-		PresetRuBanking: d.routing.PresetRuBanking,
-		PresetRuGov:     d.routing.PresetRuGov,
-		Multihop:        d.multihop.Enabled,
-		MultihopEntryID: d.multihop.EntryID,
-		MultihopExitID:  d.multihop.ExitID,
-		LastProfile:     d.lastProfile,
-		LastNode:        d.lastNode,
-		ZapretStrategy:  d.zapretActive,
+		Version:               settingsVersion,
+		RoutingMode:           string(d.routing.Mode),
+		PresetGamesDirect:     &games,
+		PresetVoiceDirect:     &voice,
+		PresetUnblockServices: &services,
+		SplitMode:             string(d.routing.SplitMode),
+		SplitApps:             d.routing.SplitApps,
+		KillSwitch:            d.routing.KillSwitch,
+		TLSFragment:           d.routing.TLSFragment,
+		TunStack:              d.tun.Stack,
+		ProxyMode:             d.tun.Mode,
+		ProxyPort:             d.tun.MixedPort,
+		Autoconnect:           d.autoconnect,
+		AutoFailover:          &autoFailover,
+		CrashReports:          d.crashReports,
+		AdBlock:               d.routing.AdBlock,
+		IPv4Only:              d.routing.IPv4Only,
+		DNSRemote:             d.routing.DNSRemote,
+		DNSDirect:             d.routing.DNSDirect,
+		RulesDirect:           d.routing.RulesDirect,
+		RulesProxy:            d.routing.RulesProxy,
+		PresetRuBanking:       d.routing.PresetRuBanking,
+		PresetRuGov:           d.routing.PresetRuGov,
+		Multihop:              d.multihop.Enabled,
+		MultihopEntryID:       d.multihop.EntryID,
+		MultihopExitID:        d.multihop.ExitID,
+		LastProfile:           d.lastProfile,
+		LastNode:              d.lastNode,
+		ZapretStrategy:        d.zapretActive,
 		// Copied into a local first for the same reason as autoFailover: the
 		// returned struct outlives the lock.
 		ZapretAutoUpdate: &zapretAutoUpdate,
@@ -664,6 +681,8 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleSetRouting(req)
 	case CmdSetSplit:
 		return d.handleSetSplit(req)
+	case CmdSetPresets:
+		return d.handleSetPresets(req)
 	case CmdSetKillSwitch:
 		return d.handleSetKillSwitch(req)
 	case CmdSetTLSFragment:
@@ -1184,8 +1203,13 @@ func profileChanged(before, after profile.Profile) bool {
 }
 
 // handleSetRouting validates and stores the routing mode (smart/global/direct).
-// Like set_split it does not retune a live tunnel; the mode applies on the next
-// connect, and the choice is reflected back so the UI stays in sync.
+//
+// The choice is persisted and applied to a live tunnel in place, like the kill
+// switch. Neither used to happen: the mode was held in memory only, so a user who
+// picked global got smart back at the next launch with the UI reporting the mode
+// the daemon had silently reset to — and while connected the change did nothing
+// at all until the user thought to reconnect, which is indistinguishable from a
+// control that does not work.
 func (d *Daemon) handleSetRouting(req Request) Response {
 	mode := routing.Mode(req.Mode)
 	switch mode {
@@ -1195,26 +1219,74 @@ func (d *Daemon) handleSetRouting(req Request) Response {
 	}
 
 	d.mu.Lock()
+	changed := d.routing.Mode != mode
 	d.routing.Mode = mode
 	d.routing = d.routing.Normalize()
 	d.state.Routing = string(mode)
-	cur := d.state
 	d.mu.Unlock()
 
-	// A routing change does not retune a live tunnel in this iteration; the new
-	// mode applies on the next connect. Report it so the UI reflects the choice.
-	// (Reconfiguring sing-box live would mean a restart; deferred deliberately.)
-	resp, err := newResult(req.ID, cur)
+	d.persistSettings()
+	if changed {
+		d.reapplyLive()
+	}
+
+	resp, err := newResult(req.ID, d.snapshotState())
 	if err != nil {
 		return newError(req.ID, err.Error())
 	}
 	return resp
 }
 
-// handleSetSplit updates the per-app split configuration. Like set_routing it
-// only stores the new config and reflects it in the reported state; the change
-// takes effect on the next connect (live retuning would require restarting
-// sing-box). The normalized config is persisted so it survives a restart.
+// handleSetPresets toggles the three routing presets: game clients direct,
+// real-time UDP direct, and the censored-services list routed by whether the
+// bypass covers them.
+//
+// An omitted field leaves that preset alone. All three ship on, and a UI that had
+// to restate every one to change any one would eventually restate them wrong —
+// the failure mode being a user who turns off "unblock services" and silently
+// loses the two presets that keep games and voice off the tunnel.
+//
+// Each preset still yields to the kill switch and to direct mode, which the
+// routing layer enforces; this only records intent.
+func (d *Daemon) handleSetPresets(req Request) Response {
+	if req.Games == nil && req.Voice == nil && req.Services == nil {
+		return newError(req.ID, "set_presets: nothing to change")
+	}
+
+	d.mu.Lock()
+	before := d.routing
+	if req.Games != nil {
+		d.routing.GamesDirect = *req.Games
+	}
+	if req.Voice != nil {
+		d.routing.VoiceDirect = *req.Voice
+	}
+	if req.Services != nil {
+		d.routing.UnblockServices = *req.Services
+	}
+	changed := before.GamesDirect != d.routing.GamesDirect ||
+		before.VoiceDirect != d.routing.VoiceDirect ||
+		before.UnblockServices != d.routing.UnblockServices
+	d.routing = d.routing.Normalize()
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
+	d.mu.Unlock()
+
+	d.persistSettings()
+	if changed {
+		d.reapplyLive()
+	}
+
+	resp, err := newResult(req.ID, d.snapshotState())
+	if err != nil {
+		return newError(req.ID, err.Error())
+	}
+	return resp
+}
+
+// handleSetSplit updates the per-app split configuration. The normalized config
+// is persisted and, like set_routing, applied to a live tunnel in place: a user
+// who excludes an app while connected expects that app to leave the tunnel now,
+// not after they work out that a reconnect is required.
 func (d *Daemon) handleSetSplit(req Request) Response {
 	mode := routing.SplitMode(req.Mode)
 	switch mode {
@@ -1224,20 +1296,40 @@ func (d *Daemon) handleSetSplit(req Request) Response {
 	}
 
 	d.mu.Lock()
+	before := d.routing
 	d.routing.SplitMode = mode
 	d.routing.SplitApps = req.Apps
 	d.routing = d.routing.Normalize()
+	changed := before.SplitMode != d.routing.SplitMode ||
+		!sameStrings(before.SplitApps, d.routing.SplitApps)
 	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
-	cur := d.state
 	d.mu.Unlock()
 
 	d.persistSettings()
+	if changed {
+		d.reapplyLive()
+	}
 
-	resp, err := newResult(req.ID, cur)
+	resp, err := newResult(req.ID, d.snapshotState())
 	if err != nil {
 		return newError(req.ID, err.Error())
 	}
 	return resp
+}
+
+// sameStrings reports whether two normalized string slices are equal. Used to
+// decide whether a settings command actually changed anything, so an idempotent
+// re-send does not hot-swap sing-box for nothing.
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // handleSetKillSwitch arms or disarms the kill switch. The choice is recorded,
@@ -1643,6 +1735,13 @@ func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, 
 		s.Split = string(ro.SplitMode)
 	}
 	s.SplitApps = append([]string(nil), ro.SplitApps...)
+	// The routing mode is a stored preference like the rest of these, so it is
+	// reported from the live options rather than only where set_routing writes it.
+	// Without this a mode restored from the settings file was in effect but not on
+	// screen: the daemon routed globally while the UI showed smart.
+	if ro.Mode != "" {
+		s.Routing = string(ro.Mode)
+	}
 	s.KillSwitch = ro.KillSwitch
 	s.TLSFragment = ro.TLSFragment
 	s.TunStack = tun.Stack
