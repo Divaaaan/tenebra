@@ -92,6 +92,7 @@ func Install(archivePath, dir string) ([]Strategy, error) {
 	if _, err := os.Stat(filepath.Join(dir, "bin", "winws.exe")); err != nil {
 		return nil, errors.New("zapret: в архиве нет bin/winws.exe — это точно сборка zapret?")
 	}
+	disableBundleUpdater(dir)
 	return strategies, nil
 }
 
@@ -132,7 +133,27 @@ func InstallDir(src, dir string) ([]Strategy, error) {
 	if _, err := os.Stat(filepath.Join(dir, "bin", "winws.exe")); err != nil {
 		return nil, errors.New("zapret: в папке нет bin/winws.exe — это точно сборка zapret?")
 	}
+	disableBundleUpdater(dir)
 	return strategies, nil
+}
+
+// disableBundleUpdater turns off the update checker the bundle ships with, which
+// every strategy batch invokes on launch.
+//
+// It is switched off at the last moment a bundle is installed rather than only
+// on the update path, because the file arrives with any bundle — one the user
+// dropped in as readily as one this app downloaded. Left enabled it reaches
+// GitHub every time a strategy starts, on a network where reaching GitHub is
+// exactly what is in doubt: the bypass then waits on a request that the DPI it
+// has not raised yet is stalling. It also makes two mechanisms decide what
+// version is installed, and the other one (see Apply) knows how to stage a
+// download and keep the user's own lists.
+//
+// Best-effort by design: an absent file is the desired end state, and a bundle
+// that cannot be written to is a problem the install itself would already have
+// reported.
+func disableBundleUpdater(dir string) {
+	_ = os.Remove(filepath.Join(dir, "utils", "check_updates.enabled"))
 }
 
 // bundleRoot returns the directory that actually holds the bundle: src itself,

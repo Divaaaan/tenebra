@@ -139,6 +139,55 @@ func TestInstallRejectsSomethingThatIsNotZapret(t *testing.T) {
 	}
 }
 
+// TestInstallDisablesTheBundlesOwnUpdater: the bundle ships an update checker
+// that every strategy batch invokes on launch. On a censored network that is a
+// GitHub request standing between the user and the bypass that would unblock
+// GitHub, and it competes with this app's own updater over what version is
+// installed. Importing a bundle by hand must switch it off exactly like
+// downloading one does.
+func TestInstallDisablesTheBundlesOwnUpdater(t *testing.T) {
+	src := bundleZip(t, "zapret-discord-youtube-1.10.1", map[string]string{
+		"utils/check_updates.enabled": "true",
+	})
+	dir := filepath.Join(t.TempDir(), "zapret")
+
+	if _, err := Install(src, dir); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "utils", "check_updates.enabled")); !os.IsNotExist(err) {
+		t.Fatalf("check_updates.enabled survived the import (err = %v)", err)
+	}
+}
+
+// TestInstallDirDisablesTheBundlesOwnUpdater: same for the folder the user drops
+// in already unpacked — the file arrives with the bundle either way.
+func TestInstallDirDisablesTheBundlesOwnUpdater(t *testing.T) {
+	src := t.TempDir()
+	for name, body := range map[string]string{
+		"general.bat":                 "@echo off\r\n",
+		"bin/winws.exe":               "MZ",
+		"utils/check_updates.enabled": "true",
+	} {
+		full := filepath.Join(src, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	dir := filepath.Join(t.TempDir(), "zapret")
+
+	if _, err := InstallDir(src, dir); err != nil {
+		t.Fatalf("InstallDir: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "utils", "check_updates.enabled")); !os.IsNotExist(err) {
+		t.Fatalf("check_updates.enabled survived the import (err = %v)", err)
+	}
+}
+
 func TestInstallSaysWhatIsWrongWithRar(t *testing.T) {
 	_, err := Install(filepath.Join(t.TempDir(), "bundle.rar"), t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "RAR") {

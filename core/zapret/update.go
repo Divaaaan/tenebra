@@ -144,11 +144,8 @@ func Apply(ctx context.Context, client *http.Client, dir string, rel Release) er
 	if err := WriteVersion(staging, rel.Version); err != nil {
 		return err
 	}
-	// Upstream ships its own update checker, which every strategy batch invokes on
-	// launch. With this updater in place that is a second mechanism fetching the
-	// same releases on its own schedule; disabling it leaves exactly one thing
-	// deciding what version is installed.
-	_ = os.Remove(filepath.Join(staging, "utils", "check_updates.enabled"))
+	// The bundle's own update checker is already off: Install disables it on every
+	// install path (see disableBundleUpdater), this one included.
 
 	return swap(dir, staging)
 }
