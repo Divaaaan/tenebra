@@ -299,7 +299,22 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 		store:   store,
 		runner:  runner,
 		proxy:   realSystemProxy{},
-		routing: routing.Options{Mode: routing.ModeSmart}.Normalize(),
+		// The presets are ON by default, which is the product: the user buys a
+		// subscription, pastes a link, drops the bypass archive and presses one
+		// button. Shipping them off would mean that button leaves games tunnelled
+		// (adding the full round trip to every input), voice at 239ms instead of
+		// 9ms, and YouTube pinned direct by the geo rule because googlevideo
+		// resolves to an ISP cache — i.e. the three problems the app exists to
+		// solve, each waiting behind a checkbox the user has to find.
+		//
+		// Each remains switchable, and each still yields to the kill switch, whose
+		// guarantee outranks any convenience default.
+		routing: routing.Options{
+			Mode:            routing.ModeSmart,
+			UnblockServices: true,
+			GamesDirect:     true,
+			VoiceDirect:     true,
+		}.Normalize(),
 		// CacheDir pins sing-box's cache file to the writable store directory so
 		// the root launchd daemon (cwd "/", read-only) doesn't abort at startup;
 		// see singbox.TunOptions.CacheDir. Mode/MixedPort are seeded concrete (tun,
