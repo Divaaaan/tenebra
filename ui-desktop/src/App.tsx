@@ -94,7 +94,7 @@ export function App() {
     // parse an executable as a list of domains.
     if (files.length === 1 && (await looksLikeZapretBundle(files[0]))) {
       const bytes = new Uint8Array(await files[0].arrayBuffer());
-      const bundle = await api.importZapret(bytes);
+      const bundle = await api.importZapret(bytes, files[0].name);
       await afterZapretImport(files[0].name, bundle.strategies?.length ?? 0);
       return;
     }

@@ -477,6 +477,10 @@ mod tests {
             preset_ru_gov: None,
             crash_reports: None,
             crash_reports_asked: false,
+            zapret_active: None,
+            zapret_strategy: None,
+            zapret_version: None,
+            zapret_auto_update: None,
             error: None,
         }
     }

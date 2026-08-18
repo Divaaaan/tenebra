@@ -24,7 +24,8 @@ use tauri_plugin_notification::NotificationExt;
 use backend::{
     AttemptsSnapshot, Backend, ConnectionMode, ConnectionState, EventSink, ImportLinksResult,
     LeakCheck, PingResult, Profile, RoutingMode, SpeedTest, SplitMode, State, StunCheck, TunStack,
-    EVENT_ATTEMPTS, EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
+    ZapretActive, ZapretBundle, ZapretPick, ZapretUpdate, EVENT_ATTEMPTS, EVENT_LOG,
+    EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
 /// Held in Tauri's managed state and shared by every command handler. The
@@ -776,6 +777,72 @@ async fn run_speed_test(state: TauriState<'_, AppState>) -> Result<SpeedTest, St
     off_thread(Arc::clone(&state.backend), |b| b.run_speed_test()).await
 }
 
+/// Install a zapret DPI-bypass bundle.
+///
+/// The UI can hand over either the archive's bytes (a file dropped into the
+/// webview has contents but no path) or a filesystem path (Tauri's drag-drop
+/// gives real paths, which is the only way a dropped FOLDER can be taken at all).
+/// `name` carries the dropped file's name when the UI knows it: the release
+/// archives are named after their version, and reading it here is what keeps the
+/// first update check from re-downloading the bundle the user just installed.
+#[tauri::command]
+async fn import_zapret(
+    state: TauriState<'_, AppState>,
+    data: Option<String>,
+    path: Option<String>,
+    name: Option<String>,
+) -> Result<ZapretBundle, String> {
+    off_thread(Arc::clone(&state.backend), move |b| {
+        b.import_zapret(data, path, name)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_zapret(state: TauriState<'_, AppState>) -> Result<ZapretBundle, String> {
+    off_thread(Arc::clone(&state.backend), |b| b.list_zapret()).await
+}
+
+/// Probe every strategy and report which to keep. Minutes long by nature — each
+/// strategy is attached, measured and detached — so it runs off-thread like every
+/// other backend call and the UI shows progress from the core's log events.
+#[tauri::command]
+async fn pick_zapret(state: TauriState<'_, AppState>) -> Result<ZapretPick, String> {
+    off_thread(Arc::clone(&state.backend), |b| b.pick_zapret()).await
+}
+
+#[tauri::command]
+async fn start_zapret(
+    state: TauriState<'_, AppState>,
+    name: Option<String>,
+) -> Result<ZapretActive, String> {
+    off_thread(Arc::clone(&state.backend), move |b| b.start_zapret(name)).await
+}
+
+#[tauri::command]
+async fn stop_zapret(state: TauriState<'_, AppState>) -> Result<(), String> {
+    off_thread(Arc::clone(&state.backend), |b| b.stop_zapret()).await
+}
+
+/// Check for a newer published bundle and install it, downloading one outright
+/// when none is installed. The core also does this on its own schedule; this is
+/// the "check now" the user reaches for when video stops loading.
+#[tauri::command]
+async fn update_zapret(state: TauriState<'_, AppState>) -> Result<ZapretUpdate, String> {
+    off_thread(Arc::clone(&state.backend), |b| b.update_zapret()).await
+}
+
+#[tauri::command]
+async fn set_zapret_auto_update(
+    state: TauriState<'_, AppState>,
+    on: bool,
+) -> Result<State, String> {
+    off_thread(Arc::clone(&state.backend), move |b| {
+        b.set_zapret_auto_update(on)
+    })
+    .await
+}
+
 /// Quit the whole app. Closing the window only hides it (see the close handler
 /// in `run`); this is the explicit "really exit" path the tray's Quit item and
 /// the front end share.
@@ -907,6 +974,13 @@ pub fn run() {
             leak_check,
             run_stun_check,
             run_speed_test,
+            import_zapret,
+            list_zapret,
+            pick_zapret,
+            start_zapret,
+            stop_zapret,
+            update_zapret,
+            set_zapret_auto_update,
             quit_app,
             set_language,
             take_launch_deep_links,
@@ -1142,6 +1216,10 @@ mod tests {
             preset_ru_gov: None,
             crash_reports: None,
             crash_reports_asked: false,
+            zapret_active: None,
+            zapret_strategy: None,
+            zapret_version: None,
+            zapret_auto_update: None,
             error: None,
         }
     }
