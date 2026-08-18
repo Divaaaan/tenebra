@@ -16,6 +16,14 @@ type ProbeBinding struct {
 	Name string
 	// Port is the loopback port whose traffic is pinned to this node.
 	Port int
+	// Index is the node's position in the slice handed to BuildProbe. It is the
+	// only reliable way back to the caller's own identity for that node: the tag
+	// is derived from the display name and de-duplicated, and names repeat across
+	// a subscription, so matching a verdict to a stored node by name would
+	// occasionally attribute a dead exit's result to a healthy one. Nodes the
+	// builder skipped get no binding at all, which is why the index has to be
+	// carried rather than inferred from the binding's own position.
+	Index int
 }
 
 // probeInboundTag names the listener pinned to the binding at index i. Tags must
@@ -90,7 +98,7 @@ func BuildProbe(nodes []model.Node, basePort int) (map[string]any, []ProbeBindin
 			"action":   "route",
 			"outbound": nt.Tag,
 		})
-		bindings = append(bindings, ProbeBinding{Tag: nt.Tag, Name: name, Port: port})
+		bindings = append(bindings, ProbeBinding{Tag: nt.Tag, Name: name, Port: port, Index: nt.Index})
 	}
 
 	outbounds := make([]map[string]any, 0, len(outs)+1)

@@ -15,6 +15,7 @@ import (
 	"github.com/Divaaaan/tenebra/core/buildinfo"
 	"github.com/Divaaaan/tenebra/core/fallback"
 	"github.com/Divaaaan/tenebra/core/model"
+	"github.com/Divaaaan/tenebra/core/nodecheck"
 	"github.com/Divaaaan/tenebra/core/profile"
 	"github.com/Divaaaan/tenebra/core/routing"
 	"github.com/Divaaaan/tenebra/core/singbox"
@@ -300,6 +301,23 @@ type Daemon struct {
 	speedURLs        []string
 	speedSampleBytes int64
 
+	// probeRunner mints a sing-box supervisor for a node-check run: a second,
+	// short-lived process beside the live tunnel, running a config with no tun and
+	// no auto_route (see singbox.BuildProbe). It is a factory rather than a shared
+	// runner so a check can never stop the tunnel by reusing its supervisor. nil
+	// means the platform did not wire one, and check_nodes says so rather than
+	// pretending; tests inject a fake.
+	probeRunner func() Runner
+	// checkTargets are the destinations a node verdict is measured against, and
+	// checkBasePort where the per-node probe listeners start. Both are fields so a
+	// test can shrink the target list and move off the production ports.
+	checkTargets  []string
+	checkBasePort int
+	// checkProbe runs one control request through a probe listener and reports how
+	// far it got. Injectable so the ranking and reporting can be tested without a
+	// network or a sing-box.
+	checkProbe func(ctx context.Context, port int, target string) (nodecheck.Stage, int64)
+
 	// entitlement resolves a managed subscription's entitlement for one key,
 	// against the subscription's own origin. Injectable so the import/refresh
 	// paths can be unit-tested offline; production uses subscription.FetchEntitlement.
@@ -395,6 +413,9 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 
 		entitlement: subscription.FetchEntitlement,
 
+		checkTargets:  defaultCheckTargets,
+		checkBasePort: defaultCheckBasePort,
+
 		probeWarmup:  defaultProbeWarmup,
 		probeRetry:   defaultProbeRetry,
 		probeTimeout: defaultProbeTimeout,
@@ -419,6 +440,10 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 	// The health watchdog probes the active node through the tunnel; production
 	// runs a clash-API delay test through the selector (see defaultHealthProbe).
 	d.healthProbe = d.defaultHealthProbe
+	// A node check drives its own CONNECT through each probe listener so it can
+	// tell a node that never established from one that established and carried
+	// nothing (see defaultCheckProbe).
+	d.checkProbe = d.defaultCheckProbe
 	// Background entitlement lookups run under this context so Close can cancel a
 	// slow one instead of blocking shutdown on it.
 	d.entCtx, d.entCancel = context.WithCancel(context.Background())
@@ -509,6 +534,16 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	d.lastNode = ps.LastNode
 	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
 	d.mu.Unlock()
+}
+
+// SetProbeRunner installs the factory a node check uses to run its own sing-box.
+//
+// It is separate from the tunnel's runner on purpose: a check must never be able
+// to stop the tunnel, and the probe process is short-lived where the tunnel's is
+// not. main wires the platform supervisor here; a daemon without one refuses
+// check_nodes with a plain message instead of failing somewhere deeper.
+func (d *Daemon) SetProbeRunner(f func() Runner) {
+	d.probeRunner = f
 }
 
 // SetRuleSetDir points the routing layer at a directory holding the bundled RU
@@ -609,6 +644,8 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleDisconnect(req)
 	case CmdPing:
 		return d.handlePing(ctx, req)
+	case CmdCheckNodes:
+		return d.handleCheckNodes(ctx, req)
 	case CmdImportZapret:
 		return d.handleImportZapret(req)
 	case CmdListZapret:

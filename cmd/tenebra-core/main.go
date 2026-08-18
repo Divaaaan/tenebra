@@ -134,6 +134,10 @@ func buildDaemon() (*control.Daemon, error) {
 	// nil (macOS/Linux for now) leaves the guard disabled rather than guessing —
 	// see newInterfaceProbe in the per-platform runner files.
 	daemon.SetInterfaceProbe(newInterfaceProbe())
+	// A node check runs its own short-lived sing-box beside the tunnel (no tun, no
+	// auto_route), so it gets a fresh supervisor per run rather than sharing the
+	// tunnel's — a check must never be able to stop the tunnel.
+	daemon.SetProbeRunner(func() control.Runner { return newRunner() })
 	// Persist last-good per profile next to the store so the node that last
 	// connected leads the fallback walk on the next launch. A failure to open it
 	// is non-fatal: fall back to the in-memory default rather than refuse to run.
