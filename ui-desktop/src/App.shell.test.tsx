@@ -100,6 +100,10 @@ async function mountReady() {
 describe("App keyboard shortcuts", () => {
   beforeEach(() => {
     localStorage.clear();
+    // Simple mode is the app's default now, but this suite drives the full
+    // shell (overlays, shortcuts, banners). The clear above would drop it into
+    // the one-button view where none of that exists, so restate the opt-out.
+    localStorage.setItem("tenebra.simpleMode", "0");
     armEvents();
     mocks.status.mockResolvedValue({ state: "idle" } as State);
     mocks.listProfiles.mockResolvedValue([profile]);
