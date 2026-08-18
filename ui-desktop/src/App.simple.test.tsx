@@ -115,7 +115,17 @@ describe("App simple mode", () => {
     });
   });
 
-  it("renders the full shell when the flag is unset", async () => {
+  it("starts in simple mode on a fresh install", async () => {
+    // The product is a link, an archive and one button; a control panel on
+    // first run would be the opposite of that. Only an explicit opt-out brings
+    // the shell back, so an untouched install must land here.
+    localStorage.removeItem(SIMPLE_KEY);
+    const { container } = await mountReady();
+    expect(container.querySelector(".app--simple")).toBeInTheDocument();
+  });
+
+  it("renders the full shell once the user has opted out", async () => {
+    localStorage.setItem(SIMPLE_KEY, "0");
     const { container } = await mountReady();
     expect(container.querySelector(".app--simple")).not.toBeInTheDocument();
     expect(
@@ -148,6 +158,9 @@ describe("App simple mode", () => {
   });
 
   it("switches live when a storage event reports the flag changed", async () => {
+    // Start from the opted-out shell explicitly: simple mode is now the default,
+    // so "no flag" would begin in the state this test is trying to switch INTO.
+    localStorage.setItem(SIMPLE_KEY, "0");
     const { container } = await mountReady();
     expect(container.querySelector(".app--simple")).not.toBeInTheDocument();
 
@@ -171,6 +184,7 @@ describe("App simple mode", () => {
   });
 
   it("ignores a storage event for an unrelated key", async () => {
+    localStorage.setItem(SIMPLE_KEY, "0");
     const { container } = await mountReady();
     act(() => {
       localStorage.setItem(SIMPLE_KEY, "1");

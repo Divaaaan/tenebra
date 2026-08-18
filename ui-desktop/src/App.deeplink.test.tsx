@@ -95,6 +95,10 @@ describe("App deep-link connect gate", () => {
     const noopUnlisten = () => {};
     deepLinkHandler = null;
     localStorage.clear();
+    // Simple mode is the app's default now, but this suite drives the full
+    // shell (overlays, shortcuts, banners). The clear above would drop it into
+    // the one-button view where none of that exists, so restate the opt-out.
+    localStorage.setItem("tenebra.simpleMode", "0");
 
     mocks.status.mockResolvedValue({ state: "idle" });
     mocks.listProfiles.mockResolvedValue([profile]);

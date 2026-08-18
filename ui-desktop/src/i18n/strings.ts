@@ -260,6 +260,14 @@ export interface Strings {
    * words are reused from `home`/`state`.
    */
   simple: {
+    /** Step 1 label: paste the subscription link. */
+    setupLink: string;
+    setupLinkPlaceholder: string;
+    /** Step 2 label: drop the bypass bundle. */
+    setupBypass: string;
+    setupBypassHint: string;
+    /** Sub-line under the status when the bypass is running. */
+    bypassOn: string;
     /** Reassurance line under the status word while connected. */
     statusOn: string;
     /** Calm line under the status word while idle or errored. */
@@ -814,6 +822,11 @@ const en: Strings = {
     sessionTraffic: "This session",
   },
   simple: {
+    setupLink: "Paste your subscription link",
+    setupLinkPlaceholder: "https://…",
+    setupBypass: "Drop the bypass archive here",
+    setupBypassHint: "zapret archive or folder — drag it in, or click",
+    bypassOn: "bypass on",
     statusOn: "You're protected",
     statusOff: "You're not connected",
     server: "Server",
@@ -1285,6 +1298,12 @@ const ru: Strings = {
     sessionTraffic: "За сессию",
   },
   simple: {
+    /** Step 1 label: paste the subscription link. */
+    setupLink: "Вставь ссылку на подписку",
+    setupLinkPlaceholder: "https://…",
+    setupBypass: "Закинь сюда запрет",
+    setupBypassHint: "Архив или папка zapret — перетащи или нажми",
+    bypassOn: "запрет включён",
     statusOn: "Вы под защитой",
     statusOff: "Вы не подключены",
     server: "Сервер",

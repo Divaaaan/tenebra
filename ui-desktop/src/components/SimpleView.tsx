@@ -1,5 +1,6 @@
 import type { ConnectionState, Node, Profile } from "../api";
 import { useI18n } from "../i18n/I18nContext";
+import { SimpleSetup } from "./SimpleSetup";
 
 interface SimpleViewProps {
   phase: ConnectionState;
@@ -18,6 +19,16 @@ interface SimpleViewProps {
   selectedNodeId: string;
   onSelectNode: (id: string) => void;
   onSelectAuto: () => void;
+  /** True once a bypass bundle is installed. */
+  hasBypass: boolean;
+  /** Bypass strategy currently running, or "" when it is off. */
+  bypassActive: string;
+  /** Import a subscription from a pasted link. */
+  onSubscribe: (url: string) => Promise<void>;
+  /** Import a bypass bundle from dropped files. */
+  onBypassFiles: (files: File[]) => Promise<void>;
+  /** Import a bypass bundle from dropped paths (folder support). */
+  onBypassPaths: (paths: string[]) => Promise<void>;
 }
 
 /**
@@ -40,6 +51,11 @@ export function SimpleView({
   selectedNodeId,
   onSelectNode,
   onSelectAuto,
+  hasBypass,
+  bypassActive,
+  onSubscribe,
+  onBypassFiles,
+  onBypassPaths,
 }: SimpleViewProps) {
   const { t } = useI18n();
 
@@ -98,6 +114,15 @@ export function SimpleView({
           </span>
         </div>
         {reassurance && <p className="simple-sub">{reassurance}</p>}
+        {/* The bypass is named, not just flagged: it is what makes YouTube and
+            Discord work at native latency, and the user just watched it be
+            chosen. A bare dot would hide the one fact worth showing. */}
+        {bypassActive && (
+          <p className="simple-bypass">
+            <span className="simple-bypass-dot" aria-hidden="true" />
+            {t.simple.bypassOn} · {bypassActive}
+          </p>
+        )}
 
         <button
           type="button"
@@ -150,10 +175,16 @@ export function SimpleView({
               </select>
             </label>
           </>
-        ) : (
-          <p className="simple-empty">{t.simple.noProfile}</p>
-        )}
+        ) : null}
       </div>
+
+      <SimpleSetup
+        hasProfile={hasProfile}
+        hasBypass={hasBypass}
+        onSubscribe={onSubscribe}
+        onBypassFiles={onBypassFiles}
+        onBypassPaths={onBypassPaths}
+      />
 
       <button
         type="button"

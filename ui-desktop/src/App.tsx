@@ -53,6 +53,11 @@ type Overlay = "profiles" | "settings" | "logs" | null;
 const SIMPLE_MODE_KEY = "tenebra.simpleMode";
 function readSimpleMode(): boolean {
   const v = localStorage.getItem(SIMPLE_MODE_KEY);
+  // Simple mode is the DEFAULT: the product is a link, an archive and one
+  // button, and a control panel on first run would be the opposite of that.
+  // Only an explicit opt-out ("0"/"false", written by the Advanced-view button)
+  // brings the full shell back, so an untouched install starts simple.
+  if (v === null) return true;
   return v === "1" || v === "true";
 }
 
@@ -176,6 +181,24 @@ export function App() {
     await api.stopZapret();
     setZapretActive("");
     pushToast("zapret: выключен");
+  }, []);
+
+  /**
+   * Import a subscription from a link pasted on the simple screen.
+   *
+   * Named after the profile's own host so the user sees something recognisable
+   * instead of an untitled entry: they pasted a link, not a name, and asking
+   * for one would be a step for nothing.
+   */
+  const handleSimpleSubscribe = useCallback(async (url: string) => {
+    let name = "VPN";
+    try {
+      name = new URL(url).hostname || name;
+    } catch {
+      // Not a URL the parser likes — the core will reject it with a better
+      // message than anything guessed here.
+    }
+    await api.importSubscription(url, name);
   }, []);
 
   const removeBlocklist = useCallback(
@@ -645,6 +668,11 @@ export function App() {
           selectedNodeId={selectedNodeId}
           onSelectNode={handleSelectNode}
           onSelectAuto={handleSelectAuto}
+          hasBypass={blocklists.length > 0}
+          bypassActive={zapretActive}
+          onSubscribe={handleSimpleSubscribe}
+          onBypassFiles={importBlocklist}
+          onBypassPaths={importFromPaths}
         />
         <EclipseOverlay active={eclipse} onDone={endEclipse} />
         <ToastHost />
