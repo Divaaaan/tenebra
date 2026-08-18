@@ -124,6 +124,17 @@ type Request struct {
 	// is present (an explicit exit wins) and defaults to false, so an omitted
 	// field preserves the original protocol-fallback behaviour exactly.
 	Auto bool `json:"auto,omitempty"`
+	// AllowTunConflict overrides the tun-conflict guard for this connect: proceed
+	// even though another VPN already owns the machine's default route (see
+	// core/tunguard). Defaults false, so the guard is on unless the user says
+	// otherwise — an override that could arrive by accident would restore the
+	// silent failure the guard exists to prevent.
+	//
+	// It is per-request rather than a stored setting on purpose: "I know these
+	// two tunnels do not overlap" is a judgement about the machine's state right
+	// now, and a sticky flag would keep waving connects through long after the
+	// other VPN's configuration changed.
+	AllowTunConflict bool `json:"allow_tun_conflict,omitempty"`
 	// URL is the subscription URL for import_subscription.
 	URL string `json:"url,omitempty"`
 	// Link is the single share link for import_link.

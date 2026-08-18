@@ -150,6 +150,16 @@ type TunOptions struct {
 	CacheDir string
 }
 
+// DefaultTUNName is the interface name an unset TunOptions.InterfaceName
+// resolves to on this platform (empty on macOS, where the kernel dictates
+// utun<N>; the branded name elsewhere).
+//
+// Exported so callers that must reason about *our* interface before a config
+// exists — the tun-conflict guard, which has to exclude our own tun from the
+// interfaces it scans — read the name from the one place that assigns it,
+// instead of re-deriving it and drifting.
+func DefaultTUNName() string { return platformTUNName }
+
 func (t TunOptions) normalize() TunOptions {
 	if t.Mode == "" {
 		t.Mode = defaultConnMode

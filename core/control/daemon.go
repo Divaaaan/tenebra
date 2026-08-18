@@ -19,6 +19,7 @@ import (
 	"github.com/Divaaaan/tenebra/core/routing"
 	"github.com/Divaaaan/tenebra/core/singbox"
 	"github.com/Divaaaan/tenebra/core/subscription"
+	"github.com/Divaaaan/tenebra/core/tunguard"
 )
 
 // Runner owns one sing-box process. It is defined here, not in an adapter
@@ -87,6 +88,17 @@ type Daemon struct {
 	// then only read, so it needs no lock; the armed bit it toggles (proxyArmed) is
 	// guarded by mu.
 	proxy systemProxyController
+
+	// ifaceProbe enumerates the machine's interfaces and their default routes for
+	// the tun-conflict guard (see tunguard). It is injected by the platform layer
+	// — the core stays stdlib-only and cannot read a route table itself — and is
+	// set once at construction, then only read, so it needs no lock.
+	//
+	// nil disables the guard, which is the correct default for a platform with no
+	// implementation yet and for unit tests that never raise a real tun: refusing
+	// to connect because we cannot see the routes would block the very platforms
+	// the check has not been ported to.
+	ifaceProbe func() ([]tunguard.Iface, error)
 
 	mu      sync.Mutex
 	routing routing.Options

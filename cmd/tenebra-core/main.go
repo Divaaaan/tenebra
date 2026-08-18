@@ -123,6 +123,10 @@ func buildDaemon() (*control.Daemon, error) {
 	// runner_linux.go for Linux, runner_other.go for Windows).
 	runner := newRunner()
 	daemon := control.NewDaemon(store, runner)
+	// Arm the tun-conflict guard where the platform can read its route table.
+	// nil (macOS/Linux for now) leaves the guard disabled rather than guessing —
+	// see newInterfaceProbe in the per-platform runner files.
+	daemon.SetInterfaceProbe(newInterfaceProbe())
 	// Persist last-good per profile next to the store so the node that last
 	// connected leads the fallback walk on the next launch. A failure to open it
 	// is non-fatal: fall back to the in-memory default rather than refuse to run.
