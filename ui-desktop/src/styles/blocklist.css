@@ -1,0 +1,284 @@
+/*
+ * Blocklist import overlay.
+ *
+ * The motion here is functional: the drop zone has to say "release here" the
+ * instant a file is over it (a static outline reads as decoration and users drop
+ * on the wrong half of the window), and an imported list has to be visibly new
+ * so the user knows the drop landed. Everything else stays still.
+ *
+ * Reuses the shell's scrim/panel keyframes vocabulary so this reads as the same
+ * app rather than a bolted-on dialog.
+ */
+
+.bl-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: var(--sp-5);
+  background: var(--scrim);
+  animation: bl-scrim-in var(--t-fast) var(--t-enter) both;
+}
+
+@keyframes bl-scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.bl-panel {
+  width: min(560px, 100%);
+  max-height: min(80vh, 640px);
+  overflow-y: auto;
+  padding: var(--sp-5);
+  background: var(--surface);
+  border: var(--bw) solid var(--line);
+  border-radius: var(--radius);
+  animation: bl-panel-in var(--t-base) var(--t-panel) both;
+}
+
+@keyframes bl-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.bl-panel__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.bl-panel__title {
+  margin: 0;
+  font-family: var(--display);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+}
+
+.bl-panel__close {
+  padding: 0 var(--sp-2);
+  color: var(--text-dim);
+  background: none;
+  border: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  cursor: pointer;
+}
+
+.bl-panel__close:hover {
+  color: var(--signal);
+}
+
+.bl-panel__hint {
+  margin: var(--sp-2) 0 var(--sp-4);
+  color: var(--text-dim);
+  font-size: var(--fs-meta);
+}
+
+/* ── drop zone ─────────────────────────────────────────────────────────── */
+
+.bl-drop {
+  position: relative;
+  display: grid;
+  gap: var(--sp-2);
+  place-items: center;
+  padding: var(--sp-6) var(--sp-4);
+  border: var(--bw) dashed var(--line-2);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  text-align: center;
+  cursor: pointer;
+  transition:
+    border-color var(--t-fast) var(--t-base),
+    color var(--t-fast) var(--t-base),
+    background var(--t-fast) var(--t-base);
+}
+
+.bl-drop:hover,
+.bl-drop:focus-visible {
+  border-color: var(--signal-soft);
+  color: var(--text);
+}
+
+/* The dragging state has to be unmistakable at a glance — the pointer is
+   carrying a file and the user is not reading labels. */
+.bl-drop.is-dragging {
+  border-color: var(--signal);
+  border-style: solid;
+  color: var(--text);
+  background: var(--signal-faint);
+}
+
+/* A ring that pulses only while a file hovers: it draws the eye to the exact
+   target instead of animating permanently and becoming wallpaper. */
+.bl-drop__ring {
+  width: var(--sp-6);
+  height: var(--sp-6);
+  border: var(--bw-emphasis) solid currentColor;
+  border-radius: var(--radius-max);
+  opacity: 0.5;
+}
+
+.bl-drop.is-dragging .bl-drop__ring {
+  opacity: 1;
+  animation: bl-ring-pulse 900ms var(--t-base) infinite;
+}
+
+@keyframes bl-ring-pulse {
+  0% {
+    transform: scale(0.92);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+  100% {
+    transform: scale(0.92);
+  }
+}
+
+/* While an import runs the zone sweeps, so a large archive does not look like a
+   frozen window. No percentage is claimed: parsing has no honest progress and a
+   stalled fake bar is worse than none. */
+.bl-drop.is-busy {
+  cursor: progress;
+}
+
+.bl-drop.is-busy::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--signal), transparent);
+  animation: bl-sweep 1.1s linear infinite;
+}
+
+@keyframes bl-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.bl-drop__label {
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+}
+
+.bl-drop__formats {
+  color: var(--text-dim-2);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--track-label);
+}
+
+/* The native input stays in the DOM (the zone clicks it) but never shows. */
+.bl-file {
+  display: none;
+}
+
+.bl-error {
+  margin: var(--sp-3) 0 0;
+  color: var(--signal);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  animation: bl-error-in var(--t-fast) var(--t-enter) both;
+}
+
+@keyframes bl-error-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── imported lists ────────────────────────────────────────────────────── */
+
+.bl-list {
+  margin: var(--sp-4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bl-item {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: baseline;
+  gap: var(--sp-3);
+  padding: var(--sp-2) 0;
+  border-top: var(--bw) solid var(--line);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  animation: bl-item-in var(--t-base) var(--t-enter) both;
+}
+
+@keyframes bl-item-in {
+  from {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.bl-item__label {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bl-item__rules {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.bl-item__remove {
+  padding: 0 var(--sp-2);
+  color: var(--text-dim-2);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  transition: color var(--t-fast) var(--t-base);
+}
+
+.bl-item__remove:hover {
+  color: var(--signal);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Dropping the moving parts entirely rather than zeroing their duration, which
+     would leave the sweep and the ring strobing. The dragging state keeps its
+     colour and solid border, so the zone still says "release here". */
+  .bl-drop.is-dragging .bl-drop__ring,
+  .bl-drop.is-busy::after {
+    animation: none;
+  }
+
+  .bl-scrim,
+  .bl-panel,
+  .bl-item,
+  .bl-error {
+    animation: none;
+  }
+}
