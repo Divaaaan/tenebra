@@ -364,3 +364,10 @@ export interface AttemptsEvent {
   items: Attempt[];
   outcome: "" | "ok" | "exhausted";
 }
+
+/** An installed zapret bundle: where it lives and what strategies it offers. */
+export interface ZapretBundle {
+  dir: string;
+  /** Strategy names, best-guess default first; empty when nothing is installed. */
+  strategies: string[] | null;
+}

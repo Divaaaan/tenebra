@@ -7,6 +7,7 @@ import { ServerList, type ServerRow } from "./components/ServerList";
 import { BottomBar } from "./components/BottomBar";
 import { BlocklistPanel, type BlocklistSource } from "./components/BlocklistPanel";
 import { readBlocklistFiles } from "./lib/blocklist";
+import { looksLikeZapretBundle } from "./lib/zapret";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { UpdateConfirm } from "./components/UpdateConfirm";
 import { DaemonSkewBanner } from "./components/DaemonSkewBanner";
@@ -80,6 +81,23 @@ export function App() {
   const [blocklists, setBlocklists] = useState<BlocklistSource[]>([]);
 
   const importBlocklist = useCallback(async (files: File[]) => {
+    // A zapret bundle is a different thing from a blocklist and is recognised
+    // by content, not by name: it is a zip carrying bin/winws.exe and a set of
+    // strategy .bat files. Sending it to the core is what makes "drop the
+    // archive into the VPN" actually work, instead of the reader trying to
+    // parse an executable as a list of domains.
+    if (files.length === 1 && (await looksLikeZapretBundle(files[0]))) {
+      const bytes = new Uint8Array(await files[0].arrayBuffer());
+      const bundle = await api.importZapret(bytes);
+      const count = bundle.strategies?.length ?? 0;
+      setBlocklists((prev) => [
+        ...prev.filter((s) => s.label !== files[0].name),
+        { id: files[0].name, label: files[0].name, rules: count },
+      ]);
+      pushToast(`zapret: ${count} стратегий`);
+      return;
+    }
+
     const parsed = await readBlocklistFiles(files);
     // One drop is one entry, however many files it held: dropping an unpacked
     // release means dropping a dozen files, and listing each would bury the one
