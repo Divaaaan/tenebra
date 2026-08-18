@@ -342,3 +342,35 @@
   max-height: calc(720px - 72px);
   overflow-y: auto;
 }
+
+/* Count badge on a bottom-bar action (imported blocklists). It appears only when
+   there is something to report, so an empty state stays quiet, and it pops once
+   on arrival rather than pulsing — a permanently animating badge in the corner
+   of the eye is noise, not information. */
+.app-bottom .act .act-count {
+  margin-inline-start: var(--sp-2);
+  padding: 0 var(--sp-2);
+  color: var(--on-signal);
+  background: var(--signal);
+  border-radius: var(--radius-max);
+  font-size: var(--fs-meta);
+  font-variant-numeric: tabular-nums;
+  animation: act-count-in var(--t-base) var(--t-enter) both;
+}
+
+@keyframes act-count-in {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-bottom .act .act-count {
+    animation: none;
+  }
+}

@@ -601,6 +601,12 @@ export interface Strings {
     close: string;
     /** Label of the settings row that opens the panel. */
     open: string;
+    /** Accessible label of the "?" trigger. */
+    helpLabel: string;
+    /** Title inside the hint popover. */
+    helpTitle: string;
+    /** Step lines shown in the hint, in order. */
+    helpLines: string[];
   };
 
   check: {
@@ -1070,6 +1076,16 @@ const en: Strings = {
     remove: "Remove",
     close: "Close",
     open: "Open",
+    helpLabel: "How this works",
+    helpTitle: "What to drop here",
+    helpLines: [
+      "A blocklist is a list of domains to block: ads, trackers, counters.",
+      "Drop a .zip with text lists inside, or a plain .txt / .lst / .srs.",
+      "Lines may be bare domains, hosts entries (0.0.0.0 ads.example)",
+      "or AdBlock syntax (||ads.example^) — all three are understood.",
+      "Comments starting with # ! ; are ignored.",
+      "Blocking is DNS-level, so it works for every app, not just the browser.",
+    ],
   },
 
   check: {
@@ -1528,6 +1544,16 @@ const ru: Strings = {
     remove: "Убрать",
     close: "Закрыть",
     open: "Открыть",
+    helpLabel: "Как это работает",
+    helpTitle: "Что сюда закидывать",
+    helpLines: [
+      "Запрет — это список доменов, которые будут блокироваться: реклама, трекеры, счётчики.",
+      "Перетащи .zip с текстовыми списками внутри либо обычный .txt / .lst / .srs.",
+      "Строки понимаются в трёх видах: голый домен, hosts (0.0.0.0 ads.example)",
+      "и AdBlock (||ads.example^) — разбирается любой из них.",
+      "Строки с # ! ; считаются комментариями и пропускаются.",
+      "Блокировка идёт на уровне DNS, поэтому работает во всех программах, а не только в браузере.",
+    ],
   },
 
   check: {

@@ -1,0 +1,105 @@
+/*
+ * "?" hint: a trigger that reveals an explanation on hover or focus.
+ *
+ * The popover animates in because it appears over content the user is already
+ * reading — arriving instantly reads as a glitch, while a short rise makes it
+ * obvious that something new was added rather than that the layout jumped. It
+ * never animates out: by then the pointer has left and a fading panel just
+ * delays the view underneath.
+ */
+
+.hint {
+  position: relative;
+  display: inline-flex;
+  margin-inline-start: var(--sp-2);
+  vertical-align: middle;
+}
+
+.hint__trigger {
+  display: grid;
+  place-items: center;
+  width: 1.25em;
+  height: 1.25em;
+  padding: 0;
+  color: var(--text-dim);
+  background: none;
+  border: var(--bw) solid var(--line-2);
+  border-radius: var(--radius-max);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  line-height: 1;
+  cursor: help;
+  transition:
+    color var(--t-fast) var(--t-base),
+    border-color var(--t-fast) var(--t-base);
+}
+
+.hint__trigger:hover,
+.hint__trigger:focus-visible {
+  color: var(--signal);
+  border-color: var(--signal);
+}
+
+.hint__pop {
+  position: absolute;
+  top: calc(100% + var(--sp-2));
+  inset-inline-start: 0;
+  z-index: 50;
+  display: grid;
+  gap: var(--sp-1);
+  width: max-content;
+  max-width: min(420px, 70vw);
+  padding: var(--sp-3);
+  background: var(--surface-2);
+  border: var(--bw) solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: normal;
+  animation: hint-in var(--t-fast) var(--t-enter) both;
+}
+
+@keyframes hint-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.hint__title {
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: var(--track-label);
+}
+
+/* Each line cascades so the eye follows the steps in order instead of being
+   handed a block of text at once. */
+.hint__line {
+  animation: hint-line-in var(--t-base) var(--t-enter) both;
+}
+
+@keyframes hint-line-in {
+  from {
+    opacity: 0;
+    transform: translateX(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hint__pop,
+  .hint__line {
+    animation: none;
+  }
+}

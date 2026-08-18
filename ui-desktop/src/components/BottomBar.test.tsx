@@ -16,6 +16,8 @@ function baseProps(overrides: Partial<Parameters<typeof BottomBar>[0]> = {}) {
     onToggleKillSwitch: vi.fn(),
     onLeakCheck: vi.fn(),
     onSettings: vi.fn(),
+    onBlocklist: vi.fn(),
+    blocklistCount: 0,
     ...overrides,
   };
 }

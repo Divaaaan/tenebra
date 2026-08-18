@@ -5,6 +5,8 @@ import { TopBar } from "./components/TopBar";
 import { ConnectionPanel } from "./components/ConnectionPanel";
 import { ServerList, type ServerRow } from "./components/ServerList";
 import { BottomBar } from "./components/BottomBar";
+import { BlocklistPanel, type BlocklistSource } from "./components/BlocklistPanel";
+import { readBlocklist } from "./lib/blocklist";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { UpdateConfirm } from "./components/UpdateConfirm";
 import { DaemonSkewBanner } from "./components/DaemonSkewBanner";
@@ -69,6 +71,28 @@ export function App() {
   const [query, setQuery] = useState("");
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [busy, setBusy] = useState(false);
+
+  // Blocklist import. It lives on the main screen rather than inside Settings
+  // because it is something the user does with a file in hand, not something
+  // they go looking for while configuring — burying it two screens deep is how
+  // an import feature ends up unused.
+  const [blocklistOpen, setBlocklistOpen] = useState(false);
+  const [blocklists, setBlocklists] = useState<BlocklistSource[]>([]);
+
+  const importBlocklist = useCallback(async (file: File) => {
+    const parsed = await readBlocklist(file);
+    setBlocklists((prev) => [
+      // Re-importing the same file replaces it instead of stacking duplicates,
+      // which is what happens when a user re-drops an updated list.
+      ...prev.filter((s) => s.label !== file.name),
+      { id: file.name, label: file.name, rules: parsed.rules.length },
+    ]);
+  }, []);
+
+  const removeBlocklist = useCallback(
+    (id: string) => setBlocklists((prev) => prev.filter((s) => s.id !== id)),
+    [],
+  );
 
   // Simple mode: the Settings toggle writes `tenebra.simpleMode`; we mirror it here
   // and swap the whole shell for SimpleView when it's on. A cross-window write
@@ -649,7 +673,18 @@ export function App() {
         onToggleKillSwitch={handleToggleKill}
         onLeakCheck={() => setOverlay("logs")}
         onSettings={() => setOverlay("settings")}
+        onBlocklist={() => setBlocklistOpen(true)}
+        blocklistCount={blocklists.length}
       />
+
+      {blocklistOpen && (
+        <BlocklistPanel
+          sources={blocklists}
+          onImportFile={importBlocklist}
+          onRemove={removeBlocklist}
+          onClose={() => setBlocklistOpen(false)}
+        />
+      )}
 
       {overlay && (
         <div
