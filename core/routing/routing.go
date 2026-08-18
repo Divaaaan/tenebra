@@ -116,6 +116,19 @@ type Options struct {
 	// as a local rule-set and is never fetched remotely.
 	AdBlock bool
 
+	// ZapretActive marks that the DPI bypass is running alongside the tunnel.
+	//
+	// It flips where the censored services go. Without the bypass they must be
+	// tunnelled or they do not load at all; with it they load on the direct path
+	// at the ISP's own latency, and tunnelling them would add the full round trip
+	// to another country for nothing — the difference measured here was 239ms
+	// against 9ms, which is the whole distance between usable voice chat and
+	// unusable.
+	//
+	// The tunnel is not redundant: it still carries everything the bypass does not
+	// cover. The two split the work rather than duplicating it.
+	ZapretActive bool
+
 	// UnblockServices pins the commonly-censored services (YouTube, Discord,
 	// Meta, X and friends) to the proxy by domain, ahead of the geo split.
 	//

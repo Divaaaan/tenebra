@@ -55,6 +55,19 @@ func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 		return newError(req.ID, err.Error())
 	}
 
+	// Bring the DPI bypass up with the tunnel, so one press does the whole job:
+	// the bypass takes YouTube and Discord on the direct path (no added latency),
+	// the tunnel takes everything else that is blocked, and games stay on the ISP
+	// path. Whether it actually started decides where those services are routed —
+	// tunnelling them anyway would pay a round trip they no longer need, and
+	// routing them direct without the bypass would leave them blocked.
+	zapretUp := d.autoStartZapret(ctx)
+	d.mu.Lock()
+	if d.routing.ZapretActive != zapretUp {
+		d.routing.ZapretActive = zapretUp
+	}
+	d.mu.Unlock()
+
 	// A user-driven connect opens a fresh kill-switch relaunch budget.
 	d.mu.Lock()
 	d.relaunches = 0

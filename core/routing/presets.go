@@ -96,10 +96,30 @@ func BlockedServiceSuffixes() []string {
 }
 
 // unblockActive reports whether the blocked-services preset should emit rules.
+//
 // Inert in direct mode, where nothing is tunnelled and pinning a domain to the
-// proxy would be a contradiction.
+// proxy would be a contradiction — and inert while the DPI bypass is running,
+// which is the important case: the bypass unblocks these services ON THE DIRECT
+// PATH, at the ISP's own latency. Tunnelling them anyway would pay the full
+// round trip to another country for traffic that no longer needs it, which is
+// precisely the pinging-in-voice-chat problem the bypass exists to remove.
 func (o Options) unblockActive() bool {
-	return o.UnblockServices && o.Mode != ModeDirect
+	return o.UnblockServices && o.Mode != ModeDirect && !o.ZapretActive
+}
+
+// zapretDirectSuffixes are the services handed to the DPI bypass instead of the
+// tunnel while it is running.
+//
+// It is the same list the tunnel would otherwise carry, used in the opposite
+// direction: with the bypass up these resolve and connect directly, so pinning
+// them direct keeps video and voice on the short path. Everything NOT on this
+// list still goes through the tunnel, because the bypass only covers what its
+// host lists cover.
+func (o Options) zapretDirectSuffixes() []string {
+	if !o.ZapretActive || o.Mode == ModeDirect {
+		return nil
+	}
+	return normalizeSuffixes(blockedServiceSuffixes)
 }
 
 // proxySuffixesWithPresets merges the user's proxy-pinned domains with the

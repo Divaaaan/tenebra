@@ -138,6 +138,15 @@ func (o Options) RouteRules() []map[string]any {
 			route(map[string]any{"domain_suffix": direct}, tagDirect),
 		)
 	}
+
+	// With the bypass running, the censored services take the direct path: it
+	// gets them through at the ISP's own latency, so tunnelling them would buy
+	// nothing and cost the entire round trip.
+	if bypass := o.zapretDirectSuffixes(); len(bypass) > 0 {
+		rules = append(rules,
+			route(map[string]any{"domain_suffix": bypass}, tagDirect),
+		)
+	}
 	// Proxy-pinned domains include the blocked-services preset. This sits before
 	// the geo split on purpose: googlevideo.com and friends resolve to RU cache
 	// nodes, and the geo rule would otherwise pin the video direct while the VPN

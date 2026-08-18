@@ -273,6 +273,68 @@ func (d *Daemon) handleStartZapret(ctx context.Context, req Request) Response {
 	return resp
 }
 
+// autoStartZapret brings the bypass up as part of connecting, when a bundle is
+// installed.
+//
+// This is what makes the product one button. The user bought a VPN, pasted a
+// link, dropped the bypass archive — expecting to press connect once and have
+// YouTube and Discord work with no lag in games. Requiring them to also find and
+// flip a second switch would put the assembly back on them.
+//
+// Failures here never block the connect: the tunnel alone still carries the
+// censored services (that is what UnblockServices is for), so a bypass that will
+// not start degrades the result rather than denying it. It is logged, not
+// raised.
+//
+// Returns whether the bypass ended up running, which decides where the censored
+// services are routed.
+func (d *Daemon) autoStartZapret(ctx context.Context) bool {
+	dir := filepath.Join(d.store.Dir(), zapretDirName)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false // nothing imported; the tunnel does the whole job
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	strategies := zapret.Discover(dir, names)
+	if len(strategies) == 0 {
+		return false
+	}
+
+	d.mu.Lock()
+	want := d.zapretActive
+	d.mu.Unlock()
+
+	chosen := strategies[0]
+	for _, s := range strategies {
+		if s.Name == want {
+			chosen = s
+			break
+		}
+	}
+
+	runner := zapret.NewRunner(dir)
+	started, err := runner.Start(ctx, chosen)
+	if err != nil || !started {
+		// The usual cause is elevation: WinDivert loads a driver, which an
+		// unprivileged process cannot do. Say so rather than leaving a silent gap
+		// between "connected" and "YouTube still blocked".
+		d.emitLog(LogWarn, fmt.Sprintf(
+			"zapret: %s не запустилась — обход выключен, туннель работает без него", chosen.Name))
+		return false
+	}
+
+	d.mu.Lock()
+	d.zapretActive = chosen.Name
+	d.mu.Unlock()
+	d.emitLog(LogInfo, fmt.Sprintf("zapret: включена %s — YouTube и Discord идут напрямую", chosen.Name))
+	return true
+}
+
 // handleStopZapret turns the bypass off.
 func (d *Daemon) handleStopZapret(ctx context.Context, req Request) Response {
 	runner := zapret.NewRunner(filepath.Join(d.store.Dir(), zapretDirName))
