@@ -1,0 +1,185 @@
+/*
+ * Node-check badges.
+ *
+ * The motion here carries information rather than decorating: a node under test
+ * sweeps (so a long check does not look frozen), a verdict fades in from the
+ * measurement direction (so a row that just changed is visible without hunting),
+ * and the auto-selected node gets one pulse on arrival — one, not a loop, since a
+ * permanently animating winner would pull the eye away from the rows the user is
+ * actually comparing.
+ *
+ * Durations stay inside the existing --t-fast/--t-base budget; the global
+ * reduced-motion rule in global.css already neutralises keyframes, and the
+ * explicit block at the bottom drops the sweep entirely rather than leaving it
+ * flickering at 0.001ms.
+ */
+
+.probe-badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--track-label);
+  white-space: nowrap;
+}
+
+.probe-badge--empty {
+  color: var(--text-dim-2);
+}
+
+/* ── in flight ─────────────────────────────────────────────────────────── */
+
+.probe-badge--probing {
+  position: relative;
+  overflow: hidden;
+  color: var(--text-dim);
+  padding-inline: var(--sp-2);
+}
+
+/* A single band travelling left to right under the label. It reads as "work is
+   happening here" without claiming progress — the check has no meaningful
+   percentage, and a fake progress bar that stalls is worse than none. */
+.probe-badge__scan {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--signal-faint) 45%,
+    var(--signal-soft) 50%,
+    var(--signal-faint) 55%,
+    transparent 100%
+  );
+  transform: translateX(-100%);
+  animation: probe-scan 1.1s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes probe-scan {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* ── verdict ───────────────────────────────────────────────────────────── */
+
+.probe-badge--ok,
+.probe-badge--fail {
+  animation: probe-verdict-in var(--t-base) var(--t-enter) both;
+}
+
+@keyframes probe-verdict-in {
+  from {
+    opacity: 0;
+    /* Rises from below: the row's measurement "settles" into place. */
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.probe-badge--ok {
+  color: var(--good);
+}
+
+.probe-badge__coverage {
+  color: var(--text-dim-2);
+}
+
+.probe-badge__rtt {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Failures are dimmed rather than shouted in red: the whole point of the check
+   is that several nodes are usually dead, and a wall of alarm colour would make
+   the one working row harder to find, not easier. The stage word carries the
+   meaning. */
+.probe-badge--fail {
+  color: var(--text-dim);
+}
+
+/* A node that answered TCP and then went silent is the case a ping badge gets
+   wrong, so it is the one failure worth tinting. */
+.probe-badge--handshake {
+  color: var(--warn-soft);
+}
+
+/* ── winner ────────────────────────────────────────────────────────────── */
+
+.probe-badge__best {
+  color: var(--on-signal);
+  background: var(--signal);
+  padding: 0 var(--sp-2);
+  border-radius: var(--radius);
+  text-transform: uppercase;
+  letter-spacing: var(--track-cap);
+}
+
+.probe-badge--best .probe-badge__best {
+  animation: probe-best-pulse 900ms var(--t-enter) 1 both;
+}
+
+@keyframes probe-best-pulse {
+  0% {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── row being probed ──────────────────────────────────────────────────── */
+
+/* Applied to the server row itself so the whole line reads as under test, which
+   matters when the badge column is off-screen on a narrow window. */
+.srv-row--probing {
+  background: var(--row-trying-bg);
+}
+
+.srv-row--probing::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--signal-soft);
+  transform-origin: left center;
+  animation: probe-row-sweep 1.1s linear infinite;
+}
+
+@keyframes probe-row-sweep {
+  0% {
+    transform: scaleX(0);
+  }
+  60% {
+    transform: scaleX(1);
+  }
+  100% {
+    transform: scaleX(1);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Zeroing duration would leave the sweep strobing; drop the moving parts and
+     keep the static styling, which still conveys the state. */
+  .probe-badge__scan,
+  .srv-row--probing::after {
+    display: none;
+  }
+
+  .probe-badge--ok,
+  .probe-badge--fail,
+  .probe-badge--best .probe-badge__best {
+    animation: none;
+  }
+}
