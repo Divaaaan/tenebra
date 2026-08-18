@@ -110,7 +110,12 @@ type Daemon struct {
 	// construction, then only read. nil disables the check.
 	newProbeRunner func() Runner
 
+	// zapretActive is the DPI-bypass strategy currently running, or empty. It is
+	// what a plain start_zapret re-launches, so the user's picked strategy
+	// survives a stop/start without them naming it again. Guarded by mu.
+
 	mu      sync.Mutex
+	zapretActive string
 	routing routing.Options
 	state   State
 	tun     singbox.TunOptions
@@ -548,6 +553,10 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleListZapret(req)
 	case CmdPickZapret:
 		return d.handlePickZapret(ctx, req)
+	case CmdStartZapret:
+		return d.handleStartZapret(ctx, req)
+	case CmdStopZapret:
+		return d.handleStopZapret(ctx, req)
 	case CmdSetRouting:
 		return d.handleSetRouting(req)
 	case CmdSetSplit:

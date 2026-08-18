@@ -122,6 +122,22 @@ func (d *Daemon) handlePickZapret(ctx context.Context, req Request) Response {
 	best, found := zapret.Best(results, baseline)
 	ranked := zapret.Rank(results)
 
+	// Leave the winner RUNNING. Probing ends with everything stopped so the
+	// machine is not left on whichever strategy happened to be last — but
+	// stopping the winner too would mean the user watched a five-minute
+	// measurement and got nothing switched on, which is how this first shipped
+	// and exactly what was reported: "the bypass itself does not work".
+	if found {
+		if started, sErr := runner.Start(ctx, best.Strategy); sErr != nil || !started {
+			d.emitLog(LogWarn, fmt.Sprintf("zapret: %s не запустилась после подбора", best.Name))
+		} else {
+			d.mu.Lock()
+			d.zapretActive = best.Name
+			d.mu.Unlock()
+			d.emitLog(LogInfo, fmt.Sprintf("zapret: включена %s", best.Name))
+		}
+	}
+
 	out := struct {
 		Baseline int             `json:"baseline"`
 		Targets  int             `json:"targets"`
@@ -185,4 +201,87 @@ func (d *Daemon) handleListZapret(req Request) Response {
 		return newError(req.ID, err.Error())
 	}
 	return resp
+}
+
+// handleStartZapret turns the bypass on: the named strategy, or the one the
+// last probe picked.
+//
+// This is the switch the user actually asked for. Probing answers "which one",
+// but the answer is worthless if nothing is running afterwards.
+func (d *Daemon) handleStartZapret(ctx context.Context, req Request) Response {
+	dir := filepath.Join(d.store.Dir(), zapretDirName)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return newError(req.ID, "start_zapret: сначала загрузи сборку zapret")
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	strategies := zapret.Discover(dir, names)
+	if len(strategies) == 0 {
+		return newError(req.ID, "start_zapret: в сборке нет стратегий")
+	}
+
+	want := req.Name
+	if want == "" {
+		d.mu.Lock()
+		want = d.zapretActive
+		d.mu.Unlock()
+	}
+
+	chosen := strategies[0] // the bundle's default, when nothing was picked yet
+	if want != "" {
+		found := false
+		for _, s := range strategies {
+			if s.Name == want {
+				chosen, found = s, true
+				break
+			}
+		}
+		if !found {
+			return newError(req.ID, fmt.Sprintf("start_zapret: стратегии %q нет в сборке", want))
+		}
+	}
+
+	runner := zapret.NewRunner(dir)
+	started, err := runner.Start(ctx, chosen)
+	if err != nil {
+		return newError(req.ID, err.Error())
+	}
+	if !started {
+		// winws not coming up is usually elevation: WinDivert needs a driver
+		// load, which a non-elevated process cannot do. Saying that beats a bare
+		// "failed".
+		return newError(req.ID, fmt.Sprintf(
+			"start_zapret: %s не запустилась — winws требует прав администратора", chosen.Name))
+	}
+
+	d.mu.Lock()
+	d.zapretActive = chosen.Name
+	d.mu.Unlock()
+	d.emitLog(LogInfo, fmt.Sprintf("zapret: включена %s", chosen.Name))
+
+	resp, err := newResult(req.ID, struct {
+		Active string `json:"active"`
+	}{Active: chosen.Name})
+	if err != nil {
+		return newError(req.ID, err.Error())
+	}
+	return resp
+}
+
+// handleStopZapret turns the bypass off.
+func (d *Daemon) handleStopZapret(ctx context.Context, req Request) Response {
+	runner := zapret.NewRunner(filepath.Join(d.store.Dir(), zapretDirName))
+	if err := runner.Stop(ctx); err != nil {
+		return newError(req.ID, err.Error())
+	}
+	d.mu.Lock()
+	d.zapretActive = ""
+	d.mu.Unlock()
+	d.emitLog(LogInfo, "zapret: выключен")
+	return newResult0(req.ID)
 }

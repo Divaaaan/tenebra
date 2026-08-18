@@ -266,6 +266,22 @@ export const api = {
   },
 
   /**
+   * Turn the bypass on: the named strategy, or the one the last probe picked.
+   *
+   * Separate from picking on purpose — the measurement answers "which one", but
+   * the user still needs a switch that just turns it on without waiting minutes
+   * for a re-probe.
+   */
+  startZapret(name?: string): Promise<{ active: string }> {
+    return invoke<{ active: string }>("start_zapret", name ? { name } : {});
+  },
+
+  /** Turn the bypass off. */
+  stopZapret(): Promise<void> {
+    return invoke<void>("stop_zapret").then(() => undefined);
+  },
+
+  /**
    * Probe the current network path with a STUN Binding Request: whether outbound
    * UDP works, the reflexive public IP, and a best-effort NAT classification (see
    * {@link StunResult}). Not gated on a connection.

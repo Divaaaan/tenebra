@@ -128,7 +128,10 @@ export function App() {
     try {
       const pick = await api.pickZapret();
       if (pick.improved && pick.best) {
-        pushToast(`zapret: выбрана ${pick.best}`);
+        // The core leaves the winner running, so reflect that here rather than
+        // showing the bypass as off while it is actually on.
+        setZapretActive(pick.best);
+        pushToast(`zapret: включена ${pick.best}`);
       } else {
         // Saying "nothing helped" is more useful than silently keeping the
         // least-bad option and letting the user believe the block is handled.
@@ -158,6 +161,22 @@ export function App() {
     },
     [afterZapretImport],
   );
+
+  // Which bypass strategy is running, or "" when it is off. Held here so the
+  // panel can name it and the button knows which way it flips.
+  const [zapretActive, setZapretActive] = useState("");
+
+  const enableZapret = useCallback(async () => {
+    const r = await api.startZapret();
+    setZapretActive(r.active);
+    pushToast(`zapret: включён (${r.active})`);
+  }, []);
+
+  const disableZapret = useCallback(async () => {
+    await api.stopZapret();
+    setZapretActive("");
+    pushToast("zapret: выключен");
+  }, []);
 
   const removeBlocklist = useCallback(
     (id: string) => setBlocklists((prev) => prev.filter((s) => s.id !== id)),
@@ -752,6 +771,9 @@ export function App() {
           sources={blocklists}
           onImportFiles={importBlocklist}
           onImportPaths={importFromPaths}
+          onEnable={enableZapret}
+          onDisable={disableZapret}
+          active={zapretActive}
           onRemove={removeBlocklist}
           onClose={() => setBlocklistOpen(false)}
         />
