@@ -25,8 +25,9 @@ use serde_json::{json, Value};
 
 use super::{
     AttemptsSnapshot, Backend, ConnectionMode, EventSink, ImportLinksResult, LeakCheck, PingResult,
-    Profile, RoutingMode, SpeedTest, SplitMode, State, StunCheck, TunStack, EVENT_ATTEMPTS,
-    EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
+    Profile, RoutingMode, SpeedTest, SplitMode, State, StunCheck, TunStack, ZapretActive,
+    ZapretBundle, ZapretPick, ZapretUpdate, EVENT_ATTEMPTS, EVENT_LOG, EVENT_PROFILES, EVENT_STATE,
+    EVENT_TRAFFIC,
 };
 
 /// How long a request waits for its correlated response before giving up. The
@@ -339,6 +340,13 @@ const CMD_SET_RULES: &str = "set_rules";
 const CMD_LEAK_CHECK: &str = "leak_check";
 const CMD_RUN_STUN_CHECK: &str = "run_stun_check";
 const CMD_RUN_SPEED_TEST: &str = "run_speed_test";
+const CMD_IMPORT_ZAPRET: &str = "import_zapret";
+const CMD_LIST_ZAPRET: &str = "list_zapret";
+const CMD_PICK_ZAPRET: &str = "pick_zapret";
+const CMD_START_ZAPRET: &str = "start_zapret";
+const CMD_STOP_ZAPRET: &str = "stop_zapret";
+const CMD_UPDATE_ZAPRET: &str = "update_zapret";
+const CMD_SET_ZAPRET_AUTO_UPDATE: &str = "set_zapret_auto_update";
 
 impl<T: WireSession> Backend for T {
     fn status(&self) -> Result<State, String> {
@@ -565,6 +573,56 @@ impl<T: WireSession> Backend for T {
         // when idle (a reading off the tunnel is meaningless), which surfaces here
         // as the protocol error the caller sees.
         self.session()?.request_into(CMD_RUN_SPEED_TEST, obj([]))
+    }
+
+    fn import_zapret(
+        &self,
+        data: Option<String>,
+        path: Option<String>,
+        name: Option<String>,
+    ) -> Result<ZapretBundle, String> {
+        // `obj` drops the None fields, so the core sees exactly one of data/path
+        // and decides which install route to take from that.
+        self.session()?.request_into(
+            CMD_IMPORT_ZAPRET,
+            obj([
+                ("data", data.map(Value::from).unwrap_or(Value::Null)),
+                ("path", path.map(Value::from).unwrap_or(Value::Null)),
+                ("name", name.map(Value::from).unwrap_or(Value::Null)),
+            ]),
+        )
+    }
+
+    fn list_zapret(&self) -> Result<ZapretBundle, String> {
+        self.session()?.request_into(CMD_LIST_ZAPRET, obj([]))
+    }
+
+    fn pick_zapret(&self) -> Result<ZapretPick, String> {
+        // Minutes-long by nature: every strategy is attached, probed and detached.
+        // The request timeout on the session has to accommodate that; it is the one
+        // command where a slow answer is the correct answer.
+        self.session()?.request_into(CMD_PICK_ZAPRET, obj([]))
+    }
+
+    fn start_zapret(&self, name: Option<String>) -> Result<ZapretActive, String> {
+        self.session()?.request_into(
+            CMD_START_ZAPRET,
+            obj([("name", name.map(Value::from).unwrap_or(Value::Null))]),
+        )
+    }
+
+    fn stop_zapret(&self) -> Result<(), String> {
+        self.session()?.request(CMD_STOP_ZAPRET, obj([]))?;
+        Ok(())
+    }
+
+    fn update_zapret(&self) -> Result<ZapretUpdate, String> {
+        self.session()?.request_into(CMD_UPDATE_ZAPRET, obj([]))
+    }
+
+    fn set_zapret_auto_update(&self, on: bool) -> Result<State, String> {
+        self.session()?
+            .request_into(CMD_SET_ZAPRET_AUTO_UPDATE, obj([("on", json!(on))]))
     }
 }
 

@@ -230,6 +230,18 @@ pub struct State {
     /// prompt has an unambiguous gate; omitted when false, matching the core.
     #[serde(default, skip_serializing_if = "is_false")]
     pub crash_reports_asked: bool,
+    /// The DPI bypass: whether it is running, which strategy is picked, which
+    /// release of the bundle is installed, and whether the bundle updates itself.
+    /// The version matters on screen — a stale bundle fails exactly like a dead
+    /// node, so without it the user has no way to tell the two apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zapret_active: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zapret_strategy: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zapret_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zapret_auto_update: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -487,6 +499,67 @@ pub struct SpeedTest {
     pub duration_ms: u64,
 }
 
+/// An installed zapret bundle: where it lives and what strategies it offers.
+/// Mirrors `ZapretBundle` in `src/api/types.ts`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ZapretBundle {
+    pub dir: String,
+    /// Strategy names, the bundle default first; absent when nothing is
+    /// installed, which is the ordinary state before the first import.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategies: Option<Vec<String>>,
+}
+
+/// One probed destination while a strategy was active.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ZapretTarget {
+    pub target: String,
+    pub ok: bool,
+    pub rtt_ms: i64,
+}
+
+/// One strategy's measured outcome.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ZapretResult {
+    pub strategy: String,
+    /// Whether winws actually came up — worth telling apart from "came up and
+    /// did not help".
+    pub started: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub targets: Option<Vec<ZapretTarget>>,
+}
+
+/// The outcome of probing every strategy. `baseline` is how many targets already
+/// worked with the bypass off; `improved` is false when nothing beat it, meaning
+/// a packet filter would buy nothing here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ZapretPick {
+    pub baseline: i64,
+    pub targets: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub best: Option<String>,
+    pub improved: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub results: Option<Vec<ZapretResult>>,
+}
+
+/// Which strategy the bypass is running.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ZapretActive {
+    pub active: String,
+}
+
+/// What an update check found: the version installed before, the newest
+/// published one, and whether anything was actually replaced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ZapretUpdate {
+    #[serde(default)]
+    pub installed: String,
+    #[serde(default)]
+    pub latest: String,
+    pub updated: bool,
+}
+
 /// Push events back to the UI. Implemented by the Tauri `AppHandle` wrapper in
 /// `lib.rs`; the backend stays unaware of Tauri itself.
 pub trait EventSink: Send + Sync + 'static {
@@ -613,6 +686,38 @@ pub trait Backend: Send + Sync + 'static {
     /// connection — issued while idle it returns an error, since a throughput
     /// reading off the tunnel would be meaningless.
     fn run_speed_test(&self) -> Result<SpeedTest, String>;
+
+    /// Install a zapret DPI-bypass bundle. Exactly one of `data` (the archive
+    /// base64-encoded) or `path` (an archive or an already-unpacked folder) is
+    /// given: a file dropped into the webview has bytes and no path, while a
+    /// folder dropped onto the window has a path and no bytes. `name` is the
+    /// dropped file's name when known — the release archives carry their version
+    /// in it, which is what stops the first update check from re-downloading the
+    /// bundle the user just installed.
+    fn import_zapret(
+        &self,
+        data: Option<String>,
+        path: Option<String>,
+        name: Option<String>,
+    ) -> Result<ZapretBundle, String>;
+    /// Report the installed bundle. Nothing installed is not an error — it is
+    /// the normal state on first run.
+    fn list_zapret(&self) -> Result<ZapretBundle, String>;
+    /// Probe every strategy and report which one to keep. Takes minutes: each
+    /// strategy needs the packet filter attached, a round of control requests,
+    /// and a clean detach before the next.
+    fn pick_zapret(&self) -> Result<ZapretPick, String>;
+    /// Turn the bypass on: the named strategy, or the one already picked.
+    fn start_zapret(&self, name: Option<String>) -> Result<ZapretActive, String>;
+    /// Turn the bypass off and hand the censored services back to the tunnel.
+    fn stop_zapret(&self) -> Result<(), String>;
+    /// Check for a newer published bundle and install it, downloading one
+    /// outright when none is installed.
+    fn update_zapret(&self) -> Result<ZapretUpdate, String>;
+    /// Arm or disarm automatic bundle updates. On by default: the bypass is the
+    /// one component whose value expires, and a stale one fails exactly like a
+    /// dead node.
+    fn set_zapret_auto_update(&self, on: bool) -> Result<State, String>;
 }
 
 #[cfg(test)]
@@ -820,6 +925,10 @@ mod tests {
             preset_ru_gov: Some(true),
             crash_reports: Some(true),
             crash_reports_asked: true,
+            zapret_active: Some(true),
+            zapret_strategy: Some("general (FAKE TLS AUTO)".into()),
+            zapret_version: Some("1.10.1".into()),
+            zapret_auto_update: Some(true),
             error: None,
         };
         let json = to_value(&state).unwrap();
@@ -855,6 +964,10 @@ mod tests {
             preset_ru_gov: None,
             crash_reports: None,
             crash_reports_asked: false,
+            zapret_active: None,
+            zapret_strategy: None,
+            zapret_version: None,
+            zapret_auto_update: None,
             error: None,
         };
         let obj = to_value(&state).unwrap();

@@ -234,8 +234,12 @@ export const api = {
    * a temp file would need filesystem permissions it should not hold. The core
    * already owns the privileged side, so it unpacks.
    */
-  importZapret(zip: Uint8Array): Promise<ZapretBundle> {
-    return invoke<ZapretBundle>("import_zapret", { data: toBase64(zip) });
+  importZapret(zip: Uint8Array, name?: string): Promise<ZapretBundle> {
+    // The file name travels with the bytes: release archives carry their version
+    // in it ("zapret-discord-youtube-1.10.1.zip"), and the core reads it to stamp
+    // the install. Without it the first update check sees "unknown version" and
+    // re-downloads the bundle that was just dropped in.
+    return invoke<ZapretBundle>("import_zapret", { data: toBase64(zip), name });
   },
 
   /**

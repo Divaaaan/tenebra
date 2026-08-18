@@ -11,7 +11,8 @@ use std::time::Duration;
 use super::{
     Backend, ConnectionMode, ConnectionState, DnsResult, DnsStatus, EventSink, ExitMatch,
     ImportLinksResult, LeakCheck, Multihop, NatType, Node, PingResult, Profile, Protocol,
-    RoutingMode, Source, SpeedTest, SplitMode, State, StunCheck, TunStack, Verdict,
+    RoutingMode, Source, SpeedTest, SplitMode, State, StunCheck, TunStack, Verdict, ZapretActive,
+    ZapretBundle, ZapretPick, ZapretResult, ZapretTarget, ZapretUpdate,
 };
 
 /// How long the fake "dial" takes before flipping to connected.
@@ -22,6 +23,11 @@ const TRAFFIC_TICK: Duration = Duration::from_millis(1000);
 struct Inner {
     state: State,
     profiles: Vec<Profile>,
+    /// The bundle the mock pretends is installed, and which strategy is running.
+    /// Empty until something is imported, so the UI's "nothing installed yet"
+    /// path is the first thing a mock run exercises.
+    zapret_strategies: Vec<String>,
+    zapret_active: Option<String>,
     /// Bumped on every connect/disconnect so a stale timer or ticker from a
     /// previous attempt can tell it has been superseded and bail out.
     generation: u64,
@@ -54,6 +60,8 @@ pub struct MockBackend {
 impl MockBackend {
     pub fn new(sink: Arc<dyn EventSink>) -> Self {
         let inner = Inner {
+            zapret_strategies: Vec::new(),
+            zapret_active: None,
             state: State {
                 state: ConnectionState::Idle,
                 node: None,
@@ -93,6 +101,12 @@ impl MockBackend {
                 // Not asked yet: the mock starts fresh, so the GUI shows its
                 // first-run consent prompt just as it would against a new core.
                 crash_reports: None,
+                // The bypass reports itself only once a bundle is installed; the
+                // updater is on by default, matching the core.
+                zapret_active: None,
+                zapret_strategy: None,
+                zapret_version: None,
+                zapret_auto_update: Some(true),
                 crash_reports_asked: false,
                 error: None,
             },
@@ -727,6 +741,119 @@ impl Backend for MockBackend {
             duration_ms: 890,
         })
     }
+
+    fn import_zapret(
+        &self,
+        data: Option<String>,
+        path: Option<String>,
+        _name: Option<String>,
+    ) -> Result<ZapretBundle, String> {
+        // Refuse an empty drop the way the core does, so the UI's error path is
+        // exercised in mock runs instead of only in front of a real core.
+        if data.as_deref().unwrap_or("").is_empty() && path.as_deref().unwrap_or("").is_empty() {
+            return Err("import_zapret: пустой архив".into());
+        }
+        let mut inner = self.shared.inner.lock().unwrap();
+        inner.zapret_strategies = demo_strategies();
+        Ok(ZapretBundle {
+            dir: MOCK_ZAPRET_DIR.into(),
+            strategies: Some(inner.zapret_strategies.clone()),
+        })
+    }
+
+    fn list_zapret(&self) -> Result<ZapretBundle, String> {
+        let inner = self.shared.inner.lock().unwrap();
+        let strategies = if inner.zapret_strategies.is_empty() {
+            None
+        } else {
+            Some(inner.zapret_strategies.clone())
+        };
+        Ok(ZapretBundle {
+            dir: MOCK_ZAPRET_DIR.into(),
+            strategies,
+        })
+    }
+
+    fn pick_zapret(&self) -> Result<ZapretPick, String> {
+        let mut inner = self.shared.inner.lock().unwrap();
+        if inner.zapret_strategies.is_empty() {
+            return Err("pick_zapret: сначала загрузи сборку zapret".into());
+        }
+        // A believable measurement: the baseline already carries some targets, and
+        // the winner carries more. The winner is left running, as the core does.
+        let best = "general (FAKE TLS AUTO)".to_string();
+        inner.zapret_active = Some(best.clone());
+        Ok(ZapretPick {
+            baseline: 3,
+            targets: 5,
+            best: Some(best.clone()),
+            improved: true,
+            results: Some(vec![ZapretResult {
+                strategy: best,
+                started: true,
+                targets: Some(vec![ZapretTarget {
+                    target: "https://www.youtube.com/generate_204".into(),
+                    ok: true,
+                    rtt_ms: 162,
+                }]),
+            }]),
+        })
+    }
+
+    fn start_zapret(&self, name: Option<String>) -> Result<ZapretActive, String> {
+        let mut inner = self.shared.inner.lock().unwrap();
+        if inner.zapret_strategies.is_empty() {
+            return Err("start_zapret: сначала загрузи сборку zapret".into());
+        }
+        let chosen = name
+            .or_else(|| inner.zapret_active.clone())
+            .unwrap_or_else(|| inner.zapret_strategies[0].clone());
+        if !inner.zapret_strategies.contains(&chosen) {
+            return Err(format!("start_zapret: стратегии {chosen:?} нет в сборке"));
+        }
+        inner.zapret_active = Some(chosen.clone());
+        Ok(ZapretActive { active: chosen })
+    }
+
+    fn stop_zapret(&self) -> Result<(), String> {
+        // The pick survives a stop, as in the core: stopping is not un-picking.
+        Ok(())
+    }
+
+    fn update_zapret(&self) -> Result<ZapretUpdate, String> {
+        let mut inner = self.shared.inner.lock().unwrap();
+        let had = !inner.zapret_strategies.is_empty();
+        inner.zapret_strategies = demo_strategies();
+        Ok(ZapretUpdate {
+            installed: if had { "1.10.0".into() } else { String::new() },
+            latest: "1.10.1".into(),
+            updated: true,
+        })
+    }
+
+    fn set_zapret_auto_update(&self, on: bool) -> Result<State, String> {
+        let mut inner = self.shared.inner.lock().unwrap();
+        inner.state.zapret_auto_update = Some(on);
+        let state = inner.state.clone();
+        drop(inner);
+        self.shared.emit_state(&state);
+        Ok(state)
+    }
+}
+
+/// Where the mock pretends the bundle lives.
+const MOCK_ZAPRET_DIR: &str = r"C:\ProgramData\Tenebra\data\zapret";
+
+/// The strategy names a real 1.10.x bundle ships, trimmed to a handful — enough
+/// for the UI to render a list and a pick without pretending to be exhaustive.
+fn demo_strategies() -> Vec<String> {
+    vec![
+        "general".into(),
+        "general (ALT)".into(),
+        "general (ALT2)".into(),
+        "general (FAKE TLS AUTO)".into(),
+        "general (SIMPLE FAKE)".into(),
+    ]
 }
 
 // --- demo data and small helpers ----------------------------------------------
