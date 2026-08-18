@@ -76,8 +76,21 @@ export const api = {
   // candidate ordering — true ranks nodes by measured ping (fastest first),
   // false (the default) keeps the protocol-fallback order. The core ignores
   // `auto` when a node is given.
-  connect(profile: string, node?: string, auto?: boolean): Promise<State> {
-    return invoke<State>("connect", { profile, node, auto });
+  // `allowTunConflict` overrides the core's refusal to raise a tun while another
+  // VPN owns the default route. It is per-connect and never sticky: whether two
+  // tunnels overlap is a fact about the machine right now.
+  connect(
+    profile: string,
+    node?: string,
+    auto?: boolean,
+    allowTunConflict?: boolean,
+  ): Promise<State> {
+    return invoke<State>("connect", {
+      profile,
+      node,
+      auto,
+      allowTunConflict,
+    });
   },
 
   disconnect(): Promise<State> {
