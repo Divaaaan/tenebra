@@ -9,6 +9,62 @@ All notable changes to Tenebra are documented here. The format follows
 > [project status](README.md#project-status). Expect breaking changes between
 > 0.x releases.
 
+## [Unreleased]
+
+### Added
+
+- **The connect button measures before it picks an exit.** A node whose proxy
+  handshake has stopped answering still completes a TCP dial instantly, so it
+  reads as the *fastest* node and wins a latency-ranked pick while every request
+  through it hangs — which is how a connect that reported success left a machine
+  with no working internet. `check_nodes` now exposes every node as its own
+  loopback proxy in one sing-box process (no tun, no `auto_route`, and a blocking
+  final rule so a stray request cannot egress unproxied and certify a dead node),
+  judges each by whether traffic survives it across several unalike destinations,
+  and reports what broke: address unreachable, proxy handshake never completed,
+  or tunnel up but carrying nothing. With nothing usable it says so instead of
+  offering the least-bad node.
+- **The app says whether video, voice and games actually work.** "Connected" was
+  never an answer: exit IP, DNS verdict, throughput and node latency together
+  still leave someone watching YouTube spin unable to tell whether the tunnel,
+  the bypass, the routing or their own network is at fault. `check_services`
+  probes the three and the screen shows what each cost — a latency, not a tick,
+  because "voice works" and "voice works at 240ms" are different answers and
+  moving between them is the entire reason the routing is split.
+- **The DPI-bypass bundle installs itself** on the first connect when there is
+  none, so the setup screen asks only for the subscription link. Dragging in a
+  specific bundle still works and still wins; it is simply no longer a step
+  standing between the user and the button.
+- **`set_presets`** toggles the routing presets (games direct, real-time UDP
+  direct, censored services unblocked) individually. Each takes an optional
+  value, so naming one leaves the others alone.
+
+### Fixed
+
+- **The bypass no longer steals Discord's voice out of the tunnel.** The bundle
+  ships a block that punches voice and STUN through the DPI on the direct path —
+  right for a machine with no tunnel, wrong with one: WinDivert takes those
+  packets before the tunnel's router sees them, so voice leaves from the ISP
+  address no matter what the routing says, and on a network where the voice
+  servers are unreachable that way the client sits on "no route" forever. The
+  strategy is rewritten without that one block while a tunnel is connected, which
+  is what lets voice and YouTube work at the same time rather than one or the
+  other.
+- **Routing choices survive a restart and apply while connected.** The routing
+  mode was held in memory only: a user who chose global got smart back at the
+  next launch, with the UI reporting the mode the daemon had reset to. The three
+  presets were set in the constructor and had no command at all. `set_routing`
+  and `set_split` now hot-swap a live tunnel like the kill switch already did,
+  and skip the swap when nothing actually changed.
+- **The bundle's own update checker is switched off on import too**, not only on
+  the update path. A bundle dragged in by hand kept it armed, so every strategy
+  start reached GitHub first — on the network this app exists for, that is the
+  bypass waiting on a request the censor it has not raised yet is stalling.
+- **A daemon no longer reaches the internet unless it is given the way.** The
+  bundle updater was wired in the constructor, which put unit tests on the
+  release feed the moment a connect could install a missing bundle. `main`
+  installs it now, the same way the node-check probe runner is wired.
+
 ## [0.4.6] - 2026-07-27
 
 ### Added

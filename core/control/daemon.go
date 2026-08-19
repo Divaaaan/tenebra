@@ -319,6 +319,12 @@ type Daemon struct {
 	// network or a sing-box.
 	checkProbe func(ctx context.Context, port int, target string) (nodecheck.Stage, int64)
 
+	// bypassVerifyDelay is how long after a connect the bypass is checked for
+	// actually carrying video (see verifyBypass). A field so a test can shorten it,
+	// and zero disables the check entirely — which is what every test that is not
+	// about it wants, since otherwise each connect leaves a timer running.
+	bypassVerifyDelay time.Duration
+
 	// entitlement resolves a managed subscription's entitlement for one key,
 	// against the subscription's own origin. Injectable so the import/refresh
 	// paths can be unit-tested offline; production uses subscription.FetchEntitlement.
@@ -423,6 +429,8 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 
 		checkTargets:  defaultCheckTargets,
 		checkBasePort: defaultCheckBasePort,
+
+		bypassVerifyDelay: defaultBypassVerifyDelay,
 
 		probeWarmup:  defaultProbeWarmup,
 		probeRetry:   defaultProbeRetry,
