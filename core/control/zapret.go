@@ -139,6 +139,10 @@ func (d *Daemon) refreshZapretStateLocked() {
 func (d *Daemon) newZapretRunner(dir string) *zapret.Runner {
 	r := zapret.NewRunner(dir)
 	r.KeepVoiceInTunnel = d.snapshotState().State == StateConnected
+	// Keep the filter off our own tunnel's adapter. Pinned always, not only while
+	// connected: a strategy started before the tunnel is still running after it
+	// comes up, and by then the damage is done invisibly.
+	r.PinIfaceIndex = d.physicalIfaceIndex()
 	return r
 }
 

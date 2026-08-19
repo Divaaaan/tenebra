@@ -35,6 +35,11 @@ type Runner struct {
 	// direct path, and doing that while a tunnel exists takes the voice out of the
 	// tunnel and lands it where its servers are blocked by address.
 	KeepVoiceInTunnel bool
+	// PinIfaceIndex confines the filter to one network interface (see
+	// PinInterface). Set it to the physical uplink's index whenever a tun exists
+	// or may appear; zero leaves the filter on every interface, which is only
+	// right on a machine with no tunnel at all.
+	PinIfaceIndex int
 }
 
 // NewRunner builds a Runner with defaults that hold up on a slow machine.
@@ -71,19 +76,28 @@ func (r *Runner) Start(ctx context.Context, s Strategy) (bool, error) {
 // bypass at all is the outage the user notices — and the voice conflict is
 // recoverable by other means, an unstarted strategy is not.
 func (r *Runner) launchPath(s Strategy) string {
-	if !r.KeepVoiceInTunnel {
+	if !r.KeepVoiceInTunnel && r.PinIfaceIndex <= 0 {
 		return s.Path
 	}
 	data, err := os.ReadFile(s.Path)
 	if err != nil {
 		return s.Path
 	}
-	stripped, changed := StripVoiceUDP(string(data))
+	text := string(data)
+	changed := false
+	if r.KeepVoiceInTunnel {
+		if out, ok := StripVoiceUDP(text); ok {
+			text, changed = out, true
+		}
+	}
+	if out, ok := PinInterface(text, r.PinIfaceIndex); ok {
+		text, changed = out, true
+	}
 	if !changed {
 		return s.Path
 	}
 	derived := filepath.Join(r.Dir, derivedStrategyFile)
-	if err := os.WriteFile(derived, []byte(stripped), 0o644); err != nil {
+	if err := os.WriteFile(derived, []byte(text), 0o644); err != nil {
 		return s.Path
 	}
 	return derived
