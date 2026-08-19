@@ -111,6 +111,14 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 	if err != nil {
 		return State{}, err
 	}
+	// Choose the tun address here rather than only on the user's connect, because
+	// every restart needs a free one — and a hot-swap restarts while the outgoing
+	// adapter is still tearing down, still holding the address it was given. The
+	// replacement then fails to configure ("The object already exists"), the swap
+	// takes the tunnel with it, and the daemon reports connected over nothing.
+	// That is what made a live re-apply look like a tunnel that died on its own
+	// twenty seconds in.
+	d.pickFreeTunAddress()
 	// A health failover asks to avoid the node it is leaving; drop it so the walk
 	// picks a different exit. If that empties the set (a single-node profile has
 	// nowhere else to go) fail here, before any teardown, so the current tunnel is

@@ -139,6 +139,10 @@ func buildDaemon() (*control.Daemon, error) {
 	// auto_route), so it gets a fresh supervisor per run rather than sharing the
 	// tunnel's — a check must never be able to stop the tunnel.
 	daemon.SetProbeRunner(func() control.Runner { return newRunner() })
+	// A real core searches the bundle for a working strategy when the running one
+	// stops piercing the censor; a test does not, or every connect would spend
+	// minutes probing twenty batch files.
+	daemon.SetBypassRepick(true)
 	// The live bypass-bundle updater. It lives here, not in the daemon's
 	// constructor, so only a real core reaches the release feed.
 	daemon.SetZapretUpdater(

@@ -329,6 +329,11 @@ type Daemon struct {
 	// cannot fake through a socket.
 	bypassProbe func(ctx context.Context) bool
 
+	// bypassRepick arms the strategy search that runs when the bypass turns out
+	// not to be carrying anything. Off by default so no test spends minutes
+	// probing twenty strategies; main arms it for the real core.
+	bypassRepick bool
+
 	// bypassVerifyDelay is how long after a connect the bypass is checked for
 	// actually carrying video (see verifyBypass). A field so a test can shorten it,
 	// and zero disables the check entirely — which is what every test that is not
@@ -595,6 +600,14 @@ func (d *Daemon) SetZapretUpdater(
 		d.zapretApply = apply
 	}
 }
+
+// SetBypassRepick arms the strategy search that follows a bypass which turns out
+// not to be carrying anything.
+//
+// Off unless asked for, because the search stops and starts the packet filter
+// once per strategy and takes minutes — fine on a real machine that has just
+// lost YouTube, ruinous in a unit test.
+func (d *Daemon) SetBypassRepick(on bool) { d.bypassRepick = on }
 
 // SetProbeRunner installs the factory a node check uses to run its own sing-box.
 //

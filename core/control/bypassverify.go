@@ -3,7 +3,11 @@ package control
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
+	"path/filepath"
 	"time"
+
+	"github.com/Divaaaan/tenebra/core/zapret"
 )
 
 // videoProbeHost/videoProbeSNI are what the bypass check dials and names in its
@@ -78,8 +82,75 @@ func (d *Daemon) verifyBypass(ctx context.Context, gen uint64) {
 	if !d.isCurrent(gen) {
 		return
 	}
+
+	// Service first, optimisation second. The tunnel carries these domains slower
+	// and with ads, but it carries them; leaving them on a bypass that is not
+	// working leaves them carried by nothing while the app claims to be connected.
 	d.emitLog(LogWarn, "обход не вытянул видео — увожу эти сервисы в туннель")
 	d.fallBackToTunnel(ctx)
+
+	// Then find out whether another strategy works. The bundle ships about twenty
+	// because which one defeats a given ISP's DPI is discoverable only by trying,
+	// and the one that worked last month is exactly what stops working when the
+	// censor is updated. This is the difference between "YouTube broke, go read a
+	// forum" and "YouTube was slow for a few minutes".
+	d.repickStrategy(ctx, gen)
+}
+
+// repickStrategy measures every strategy in the bundle and, if one carries the
+// control targets, puts the services back on the direct path behind it.
+//
+// It runs after the fallback rather than instead of it: probing takes minutes —
+// each strategy needs the filter attached, several requests, and a clean detach —
+// and the user should not spend those minutes with no video at all.
+//
+// A run that finds nothing leaves the tunnel arrangement in place, which is the
+// honest outcome: the bypass has nothing to offer on this network today.
+func (d *Daemon) repickStrategy(ctx context.Context, gen uint64) {
+	if !d.bypassRepick {
+		return // disabled (tests that are not about this path)
+	}
+
+	dir := filepath.Join(d.store.Dir(), zapretDirName)
+	strategies := zapret.Discover(dir, dirFileNames(dir))
+	if len(strategies) == 0 {
+		return
+	}
+
+	d.emitLog(LogInfo, fmt.Sprintf("подбираю стратегию обхода — %d вариантов", len(strategies)))
+
+	d.zapretOpMu.Lock()
+	runner := d.newZapretRunner(dir)
+	results, baseline, err := runner.Pick(ctx, strategies, zapret.DefaultTargets(), nil)
+	d.zapretOpMu.Unlock()
+	if err != nil || !d.isCurrent(gen) {
+		return
+	}
+
+	best, found := zapret.Best(results, baseline)
+	if !found {
+		d.emitLog(LogWarn, "ни одна стратегия не пробила блокировку — остаёмся в туннеле")
+		return
+	}
+
+	d.zapretOpMu.Lock()
+	started, startErr := runner.Start(ctx, best.Strategy)
+	d.zapretOpMu.Unlock()
+	if startErr != nil || !started || !d.isCurrent(gen) {
+		d.emitLog(LogWarn, fmt.Sprintf("стратегия %s не запустилась", best.Name))
+		return
+	}
+
+	d.mu.Lock()
+	d.zapretActive = best.Name
+	d.routing.ZapretActive = true
+	d.routing.ZapretCovered = zapret.Covered(dir)
+	d.refreshZapretStateLocked()
+	d.mu.Unlock()
+	d.persistSettings()
+
+	d.emitLog(LogInfo, fmt.Sprintf("стратегия %s работает — возвращаю сервисы на прямой канал", best.Name))
+	d.reapplyLive()
 }
 
 // bypassCarriesVideo reports whether the bypass is piercing the censor for video
