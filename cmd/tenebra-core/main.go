@@ -22,6 +22,7 @@ import (
 
 	"github.com/Divaaaan/tenebra/core/control"
 	"github.com/Divaaaan/tenebra/core/profile"
+	"github.com/Divaaaan/tenebra/core/zapret"
 )
 
 // pipeMode switches the console process from stdin/stdout to the named-pipe
@@ -138,6 +139,14 @@ func buildDaemon() (*control.Daemon, error) {
 	// auto_route), so it gets a fresh supervisor per run rather than sharing the
 	// tunnel's — a check must never be able to stop the tunnel.
 	daemon.SetProbeRunner(func() control.Runner { return newRunner() })
+	// The live bypass-bundle updater. It lives here, not in the daemon's
+	// constructor, so only a real core reaches the release feed.
+	daemon.SetZapretUpdater(
+		func(ctx context.Context) (zapret.Release, error) { return zapret.LatestRelease(ctx, nil) },
+		func(ctx context.Context, dir string, rel zapret.Release) error {
+			return zapret.Apply(ctx, nil, dir, rel)
+		},
+	)
 	// Persist last-good per profile next to the store so the node that last
 	// connected leads the fallback walk on the next launch. A failure to open it
 	// is non-fatal: fall back to the in-memory default rather than refuse to run.

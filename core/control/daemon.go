@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -360,11 +361,18 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 		// that is a few releases behind is not slower, it stops working, and the
 		// failure is indistinguishable from a dead node.
 		zapretAutoUpdate: true,
-		zapretLatest: func(ctx context.Context) (zapret.Release, error) {
-			return zapret.LatestRelease(ctx, nil)
+		// Deliberately NOT the live release feed. Fetching a bundle is the one
+		// daemon behaviour that reaches the internet on its own, and wiring it here
+		// made every test that connects download one into its temp directory — three
+		// of them did exactly that, at fifteen seconds each, and one got far enough
+		// to have Windows pop a dialog about a winws.exe whose directory the test had
+		// already deleted. main installs the real pair (SetZapretUpdater); anything
+		// that has not asked for it gets an updater that politely does nothing.
+		zapretLatest: func(context.Context) (zapret.Release, error) {
+			return zapret.Release{}, errors.New("zapret: updater not configured")
 		},
-		zapretApply: func(ctx context.Context, dir string, rel zapret.Release) error {
-			return zapret.Apply(ctx, nil, dir, rel)
+		zapretApply: func(context.Context, string, zapret.Release) error {
+			return errors.New("zapret: updater not configured")
 		},
 		// CacheDir pins sing-box's cache file to the writable store directory so
 		// the root launchd daemon (cwd "/", read-only) doesn't abort at startup;
@@ -544,6 +552,25 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	d.lastNode = ps.LastNode
 	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
 	d.mu.Unlock()
+}
+
+// SetZapretUpdater installs the pair that fetches and applies bypass bundles.
+//
+// It is wired by main rather than defaulted in the constructor so that reaching
+// the internet is something a daemon is given, not something it is born with: a
+// unit test builds a daemon and gets an updater that declines, instead of one
+// that quietly downloads a bundle into a temp directory and starts a packet
+// filter from it.
+func (d *Daemon) SetZapretUpdater(
+	latest func(ctx context.Context) (zapret.Release, error),
+	apply func(ctx context.Context, dir string, rel zapret.Release) error,
+) {
+	if latest != nil {
+		d.zapretLatest = latest
+	}
+	if apply != nil {
+		d.zapretApply = apply
+	}
 }
 
 // SetProbeRunner installs the factory a node check uses to run its own sing-box.

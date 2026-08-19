@@ -13,7 +13,6 @@ import (
 	"github.com/Divaaaan/tenebra/core/fallback"
 	"github.com/Divaaaan/tenebra/core/model"
 	"github.com/Divaaaan/tenebra/core/profile"
-	"github.com/Divaaaan/tenebra/core/zapret"
 )
 
 // memListener is an in-memory net.Listener: dial hands the server half of a
@@ -81,21 +80,7 @@ func newTestDaemon(t *testing.T) (*Daemon, *fakeRunner) {
 	// so a live classify would dial the network on every blocked candidate.
 	// Escalation tests override d.classify with a scripted verdict.
 	d.classify = func(context.Context, model.Node, bool) fallback.FailureClass { return fallback.Unknown }
-	stubZapretFeed(d)
 	return d, runner
-}
-
-// stubZapretFeed keeps a test daemon off the network.
-//
-// A connect installs the bypass bundle when there is none (see
-// installZapretIfMissing), and the production release lookup is a real HTTP call:
-// left alone, every connect test depends on GitHub being reachable and waits out
-// the install budget when it is not. Tests that exercise the installer override
-// this with a scripted release.
-func stubZapretFeed(d *Daemon) {
-	d.zapretLatest = func(context.Context) (zapret.Release, error) {
-		return zapret.Release{}, errors.New("no release feed in tests")
-	}
 }
 
 func newListenerHarness(t *testing.T) *listenerHarness {
