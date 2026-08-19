@@ -2,7 +2,6 @@ package control
 
 import (
 	"context"
-	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -36,10 +35,7 @@ func TestBypassFallsBackToTunnelWhenVideoDoesNotSurvive(t *testing.T) {
 	armBypass(d)
 
 	var asked int32
-	d.httpGet = func(context.Context, string) ([]byte, error) {
-		atomic.AddInt32(&asked, 1)
-		return nil, errors.New("timeout")
-	}
+	d.bypassProbe = func(context.Context) bool { atomic.AddInt32(&asked, 1); return false }
 
 	d.verifyBypass(context.Background(), d.currentGeneration())
 
@@ -61,7 +57,7 @@ func TestBypassLeftAloneWhenVideoWorks(t *testing.T) {
 	d, _ := newTestDaemon(t)
 	d.bypassVerifyDelay = time.Millisecond
 	armBypass(d)
-	d.httpGet = func(context.Context, string) ([]byte, error) { return nil, nil }
+	d.bypassProbe = func(context.Context) bool { return true }
 
 	d.verifyBypass(context.Background(), d.currentGeneration())
 
@@ -83,12 +79,7 @@ func TestBypassRecoversAfterOneBlip(t *testing.T) {
 	armBypass(d)
 
 	var n int32
-	d.httpGet = func(context.Context, string) ([]byte, error) {
-		if atomic.AddInt32(&n, 1) == 1 {
-			return nil, errors.New("one blip")
-		}
-		return nil, nil
-	}
+	d.bypassProbe = func(context.Context) bool { return atomic.AddInt32(&n, 1) != 1 }
 
 	d.verifyBypass(context.Background(), d.currentGeneration())
 
@@ -105,10 +96,7 @@ func TestBypassNotVerifiedWhenItIsNotRunning(t *testing.T) {
 	d.bypassVerifyDelay = time.Millisecond
 
 	var asked int32
-	d.httpGet = func(context.Context, string) ([]byte, error) {
-		atomic.AddInt32(&asked, 1)
-		return nil, errors.New("should not be called")
-	}
+	d.bypassProbe = func(context.Context) bool { atomic.AddInt32(&asked, 1); return false }
 
 	d.verifyBypass(context.Background(), d.currentGeneration())
 
@@ -124,7 +112,7 @@ func TestBypassVerifyStopsWhenSuperseded(t *testing.T) {
 	d, _ := newTestDaemon(t)
 	d.bypassVerifyDelay = time.Millisecond
 	armBypass(d)
-	d.httpGet = func(context.Context, string) ([]byte, error) { return nil, errors.New("timeout") }
+	d.bypassProbe = func(context.Context) bool { return false }
 
 	stale := d.currentGeneration()
 	d.mu.Lock()
