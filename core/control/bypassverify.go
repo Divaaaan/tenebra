@@ -180,12 +180,22 @@ func (d *Daemon) defaultBypassProbe(ctx context.Context) bool {
 	return tlsConn.HandshakeContext(ctx) == nil
 }
 
-// fallBackToTunnel marks the bypass as not carrying anything and rebuilds the
-// live tunnel so the services it claimed travel through the node instead.
+// fallBackToTunnel records that the bypass is not carrying what it claimed, so
+// the next connect routes those services through the node instead.
 //
-// The filter itself is left running. Stopping it is a separate decision with its
-// own failure modes (it also covers destinations outside this preset), and the
-// thing that was broken is the routing assumption, not the process.
+// It deliberately does NOT rebuild the live tunnel. Rebuilding means stopping
+// sing-box and starting a replacement, and on a live machine that is a real risk
+// taken for an optimisation: the difference between YouTube going direct and
+// YouTube going through the node is latency and ads, while a failed rebuild is
+// no connection at all. Measured on the author's machine, that risk landed —
+// twenty seconds after a healthy connect this check fired, the rebuild started a
+// replacement that never came up, and the tunnel was gone while the app still
+// said connected. Three separate debugging sessions started from that wreckage.
+//
+// So the verdict is recorded and reported, and the routing follows on the next
+// connect. The filter itself is left running: stopping it is a separate decision
+// with its own failure modes, and what was wrong is the routing assumption, not
+// the process.
 func (d *Daemon) fallBackToTunnel(ctx context.Context) {
 	d.mu.Lock()
 	already := !d.routing.ZapretActive
@@ -198,5 +208,6 @@ func (d *Daemon) fallBackToTunnel(ctx context.Context) {
 	if already {
 		return
 	}
-	d.reapplyLive()
+	d.persistSettings()
+	d.emitLog(LogWarn, "маршрутизация обхода обновится при следующем подключении — живой туннель не трогаю")
 }
