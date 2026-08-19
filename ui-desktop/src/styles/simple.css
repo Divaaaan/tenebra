@@ -313,6 +313,45 @@
   cursor: default;
 }
 
+/* The post-connect checks. Three lines, each with the latency it measured: for
+   voice and games the difference between "works" and "works at 240ms" is the
+   entire reason the routing is split, so a bare tick would drop the fact worth
+   showing. */
+.svc-checks {
+  display: grid;
+  gap: var(--sp-1);
+  margin: var(--sp-4) 0 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+}
+
+.svc-check {
+  display: grid;
+  grid-template-columns: 1.2em 1fr auto;
+  gap: var(--sp-2);
+  align-items: baseline;
+  color: var(--text-dim);
+}
+
+.svc-check.is-ok .svc-mark {
+  color: var(--signal);
+}
+
+.svc-check.is-bad {
+  color: var(--text);
+}
+
+.svc-check.is-bad .svc-mark,
+.svc-check.is-bad .svc-rtt {
+  color: var(--danger, #e5484d);
+}
+
+.svc-rtt {
+  font-variant-numeric: tabular-nums;
+}
+
 /* The manual bundle import, folded away. It is no longer a step — the core
    installs a bundle on the first connect — so it reads as a quiet aside rather
    than something standing between the user and the button. */

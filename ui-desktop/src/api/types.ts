@@ -253,6 +253,29 @@ export interface NodeCheck {
 }
 
 /**
+ * One answer to "is the thing I installed this for working?".
+ *
+ * Named after what the user recognises rather than after the mechanism: video,
+ * voice, games. Everything else the app reports — exit IP, DNS verdict,
+ * throughput, node latency — leaves someone staring at a spinning YouTube unable
+ * to say whether the tunnel, the bypass or their own network is at fault.
+ */
+export interface ServiceCheck {
+  /** Stable key: "video" | "voice" | "games". */
+  service: string;
+  ok: boolean;
+  /** What it cost in ms; meaningful only when ok. */
+  rttMs: number;
+  /** The destination measured, so a failure can be repeated by hand. */
+  detail: string;
+}
+
+/** Result of `check_services`. */
+export interface ServiceChecks {
+  checks: ServiceCheck[];
+}
+
+/**
  * Result of a batch link import (`import_links`): the single profile built from
  * all the valid links, plus how many links were imported and how many were
  * skipped because they didn't parse. Mirror of the core's wrapped response — the

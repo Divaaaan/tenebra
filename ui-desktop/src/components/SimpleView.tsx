@@ -1,5 +1,11 @@
-import type { ConnectionState, Node, Profile } from "../api";
+import type {
+  ConnectionState,
+  Node,
+  Profile,
+  ServiceCheck as ServiceCheckResult,
+} from "../api";
 import { useI18n } from "../i18n/I18nContext";
+import { ServiceChecks } from "./ServiceChecks";
 import { SimpleSetup } from "./SimpleSetup";
 
 interface SimpleViewProps {
@@ -29,6 +35,10 @@ interface SimpleViewProps {
   onBypassFiles: (files: File[]) => Promise<void>;
   /** Import a bypass bundle from dropped paths (folder support). */
   onBypassPaths: (paths: string[]) => Promise<void>;
+  /** What the post-connect checks measured; empty before one has run. */
+  serviceChecks: ServiceCheckResult[];
+  /** True while those checks are in flight. */
+  serviceChecking: boolean;
 }
 
 /**
@@ -56,6 +66,8 @@ export function SimpleView({
   onSubscribe,
   onBypassFiles,
   onBypassPaths,
+  serviceChecks,
+  serviceChecking,
 }: SimpleViewProps) {
   const { t } = useI18n();
 
@@ -132,6 +144,11 @@ export function SimpleView({
         >
           {buttonLabel}
         </button>
+
+        {/* What "connected" actually bought: video, voice and game latency,
+            measured. The status word alone leaves a user watching a spinning
+            YouTube with no way to say what is wrong. */}
+        <ServiceChecks checks={serviceChecks} checking={serviceChecking} />
       </div>
 
       <div className="simple-pick">

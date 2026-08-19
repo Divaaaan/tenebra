@@ -81,13 +81,21 @@ func newTestDaemon(t *testing.T) (*Daemon, *fakeRunner) {
 	// so a live classify would dial the network on every blocked candidate.
 	// Escalation tests override d.classify with a scripted verdict.
 	d.classify = func(context.Context, model.Node, bool) fallback.FailureClass { return fallback.Unknown }
-	// The first-connect bundle installer would otherwise reach the release feed
-	// over the network (see installZapretIfMissing). Tests that exercise it
-	// override this with a scripted release.
+	stubZapretFeed(d)
+	return d, runner
+}
+
+// stubZapretFeed keeps a test daemon off the network.
+//
+// A connect installs the bypass bundle when there is none (see
+// installZapretIfMissing), and the production release lookup is a real HTTP call:
+// left alone, every connect test depends on GitHub being reachable and waits out
+// the install budget when it is not. Tests that exercise the installer override
+// this with a scripted release.
+func stubZapretFeed(d *Daemon) {
 	d.zapretLatest = func(context.Context) (zapret.Release, error) {
 		return zapret.Release{}, errors.New("no release feed in tests")
 	}
-	return d, runner
 }
 
 func newListenerHarness(t *testing.T) *listenerHarness {

@@ -11,9 +11,9 @@ use std::time::Duration;
 use super::{
     Backend, CheckStage, CheckTarget, ConnectionMode, ConnectionState, DnsResult, DnsStatus,
     EventSink, ExitMatch, ImportLinksResult, LeakCheck, Multihop, NatType, Node, NodeCheck,
-    NodeCheckResult, PingResult, Profile, Protocol, RoutingMode, Source, SpeedTest, SplitMode,
-    State, StunCheck, TunStack, Verdict, ZapretActive, ZapretBundle, ZapretPick, ZapretResult,
-    ZapretTarget, ZapretUpdate,
+    NodeCheckResult, PingResult, Profile, Protocol, RoutingMode, ServiceCheck, ServiceChecks,
+    Source, SpeedTest, SplitMode, State, StunCheck, TunStack, Verdict, ZapretActive, ZapretBundle,
+    ZapretPick, ZapretResult, ZapretTarget, ZapretUpdate,
 };
 
 /// How long the fake "dial" takes before flipping to connected.
@@ -446,6 +446,37 @@ impl Backend for MockBackend {
             .find(|p| p.id == profile)
             .ok_or("profile not found")?;
         Ok(synth_check(p))
+    }
+
+    fn check_services(&self) -> Result<ServiceChecks, String> {
+        // The demo mirrors the split the product promises: video and games on the
+        // physical link at native latency, voice through the tunnel because its
+        // servers are not reachable directly here.
+        let connected = {
+            let inner = self.shared.inner.lock().unwrap();
+            inner.state.state == ConnectionState::Connected
+        };
+        let checks = vec![
+            ServiceCheck {
+                service: "video".into(),
+                ok: true,
+                rtt_ms: 41,
+                detail: "https://www.youtube.com/generate_204".into(),
+            },
+            ServiceCheck {
+                service: "voice".into(),
+                ok: connected,
+                rtt_ms: if connected { 89 } else { 0 },
+                detail: "gateway.discord.gg:443".into(),
+            },
+            ServiceCheck {
+                service: "games".into(),
+                ok: true,
+                rtt_ms: 9,
+                detail: "77.88.8.8:443".into(),
+            },
+        ];
+        Ok(ServiceChecks { checks })
     }
 
     fn set_routing(&self, mode: RoutingMode) -> Result<State, String> {

@@ -11,6 +11,7 @@ import type {
   LogEvent,
   NodeCheck,
   PingResult,
+  ServiceChecks,
   Profile,
   RoutingMode,
   SpeedTestResult,
@@ -119,6 +120,17 @@ export const api = {
    */
   checkNodes(profile: string): Promise<NodeCheck> {
     return invoke<NodeCheck>("check_nodes", { profile });
+  },
+
+  /**
+   * Check whether video, voice and game latency work right now.
+   *
+   * The three probes run concurrently in the core, so this costs about one
+   * timeout rather than three — but it is still seconds, not milliseconds, and
+   * belongs behind a visible "checking" state.
+   */
+  checkServices(): Promise<ServiceChecks> {
+    return invoke<ServiceChecks>("check_services");
   },
 
   setRouting(mode: RoutingMode): Promise<State> {
