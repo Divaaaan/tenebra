@@ -70,9 +70,12 @@ const (
 	CmdSetDNS          = "set_dns"
 	CmdSetRules        = "set_rules"
 	CmdSetCrashReports = "set_crash_reports"
-	CmdLeakCheck       = "leak_check"
-	CmdRunStunCheck    = "run_stun_check"
-	CmdRunSpeedTest    = "run_speed_test"
+	// CmdCheckServices answers "does the thing I installed this for work": video,
+	// voice and game latency, each as a named check rather than as a mechanism.
+	CmdCheckServices = "check_services"
+	CmdLeakCheck     = "leak_check"
+	CmdRunStunCheck  = "run_stun_check"
+	CmdRunSpeedTest  = "run_speed_test"
 )
 
 // ConnState is the connection lifecycle state reported in State and state

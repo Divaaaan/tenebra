@@ -668,6 +668,20 @@ export interface Strings {
     coverage: string;
   };
 
+  /**
+   * The post-connect service checks: the three things the user installed this
+   * for, named the way they would name them.
+   */
+  checks: {
+    video: string;
+    voice: string;
+    games: string;
+    /** Shown while the probes are in flight. */
+    running: string;
+    /** Shown instead of a latency when a check failed. */
+    failed: string;
+  };
+
   units: {
     ms: string;
   };
@@ -1152,6 +1166,13 @@ const en: Strings = {
     noneUsable: "No node carried traffic. Nothing to auto-select.",
     coverage: "targets",
   },
+  checks: {
+    video: "YouTube",
+    voice: "Discord voice",
+    games: "Games",
+    running: "checking what works…",
+    failed: "not working",
+  },
   units: {
     ms: "ms",
   },
@@ -1635,6 +1656,13 @@ const ru: Strings = {
     best: "лучший",
     noneUsable: "Ни один узел не пропустил трафик. Выбирать нечего.",
     coverage: "целей",
+  },
+  checks: {
+    video: "Ютюб",
+    voice: "Голос в дискорде",
+    games: "Игры",
+    running: "проверяю, что работает…",
+    failed: "не работает",
   },
   units: {
     ms: "мс",

@@ -38,6 +38,7 @@ import { dispatchDeepLink, type DeepLinkHandlers } from "./lib/deepLink";
 import { locate, type Region } from "./lib/region";
 import { useNodeCheck } from "./lib/useNodeCheck";
 import { useNodePings } from "./lib/useNodePings";
+import { useServiceChecks } from "./lib/useServiceChecks";
 import { useSessionClock, formatUptime } from "./lib/useSessionClock";
 import { useTrafficHistory } from "./lib/useTrafficHistory";
 import { useUpdateCheck } from "./lib/useUpdateCheck";
@@ -338,6 +339,9 @@ export function App() {
   // What actually survives each node, measured on demand — the connect button
   // runs it before choosing an exit (see handlePrimary).
   const nodeCheck = useNodeCheck();
+  // And, once connected, whether the three things the user came for actually
+  // work: video, voice, game latency.
+  const services = useServiceChecks(phase);
   const sessionSecs = useSessionClock(phase);
   const history = useTrafficHistory(phase, traffic.downRate, traffic.upRate);
 
@@ -716,6 +720,8 @@ export function App() {
           onSubscribe={handleSimpleSubscribe}
           onBypassFiles={importBlocklist}
           onBypassPaths={importFromPaths}
+          serviceChecks={services.checks}
+          serviceChecking={services.checking}
         />
         <EclipseOverlay active={eclipse} onDone={endEclipse} />
         <ToastHost />

@@ -25,8 +25,8 @@ use serde_json::{json, Value};
 
 use super::{
     AttemptsSnapshot, Backend, ConnectionMode, EventSink, ImportLinksResult, LeakCheck, NodeCheck,
-    PingResult, Profile, RoutingMode, SpeedTest, SplitMode, State, StunCheck, TunStack,
-    ZapretActive, ZapretBundle, ZapretPick, ZapretUpdate, EVENT_ATTEMPTS, EVENT_LOG,
+    PingResult, Profile, RoutingMode, ServiceChecks, SpeedTest, SplitMode, State, StunCheck,
+    TunStack, ZapretActive, ZapretBundle, ZapretPick, ZapretUpdate, EVENT_ATTEMPTS, EVENT_LOG,
     EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
@@ -326,6 +326,7 @@ const CMD_CONNECT: &str = "connect";
 const CMD_DISCONNECT: &str = "disconnect";
 const CMD_PING: &str = "ping";
 const CMD_CHECK_NODES: &str = "check_nodes";
+const CMD_CHECK_SERVICES: &str = "check_services";
 const CMD_SET_ROUTING: &str = "set_routing";
 const CMD_SET_SPLIT: &str = "set_split";
 const CMD_SET_KILL_SWITCH: &str = "set_kill_switch";
@@ -449,6 +450,10 @@ impl<T: WireSession> Backend for T {
     fn check_nodes(&self, profile: String) -> Result<NodeCheck, String> {
         self.session()?
             .request_into(CMD_CHECK_NODES, obj([("profile", json!(profile))]))
+    }
+
+    fn check_services(&self) -> Result<ServiceChecks, String> {
+        self.session()?.request_into(CMD_CHECK_SERVICES, obj([]))
     }
 
     fn set_routing(&self, mode: RoutingMode) -> Result<State, String> {

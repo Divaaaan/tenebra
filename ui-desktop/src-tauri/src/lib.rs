@@ -23,9 +23,9 @@ use tauri_plugin_notification::NotificationExt;
 
 use backend::{
     AttemptsSnapshot, Backend, ConnectionMode, ConnectionState, EventSink, ImportLinksResult,
-    LeakCheck, NodeCheck, PingResult, Profile, RoutingMode, SpeedTest, SplitMode, State, StunCheck,
-    TunStack, ZapretActive, ZapretBundle, ZapretPick, ZapretUpdate, EVENT_ATTEMPTS, EVENT_LOG,
-    EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
+    LeakCheck, NodeCheck, PingResult, Profile, RoutingMode, ServiceChecks, SpeedTest, SplitMode,
+    State, StunCheck, TunStack, ZapretActive, ZapretBundle, ZapretPick, ZapretUpdate,
+    EVENT_ATTEMPTS, EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
 /// Held in Tauri's managed state and shared by every command handler. The
@@ -671,6 +671,13 @@ async fn check_nodes(
     off_thread(Arc::clone(&state.backend), move |b| b.check_nodes(profile)).await
 }
 
+/// Check whether video, voice and game latency work right now. Costs about one
+/// timeout: the core runs its three probes concurrently.
+#[tauri::command]
+async fn check_services(state: TauriState<'_, AppState>) -> Result<ServiceChecks, String> {
+    off_thread(Arc::clone(&state.backend), move |b| b.check_services()).await
+}
+
 #[tauri::command]
 async fn set_routing(state: TauriState<'_, AppState>, mode: RoutingMode) -> Result<State, String> {
     off_thread(Arc::clone(&state.backend), move |b| b.set_routing(mode)).await
@@ -974,6 +981,7 @@ pub fn run() {
             disconnect,
             ping,
             check_nodes,
+            check_services,
             set_routing,
             set_split,
             set_kill_switch,

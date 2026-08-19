@@ -422,6 +422,33 @@ pub struct NodeCheck {
     pub best: String,
 }
 
+/// One answer to "is the thing I installed this for working?".
+///
+/// Named after what the user recognises — video, voice, games — rather than after
+/// the mechanism. The app already reports exit IP, DNS verdict, throughput and
+/// node latency, and none of that tells someone staring at a spinning YouTube
+/// whether the tunnel, the bypass or their own network is at fault.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceCheck {
+    /// Stable key the UI labels: "video", "voice", "games".
+    pub service: String,
+    pub ok: bool,
+    /// What it cost in milliseconds; meaningful only when `ok`.
+    pub rtt_ms: i64,
+    /// The destination that was measured, so a failure can be repeated by hand.
+    #[serde(default)]
+    pub detail: String,
+}
+
+/// The full result of `check_services`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceChecks {
+    #[serde(default)]
+    pub checks: Vec<ServiceCheck>,
+}
+
 /// The IP-vs-exit comparison outcome, mirroring the core's `ExitVerdict`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -673,6 +700,10 @@ pub trait Backend: Send + Sync + 'static {
     /// through every node to several destinations — and it is the only one of the
     /// two whose answer can be trusted to pick an exit.
     fn check_nodes(&self, profile: String) -> Result<NodeCheck, String>;
+    /// Check whether video, voice and game latency actually work right now. Runs
+    /// its three probes concurrently in the core, so it costs about one timeout
+    /// rather than three.
+    fn check_services(&self) -> Result<ServiceChecks, String>;
     fn set_routing(&self, mode: RoutingMode) -> Result<State, String>;
     fn set_split(&self, mode: SplitMode, apps: Vec<String>) -> Result<State, String>;
     /// Arm or disarm the kill switch. The core persists the choice and, when a

@@ -34,7 +34,9 @@ func daemonForConflictTest(t *testing.T) (*Daemon, string) {
 	if err := store.Add(p); err != nil {
 		t.Fatalf("add profile: %v", err)
 	}
-	return NewDaemon(store, newFakeRunner()), p.ID
+	d := NewDaemon(store, newFakeRunner())
+	stubZapretFeed(d)
+	return d, p.ID
 }
 
 // foreignTunnel is another VPN holding the default route at a metric that beats

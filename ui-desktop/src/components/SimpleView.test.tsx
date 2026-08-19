@@ -29,6 +29,8 @@ function setup(overrides: Partial<Parameters<typeof SimpleView>[0]> = {}) {
     onSubscribe: vi.fn(async () => {}),
     onBypassFiles: vi.fn(async () => {}),
     onBypassPaths: vi.fn(async () => {}),
+    serviceChecks: [],
+    serviceChecking: false,
     ...overrides,
   };
   const utils = renderWithProviders(<SimpleView {...props} />);

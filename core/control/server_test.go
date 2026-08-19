@@ -14,7 +14,6 @@ import (
 	"github.com/Divaaaan/tenebra/core/fallback"
 	"github.com/Divaaaan/tenebra/core/model"
 	"github.com/Divaaaan/tenebra/core/profile"
-	"github.com/Divaaaan/tenebra/core/zapret"
 )
 
 // harness drives a Server over two pipes with a fake runner, demultiplexing the
@@ -53,13 +52,7 @@ func newHarness(t *testing.T) *harness {
 	// nodes aren't real, so a live classify would dial the network on every
 	// blocked candidate. Tests that exercise escalation override d.classify.
 	d.classify = func(context.Context, model.Node, bool) fallback.FailureClass { return fallback.Unknown }
-	// A connect installs the bypass bundle when there is none (see
-	// installZapretIfMissing). Left at its default that reaches the release feed
-	// over the network, so every connect test would depend on GitHub being
-	// reachable — and wait out the install budget when it isn't.
-	d.zapretLatest = func(context.Context) (zapret.Release, error) {
-		return zapret.Release{}, errors.New("no release feed in tests")
-	}
+	stubZapretFeed(d)
 
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()

@@ -703,6 +703,8 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleSetRules(req)
 	case CmdSetCrashReports:
 		return d.handleSetCrashReports(req)
+	case CmdCheckServices:
+		return d.handleCheckServices(ctx, req)
 	case CmdLeakCheck:
 		return d.handleLeakCheck(ctx, req)
 	case CmdRunStunCheck:
