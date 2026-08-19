@@ -229,6 +229,12 @@ export interface Strings {
     tunConflict: string;
     /** Offered after tunConflict: connect anyway, overriding the guard. */
     tunConflictOverride: string;
+    /** Title of the override prompt that carries tunConflictOverride. */
+    tunConflictOverrideTitle: string;
+    /** Override prompt: accept, connect despite the other tunnel. */
+    tunConflictOverrideConfirm: string;
+    /** Override prompt: decline and leave the guard's refusal standing. */
+    tunConflictOverrideCancel: string;
   };
 
   /**
@@ -842,6 +848,9 @@ const en: Strings = {
       "Another VPN already owns the default route, so the tunnel was not raised — two tunnels routing everything take the machine offline rather than sharing. Turn the other one off and try again.",
     tunConflictOverride:
       "Connect anyway? Do this only if you know the two tunnels do not overlap.",
+    tunConflictOverrideTitle: "Another VPN holds the route",
+    tunConflictOverrideConfirm: "Connect anyway",
+    tunConflictOverrideCancel: "Cancel",
   },
   crash: {
     consentText:
@@ -1341,6 +1350,9 @@ const ru: Strings = {
       "Маршрут по умолчанию уже держит другой VPN, туннель не поднят — два туннеля не делят машину, а оставляют её без сети. Выключи второй и попробуй снова.",
     tunConflictOverride:
       "Подключиться всё равно? Только если точно знаешь, что туннели не пересекаются.",
+    tunConflictOverrideTitle: "Маршрут держит другой VPN",
+    tunConflictOverrideConfirm: "Всё равно подключить",
+    tunConflictOverrideCancel: "Отмена",
   },
   crash: {
     consentText:

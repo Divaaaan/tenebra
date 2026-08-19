@@ -15,6 +15,7 @@ import { CrashConsentBanner } from "./components/CrashConsentBanner";
 import { CrashReportBanner } from "./components/CrashReportBanner";
 import { CrashReportModal } from "./components/CrashReportModal";
 import { DeepLinkConfirm } from "./components/DeepLinkConfirm";
+import { TunConflictConfirm } from "./components/TunConflictConfirm";
 import { ProfilesScreen } from "./screens/ProfilesScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { LogsScreen } from "./screens/LogsScreen";
@@ -246,6 +247,25 @@ export function App() {
   const [pendingConnect, setPendingConnect] = useState<string | null>(null);
   const clearImportPreset = useCallback(() => setImportPreset(null), []);
 
+  // The tun-conflict override asks its question in-app. `window.confirm` is
+  // brokered by the Tauri dialog plugin, which this app grants only for the file
+  // picker, so the call threw "plugin:dialog|confirm not allowed by ACL" and the
+  // connect died on the guard instead of asking. Holding the promise's resolve
+  // here turns the modal back into an awaitable question.
+  const [tunOverrideAsk, setTunOverrideAsk] = useState<{
+    resolve: (ok: boolean) => void;
+  } | null>(null);
+  const askTunOverride = useCallback(
+    () => new Promise<boolean>((resolve) => setTunOverrideAsk({ resolve })),
+    [],
+  );
+  const answerTunOverride = useCallback((ok: boolean) => {
+    setTunOverrideAsk((ask) => {
+      ask?.resolve(ok);
+      return null;
+    });
+  }, []);
+
   // A connect deep link never fires on arrival: it can be handed to the app by
   // any visited web page. `connectRequest` holds the profile a link asked to
   // connect until the user approves it in the confirmation prompt; only then is
@@ -466,7 +486,7 @@ export function App() {
             // only.
             if (!isTunConflict(e)) throw e;
             pushToast(describeCoreError(e, t));
-            if (!window.confirm(t.daemon.tunConflictOverride)) throw e;
+            if (!(await askTunOverride())) throw e;
             await tenebra.connect(selectedProfileId, node, auto, true);
           }
         }
@@ -480,7 +500,15 @@ export function App() {
         setBusy(false);
       }
     })();
-  }, [busy, connected, phase, tenebra, selectedProfileId, selectedNodeId]);
+  }, [
+    busy,
+    connected,
+    phase,
+    tenebra,
+    selectedProfileId,
+    selectedNodeId,
+    askTunOverride,
+  ]);
 
   const handleSelectNode = useCallback(
     (id: string) => {
@@ -911,6 +939,13 @@ export function App() {
           }
           onConfirm={confirmConnectRequest}
           onCancel={cancelConnectRequest}
+        />
+      )}
+
+      {tunOverrideAsk && (
+        <TunConflictConfirm
+          onConfirm={() => answerTunOverride(true)}
+          onCancel={() => answerTunOverride(false)}
         />
       )}
 
