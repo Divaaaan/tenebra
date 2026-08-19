@@ -52,7 +52,6 @@ func newHarness(t *testing.T) *harness {
 	// nodes aren't real, so a live classify would dial the network on every
 	// blocked candidate. Tests that exercise escalation override d.classify.
 	d.classify = func(context.Context, model.Node, bool) fallback.FailureClass { return fallback.Unknown }
-	stubZapretFeed(d)
 
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
