@@ -220,6 +220,7 @@ func (d *Daemon) applyZapretState(running bool, strategy string) {
 // It does not rebuild a live tunnel: both callers are about to build one, and the
 // flag set here is what that build reads.
 func (d *Daemon) raiseZapretForConnect(ctx context.Context) bool {
+	d.pickFreeTunAddress()
 	d.installZapretIfMissing(ctx)
 	up := d.autoStartZapret(ctx)
 	d.mu.Lock()

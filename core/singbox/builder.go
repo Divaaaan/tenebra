@@ -141,6 +141,14 @@ type TunOptions struct {
 	// desktop path — where sing-box owns the tun and needs auto_route — is unchanged.
 	ExternalTun  bool
 	ClashAPIPort int
+	// Address is the IPv4 CIDR the tun carries. Empty takes the historical
+	// default. It is settable because that address is not ours alone — other VPN
+	// clients hand their tun the same 172.19.0.1, and two adapters cannot hold one
+	// address: the second to start fails to configure and its sing-box exits while
+	// the app that launched it keeps reporting a healthy tunnel. See
+	// FreeTunAddress, which the control layer uses to pick one that is actually
+	// free on the machine.
+	Address string
 	// CacheDir is the directory sing-box's cache_file is written to. When empty,
 	// the cache file is enabled without an explicit path and sing-box resolves it
 	// against the process working directory — correct for the GUI sidecar. The
@@ -541,7 +549,7 @@ func tunInbound(t TunOptions, strictRoute bool) map[string]any {
 	in := map[string]any{
 		"type":    "tun",
 		"tag":     tunTag,
-		"address": []string{tunAddr, tunAddr6},
+		"address": []string{tunAddressFor(t), tunAddr6},
 		"mtu":     t.MTU,
 		"stack":   t.Stack,
 	}
