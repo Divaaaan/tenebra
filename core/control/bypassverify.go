@@ -2,7 +2,15 @@ package control
 
 import (
 	"context"
+	"crypto/tls"
 	"time"
+)
+
+// videoProbeHost/videoProbeSNI are what the bypass check dials and names in its
+// ClientHello. A censor acts on the name, so the name is the measurement.
+const (
+	videoProbeHost = "www.youtube.com:443"
+	videoProbeSNI  = "www.youtube.com"
 )
 
 // defaultBypassVerifyDelay is how long after a connect the bypass is checked.
@@ -62,7 +70,7 @@ func (d *Daemon) verifyBypass(ctx context.Context, gen uint64) {
 		if ctx.Err() != nil || !d.isCurrent(gen) {
 			return
 		}
-		if d.bypassCarriesVideo(ctx) {
+		if d.bypassProbe(ctx) {
 			return
 		}
 	}
@@ -74,14 +82,31 @@ func (d *Daemon) verifyBypass(ctx context.Context, gen uint64) {
 	d.fallBackToTunnel(ctx)
 }
 
-// bypassCarriesVideo asks for the video control target the way the machine's own
-// routing would. With the bypass up that request goes out the physical link, so
-// a success means the bypass is doing its job and a failure means it is not.
-func (d *Daemon) bypassCarriesVideo(ctx context.Context) bool {
+// bypassCarriesVideo reports whether the bypass is piercing the censor for video
+// on the path it actually acts on.
+//
+// The probe is pinned to the physical link (see newPingDialer) and stops at the
+// TLS handshake, because that is exactly the operation the DPI interferes with
+// and exactly where the bypass intervenes. Asking over ordinary routing instead
+// measures something else entirely: on a machine where another VPN owns the
+// default route, the request leaves through *that* tunnel and says nothing about
+// our bypass. It said "broken" on a working setup for that reason, and the
+// fallback it triggered tore down a healthy tunnel — the check has to be about
+// the thing it judges.
+func (d *Daemon) defaultBypassProbe(ctx context.Context) bool {
 	ctx, cancel := context.WithTimeout(ctx, serviceCheckTimeout)
 	defer cancel()
-	_, err := d.httpGet(ctx, videoProbeURL)
-	return err == nil
+
+	conn, err := d.dial(ctx, "tcp", videoProbeHost)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	if dl, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(dl)
+	}
+	tlsConn := tls.Client(conn, &tls.Config{ServerName: videoProbeSNI})
+	return tlsConn.HandshakeContext(ctx) == nil
 }
 
 // fallBackToTunnel marks the bypass as not carrying anything and rebuilds the

@@ -324,6 +324,11 @@ type Daemon struct {
 	// test can describe a machine where the default is already taken.
 	localAddrs func() []net.Addr
 
+	// bypassProbe reports whether the bypass is carrying video on the direct path.
+	// Injectable because the real one completes a TLS handshake, which a unit test
+	// cannot fake through a socket.
+	bypassProbe func(ctx context.Context) bool
+
 	// bypassVerifyDelay is how long after a connect the bypass is checked for
 	// actually carrying video (see verifyBypass). A field so a test can shorten it,
 	// and zero disables the check entirely — which is what every test that is not
@@ -466,6 +471,10 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 	// tell a node that never established from one that established and carried
 	// nothing (see defaultCheckProbe).
 	d.checkProbe = d.defaultCheckProbe
+	// The bypass check dials the physical link and completes a TLS handshake --
+	// the exact operation a censor interferes with, and the one the bypass exists
+	// to get through.
+	d.bypassProbe = d.defaultBypassProbe
 	// Background entitlement lookups run under this context so Close can cancel a
 	// slow one instead of blocking shutdown on it.
 	d.entCtx, d.entCancel = context.WithCancel(context.Background())

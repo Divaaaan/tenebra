@@ -22,15 +22,16 @@ import (
 // is about to be raised.
 func (d *Daemon) pickFreeTunAddress() {
 	addrs := d.localAddrs()
-	chosen := singbox.FreeTunAddress(addrs)
+	chosen := singbox.FreeTunAddresses(addrs)
 
 	d.mu.Lock()
 	previous := d.tun.Address
-	d.tun.Address = chosen
+	d.tun.Address = chosen.V4
+	d.tun.Address6 = chosen.V6
 	d.mu.Unlock()
 
-	if previous != "" && previous != chosen {
-		d.emitLog(LogInfo, fmt.Sprintf("туннель переезжает на %s — прежний адрес занят", chosen))
+	if previous != "" && previous != chosen.V4 {
+		d.emitLog(LogInfo, fmt.Sprintf("туннель переезжает на %s — прежний адрес занят", chosen.V4))
 	}
 }
 
