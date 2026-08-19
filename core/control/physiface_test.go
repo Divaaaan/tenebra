@@ -5,18 +5,32 @@ import (
 	"net"
 	"testing"
 
+	"github.com/Divaaaan/tenebra/core/singbox"
 	"github.com/Divaaaan/tenebra/core/tunguard"
 )
 
-// realIfaceName returns a name this machine actually has, so the index lookup
-// can be checked against the OS rather than against a fixture.
+// realIfaceName returns a non-tunnel, non-loopback interface this machine
+// actually has, so the index lookup is checked against the OS rather than a
+// fixture. It must skip tunnels: the machine these tests run on carries other
+// VPNs, and handing one of those in as "the physical uplink" would assert the
+// very confusion this code exists to avoid.
 func realIfaceName(t *testing.T) (string, int) {
 	t.Helper()
 	list, err := net.Interfaces()
-	if err != nil || len(list) == 0 {
-		t.Skip("no interfaces to read on this machine")
+	if err != nil {
+		t.Skip("cannot read interfaces on this machine")
 	}
-	return list[0].Name, list[0].Index
+	for _, i := range list {
+		if i.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if tunguard.IsTunnelIface(tunguard.Iface{Name: i.Name}) {
+			continue
+		}
+		return i.Name, i.Index
+	}
+	t.Skip("no physical interface to test against on this machine")
+	return "", 0
 }
 
 // TestPhysicalIfaceIndexPicksTheUplink is the case that matters: a machine with
@@ -29,6 +43,51 @@ func TestPhysicalIfaceIndexPicksTheUplink(t *testing.T) {
 		return []tunguard.Iface{
 			{Name: name, HasDefaultRoute: true, RouteMetric: 25},
 			{Name: "tenebra", IsTunnel: true, HasDefaultRoute: true, RouteMetric: 0},
+		}, nil
+	})
+
+	if got := d.physicalIfaceIndex(); got != want {
+		t.Errorf("index = %d, want %d (%s)", got, want, name)
+	}
+}
+
+// TestPhysicalIfaceIndexIgnoresAnotherVPNsAdapter is the live failure.
+//
+// The Windows adapter cannot classify interfaces — net.Interfaces exposes no
+// driver description — so every Iface it returns has IsTunnel false, including
+// another VPN's tun. Trusting that field alone picked the other VPN's adapter as
+// "the physical uplink" and pinned the bypass to the one interface it must stay
+// off: YouTube died the moment the app started its bypass.
+func TestPhysicalIfaceIndexIgnoresAnotherVPNsAdapter(t *testing.T) {
+	name, want := realIfaceName(t)
+	d, _ := daemonForConflictTest(t)
+	d.SetInterfaceProbe(func() ([]tunguard.Iface, error) {
+		return []tunguard.Iface{
+			// Exactly what the Windows probe produces: IsTunnel unset on both, and
+			// the other VPN holding the better metric.
+			{Name: "vpnfix", HasDefaultRoute: true, RouteMetric: 0},
+			{Name: name, HasDefaultRoute: true, RouteMetric: 25},
+		}, nil
+	})
+
+	if got := d.physicalIfaceIndex(); got != want {
+		t.Errorf("index = %d, want %d (%s) — the bypass would be pinned to the tunnel", got, want, name)
+	}
+}
+
+// TestPhysicalIfaceIndexIgnoresOurOwnTun: the adapter we are about to raise is
+// not an uplink either, whatever metric it ends up with.
+func TestPhysicalIfaceIndexIgnoresOurOwnTun(t *testing.T) {
+	own := singbox.DefaultTUNName()
+	if own == "" {
+		t.Skip("platform lets the kernel name the tun; nothing to exclude by name")
+	}
+	name, want := realIfaceName(t)
+	d, _ := daemonForConflictTest(t)
+	d.SetInterfaceProbe(func() ([]tunguard.Iface, error) {
+		return []tunguard.Iface{
+			{Name: own, HasDefaultRoute: true, RouteMetric: 0},
+			{Name: name, HasDefaultRoute: true, RouteMetric: 25},
 		}, nil
 	})
 
