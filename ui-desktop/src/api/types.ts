@@ -9,11 +9,7 @@
  * the new node follows.
  */
 export type ConnectionState =
-  | "idle"
-  | "connecting"
-  | "connected"
-  | "error"
-  | "health_reconnecting";
+  "idle" | "connecting" | "connected" | "error" | "health_reconnecting";
 
 export type RoutingMode = "smart" | "global" | "direct";
 
@@ -35,12 +31,7 @@ export type TunStack = "system" | "gvisor" | "mixed";
 export type ConnectionMode = "tun" | "system-proxy";
 
 export type NodeProtocol =
-  | "vless"
-  | "hysteria2"
-  | "amneziawg"
-  | "shadowsocks"
-  | "trojan"
-  | "vmess";
+  "vless" | "hysteria2" | "amneziawg" | "shadowsocks" | "trojan" | "vmess";
 
 export interface State {
   state: ConnectionState;
@@ -67,6 +58,18 @@ export interface State {
    * override); omitted (treated as off) when it isn't.
    */
   tls_fragment?: boolean;
+  /**
+   * The DPI bypass: whether it is carrying anything, which strategy is up, which
+   * bundle version is installed, and whether the bundle updates itself.
+   *
+   * The version is here rather than buried in a panel because a stale bundle does
+   * not degrade — it stops working, and the symptom is indistinguishable from a
+   * dead node or an expired subscription. It is the one fact that separates them.
+   */
+  zapret_active?: boolean;
+  zapret_strategy?: string;
+  zapret_version?: string;
+  zapret_auto_update?: boolean;
   /**
    * The two-hop chain selection: whether it is enabled and which entry/exit
    * servers (by stable id) it chains through. Omitted until the user has picked a
@@ -423,6 +426,19 @@ export interface ZapretResult {
  * false when nothing beat it, which means the block is elsewhere — or there is
  * no block — and enabling a packet filter would buy nothing.
  */
+/**
+ * What `update_zapret` did: the version that was installed, the newest published
+ * one, and whether anything changed.
+ *
+ * Both versions are reported even when nothing changed, because "already current"
+ * and "could not check" are different answers and only one of them is fine.
+ */
+export interface ZapretUpdate {
+  installed: string;
+  latest: string;
+  updated: boolean;
+}
+
 export interface ZapretPick {
   baseline: number;
   targets: number;

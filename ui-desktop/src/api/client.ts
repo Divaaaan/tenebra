@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   ZapretPick,
   ZapretBundle,
+  ZapretUpdate,
   AttemptsEvent,
   BatchImportResult,
   ConnectionMode,
@@ -329,6 +330,27 @@ export const api = {
   },
 
   /**
+   * Install the newest published bundle, or a first one when none is installed.
+   *
+   * Worth a button of its own because a stale bypass does not degrade, it stops
+   * working — and it fails exactly like a dead node or a broken subscription, so
+   * "am I running the current one" is the question that separates those. Answers
+   * with the versions before and after and whether anything changed.
+   */
+  updateZapret(): Promise<ZapretUpdate> {
+    return invoke<ZapretUpdate>("update_zapret");
+  },
+
+  /**
+   * Arm or disarm the background bundle updater. On by default: a bypass a few
+   * releases behind is the most common way this stops working, and noticing that
+   * yourself means first suspecting everything else.
+   */
+  setZapretAutoUpdate(on: boolean): Promise<void> {
+    return invoke<void>("set_zapret_auto_update", { on }).then(() => undefined);
+  },
+
+  /**
    * Probe the current network path with a STUN Binding Request: whether outbound
    * UDP works, the reflexive public IP, and a best-effort NAT classification (see
    * {@link StunResult}). Not gated on a connection.
@@ -439,9 +461,7 @@ export interface LeakCheck {
 // Event subscriptions. Each returns the Tauri unlisten handle; callers detach on
 // unmount. Channel names match the protocol's event field exactly.
 
-export function onState(
-  handler: (e: StateEvent) => void,
-): Promise<UnlistenFn> {
+export function onState(handler: (e: StateEvent) => void): Promise<UnlistenFn> {
   return listen<StateEvent>("state", (event) => handler(event.payload));
 }
 
@@ -489,8 +509,7 @@ export function onTrayShow(handler: () => void): Promise<UnlistenFn> {
 // connects a profile by id.
 
 export type DeepLinkAction =
-  | { action: "import"; url: string }
-  | { action: "connect"; profile: string };
+  { action: "import"; url: string } | { action: "connect"; profile: string };
 
 /**
  * Subscribe to deep links that arrive while the app is running. Mirrors the tray

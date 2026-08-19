@@ -3,7 +3,14 @@ import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getVersion } from "@tauri-apps/api/app";
 import type { Update } from "@tauri-apps/plugin-updater";
 
-import type { ConnectionMode, RoutingMode, SplitMode, TunStack } from "../api";
+import {
+  api,
+  type ConnectionMode,
+  type RoutingMode,
+  type SplitMode,
+  type TunStack,
+  type ZapretUpdate,
+} from "../api";
 import type { Tenebra } from "../state/useTenebra";
 import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import { UpdateConfirm } from "../components/UpdateConfirm";
@@ -119,7 +126,9 @@ function RuleListEditor({
   // flagged the moment it can't be a domain, mirroring the DNS resolver field.
   const valid = trimmed === "" || isValidDomainSuffix(trimmed);
   const canAdd =
-    trimmed !== "" && isValidDomainSuffix(trimmed) && !domains.includes(normalized);
+    trimmed !== "" &&
+    isValidDomainSuffix(trimmed) &&
+    !domains.includes(normalized);
   const errorId = `${idBase}-error`;
 
   function add() {
@@ -237,7 +246,8 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     }
     const updateActive = () => {
       const tops = NAV_SECTIONS.map(
-        (key) => sectionRefs.current.get(key)?.offsetTop ?? Number.POSITIVE_INFINITY,
+        (key) =>
+          sectionRefs.current.get(key)?.offsetTop ?? Number.POSITIVE_INFINITY,
       );
       setActiveSection(
         NAV_SECTIONS[
@@ -292,7 +302,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   const [autoFastest, setAutoFastestState] = useState(getAutoFastest);
   const [autoInstall, setAutoInstallState] = useState(getAutoInstallUpdates);
   const [channel, setChannelState] = useState<UpdateChannel>(getUpdateChannel);
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ kind: "idle" });
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({
+    kind: "idle",
+  });
   const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null);
   // A manual install while a tunnel is up would be dropped by the relaunch, so it
   // waits on a confirm; this holds that dialog open.
@@ -387,12 +399,47 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     void tenebra.setTlsFragment(!tlsFragment).catch(reportRefusal);
   }
 
+  // The bypass bundle's version and its updater. Both are core-owned; the version
+  // is shown because a stale bundle fails exactly like a dead node or an expired
+  // subscription, and knowing which of the three you have is otherwise guesswork.
+  const bypassVersion = tenebra.state.zapret_version ?? "";
+  const bypassAutoUpdate = tenebra.state.zapret_auto_update ?? true;
+  const [bypassUpdating, setBypassUpdating] = useState(false);
+  const [bypassUpdateNote, setBypassUpdateNote] = useState("");
+
+  function updateBypass() {
+    if (bypassUpdating) return;
+    setBypassUpdating(true);
+    setBypassUpdateNote("");
+    void api
+      .updateZapret()
+      .then((r: ZapretUpdate) => {
+        // "Already current" and "updated" are both successes, and the user should
+        // be able to tell them apart — the first means the bypass is not the
+        // problem, which is the whole reason to look here.
+        setBypassUpdateNote(
+          r.updated
+            ? `${r.installed || "—"} → ${r.latest}`
+            : `${t.settings.bypassUpToDate} ${r.latest || r.installed}`,
+        );
+      })
+      .catch((e: unknown) => {
+        setBypassUpdateNote(describeCoreError(e, t));
+      })
+      .finally(() => setBypassUpdating(false));
+  }
+
+  function toggleBypassAutoUpdate() {
+    void api.setZapretAutoUpdate(!bypassAutoUpdate).catch(reportRefusal);
+  }
+
   // Multihop two-hop chain. Core-owned like the other toggles: off with no
   // selection until the user picks an entry and an exit node. The choices are
   // drawn from the active profile (the connected one, else the first stored) and
   // sent by stable id; the core resolves them at connect time and falls back to a
   // single hop for a pair that no longer fits the profile.
-  const multihopProfileId = tenebra.state.profile || tenebra.profiles[0]?.id || "";
+  const multihopProfileId =
+    tenebra.state.profile || tenebra.profiles[0]?.id || "";
   const multihopNodes =
     tenebra.profiles.find((p) => p.id === multihopProfileId)?.nodes ?? [];
   const multihopEnabled = tenebra.state.multihop?.enabled ?? false;
@@ -402,14 +449,21 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   // rule the core enforces — so the toggle is inert until then (it can always turn
   // off). The selectors stay usable while off so a pick can be made first.
   const multihopArmable =
-    multihopEntry !== "" && multihopExit !== "" && multihopEntry !== multihopExit;
+    multihopEntry !== "" &&
+    multihopExit !== "" &&
+    multihopEntry !== multihopExit;
 
   function toggleMultihop() {
     if (!multihopEnabled && !multihopArmable) {
       return;
     }
     void tenebra
-      .setMultihop(multihopProfileId, !multihopEnabled, multihopEntry, multihopExit)
+      .setMultihop(
+        multihopProfileId,
+        !multihopEnabled,
+        multihopEntry,
+        multihopExit,
+      )
       .catch(reportRefusal);
   }
   function selectMultihopEntry(entryId: string) {
@@ -485,7 +539,11 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   // manifest to compare against. The radiogroup mirrors the routing/stack
   // pattern below — a roving tabIndex plus arrow keys that carry focus with the
   // selection.
-  const channelOptions: { value: UpdateChannel; label: string; hint: string }[] = [
+  const channelOptions: {
+    value: UpdateChannel;
+    label: string;
+    hint: string;
+  }[] = [
     {
       value: "stable",
       label: t.settings.updateChannelStable,
@@ -581,7 +639,10 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
       case "uptodate":
         return t.settings.updatesUpToDate;
       case "available":
-        return t.settings.updatesAvailable.replace("{version}", updateStatus.version);
+        return t.settings.updatesAvailable.replace(
+          "{version}",
+          updateStatus.version,
+        );
       case "downloading":
         return updateStatus.percent == null
           ? t.settings.updatesDownloading
@@ -600,9 +661,21 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   const routing = tenebra.state.routing ?? "smart";
 
   const routingOptions: { mode: RoutingMode; label: string; hint: string }[] = [
-    { mode: "smart", label: t.settings.routingSmart, hint: t.settings.routingSmartHint },
-    { mode: "global", label: t.settings.routingGlobal, hint: t.settings.routingGlobalHint },
-    { mode: "direct", label: t.settings.routingDirect, hint: t.settings.routingDirectHint },
+    {
+      mode: "smart",
+      label: t.settings.routingSmart,
+      hint: t.settings.routingSmartHint,
+    },
+    {
+      mode: "global",
+      label: t.settings.routingGlobal,
+      hint: t.settings.routingGlobalHint,
+    },
+    {
+      mode: "direct",
+      label: t.settings.routingDirect,
+      hint: t.settings.routingDirectHint,
+    },
   ];
 
   // One ref slot per radio button so an arrow key can move DOM focus onto the
@@ -619,7 +692,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     const delta = e.key === "ArrowDown" ? 1 : -1;
     const nextIndex =
       (index + delta + routingOptions.length) % routingOptions.length;
-    void tenebra.setRouting(routingOptions[nextIndex].mode).catch(reportRefusal);
+    void tenebra
+      .setRouting(routingOptions[nextIndex].mode)
+      .catch(reportRefusal);
     routingRefs.current[nextIndex]?.focus();
   }
 
@@ -632,8 +707,16 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
 
   const splitOptions: { mode: SplitMode; label: string; hint: string }[] = [
     { mode: "off", label: t.settings.splitOff, hint: t.settings.splitOffHint },
-    { mode: "exclude", label: t.settings.splitExclude, hint: t.settings.splitExcludeHint },
-    { mode: "include", label: t.settings.splitInclude, hint: t.settings.splitIncludeHint },
+    {
+      mode: "exclude",
+      label: t.settings.splitExclude,
+      hint: t.settings.splitExcludeHint,
+    },
+    {
+      mode: "include",
+      label: t.settings.splitInclude,
+      hint: t.settings.splitIncludeHint,
+    },
   ];
 
   function chooseSplitMode(mode: SplitMode) {
@@ -734,9 +817,21 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   const tunStack = tenebra.state.tun_stack ?? "system";
 
   const stackOptions: { stack: TunStack; label: string; hint: string }[] = [
-    { stack: "system", label: t.settings.stackSystem, hint: t.settings.stackSystemHint },
-    { stack: "gvisor", label: t.settings.stackGvisor, hint: t.settings.stackGvisorHint },
-    { stack: "mixed", label: t.settings.stackMixed, hint: t.settings.stackMixedHint },
+    {
+      stack: "system",
+      label: t.settings.stackSystem,
+      hint: t.settings.stackSystemHint,
+    },
+    {
+      stack: "gvisor",
+      label: t.settings.stackGvisor,
+      hint: t.settings.stackGvisorHint,
+    },
+    {
+      stack: "mixed",
+      label: t.settings.stackMixed,
+      hint: t.settings.stackMixedHint,
+    },
   ];
 
   function chooseStack(stack: TunStack) {
@@ -907,7 +1002,11 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
           <div className="set-section-head">
             <h2 className="set-eyebrow">{t.settings.routing}</h2>
           </div>
-          <div className="set-options" role="radiogroup" aria-label={t.settings.routing}>
+          <div
+            className="set-options"
+            role="radiogroup"
+            aria-label={t.settings.routing}
+          >
             {routingOptions.map((opt, index) => {
               const checked = routing === opt.mode;
               return (
@@ -926,7 +1025,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
                   }
                   onKeyDown={(e) => onRoutingKey(e, index)}
                 >
-                  <span className="set-mark" aria-hidden="true">{checked ? "▣" : "▢"}</span>
+                  <span className="set-mark" aria-hidden="true">
+                    {checked ? "▣" : "▢"}
+                  </span>
                   <span className="set-option-text">
                     <span className="set-option-label">{opt.label}</span>
                     <span className="set-option-hint">{opt.hint}</span>
@@ -947,7 +1048,11 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             <p className="set-sub">{t.settings.splitHint}</p>
           </div>
 
-          <div className="set-options" role="radiogroup" aria-label={t.settings.split}>
+          <div
+            className="set-options"
+            role="radiogroup"
+            aria-label={t.settings.split}
+          >
             {splitOptions.map((opt, index) => {
               const checked = splitMode === opt.mode;
               return (
@@ -964,7 +1069,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
                   onClick={() => chooseSplitMode(opt.mode)}
                   onKeyDown={(e) => onSplitKey(e, index)}
                 >
-                  <span className="set-mark" aria-hidden="true">{checked ? "▣" : "▢"}</span>
+                  <span className="set-mark" aria-hidden="true">
+                    {checked ? "▣" : "▢"}
+                  </span>
                   <span className="set-option-text">
                     <span className="set-option-label">{opt.label}</span>
                     <span className="set-option-hint">{opt.hint}</span>
@@ -979,7 +1086,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
               <span className="set-eyebrow">{t.settings.splitApps}</span>
               <div className="set-add">
                 <span className="set-field">
-                  <span className="set-prompt" aria-hidden="true">$</span>
+                  <span className="set-prompt" aria-hidden="true">
+                    $
+                  </span>
                   <input
                     type="text"
                     value={appDraft}
@@ -1037,8 +1146,12 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
 
           <div className="set-row">
             <span className="set-row-text">
-              <span className="set-row-label">{t.settings.presetRuBanking}</span>
-              <span className="set-row-hint">{t.settings.presetRuBankingHint}</span>
+              <span className="set-row-label">
+                {t.settings.presetRuBanking}
+              </span>
+              <span className="set-row-hint">
+                {t.settings.presetRuBankingHint}
+              </span>
             </span>
             <button
               type="button"
@@ -1129,7 +1242,11 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             <h2 className="set-eyebrow">{t.settings.mode}</h2>
             <p className="set-sub">{t.settings.modeHint}</p>
           </div>
-          <div className="set-options" role="radiogroup" aria-label={t.settings.mode}>
+          <div
+            className="set-options"
+            role="radiogroup"
+            aria-label={t.settings.mode}
+          >
             {modeOptions.map((opt, index) => {
               const checked = proxyMode === opt.mode;
               return (
@@ -1146,7 +1263,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
                   onClick={() => chooseMode(opt.mode)}
                   onKeyDown={(e) => onModeKey(e, index)}
                 >
-                  <span className="set-mark" aria-hidden="true">{checked ? "▣" : "▢"}</span>
+                  <span className="set-mark" aria-hidden="true">
+                    {checked ? "▣" : "▢"}
+                  </span>
                   <span className="set-option-text">
                     <span className="set-option-label">{opt.label}</span>
                     <span className="set-option-hint">{opt.hint}</span>
@@ -1166,7 +1285,11 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             <h2 className="set-eyebrow">{t.settings.tunnel}</h2>
             <p className="set-sub">{t.settings.tunnelHint}</p>
           </div>
-          <div className="set-options" role="radiogroup" aria-label={t.settings.tunnel}>
+          <div
+            className="set-options"
+            role="radiogroup"
+            aria-label={t.settings.tunnel}
+          >
             {stackOptions.map((opt, index) => {
               const checked = tunStack === opt.stack;
               return (
@@ -1183,7 +1306,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
                   onClick={() => chooseStack(opt.stack)}
                   onKeyDown={(e) => onStackKey(e, index)}
                 >
-                  <span className="set-mark" aria-hidden="true">{checked ? "▣" : "▢"}</span>
+                  <span className="set-mark" aria-hidden="true">
+                    {checked ? "▣" : "▢"}
+                  </span>
                   <span className="set-option-text">
                     <span className="set-option-label">{opt.label}</span>
                     <span className="set-option-hint">{opt.hint}</span>
@@ -1248,7 +1373,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             </label>
             <span className="set-row-hint">{t.settings.dnsRemoteHint}</span>
             <span className={`set-field${remoteValid ? "" : " is-invalid"}`}>
-              <span className="set-prompt" aria-hidden="true">$</span>
+              <span className="set-prompt" aria-hidden="true">
+                $
+              </span>
               <input
                 id="dns-remote"
                 type="text"
@@ -1278,7 +1405,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             </label>
             <span className="set-row-hint">{t.settings.dnsDirectHint}</span>
             <span className={`set-field${directValid ? "" : " is-invalid"}`}>
-              <span className="set-prompt" aria-hidden="true">$</span>
+              <span className="set-prompt" aria-hidden="true">
+                $
+              </span>
               <input
                 id="dns-direct"
                 type="text"
@@ -1331,6 +1460,55 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
               {tlsFragment ? "ON" : "OFF"}
             </button>
           </div>
+
+          {/* The bundle's version, and a way to move it. A bypass a few releases
+              behind does not get slower, it stops working — and it fails exactly
+              like a dead node or an expired subscription, so the version is the
+              one fact that tells those apart. */}
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.bypassVersion}</span>
+              <span className="set-row-hint">
+                {bypassVersion
+                  ? `${t.settings.bypassVersionInstalled} ${bypassVersion}`
+                  : t.settings.bypassVersionUnknown}
+                {bypassUpdateNote ? ` · ${bypassUpdateNote}` : ""}
+              </span>
+            </span>
+            <button
+              type="button"
+              className="set-btn"
+              disabled={bypassUpdating}
+              onClick={updateBypass}
+            >
+              {bypassUpdating
+                ? t.settings.bypassUpdating
+                : t.settings.bypassUpdate}
+            </button>
+          </div>
+
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">
+                {t.settings.bypassAutoUpdate}
+              </span>
+              <span className="set-row-hint">
+                {t.settings.bypassAutoUpdateHint}
+              </span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={bypassAutoUpdate}
+              className={`set-switch${bypassAutoUpdate ? " is-on" : ""}`}
+              onClick={toggleBypassAutoUpdate}
+            >
+              <span className="set-switch-box" aria-hidden="true">
+                {bypassAutoUpdate ? "▣" : "▢"}
+              </span>
+              {bypassAutoUpdate ? "ON" : "OFF"}
+            </button>
+          </div>
         </section>
 
         <section
@@ -1346,7 +1524,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
           <div className="set-row">
             <span className="set-row-text">
               <span className="set-row-label">{t.settings.multihopEnable}</span>
-              <span className="set-row-hint">{t.settings.multihopEnableHint}</span>
+              <span className="set-row-hint">
+                {t.settings.multihopEnableHint}
+              </span>
             </span>
             <button
               type="button"
@@ -1366,7 +1546,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
           <div className="set-row">
             <span className="set-row-text">
               <span className="set-row-label">{t.settings.multihopEntry}</span>
-              <span className="set-row-hint">{t.settings.multihopEntryHint}</span>
+              <span className="set-row-hint">
+                {t.settings.multihopEntryHint}
+              </span>
             </span>
             <select
               className="simple-select"
@@ -1387,7 +1569,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
           <div className="set-row">
             <span className="set-row-text">
               <span className="set-row-label">{t.settings.multihopExit}</span>
-              <span className="set-row-hint">{t.settings.multihopExitHint}</span>
+              <span className="set-row-hint">
+                {t.settings.multihopExitHint}
+              </span>
             </span>
             <select
               className="simple-select"
@@ -1419,7 +1603,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
           <div className="set-row">
             <span className="set-row-text">
               <span className="set-row-label">{t.settings.autoFailover}</span>
-              <span className="set-row-hint">{t.settings.autoFailoverHint}</span>
+              <span className="set-row-hint">
+                {t.settings.autoFailoverHint}
+              </span>
             </span>
             <button
               type="button"
@@ -1481,7 +1667,11 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             <span className="set-row-text">
               <span className="set-row-label">{t.settings.language}</span>
             </span>
-            <div className="set-seg" role="group" aria-label={t.settings.language}>
+            <div
+              className="set-seg"
+              role="group"
+              aria-label={t.settings.language}
+            >
               {langOptions.map((opt) => (
                 <button
                   key={opt.value}
@@ -1527,7 +1717,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
           <div className="set-row">
             <span className="set-row-text">
               <span className="set-row-label">{t.settings.launchAtLogin}</span>
-              <span className="set-row-hint">{t.settings.launchAtLoginHint}</span>
+              <span className="set-row-hint">
+                {t.settings.launchAtLoginHint}
+              </span>
             </span>
             <button
               type="button"
@@ -1635,12 +1827,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             </span>
             {selfUpdating &&
             pendingUpdate &&
-            (updateStatus.kind === "available" || updateStatus.kind === "error") ? (
-              <button
-                type="button"
-                className="set-btn"
-                onClick={applyUpdate}
-              >
+            (updateStatus.kind === "available" ||
+              updateStatus.kind === "error") ? (
+              <button type="button" className="set-btn" onClick={applyUpdate}>
                 {t.settings.updatesInstall}
               </button>
             ) : (
@@ -1682,7 +1871,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
           <div className="set-row">
             <span className="set-row-text">
               <span className="set-row-label">{t.settings.crashReports}</span>
-              <span className="set-row-hint">{t.settings.crashReportsHint}</span>
+              <span className="set-row-hint">
+                {t.settings.crashReportsHint}
+              </span>
             </span>
             <button
               type="button"

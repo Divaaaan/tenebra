@@ -510,6 +510,15 @@ export interface Strings {
     bypass: string;
     bypassHint: string;
     tlsFragment: string;
+    /** Installed bypass-bundle version, and the control that moves it. */
+    bypassVersion: string;
+    bypassVersionInstalled: string;
+    bypassVersionUnknown: string;
+    bypassUpdate: string;
+    bypassUpdating: string;
+    bypassUpToDate: string;
+    bypassAutoUpdate: string;
+    bypassAutoUpdateHint: string;
     tlsFragmentHint: string;
     /**
      * Multihop section: the optional two-hop chain that routes through an entry
@@ -1056,6 +1065,15 @@ const en: Strings = {
     bypassHint:
       "Defeat deep-packet inspection that fingerprints and blocks the tunnel handshake.",
     tlsFragment: "DPI bypass — TLS fragmentation",
+    bypassVersion: "Bypass bundle",
+    bypassVersionInstalled: "installed",
+    bypassVersionUnknown: "not installed yet",
+    bypassUpdate: "Update",
+    bypassUpdating: "Updating…",
+    bypassUpToDate: "already current:",
+    bypassAutoUpdate: "Update the bundle automatically",
+    bypassAutoUpdateHint:
+      "A bundle a few releases behind does not get slower — it stops working, and looks exactly like a dead node.",
     tlsFragmentHint:
       "Split the TLS ClientHello across packets so filters can't match it whole. Applies to every TLS-bearing outbound; connects get a touch slower.",
     multihop: "Multihop",
@@ -1547,6 +1565,15 @@ const ru: Strings = {
     bypassHint:
       "Обойти глубокую инспекцию пакетов (DPI), которая распознаёт и блокирует рукопожатие туннеля.",
     tlsFragment: "Обход DPI — фрагментация TLS",
+    bypassVersion: "Сборка обхода",
+    bypassVersionInstalled: "установлена",
+    bypassVersionUnknown: "ещё не установлена",
+    bypassUpdate: "Обновить",
+    bypassUpdating: "Обновляю…",
+    bypassUpToDate: "уже свежая:",
+    bypassAutoUpdate: "Обновлять сборку самому",
+    bypassAutoUpdateHint:
+      "Устаревшая сборка не тормозит, а перестаёт работать — и выглядит это ровно как мёртвый узел.",
     tlsFragmentHint:
       "Режет TLS-рукопожатие (ClientHello) на пакеты, чтобы фильтры не могли распознать его целиком. Применяется ко всем TLS-соединениям; коннект чуть медленнее.",
     multihop: "Multihop",
