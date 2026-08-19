@@ -236,7 +236,16 @@ func (d *Daemon) reapplyLive() {
 		return
 	}
 	if _, err := d.startConnect(context.Background(), p, cur.Node, false, false, ""); err != nil {
-		d.emitLog(LogWarn, fmt.Sprintf("re-apply: %v; the change applies on the next connect", err))
+		// Say the tunnel is down, because it is. startConnect stops the running
+		// process before it tries to bring the new one up, so a failure here is not
+		// "nothing changed" — the old tunnel is already gone. Logging "the change
+		// applies on the next connect" and leaving the state at connected is how a
+		// dead tunnel keeps a green light: the app reports a healthy connection, the
+		// user's traffic goes nowhere, and every diagnosis starts from a lie. Seen
+		// exactly that way on a live machine, for hours.
+		d.emitLog(LogError, fmt.Sprintf("re-apply: %v; the tunnel is down", err))
+		d.setState(State{State: StateError, Profile: cur.Profile, Node: cur.Node,
+			Error: "re-apply failed: " + err.Error(), Routing: d.snapshotState().Routing})
 	}
 }
 
