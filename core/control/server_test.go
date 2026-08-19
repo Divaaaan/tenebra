@@ -52,6 +52,11 @@ func newHarness(t *testing.T) *harness {
 	// nodes aren't real, so a live classify would dial the network on every
 	// blocked candidate. Tests that exercise escalation override d.classify.
 	d.classify = func(context.Context, model.Node, bool) fallback.FailureClass { return fallback.Unknown }
+	// The tun watch would otherwise look for an adapter these tests never raise,
+	// on the machine running them. Keep the watch itself running — it must not
+	// disturb an ordinary connection — but answer it from the fake.
+	d.ifacePresent = func(string) bool { return true }
+	d.tunWatchInterval = 20 * time.Millisecond
 
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()

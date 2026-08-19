@@ -805,6 +805,14 @@ func (d *Daemon) startLifecycle(ctx context.Context, gen uint64, profileID, node
 		d.healthWatch(ctx, gen, profileID, nodeID)
 	}()
 
+	// Watch the tunnel itself, not just the process behind it: the adapter can
+	// vanish while sing-box keeps running, and then "connected" is a lie.
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.watchTunInterface(ctx, gen)
+	}()
+
 	// Confirm the bypass is carrying what the routing just handed it. A bypass
 	// that starts but does not work leaves those services with no carrier at all,
 	// because routing sent them direct precisely because it was running.

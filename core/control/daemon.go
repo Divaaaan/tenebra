@@ -324,6 +324,13 @@ type Daemon struct {
 	// test can describe a machine where the default is already taken.
 	localAddrs func() []net.Addr
 
+	// ifacePresent reports whether a network interface exists, and tunWatchInterval
+	// how often a live tunnel's own interface is checked for still being there. The
+	// daemon used to watch only the sing-box process, which kept it reporting a
+	// healthy connection over an adapter that had vanished underneath it.
+	ifacePresent     func(name string) bool
+	tunWatchInterval time.Duration
+
 	// bypassProbe reports whether the bypass is carrying video on the direct path.
 	// Injectable because the real one completes a TLS handshake, which a unit test
 	// cannot fake through a socket.
@@ -447,6 +454,8 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 
 		bypassVerifyDelay: defaultBypassVerifyDelay,
 		localAddrs:        defaultLocalAddrs,
+		ifacePresent:      defaultIfacePresent,
+		tunWatchInterval:  defaultTunWatchInterval,
 
 		probeWarmup:  defaultProbeWarmup,
 		probeRetry:   defaultProbeRetry,
