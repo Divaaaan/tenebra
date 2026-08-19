@@ -63,9 +63,19 @@ func looksLikeTunnel(name string) bool {
 	return false
 }
 
-// isTunnel reports whether the adapter classified this interface as a tunnel, or
-// failing that whether its name looks like one.
-func isTunnel(ifc Iface) bool { return ifc.IsTunnel || looksLikeTunnel(ifc.Name) }
+// IsTunnelIface reports whether this interface is a tunnel: what the adapter
+// said, or failing that what its name looks like.
+//
+// Exported because the name heuristic is not optional equipment. The Windows
+// adapter cannot classify an interface at all (net.Interfaces exposes no driver
+// description), so every Iface it returns has IsTunnel false — and a caller that
+// trusts that field alone treats another VPN's adapter as the machine's physical
+// uplink. That is not hypothetical: it is how the bypass ended up pinned to the
+// tunnel it was supposed to stay off.
+func IsTunnelIface(ifc Iface) bool { return ifc.IsTunnel || looksLikeTunnel(ifc.Name) }
+
+// isTunnel is the internal spelling, kept so this package reads as it did.
+func isTunnel(ifc Iface) bool { return IsTunnelIface(ifc) }
 
 // uplinkMetric is the best (lowest) default-route metric among the non-tunnel
 // interfaces — i.e. how good the machine's ordinary internet path is. Returns

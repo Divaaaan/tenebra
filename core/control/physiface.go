@@ -4,6 +4,7 @@ import (
 	"net"
 	"strings"
 
+	"github.com/Divaaaan/tenebra/core/singbox"
 	"github.com/Divaaaan/tenebra/core/tunguard"
 )
 
@@ -29,10 +30,20 @@ func (d *Daemon) physicalIfaceIndex() int {
 		return 0
 	}
 
+	// Our own tun by the name the builder gives it, every other tunnel by what the
+	// platform says or what the name looks like. Reading i.IsTunnel alone is not
+	// enough: the Windows adapter cannot classify interfaces, so it leaves that
+	// field false on every one of them — and the first live run pinned the bypass
+	// to the other VPN's adapter, which is the exact interface it must stay off.
+	own := strings.ToLower(singbox.DefaultTUNName())
+
 	var best tunguard.Iface
 	found, tied := false, false
 	for _, i := range ifaces {
-		if i.IsTunnel || !i.HasDefaultRoute {
+		if !i.HasDefaultRoute || tunguard.IsTunnelIface(i) {
+			continue
+		}
+		if own != "" && strings.HasPrefix(strings.ToLower(i.Name), own) {
 			continue
 		}
 		switch {
