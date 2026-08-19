@@ -137,8 +137,19 @@ func (d *Daemon) refreshZapretStateLocked() {
 // never connects; bypass stopped, it leaves through the node and works — while
 // YouTube dies with it. Dropping just that block is what lets both work at once.
 func (d *Daemon) newZapretRunner(dir string) *zapret.Runner {
+	return d.newZapretRunnerFor(dir, d.snapshotState().State == StateConnected)
+}
+
+// newZapretRunnerFor is newZapretRunner with the tunnel question answered by the
+// caller. The connect path has to answer it itself: it raises the bypass before
+// the tunnel exists, so reading the state there always says "not connected" and
+// leaves the voice block in — on a session that is about to have a tunnel. The
+// symptom is a machine that connects and then cannot hold a voice call, with
+// nothing in the logs to explain it, because the block was decided one step too
+// early.
+func (d *Daemon) newZapretRunnerFor(dir string, tunnelUp bool) *zapret.Runner {
 	r := zapret.NewRunner(dir)
-	r.KeepVoiceInTunnel = d.snapshotState().State == StateConnected
+	r.KeepVoiceInTunnel = tunnelUp
 	// Keep the filter off our own tunnel's adapter. Pinned always, not only while
 	// connected: a strategy started before the tunnel is still running after it
 	// comes up, and by then the damage is done invisibly.
@@ -226,7 +237,9 @@ func (d *Daemon) applyZapretState(running bool, strategy string) {
 func (d *Daemon) raiseZapretForConnect(ctx context.Context) bool {
 	d.pickFreeTunAddress()
 	d.installZapretIfMissing(ctx)
-	up := d.autoStartZapret(ctx)
+	// The tunnel is not up yet — this runs on the way to it — but it is about to
+	// be, and the voice block has to be decided for the session that will exist.
+	up := d.autoStartZapret(ctx, true)
 	d.mu.Lock()
 	d.routing.ZapretActive = up
 	if !up {
@@ -471,6 +484,8 @@ func (d *Daemon) handleStartZapret(ctx context.Context, req Request) Response {
 
 	d.excludeNodesFromZapret(dir)
 
+	// A hand-started bypass answers the tunnel question from the live state:
+	// nothing is about to change here, unlike the connect path.
 	runner := d.newZapretRunner(dir)
 	started, err := runner.Start(ctx, chosen)
 	if err != nil {
@@ -511,7 +526,7 @@ func (d *Daemon) handleStartZapret(ctx context.Context, req Request) Response {
 //
 // Returns whether the bypass ended up running, which decides where the censored
 // services are routed.
-func (d *Daemon) autoStartZapret(ctx context.Context) bool {
+func (d *Daemon) autoStartZapret(ctx context.Context, tunnelUp bool) bool {
 	d.zapretOpMu.Lock()
 	defer d.zapretOpMu.Unlock()
 
@@ -545,7 +560,7 @@ func (d *Daemon) autoStartZapret(ctx context.Context) bool {
 
 	d.excludeNodesFromZapret(dir)
 
-	runner := d.newZapretRunner(dir)
+	runner := d.newZapretRunnerFor(dir, tunnelUp)
 	started, err := runner.Start(ctx, chosen)
 	if err != nil || !started {
 		// The usual cause is elevation: WinDivert loads a driver, which an
