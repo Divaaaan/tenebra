@@ -319,6 +319,11 @@ type Daemon struct {
 	// network or a sing-box.
 	checkProbe func(ctx context.Context, port int, target string) (nodecheck.Stage, int64)
 
+	// localAddrs reports the machine's interface addresses, so a connect can pick
+	// a tun address nothing else holds (see pickFreeTunAddress). Injectable so a
+	// test can describe a machine where the default is already taken.
+	localAddrs func() []net.Addr
+
 	// bypassVerifyDelay is how long after a connect the bypass is checked for
 	// actually carrying video (see verifyBypass). A field so a test can shorten it,
 	// and zero disables the check entirely — which is what every test that is not
@@ -431,6 +436,7 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 		checkBasePort: defaultCheckBasePort,
 
 		bypassVerifyDelay: defaultBypassVerifyDelay,
+		localAddrs:        defaultLocalAddrs,
 
 		probeWarmup:  defaultProbeWarmup,
 		probeRetry:   defaultProbeRetry,
