@@ -787,6 +787,15 @@ func (d *Daemon) startLifecycle(ctx context.Context, gen uint64, profileID, node
 		defer d.wg.Done()
 		d.healthWatch(ctx, gen, profileID, nodeID)
 	}()
+
+	// Confirm the bypass is carrying what the routing just handed it. A bypass
+	// that starts but does not work leaves those services with no carrier at all,
+	// because routing sent them direct precisely because it was running.
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.verifyBypass(ctx, gen)
+	}()
 }
 
 // watchProcess waits for either the process to exit or the connection to be torn
