@@ -35,21 +35,47 @@ const (
 	CmdConnect            = "connect"
 	CmdDisconnect         = "disconnect"
 	CmdPing               = "ping"
-	CmdSetRouting         = "set_routing"
-	CmdSetSplit           = "set_split"
-	CmdSetKillSwitch      = "set_kill_switch"
-	CmdSetTLSFragment     = "set_tls_fragment"
-	CmdSetMultihop        = "set_multihop"
-	CmdSetProxyMode       = "set_proxy_mode"
-	CmdSetTun             = "set_tun"
-	CmdSetAutoconnect     = "set_autoconnect"
-	CmdSetAutoFailover    = "set_auto_failover"
-	CmdSetDNS             = "set_dns"
-	CmdSetRules           = "set_rules"
-	CmdSetCrashReports    = "set_crash_reports"
-	CmdLeakCheck          = "leak_check"
-	CmdRunStunCheck       = "run_stun_check"
-	CmdRunSpeedTest       = "run_speed_test"
+	// CmdCheckNodes measures what actually survives each node end to end, rather
+	// than whether its address accepts TCP (which CmdPing does). See
+	// core/nodecheck for why a TCP-reachable node can still be a black hole.
+	CmdCheckNodes = "check_nodes"
+	// CmdImportZapret installs a zapret DPI-bypass bundle sent as base64 zip.
+	CmdImportZapret = "import_zapret"
+	// CmdListZapret reports the installed bundle's strategies.
+	CmdListZapret = "list_zapret"
+	// CmdPickZapret probes every installed strategy and reports which to use.
+	CmdPickZapret = "pick_zapret"
+	// CmdStartZapret turns the bypass on; CmdStopZapret turns it off.
+	CmdStartZapret = "start_zapret"
+	CmdStopZapret  = "stop_zapret"
+	// CmdUpdateZapret checks for a newer published bundle and installs it,
+	// downloading one outright when none is installed. It answers with the
+	// installed and latest versions and whether anything changed.
+	CmdUpdateZapret = "update_zapret"
+	// CmdSetZapretAutoUpdate arms or disarms the background bundle updater.
+	CmdSetZapretAutoUpdate = "set_zapret_auto_update"
+	CmdSetRouting          = "set_routing"
+	CmdSetSplit            = "set_split"
+	// CmdSetPresets toggles the routing presets: games direct, real-time UDP
+	// direct, censored services unblocked. All three default on and each is
+	// independently switchable; an omitted field leaves that preset unchanged.
+	CmdSetPresets      = "set_presets"
+	CmdSetKillSwitch   = "set_kill_switch"
+	CmdSetTLSFragment  = "set_tls_fragment"
+	CmdSetMultihop     = "set_multihop"
+	CmdSetProxyMode    = "set_proxy_mode"
+	CmdSetTun          = "set_tun"
+	CmdSetAutoconnect  = "set_autoconnect"
+	CmdSetAutoFailover = "set_auto_failover"
+	CmdSetDNS          = "set_dns"
+	CmdSetRules        = "set_rules"
+	CmdSetCrashReports = "set_crash_reports"
+	// CmdCheckServices answers "does the thing I installed this for work": video,
+	// voice and game latency, each as a named check rather than as a mechanism.
+	CmdCheckServices = "check_services"
+	CmdLeakCheck     = "leak_check"
+	CmdRunStunCheck  = "run_stun_check"
+	CmdRunSpeedTest  = "run_speed_test"
 )
 
 // ConnState is the connection lifecycle state reported in State and state
@@ -124,6 +150,25 @@ type Request struct {
 	// is present (an explicit exit wins) and defaults to false, so an omitted
 	// field preserves the original protocol-fallback behaviour exactly.
 	Auto bool `json:"auto,omitempty"`
+	// AllowTunConflict overrides the tun-conflict guard for this connect: proceed
+	// even though another VPN already owns the machine's default route (see
+	// core/tunguard). Defaults false, so the guard is on unless the user says
+	// otherwise — an override that could arrive by accident would restore the
+	// silent failure the guard exists to prevent.
+	//
+	// It is per-request rather than a stored setting on purpose: "I know these
+	// two tunnels do not overlap" is a judgement about the machine's state right
+	// now, and a sticky flag would keep waving connects through long after the
+	// other VPN's configuration changed.
+	AllowTunConflict bool `json:"allow_tun_conflict,omitempty"`
+	// Data carries a base64 payload for commands that ship a file — currently the
+	// zapret bundle. It is base64 rather than a path because the UI runs in a
+	// webview, where a dropped file has contents but no filesystem path.
+	Data string `json:"data,omitempty"`
+	// Path is a filesystem path for commands that can take one instead of bytes:
+	// import_zapret accepts either an archive or an already-unpacked FOLDER, and a
+	// folder has no byte payload to send.
+	Path string `json:"path,omitempty"`
 	// URL is the subscription URL for import_subscription.
 	URL string `json:"url,omitempty"`
 	// Link is the single share link for import_link.
@@ -133,7 +178,12 @@ type Request struct {
 	// on newlines, drops blanks/comments/duplicates, and counts unparseable lines
 	// as skipped rather than failing the whole import.
 	Links []string `json:"links,omitempty"`
-	// Name names the profile for import_subscription, import_link and import_links.
+	// Name names the profile for import_subscription, import_link and import_links,
+	// the strategy for start_zapret, and — for import_zapret sent as bytes — the
+	// dropped file's name, which is where the bundle's version is read from
+	// (release archives are named after their version). Optional there: a bundle
+	// imported without a name simply has an unknown version until the updater
+	// resolves it.
 	Name string `json:"name,omitempty"`
 	// Mode is the routing mode for set_routing (smart/global/direct) and also the
 	// split mode for set_split (off/exclude/include).
@@ -191,6 +241,18 @@ type Request struct {
 	Enabled bool   `json:"enabled,omitempty"`
 	EntryID string `json:"entry_id,omitempty"`
 	ExitID  string `json:"exit_id,omitempty"`
+	// Games, Voice and Services toggle the three routing presets for set_presets:
+	// game clients direct, real-time UDP direct, and the censored-services list
+	// through the bypass or the tunnel.
+	//
+	// Pointers, not plain bools: all three default to ON, so an omitted field has
+	// to mean "leave it alone" rather than "turn it off". With plain bools a UI
+	// flipping one switch would silently disarm the other two — and the two it
+	// disarmed are the ones that keep games and voice off the tunnel, i.e. the
+	// user would fix one thing and lose their ping.
+	Games    *bool `json:"games,omitempty"`
+	Voice    *bool `json:"voice,omitempty"`
+	Services *bool `json:"services,omitempty"`
 }
 
 // Response is a core -> UI reply to a Request, correlated by ID. Exactly one of
@@ -295,9 +357,20 @@ type State struct {
 	// omitempty drops only the nil (not-asked) case, letting the GUI tell "off"
 	// apart from "not asked". CrashReportsAsked carries the same has-been-asked
 	// bit explicitly so a consumer never has to lean on that pointer subtlety.
-	CrashReports      *bool  `json:"crash_reports,omitempty"`
-	CrashReportsAsked bool   `json:"crash_reports_asked,omitempty"`
-	Error             string `json:"error,omitempty"`
+	CrashReports      *bool `json:"crash_reports,omitempty"`
+	CrashReportsAsked bool  `json:"crash_reports_asked,omitempty"`
+	// Zapret* report the DPI bypass: whether it is running, which strategy is
+	// picked, which release of the bundle is installed ("" when none is, or when
+	// it was installed from a source carrying no version), and whether the bundle
+	// updates itself. The version is what lets a UI say "bypass 1.10.1" instead of
+	// leaving the user to guess whether the thing that stopped unblocking YouTube
+	// is old — the failure mode of a stale bundle is indistinguishable from a dead
+	// node, so the version has to be visible somewhere.
+	ZapretActive     bool   `json:"zapret_active,omitempty"`
+	ZapretStrategy   string `json:"zapret_strategy,omitempty"`
+	ZapretVersion    string `json:"zapret_version,omitempty"`
+	ZapretAutoUpdate bool   `json:"zapret_auto_update,omitempty"`
+	Error            string `json:"error,omitempty"`
 }
 
 // PingResult is one node's dial-latency probe outcome.

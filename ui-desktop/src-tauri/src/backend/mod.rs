@@ -230,6 +230,18 @@ pub struct State {
     /// prompt has an unambiguous gate; omitted when false, matching the core.
     #[serde(default, skip_serializing_if = "is_false")]
     pub crash_reports_asked: bool,
+    /// The DPI bypass: whether it is running, which strategy is picked, which
+    /// release of the bundle is installed, and whether the bundle updates itself.
+    /// The version matters on screen — a stale bundle fails exactly like a dead
+    /// node, so without it the user has no way to tell the two apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zapret_active: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zapret_strategy: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zapret_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zapret_auto_update: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -353,6 +365,88 @@ pub struct PingResult {
     /// whole ping response into an error, losing every node.
     pub rtt_ms: i64,
     pub ok: bool,
+}
+
+/// How far a probe got through a node before it failed. Mirrors the core's
+/// `nodecheck.Stage`.
+///
+/// The distinction is the point of the whole command: `dial` means the address
+/// never answered, `handshake` means it answered TCP and then never completed the
+/// proxy handshake — the state a node was in when it passed a TCP ping as the
+/// *fastest* node and carried nothing — and `probe` means the tunnel came up but
+/// traffic did not survive it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CheckStage {
+    Ok,
+    Dial,
+    Handshake,
+    Probe,
+}
+
+/// One control request through one node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckTarget {
+    /// The probed URL, kept so the UI can name what failed rather than showing a
+    /// bare red dot.
+    pub target: String,
+    pub stage: CheckStage,
+    /// Time to first byte in milliseconds; meaningful only when stage is `Ok`.
+    /// Widened to i64 for the same reason as `PingResult::rtt_ms`.
+    pub rtt_ms: i64,
+}
+
+/// Everything measured through a single node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeCheckResult {
+    pub node: String,
+    #[serde(default)]
+    pub targets: Vec<CheckTarget>,
+}
+
+/// The full verdict of a `check_nodes` run: every node ranked best-first, plus
+/// the one auto-selection should take.
+///
+/// `best` is empty when nothing works. That is deliberate and must survive to the
+/// UI: with every exit broken there is no meaningful "fastest", and quietly
+/// offering the least-bad one is exactly the failure this command exists to
+/// prevent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeCheck {
+    #[serde(default)]
+    pub results: Vec<NodeCheckResult>,
+    #[serde(default)]
+    pub best: String,
+}
+
+/// One answer to "is the thing I installed this for working?".
+///
+/// Named after what the user recognises — video, voice, games — rather than after
+/// the mechanism. The app already reports exit IP, DNS verdict, throughput and
+/// node latency, and none of that tells someone staring at a spinning YouTube
+/// whether the tunnel, the bypass or their own network is at fault.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceCheck {
+    /// Stable key the UI labels: "video", "voice", "games".
+    pub service: String,
+    pub ok: bool,
+    /// What it cost in milliseconds; meaningful only when `ok`.
+    pub rtt_ms: i64,
+    /// The destination that was measured, so a failure can be repeated by hand.
+    #[serde(default)]
+    pub detail: String,
+}
+
+/// The full result of `check_services`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceChecks {
+    #[serde(default)]
+    pub checks: Vec<ServiceCheck>,
 }
 
 /// The IP-vs-exit comparison outcome, mirroring the core's `ExitVerdict`.
@@ -487,6 +581,67 @@ pub struct SpeedTest {
     pub duration_ms: u64,
 }
 
+/// An installed zapret bundle: where it lives and what strategies it offers.
+/// Mirrors `ZapretBundle` in `src/api/types.ts`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ZapretBundle {
+    pub dir: String,
+    /// Strategy names, the bundle default first; absent when nothing is
+    /// installed, which is the ordinary state before the first import.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategies: Option<Vec<String>>,
+}
+
+/// One probed destination while a strategy was active.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ZapretTarget {
+    pub target: String,
+    pub ok: bool,
+    pub rtt_ms: i64,
+}
+
+/// One strategy's measured outcome.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ZapretResult {
+    pub strategy: String,
+    /// Whether winws actually came up — worth telling apart from "came up and
+    /// did not help".
+    pub started: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub targets: Option<Vec<ZapretTarget>>,
+}
+
+/// The outcome of probing every strategy. `baseline` is how many targets already
+/// worked with the bypass off; `improved` is false when nothing beat it, meaning
+/// a packet filter would buy nothing here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ZapretPick {
+    pub baseline: i64,
+    pub targets: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub best: Option<String>,
+    pub improved: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub results: Option<Vec<ZapretResult>>,
+}
+
+/// Which strategy the bypass is running.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ZapretActive {
+    pub active: String,
+}
+
+/// What an update check found: the version installed before, the newest
+/// published one, and whether anything was actually replaced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ZapretUpdate {
+    #[serde(default)]
+    pub installed: String,
+    #[serde(default)]
+    pub latest: String,
+    pub updated: bool,
+}
+
 /// Push events back to the UI. Implemented by the Tauri `AppHandle` wrapper in
 /// `lib.rs`; the backend stays unaware of Tauri itself.
 pub trait EventSink: Send + Sync + 'static {
@@ -526,9 +681,29 @@ pub trait Backend: Send + Sync + 'static {
     /// exit. Without one, `auto` chooses the candidate ordering the core walks:
     /// `false` keeps the protocol-fallback order, `true` selects the fastest node
     /// by measured ping. `auto` is ignored when `node` is set.
-    fn connect(&self, profile: String, node: Option<String>, auto: bool) -> Result<State, String>;
+    /// `allow_tun_conflict` overrides the guard that refuses to raise our tun
+    /// while another VPN owns the machine's default route. It is per-connect and
+    /// never defaulted on: "I know these two tunnels do not overlap" is a
+    /// judgement about the machine right now, and a sticky flag would keep waving
+    /// connects through long after the other VPN changed.
+    fn connect(
+        &self,
+        profile: String,
+        node: Option<String>,
+        auto: bool,
+        allow_tun_conflict: bool,
+    ) -> Result<State, String>;
     fn disconnect(&self) -> Result<State, String>;
     fn ping(&self, profile: String) -> Result<Vec<PingResult>, String>;
+    /// Measure what actually survives each node, rather than whether its address
+    /// accepts TCP. Slower than `ping` by design — it opens a real connection
+    /// through every node to several destinations — and it is the only one of the
+    /// two whose answer can be trusted to pick an exit.
+    fn check_nodes(&self, profile: String) -> Result<NodeCheck, String>;
+    /// Check whether video, voice and game latency actually work right now. Runs
+    /// its three probes concurrently in the core, so it costs about one timeout
+    /// rather than three.
+    fn check_services(&self) -> Result<ServiceChecks, String>;
     fn set_routing(&self, mode: RoutingMode) -> Result<State, String>;
     fn set_split(&self, mode: SplitMode, apps: Vec<String>) -> Result<State, String>;
     /// Arm or disarm the kill switch. The core persists the choice and, when a
@@ -613,6 +788,38 @@ pub trait Backend: Send + Sync + 'static {
     /// connection — issued while idle it returns an error, since a throughput
     /// reading off the tunnel would be meaningless.
     fn run_speed_test(&self) -> Result<SpeedTest, String>;
+
+    /// Install a zapret DPI-bypass bundle. Exactly one of `data` (the archive
+    /// base64-encoded) or `path` (an archive or an already-unpacked folder) is
+    /// given: a file dropped into the webview has bytes and no path, while a
+    /// folder dropped onto the window has a path and no bytes. `name` is the
+    /// dropped file's name when known — the release archives carry their version
+    /// in it, which is what stops the first update check from re-downloading the
+    /// bundle the user just installed.
+    fn import_zapret(
+        &self,
+        data: Option<String>,
+        path: Option<String>,
+        name: Option<String>,
+    ) -> Result<ZapretBundle, String>;
+    /// Report the installed bundle. Nothing installed is not an error — it is
+    /// the normal state on first run.
+    fn list_zapret(&self) -> Result<ZapretBundle, String>;
+    /// Probe every strategy and report which one to keep. Takes minutes: each
+    /// strategy needs the packet filter attached, a round of control requests,
+    /// and a clean detach before the next.
+    fn pick_zapret(&self) -> Result<ZapretPick, String>;
+    /// Turn the bypass on: the named strategy, or the one already picked.
+    fn start_zapret(&self, name: Option<String>) -> Result<ZapretActive, String>;
+    /// Turn the bypass off and hand the censored services back to the tunnel.
+    fn stop_zapret(&self) -> Result<(), String>;
+    /// Check for a newer published bundle and install it, downloading one
+    /// outright when none is installed.
+    fn update_zapret(&self) -> Result<ZapretUpdate, String>;
+    /// Arm or disarm automatic bundle updates. On by default: the bypass is the
+    /// one component whose value expires, and a stale one fails exactly like a
+    /// dead node.
+    fn set_zapret_auto_update(&self, on: bool) -> Result<State, String>;
 }
 
 #[cfg(test)]
@@ -820,6 +1027,10 @@ mod tests {
             preset_ru_gov: Some(true),
             crash_reports: Some(true),
             crash_reports_asked: true,
+            zapret_active: Some(true),
+            zapret_strategy: Some("general (FAKE TLS AUTO)".into()),
+            zapret_version: Some("1.10.1".into()),
+            zapret_auto_update: Some(true),
             error: None,
         };
         let json = to_value(&state).unwrap();
@@ -855,6 +1066,10 @@ mod tests {
             preset_ru_gov: None,
             crash_reports: None,
             crash_reports_asked: false,
+            zapret_active: None,
+            zapret_strategy: None,
+            zapret_version: None,
+            zapret_auto_update: None,
             error: None,
         };
         let obj = to_value(&state).unwrap();

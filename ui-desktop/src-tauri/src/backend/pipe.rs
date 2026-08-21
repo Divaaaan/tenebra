@@ -306,6 +306,10 @@ fn reconnecting_state() -> State {
         preset_ru_banking: None,
         preset_ru_gov: None,
         crash_reports: None,
+        zapret_active: None,
+        zapret_strategy: None,
+        zapret_version: None,
+        zapret_auto_update: None,
         crash_reports_asked: false,
         error: Some("Reconnecting to the Tenebra service…".to_string()),
     }
@@ -343,6 +347,10 @@ fn lost_state() -> State {
         preset_ru_banking: None,
         preset_ru_gov: None,
         crash_reports: None,
+        zapret_active: None,
+        zapret_strategy: None,
+        zapret_version: None,
+        zapret_auto_update: None,
         crash_reports_asked: false,
         error: Some("Lost the connection to the Tenebra service; reconnecting.".to_string()),
     }

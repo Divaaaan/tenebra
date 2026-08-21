@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -15,10 +16,13 @@ import (
 	"github.com/Divaaaan/tenebra/core/buildinfo"
 	"github.com/Divaaaan/tenebra/core/fallback"
 	"github.com/Divaaaan/tenebra/core/model"
+	"github.com/Divaaaan/tenebra/core/nodecheck"
 	"github.com/Divaaaan/tenebra/core/profile"
 	"github.com/Divaaaan/tenebra/core/routing"
 	"github.com/Divaaaan/tenebra/core/singbox"
 	"github.com/Divaaaan/tenebra/core/subscription"
+	"github.com/Divaaaan/tenebra/core/tunguard"
+	"github.com/Divaaaan/tenebra/core/zapret"
 )
 
 // Runner owns one sing-box process. It is defined here, not in an adapter
@@ -88,10 +92,48 @@ type Daemon struct {
 	// guarded by mu.
 	proxy systemProxyController
 
-	mu      sync.Mutex
-	routing routing.Options
-	state   State
-	tun     singbox.TunOptions
+	// ifaceProbe enumerates the machine's interfaces and their default routes for
+	// the tun-conflict guard (see tunguard). It is injected by the platform layer
+	// — the core stays stdlib-only and cannot read a route table itself — and is
+	// set once at construction, then only read, so it needs no lock.
+	//
+	// nil disables the guard, which is the correct default for a platform with no
+	// implementation yet and for unit tests that never raise a real tun: refusing
+	// to connect because we cannot see the routes would block the very platforms
+	// the check has not been ported to.
+	ifaceProbe func() ([]tunguard.Iface, error)
+
+	// zapretActive is the DPI-bypass strategy the user settled on, or empty. It is
+	// what a plain start_zapret re-launches, so the picked strategy survives a
+	// stop/start — and a restart, since it is persisted — without them naming it
+	// again. It records the CHOICE, not the running state: whether the bypass is
+	// up lives in routing.ZapretActive, which is what routing reads. Guarded by mu.
+
+	// zapretAutoUpdate arms the background bundle updater (see
+	// RunZapretAutoUpdate). On by default: the bypass is the one component that
+	// expires — the censor learns the tricks a release shipped with — and a stale
+	// bundle fails exactly like a broken VPN, so leaving it to the user to notice
+	// is leaving them a symptom with no visible cause. Guarded by mu.
+	zapretAutoUpdate bool
+
+	// zapretLatest and zapretApply are the bundle-update mechanism, injected so a
+	// test can exercise the update path without reaching GitHub or writing a
+	// megabyte of archive. Set once at construction, then only read.
+	zapretLatest func(context.Context) (zapret.Release, error)
+	zapretApply  func(context.Context, string, zapret.Release) error
+
+	// zapretOpMu serializes every operation that drives the bypass: probing,
+	// starting, stopping and updating. They share one winws process and one
+	// directory on disk, and overlapping them replaces a bundle under a running
+	// filter. It is separate from mu, which must never be held across the minutes
+	// a probe run takes.
+	zapretOpMu sync.Mutex
+
+	mu           sync.Mutex
+	zapretActive string
+	routing      routing.Options
+	state        State
+	tun          singbox.TunOptions
 	// proxyArmed records whether the daemon currently has the OS system proxy
 	// pointed at our mixed inbound, so disarmSystemProxy clears it exactly once and
 	// never touches a proxy we didn't set. Guarded by mu.
@@ -250,6 +292,51 @@ type Daemon struct {
 	speedURLs        []string
 	speedSampleBytes int64
 
+	// probeRunner mints a sing-box supervisor for a node-check run: a second,
+	// short-lived process beside the live tunnel, running a config with no tun and
+	// no auto_route (see singbox.BuildProbe). It is a factory rather than a shared
+	// runner so a check can never stop the tunnel by reusing its supervisor. nil
+	// means the platform did not wire one, and check_nodes says so rather than
+	// pretending; tests inject a fake.
+	probeRunner func() Runner
+	// checkTargets are the destinations a node verdict is measured against, and
+	// checkBasePort where the per-node probe listeners start. Both are fields so a
+	// test can shrink the target list and move off the production ports.
+	checkTargets  []string
+	checkBasePort int
+	// checkProbe runs one control request through a probe listener and reports how
+	// far it got. Injectable so the ranking and reporting can be tested without a
+	// network or a sing-box.
+	checkProbe func(ctx context.Context, port int, target string) (nodecheck.Stage, int64)
+
+	// localAddrs reports the machine's interface addresses, so a connect can pick
+	// a tun address nothing else holds (see pickFreeTunAddress). Injectable so a
+	// test can describe a machine where the default is already taken.
+	localAddrs func() []net.Addr
+
+	// ifacePresent reports whether a network interface exists, and tunWatchInterval
+	// how often a live tunnel's own interface is checked for still being there. The
+	// daemon used to watch only the sing-box process, which kept it reporting a
+	// healthy connection over an adapter that had vanished underneath it.
+	ifacePresent     func(name string) bool
+	tunWatchInterval time.Duration
+
+	// bypassProbe reports whether the bypass is carrying video on the direct path.
+	// Injectable because the real one completes a TLS handshake, which a unit test
+	// cannot fake through a socket.
+	bypassProbe func(ctx context.Context) bool
+
+	// bypassRepick arms the strategy search that runs when the bypass turns out
+	// not to be carrying anything. Off by default so no test spends minutes
+	// probing twenty strategies; main arms it for the real core.
+	bypassRepick bool
+
+	// bypassVerifyDelay is how long after a connect the bypass is checked for
+	// actually carrying video (see verifyBypass). A field so a test can shorten it,
+	// and zero disables the check entirely — which is what every test that is not
+	// about it wants, since otherwise each connect leaves a timer running.
+	bypassVerifyDelay time.Duration
+
 	// entitlement resolves a managed subscription's entitlement for one key,
 	// against the subscription's own origin. Injectable so the import/refresh
 	// paths can be unit-tested offline; production uses subscription.FetchEntitlement.
@@ -269,10 +356,42 @@ type Daemon struct {
 // with the stack pinned explicitly so the reported state always names it.
 func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 	d := &Daemon{
-		store:   store,
-		runner:  runner,
-		proxy:   realSystemProxy{},
-		routing: routing.Options{Mode: routing.ModeSmart}.Normalize(),
+		store:  store,
+		runner: runner,
+		proxy:  realSystemProxy{},
+		// The presets are ON by default, which is the product: the user buys a
+		// subscription, pastes a link, drops the bypass archive and presses one
+		// button. Shipping them off would mean that button leaves games tunnelled
+		// (adding the full round trip to every input), voice at 239ms instead of
+		// 9ms, and YouTube pinned direct by the geo rule because googlevideo
+		// resolves to an ISP cache — i.e. the three problems the app exists to
+		// solve, each waiting behind a checkbox the user has to find.
+		//
+		// Each remains switchable, and each still yields to the kill switch, whose
+		// guarantee outranks any convenience default.
+		routing: routing.Options{
+			Mode:            routing.ModeSmart,
+			UnblockServices: true,
+			GamesDirect:     true,
+			VoiceDirect:     true,
+		}.Normalize(),
+		// Bundle updates default on for the same reason the presets do: a bypass
+		// that is a few releases behind is not slower, it stops working, and the
+		// failure is indistinguishable from a dead node.
+		zapretAutoUpdate: true,
+		// Deliberately NOT the live release feed. Fetching a bundle is the one
+		// daemon behaviour that reaches the internet on its own, and wiring it here
+		// made every test that connects download one into its temp directory — three
+		// of them did exactly that, at fifteen seconds each, and one got far enough
+		// to have Windows pop a dialog about a winws.exe whose directory the test had
+		// already deleted. main installs the real pair (SetZapretUpdater); anything
+		// that has not asked for it gets an updater that politely does nothing.
+		zapretLatest: func(context.Context) (zapret.Release, error) {
+			return zapret.Release{}, errors.New("zapret: updater not configured")
+		},
+		zapretApply: func(context.Context, string, zapret.Release) error {
+			return errors.New("zapret: updater not configured")
+		},
 		// CacheDir pins sing-box's cache file to the writable store directory so
 		// the root launchd daemon (cwd "/", read-only) doesn't abort at startup;
 		// see singbox.TunOptions.CacheDir. Mode/MixedPort are seeded concrete (tun,
@@ -320,6 +439,14 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 
 		entitlement: subscription.FetchEntitlement,
 
+		checkTargets:  defaultCheckTargets,
+		checkBasePort: defaultCheckBasePort,
+
+		bypassVerifyDelay: defaultBypassVerifyDelay,
+		localAddrs:        defaultLocalAddrs,
+		ifacePresent:      defaultIfacePresent,
+		tunWatchInterval:  defaultTunWatchInterval,
+
 		probeWarmup:  defaultProbeWarmup,
 		probeRetry:   defaultProbeRetry,
 		probeTimeout: defaultProbeTimeout,
@@ -344,6 +471,14 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 	// The health watchdog probes the active node through the tunnel; production
 	// runs a clash-API delay test through the selector (see defaultHealthProbe).
 	d.healthProbe = d.defaultHealthProbe
+	// A node check drives its own CONNECT through each probe listener so it can
+	// tell a node that never established from one that established and carried
+	// nothing (see defaultCheckProbe).
+	d.checkProbe = d.defaultCheckProbe
+	// The bypass check dials the physical link and completes a TLS handshake --
+	// the exact operation a censor interferes with, and the one the bypass exists
+	// to get through.
+	d.bypassProbe = d.defaultBypassProbe
 	// Background entitlement lookups run under this context so Close can cancel a
 	// slow one instead of blocking shutdown on it.
 	d.entCtx, d.entCancel = context.WithCancel(context.Background())
@@ -392,6 +527,25 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	d.routing.RulesProxy = ps.RulesProxy
 	d.routing.PresetRuBanking = ps.PresetRuBanking
 	d.routing.PresetRuGov = ps.PresetRuGov
+	// A stored mode is honoured; anything unrecognised (an old file, a hand-edit)
+	// keeps the smart default rather than handing sing-box a mode it will refuse.
+	if m := routing.Mode(ps.RoutingMode); m == routing.ModeSmart || m == routing.ModeGlobal || m == routing.ModeDirect {
+		d.routing.Mode = m
+	}
+	// The three presets default on: absent means on, only an explicit false is a
+	// user turning one off.
+	d.routing.GamesDirect = ps.PresetGamesDirect == nil || *ps.PresetGamesDirect
+	d.routing.VoiceDirect = ps.PresetVoiceDirect == nil || *ps.PresetVoiceDirect
+	d.routing.UnblockServices = ps.PresetUnblockServices == nil || *ps.PresetUnblockServices
+	// The picked bypass strategy is restored, not the fact that it was running:
+	// nothing is launched here (loading never starts anything), but the next
+	// connect re-raises the strategy the probe chose instead of the bundle
+	// default.
+	d.zapretActive = ps.ZapretStrategy
+	// Absent (an old file) keeps automatic bundle updates on; only an explicit
+	// stored false holds the installed version.
+	d.zapretAutoUpdate = ps.ZapretAutoUpdate == nil || *ps.ZapretAutoUpdate
+	d.refreshZapretStateLocked()
 	d.routing = d.routing.Normalize()
 	// A stack value from a corrupt or hand-edited file must not reach sing-box;
 	// anything unknown keeps the default.
@@ -425,6 +579,43 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	d.lastNode = ps.LastNode
 	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
 	d.mu.Unlock()
+}
+
+// SetZapretUpdater installs the pair that fetches and applies bypass bundles.
+//
+// It is wired by main rather than defaulted in the constructor so that reaching
+// the internet is something a daemon is given, not something it is born with: a
+// unit test builds a daemon and gets an updater that declines, instead of one
+// that quietly downloads a bundle into a temp directory and starts a packet
+// filter from it.
+func (d *Daemon) SetZapretUpdater(
+	latest func(ctx context.Context) (zapret.Release, error),
+	apply func(ctx context.Context, dir string, rel zapret.Release) error,
+) {
+	if latest != nil {
+		d.zapretLatest = latest
+	}
+	if apply != nil {
+		d.zapretApply = apply
+	}
+}
+
+// SetBypassRepick arms the strategy search that follows a bypass which turns out
+// not to be carrying anything.
+//
+// Off unless asked for, because the search stops and starts the packet filter
+// once per strategy and takes minutes — fine on a real machine that has just
+// lost YouTube, ruinous in a unit test.
+func (d *Daemon) SetBypassRepick(on bool) { d.bypassRepick = on }
+
+// SetProbeRunner installs the factory a node check uses to run its own sing-box.
+//
+// It is separate from the tunnel's runner on purpose: a check must never be able
+// to stop the tunnel, and the probe process is short-lived where the tunnel's is
+// not. main wires the platform supervisor here; a daemon without one refuses
+// check_nodes with a plain message instead of failing somewhere deeper.
+func (d *Daemon) SetProbeRunner(f func() Runner) {
+	d.probeRunner = f
 }
 
 // SetRuleSetDir points the routing layer at a directory holding the bundled RU
@@ -466,31 +657,43 @@ func (d *Daemon) settingsLocked() persistedSettings {
 	// struct outlives the lock (Save reads it), so it must not alias the live
 	// field a later write would change.
 	autoFailover := d.autoFailover
+	zapretAutoUpdate := d.zapretAutoUpdate
+	games := d.routing.GamesDirect
+	voice := d.routing.VoiceDirect
+	services := d.routing.UnblockServices
 	return persistedSettings{
-		Version:         settingsVersion,
-		SplitMode:       string(d.routing.SplitMode),
-		SplitApps:       d.routing.SplitApps,
-		KillSwitch:      d.routing.KillSwitch,
-		TLSFragment:     d.routing.TLSFragment,
-		TunStack:        d.tun.Stack,
-		ProxyMode:       d.tun.Mode,
-		ProxyPort:       d.tun.MixedPort,
-		Autoconnect:     d.autoconnect,
-		AutoFailover:    &autoFailover,
-		CrashReports:    d.crashReports,
-		AdBlock:         d.routing.AdBlock,
-		IPv4Only:        d.routing.IPv4Only,
-		DNSRemote:       d.routing.DNSRemote,
-		DNSDirect:       d.routing.DNSDirect,
-		RulesDirect:     d.routing.RulesDirect,
-		RulesProxy:      d.routing.RulesProxy,
-		PresetRuBanking: d.routing.PresetRuBanking,
-		PresetRuGov:     d.routing.PresetRuGov,
-		Multihop:        d.multihop.Enabled,
-		MultihopEntryID: d.multihop.EntryID,
-		MultihopExitID:  d.multihop.ExitID,
-		LastProfile:     d.lastProfile,
-		LastNode:        d.lastNode,
+		Version:               settingsVersion,
+		RoutingMode:           string(d.routing.Mode),
+		PresetGamesDirect:     &games,
+		PresetVoiceDirect:     &voice,
+		PresetUnblockServices: &services,
+		SplitMode:             string(d.routing.SplitMode),
+		SplitApps:             d.routing.SplitApps,
+		KillSwitch:            d.routing.KillSwitch,
+		TLSFragment:           d.routing.TLSFragment,
+		TunStack:              d.tun.Stack,
+		ProxyMode:             d.tun.Mode,
+		ProxyPort:             d.tun.MixedPort,
+		Autoconnect:           d.autoconnect,
+		AutoFailover:          &autoFailover,
+		CrashReports:          d.crashReports,
+		AdBlock:               d.routing.AdBlock,
+		IPv4Only:              d.routing.IPv4Only,
+		DNSRemote:             d.routing.DNSRemote,
+		DNSDirect:             d.routing.DNSDirect,
+		RulesDirect:           d.routing.RulesDirect,
+		RulesProxy:            d.routing.RulesProxy,
+		PresetRuBanking:       d.routing.PresetRuBanking,
+		PresetRuGov:           d.routing.PresetRuGov,
+		Multihop:              d.multihop.Enabled,
+		MultihopEntryID:       d.multihop.EntryID,
+		MultihopExitID:        d.multihop.ExitID,
+		LastProfile:           d.lastProfile,
+		LastNode:              d.lastNode,
+		ZapretStrategy:        d.zapretActive,
+		// Copied into a local first for the same reason as autoFailover: the
+		// returned struct outlives the lock.
+		ZapretAutoUpdate: &zapretAutoUpdate,
 	}
 }
 
@@ -520,10 +723,28 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleDisconnect(req)
 	case CmdPing:
 		return d.handlePing(ctx, req)
+	case CmdCheckNodes:
+		return d.handleCheckNodes(ctx, req)
+	case CmdImportZapret:
+		return d.handleImportZapret(req)
+	case CmdListZapret:
+		return d.handleListZapret(req)
+	case CmdPickZapret:
+		return d.handlePickZapret(ctx, req)
+	case CmdStartZapret:
+		return d.handleStartZapret(ctx, req)
+	case CmdStopZapret:
+		return d.handleStopZapret(ctx, req)
+	case CmdUpdateZapret:
+		return d.handleUpdateZapret(ctx, req)
+	case CmdSetZapretAutoUpdate:
+		return d.handleSetZapretAutoUpdate(req)
 	case CmdSetRouting:
 		return d.handleSetRouting(req)
 	case CmdSetSplit:
 		return d.handleSetSplit(req)
+	case CmdSetPresets:
+		return d.handleSetPresets(req)
 	case CmdSetKillSwitch:
 		return d.handleSetKillSwitch(req)
 	case CmdSetTLSFragment:
@@ -544,6 +765,8 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleSetRules(req)
 	case CmdSetCrashReports:
 		return d.handleSetCrashReports(req)
+	case CmdCheckServices:
+		return d.handleCheckServices(ctx, req)
 	case CmdLeakCheck:
 		return d.handleLeakCheck(ctx, req)
 	case CmdRunStunCheck:
@@ -1044,8 +1267,13 @@ func profileChanged(before, after profile.Profile) bool {
 }
 
 // handleSetRouting validates and stores the routing mode (smart/global/direct).
-// Like set_split it does not retune a live tunnel; the mode applies on the next
-// connect, and the choice is reflected back so the UI stays in sync.
+//
+// The choice is persisted and applied to a live tunnel in place, like the kill
+// switch. Neither used to happen: the mode was held in memory only, so a user who
+// picked global got smart back at the next launch with the UI reporting the mode
+// the daemon had silently reset to — and while connected the change did nothing
+// at all until the user thought to reconnect, which is indistinguishable from a
+// control that does not work.
 func (d *Daemon) handleSetRouting(req Request) Response {
 	mode := routing.Mode(req.Mode)
 	switch mode {
@@ -1055,26 +1283,74 @@ func (d *Daemon) handleSetRouting(req Request) Response {
 	}
 
 	d.mu.Lock()
+	changed := d.routing.Mode != mode
 	d.routing.Mode = mode
 	d.routing = d.routing.Normalize()
 	d.state.Routing = string(mode)
-	cur := d.state
 	d.mu.Unlock()
 
-	// A routing change does not retune a live tunnel in this iteration; the new
-	// mode applies on the next connect. Report it so the UI reflects the choice.
-	// (Reconfiguring sing-box live would mean a restart; deferred deliberately.)
-	resp, err := newResult(req.ID, cur)
+	d.persistSettings()
+	if changed {
+		d.reapplyLive()
+	}
+
+	resp, err := newResult(req.ID, d.snapshotState())
 	if err != nil {
 		return newError(req.ID, err.Error())
 	}
 	return resp
 }
 
-// handleSetSplit updates the per-app split configuration. Like set_routing it
-// only stores the new config and reflects it in the reported state; the change
-// takes effect on the next connect (live retuning would require restarting
-// sing-box). The normalized config is persisted so it survives a restart.
+// handleSetPresets toggles the three routing presets: game clients direct,
+// real-time UDP direct, and the censored-services list routed by whether the
+// bypass covers them.
+//
+// An omitted field leaves that preset alone. All three ship on, and a UI that had
+// to restate every one to change any one would eventually restate them wrong —
+// the failure mode being a user who turns off "unblock services" and silently
+// loses the two presets that keep games and voice off the tunnel.
+//
+// Each preset still yields to the kill switch and to direct mode, which the
+// routing layer enforces; this only records intent.
+func (d *Daemon) handleSetPresets(req Request) Response {
+	if req.Games == nil && req.Voice == nil && req.Services == nil {
+		return newError(req.ID, "set_presets: nothing to change")
+	}
+
+	d.mu.Lock()
+	before := d.routing
+	if req.Games != nil {
+		d.routing.GamesDirect = *req.Games
+	}
+	if req.Voice != nil {
+		d.routing.VoiceDirect = *req.Voice
+	}
+	if req.Services != nil {
+		d.routing.UnblockServices = *req.Services
+	}
+	changed := before.GamesDirect != d.routing.GamesDirect ||
+		before.VoiceDirect != d.routing.VoiceDirect ||
+		before.UnblockServices != d.routing.UnblockServices
+	d.routing = d.routing.Normalize()
+	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
+	d.mu.Unlock()
+
+	d.persistSettings()
+	if changed {
+		d.reapplyLive()
+	}
+
+	resp, err := newResult(req.ID, d.snapshotState())
+	if err != nil {
+		return newError(req.ID, err.Error())
+	}
+	return resp
+}
+
+// handleSetSplit updates the per-app split configuration. The normalized config
+// is persisted and, like set_routing, applied to a live tunnel in place: a user
+// who excludes an app while connected expects that app to leave the tunnel now,
+// not after they work out that a reconnect is required.
 func (d *Daemon) handleSetSplit(req Request) Response {
 	mode := routing.SplitMode(req.Mode)
 	switch mode {
@@ -1084,20 +1360,40 @@ func (d *Daemon) handleSetSplit(req Request) Response {
 	}
 
 	d.mu.Lock()
+	before := d.routing
 	d.routing.SplitMode = mode
 	d.routing.SplitApps = req.Apps
 	d.routing = d.routing.Normalize()
+	changed := before.SplitMode != d.routing.SplitMode ||
+		!sameStrings(before.SplitApps, d.routing.SplitApps)
 	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
-	cur := d.state
 	d.mu.Unlock()
 
 	d.persistSettings()
+	if changed {
+		d.reapplyLive()
+	}
 
-	resp, err := newResult(req.ID, cur)
+	resp, err := newResult(req.ID, d.snapshotState())
 	if err != nil {
 		return newError(req.ID, err.Error())
 	}
 	return resp
+}
+
+// sameStrings reports whether two normalized string slices are equal. Used to
+// decide whether a settings command actually changed anything, so an idempotent
+// re-send does not hot-swap sing-box for nothing.
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // handleSetKillSwitch arms or disarms the kill switch. The choice is recorded,
@@ -1503,6 +1799,13 @@ func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, 
 		s.Split = string(ro.SplitMode)
 	}
 	s.SplitApps = append([]string(nil), ro.SplitApps...)
+	// The routing mode is a stored preference like the rest of these, so it is
+	// reported from the live options rather than only where set_routing writes it.
+	// Without this a mode restored from the settings file was in effect but not on
+	// screen: the daemon routed globally while the UI showed smart.
+	if ro.Mode != "" {
+		s.Routing = string(ro.Mode)
+	}
 	s.KillSwitch = ro.KillSwitch
 	s.TLSFragment = ro.TLSFragment
 	s.TunStack = tun.Stack

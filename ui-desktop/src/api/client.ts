@@ -2,12 +2,17 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
+  ZapretPick,
+  ZapretBundle,
+  ZapretUpdate,
   AttemptsEvent,
   BatchImportResult,
   ConnectionMode,
   CrashReport,
   LogEvent,
+  NodeCheck,
   PingResult,
+  ServiceChecks,
   Profile,
   RoutingMode,
   SpeedTestResult,
@@ -74,8 +79,21 @@ export const api = {
   // candidate ordering — true ranks nodes by measured ping (fastest first),
   // false (the default) keeps the protocol-fallback order. The core ignores
   // `auto` when a node is given.
-  connect(profile: string, node?: string, auto?: boolean): Promise<State> {
-    return invoke<State>("connect", { profile, node, auto });
+  // `allowTunConflict` overrides the core's refusal to raise a tun while another
+  // VPN owns the default route. It is per-connect and never sticky: whether two
+  // tunnels overlap is a fact about the machine right now.
+  connect(
+    profile: string,
+    node?: string,
+    auto?: boolean,
+    allowTunConflict?: boolean,
+  ): Promise<State> {
+    return invoke<State>("connect", {
+      profile,
+      node,
+      auto,
+      allowTunConflict,
+    });
   },
 
   disconnect(): Promise<State> {
@@ -86,6 +104,34 @@ export const api = {
     return invoke<{ results: PingResult[] }>("ping", { profile }).then(
       (r) => r.results,
     );
+  },
+
+  /**
+   * Measure what actually survives each node, and which one to connect to.
+   *
+   * Unlike {@link ping} this opens real connections through every node to
+   * several destinations, so it takes seconds, not milliseconds — call it behind
+   * a visible "checking" state. It is also the only one of the two whose answer
+   * can be trusted for picking an exit: a node whose proxy handshake has stopped
+   * answering still completes a TCP dial instantly and therefore *wins* a
+   * latency-ranked pick while carrying nothing.
+   *
+   * `best` is empty when nothing works, which must be surfaced as such rather
+   * than falling back to the least-bad node.
+   */
+  checkNodes(profile: string): Promise<NodeCheck> {
+    return invoke<NodeCheck>("check_nodes", { profile });
+  },
+
+  /**
+   * Check whether video, voice and game latency work right now.
+   *
+   * The three probes run concurrently in the core, so this costs about one
+   * timeout rather than three — but it is still seconds, not milliseconds, and
+   * belongs behind a visible "checking" state.
+   */
+  checkServices(): Promise<ServiceChecks> {
+    return invoke<ServiceChecks>("check_services");
   },
 
   setRouting(mode: RoutingMode): Promise<State> {
@@ -225,6 +271,86 @@ export const api = {
   },
 
   /**
+   * Install a zapret DPI-bypass bundle, given the .zip exactly as downloaded.
+   *
+   * The archive travels as base64 rather than a path: a file dropped into the
+   * webview has contents but no filesystem path, and having the renderer write
+   * a temp file would need filesystem permissions it should not hold. The core
+   * already owns the privileged side, so it unpacks.
+   */
+  importZapret(zip: Uint8Array, name?: string): Promise<ZapretBundle> {
+    // The file name travels with the bytes: release archives carry their version
+    // in it ("zapret-discord-youtube-1.10.1.zip"), and the core reads it to stamp
+    // the install. Without it the first update check sees "unknown version" and
+    // re-downloads the bundle that was just dropped in.
+    return invoke<ZapretBundle>("import_zapret", { data: toBase64(zip), name });
+  },
+
+  /**
+   * Install a bundle from a filesystem path — an archive or an already-unpacked
+   * folder.
+   *
+   * A dropped folder has no bytes to send, so this is the only way to accept
+   * one; Tauri's drag-drop supplies the real path.
+   */
+  importZapretPath(path: string): Promise<ZapretBundle> {
+    return invoke<ZapretBundle>("import_zapret", { path });
+  },
+
+  /** The installed bundle's strategies; empty when nothing is imported yet. */
+  listZapret(): Promise<ZapretBundle> {
+    return invoke<ZapretBundle>("list_zapret");
+  },
+
+  /**
+   * Probe every installed strategy and report which one to use.
+   *
+   * Slow by nature — each strategy needs the packet filter attached, the control
+   * requests made, and a clean detach before the next — so the caller should
+   * show progress rather than block silently.
+   */
+  pickZapret(): Promise<ZapretPick> {
+    return invoke<ZapretPick>("pick_zapret");
+  },
+
+  /**
+   * Turn the bypass on: the named strategy, or the one the last probe picked.
+   *
+   * Separate from picking on purpose — the measurement answers "which one", but
+   * the user still needs a switch that just turns it on without waiting minutes
+   * for a re-probe.
+   */
+  startZapret(name?: string): Promise<{ active: string }> {
+    return invoke<{ active: string }>("start_zapret", name ? { name } : {});
+  },
+
+  /** Turn the bypass off. */
+  stopZapret(): Promise<void> {
+    return invoke<void>("stop_zapret").then(() => undefined);
+  },
+
+  /**
+   * Install the newest published bundle, or a first one when none is installed.
+   *
+   * Worth a button of its own because a stale bypass does not degrade, it stops
+   * working — and it fails exactly like a dead node or a broken subscription, so
+   * "am I running the current one" is the question that separates those. Answers
+   * with the versions before and after and whether anything changed.
+   */
+  updateZapret(): Promise<ZapretUpdate> {
+    return invoke<ZapretUpdate>("update_zapret");
+  },
+
+  /**
+   * Arm or disarm the background bundle updater. On by default: a bypass a few
+   * releases behind is the most common way this stops working, and noticing that
+   * yourself means first suspecting everything else.
+   */
+  setZapretAutoUpdate(on: boolean): Promise<void> {
+    return invoke<void>("set_zapret_auto_update", { on }).then(() => undefined);
+  },
+
+  /**
    * Probe the current network path with a STUN Binding Request: whether outbound
    * UDP works, the reflexive public IP, and a best-effort NAT classification (see
    * {@link StunResult}). Not gated on a connection.
@@ -335,9 +461,7 @@ export interface LeakCheck {
 // Event subscriptions. Each returns the Tauri unlisten handle; callers detach on
 // unmount. Channel names match the protocol's event field exactly.
 
-export function onState(
-  handler: (e: StateEvent) => void,
-): Promise<UnlistenFn> {
+export function onState(handler: (e: StateEvent) => void): Promise<UnlistenFn> {
   return listen<StateEvent>("state", (event) => handler(event.payload));
 }
 
@@ -385,8 +509,7 @@ export function onTrayShow(handler: () => void): Promise<UnlistenFn> {
 // connects a profile by id.
 
 export type DeepLinkAction =
-  | { action: "import"; url: string }
-  | { action: "connect"; profile: string };
+  { action: "import"; url: string } | { action: "connect"; profile: string };
 
 /**
  * Subscribe to deep links that arrive while the app is running. Mirrors the tray
@@ -407,4 +530,20 @@ export function onDeepLink(
  */
 export function takeLaunchDeepLinks(): Promise<DeepLinkAction[]> {
   return invoke<DeepLinkAction[]>("take_launch_deep_links");
+}
+
+/**
+ * Base64-encodes bytes without blowing the call stack.
+ *
+ * String.fromCharCode(...bytes) is the obvious one-liner and fails on a bundle
+ * of any size — the spread turns a multi-megabyte array into that many
+ * arguments. Chunking keeps it linear and bounded.
+ */
+function toBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
 }

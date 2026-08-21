@@ -8,6 +8,10 @@ interface BottomBarProps {
   onToggleKillSwitch: () => void;
   onLeakCheck: () => void;
   onSettings: () => void;
+  /** Opens the blocklist import panel. */
+  onBlocklist: () => void;
+  /** Number of imported blocklists, shown as a count beside the action. */
+  blocklistCount: number;
 }
 
 // The spec's protocol toggle (wireguard/openvpn) doesn't map to sing-box, where
@@ -31,6 +35,8 @@ export function BottomBar({
   onToggleKillSwitch,
   onLeakCheck,
   onSettings,
+  onBlocklist,
+  blocklistCount,
 }: BottomBarProps) {
   const { t } = useI18n();
 
@@ -66,6 +72,18 @@ export function BottomBar({
         </button>
       </div>
       <div className="right">
+        <button
+          type="button"
+          className={`act${blocklistCount > 0 ? " has-count" : ""}`}
+          onClick={onBlocklist}
+          title={t.blocklist.hint}
+        >
+          ▶ {t.blocklist.title}
+          {/* The count is the only feedback that an imported list is actually
+              loaded — without it the panel looks the same whether or not the
+              drop took. */}
+          {blocklistCount > 0 && <span className="act-count">{blocklistCount}</span>}
+        </button>
         <button type="button" className="act" onClick={onLeakCheck}>
           ▶ {t.bottom.leakCheck}
         </button>
