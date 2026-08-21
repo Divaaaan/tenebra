@@ -22,6 +22,7 @@ import (
 
 	"github.com/Divaaaan/tenebra/core/control"
 	"github.com/Divaaaan/tenebra/core/profile"
+	"github.com/Divaaaan/tenebra/core/zapret"
 )
 
 // pipeMode switches the console process from stdin/stdout to the named-pipe
@@ -92,6 +93,13 @@ func run(usePipe, useSocket bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Keep the DPI-bypass bundle current in the background. It is the one piece
+	// whose value expires: the censor learns what a release does, upstream answers
+	// with new strategies, and a stale bundle fails exactly like a dead node — the
+	// user sees YouTube stop loading with nothing to point at. The loop ends with
+	// ctx and never blocks serving.
+	go daemon.RunZapretAutoUpdate(ctx)
+
 	switch {
 	case usePipe:
 		err = servePipe(ctx, daemon)
@@ -123,6 +131,31 @@ func buildDaemon() (*control.Daemon, error) {
 	// runner_linux.go for Linux, runner_other.go for Windows).
 	runner := newRunner()
 	daemon := control.NewDaemon(store, runner)
+	// Arm the tun-conflict guard where the platform can read its route table.
+	// nil (macOS/Linux for now) leaves the guard disabled rather than guessing —
+	// see newInterfaceProbe in the per-platform runner files.
+	daemon.SetInterfaceProbe(newInterfaceProbe())
+	// A node check runs its own short-lived sing-box beside the tunnel (no tun, no
+	// auto_route), so it gets a fresh supervisor per run rather than sharing the
+	// tunnel's — a check must never be able to stop the tunnel.
+	daemon.SetProbeRunner(func() control.Runner { return newRunner() })
+	// Searching the bundle for a working strategy takes minutes: every candidate
+	// needs the packet filter attached, five control requests and a clean detach,
+	// and while it runs the machine has whichever strategy is being tried — which
+	// on a live machine means the bypass flickers on and off for five minutes.
+	// Doing that automatically, on a connect the user pressed expecting the tunnel
+	// to just come up, costs more than the failure it is meant to repair: the
+	// tunnel alone still carries the censored services. The search stays available
+	// as the deliberate operation it is (pick_zapret, the app's bypass screen).
+	daemon.SetBypassRepick(false)
+	// The live bypass-bundle updater. It lives here, not in the daemon's
+	// constructor, so only a real core reaches the release feed.
+	daemon.SetZapretUpdater(
+		func(ctx context.Context) (zapret.Release, error) { return zapret.LatestRelease(ctx, nil) },
+		func(ctx context.Context, dir string, rel zapret.Release) error {
+			return zapret.Apply(ctx, nil, dir, rel)
+		},
+	)
 	// Persist last-good per profile next to the store so the node that last
 	// connected leads the fallback walk on the next launch. A failure to open it
 	// is non-fatal: fall back to the in-memory default rather than refuse to run.

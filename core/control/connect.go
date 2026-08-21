@@ -45,6 +45,24 @@ func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 		return newError(req.ID, "connect: profile has no servers")
 	}
 
+	// Refuse to raise a second tun over another VPN's default route. Checked here
+	// — on the user-driven connect only — rather than inside startConnect, whose
+	// other callers (kill-switch relaunch, reconcile) fire while our own tunnel is
+	// already up or mid-teardown; blocking those would turn a recoverable blip
+	// into a tunnel that cannot come back. The user can retry with
+	// AllowTunConflict once they have read which interface is in the way.
+	if err := d.checkTunConflict(req.AllowTunConflict); err != nil {
+		return newError(req.ID, err.Error())
+	}
+
+	// Bring the DPI bypass up with the tunnel, so one press does the whole job:
+	// the bypass takes YouTube and Discord on the direct path (no added latency),
+	// the tunnel takes everything else that is blocked, and games stay on the ISP
+	// path. Whether it actually started decides where those services are routed —
+	// tunnelling them anyway would pay a round trip they no longer need, and
+	// routing them direct without the bypass would leave them blocked.
+	d.raiseZapretForConnect(ctx)
+
 	// A user-driven connect opens a fresh kill-switch relaunch budget.
 	d.mu.Lock()
 	d.relaunches = 0
@@ -93,6 +111,14 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 	if err != nil {
 		return State{}, err
 	}
+	// Choose the tun address here rather than only on the user's connect, because
+	// every restart needs a free one — and a hot-swap restarts while the outgoing
+	// adapter is still tearing down, still holding the address it was given. The
+	// replacement then fails to configure ("The object already exists"), the swap
+	// takes the tunnel with it, and the daemon reports connected over nothing.
+	// That is what made a live re-apply look like a tunnel that died on its own
+	// twenty seconds in.
+	d.pickFreeTunAddress()
 	// A health failover asks to avoid the node it is leaving; drop it so the walk
 	// picks a different exit. If that empties the set (a single-node profile has
 	// nowhere else to go) fail here, before any teardown, so the current tunnel is
@@ -210,7 +236,16 @@ func (d *Daemon) reapplyLive() {
 		return
 	}
 	if _, err := d.startConnect(context.Background(), p, cur.Node, false, false, ""); err != nil {
-		d.emitLog(LogWarn, fmt.Sprintf("re-apply: %v; the change applies on the next connect", err))
+		// Say the tunnel is down, because it is. startConnect stops the running
+		// process before it tries to bring the new one up, so a failure here is not
+		// "nothing changed" — the old tunnel is already gone. Logging "the change
+		// applies on the next connect" and leaving the state at connected is how a
+		// dead tunnel keeps a green light: the app reports a healthy connection, the
+		// user's traffic goes nowhere, and every diagnosis starts from a lie. Seen
+		// exactly that way on a live machine, for hours.
+		d.emitLog(LogError, fmt.Sprintf("re-apply: %v; the tunnel is down", err))
+		d.setState(State{State: StateError, Profile: cur.Profile, Node: cur.Node,
+			Error: "re-apply failed: " + err.Error(), Routing: d.snapshotState().Routing})
 	}
 }
 
@@ -769,6 +804,23 @@ func (d *Daemon) startLifecycle(ctx context.Context, gen uint64, profileID, node
 		defer d.wg.Done()
 		d.healthWatch(ctx, gen, profileID, nodeID)
 	}()
+
+	// Watch the tunnel itself, not just the process behind it: the adapter can
+	// vanish while sing-box keeps running, and then "connected" is a lie.
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.watchTunInterface(ctx, gen)
+	}()
+
+	// Confirm the bypass is carrying what the routing just handed it. A bypass
+	// that starts but does not work leaves those services with no carrier at all,
+	// because routing sent them direct precisely because it was running.
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.verifyBypass(ctx, gen)
+	}()
 }
 
 // watchProcess waits for either the process to exit or the connection to be torn
@@ -973,6 +1025,17 @@ func (d *Daemon) AutoconnectOnStart() bool {
 		return false
 	}
 	d.emitLog(LogInfo, "autoconnect: reconnecting the last profile")
+	// Raise the bypass here too, exactly as a user-driven connect does. Without
+	// it, an autoconnected session is a different product from a hand-pressed one:
+	// the tunnel comes up, the bypass does not, and YouTube and Discord are
+	// tunnelled at full round-trip latency (or, if a previous run left the routing
+	// expecting the bypass, not carried at all). Autoconnect is how the app starts
+	// on most days, so "one button does the whole job" has to hold on the path
+	// where no button is pressed.
+	//
+	// Ordered before the connect, like handleConnect: the flag it sets decides
+	// where the censored services are routed in the config the connect builds.
+	d.raiseZapretForConnect(context.Background())
 	// A start failure (e.g. the pinned node vanished from the profile) is
 	// logged and leaves the state untouched: startConnect fails before any
 	// teardown, so the daemon stays idle rather than reporting an error for a
@@ -1201,6 +1264,12 @@ func (d *Daemon) Close() error {
 	if d.entCancel != nil {
 		d.entCancel()
 	}
+	// Take the DPI bypass down with us. winws is launched detached (the strategy
+	// batch uses `start`), so nothing else ever stops it: without this it outlives
+	// the app that started it, keeping a kernel packet filter attached to every
+	// connection on the machine with no window, tray icon or setting to explain
+	// where it came from. Best-effort — a failure here must not hold up shutdown.
+	d.stopZapretQuietly()
 	d.connMu.Lock()
 	d.teardown(StateIdle, "", "")
 	d.connMu.Unlock()

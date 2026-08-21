@@ -30,6 +30,22 @@ type persistedSettings struct {
 	SplitMode string   `json:"split_mode,omitempty"`
 	SplitApps []string `json:"split_apps,omitempty"`
 
+	// RoutingMode remembers smart/global/direct. Without it a user who switched
+	// to global got smart back on the next launch, with no indication that their
+	// choice had been dropped — the UI reported the mode the daemon had reset to.
+	RoutingMode string `json:"routing_mode,omitempty"`
+
+	// PresetGamesDirect, PresetVoiceDirect and PresetUnblockServices remember the
+	// three routing presets. They are *bool for the same reason AutoFailover is:
+	// all three default ON, so absent (an old file, or one written before the
+	// fields existed) has to read back as on, and only an explicit false is the
+	// user's choice to turn one off. Stored as plain bools these would have read
+	// as "off" on the first launch after an upgrade and quietly moved games and
+	// voice back into the tunnel.
+	PresetGamesDirect     *bool `json:"preset_games_direct,omitempty"`
+	PresetVoiceDirect     *bool `json:"preset_voice_direct,omitempty"`
+	PresetUnblockServices *bool `json:"preset_unblock_services,omitempty"`
+
 	// KillSwitch remembers whether the user armed the kill switch. Absent in
 	// files written before the field existed, which reads back as false — off,
 	// matching the pre-kill-switch behaviour.
@@ -108,6 +124,26 @@ type persistedSettings struct {
 	// is tolerated at load time and simply leaves the daemon idle.
 	LastProfile string `json:"last_profile,omitempty"`
 	LastNode    string `json:"last_node,omitempty"`
+
+	// ZapretStrategy remembers which DPI-bypass strategy was picked, so the
+	// measurement that chose it is made once rather than at every launch.
+	//
+	// Without it a restart falls back to the bundle's default strategy, which on
+	// this author's ISP is not the one that won: the probe run scored
+	// "general (FAKE TLS AUTO)" at 4/5 targets while plain "general" — the
+	// alphabetical default — did not. The user would then watch the app start,
+	// report the bypass active, and still fail to load video, with nothing on
+	// screen to suggest that a five-minute measurement had been quietly discarded.
+	// Absent (an old file, or a bundle never probed) reads back empty, which keeps
+	// the previous behaviour of launching the bundle default.
+	ZapretStrategy string `json:"zapret_strategy,omitempty"`
+
+	// ZapretAutoUpdate remembers whether the bundle updates itself. A *bool so the
+	// default can be on without a version bump: absent (an old file, or one written
+	// before the field existed) reads back as the on default, an explicit false is
+	// the user's choice to hold a version. Same shape, same reason, as
+	// AutoFailover.
+	ZapretAutoUpdate *bool `json:"zapret_auto_update,omitempty"`
 }
 
 // settingsVersion is the current persisted-settings format version.

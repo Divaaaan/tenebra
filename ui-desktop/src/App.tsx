@@ -5,6 +5,9 @@ import { TopBar } from "./components/TopBar";
 import { ConnectionPanel } from "./components/ConnectionPanel";
 import { ServerList, type ServerRow } from "./components/ServerList";
 import { BottomBar } from "./components/BottomBar";
+import { BlocklistPanel, type BlocklistSource } from "./components/BlocklistPanel";
+import { readBlocklistFiles } from "./lib/blocklist";
+import { looksLikeZapretBundle } from "./lib/zapret";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { UpdateConfirm } from "./components/UpdateConfirm";
 import { DaemonSkewBanner } from "./components/DaemonSkewBanner";
@@ -12,15 +15,17 @@ import { CrashConsentBanner } from "./components/CrashConsentBanner";
 import { CrashReportBanner } from "./components/CrashReportBanner";
 import { CrashReportModal } from "./components/CrashReportModal";
 import { DeepLinkConfirm } from "./components/DeepLinkConfirm";
+import { TunConflictConfirm } from "./components/TunConflictConfirm";
 import { ProfilesScreen } from "./screens/ProfilesScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { LogsScreen } from "./screens/LogsScreen";
 import { ToastHost } from "./components/ToastHost";
 import { SimpleView } from "./components/SimpleView";
+import { SimpleSetup } from "./components/SimpleSetup";
 import { EclipseOverlay } from "./components/EclipseOverlay";
 import { useTenebra } from "./state/useTenebra";
 import { useI18n } from "./i18n/I18nContext";
-import { describeCoreError } from "./i18n/strings";
+import { describeCoreError, isTunConflict } from "./i18n/strings";
 import { pushToast } from "./lib/toast";
 import type { RoutingMode } from "./api";
 import {
@@ -32,7 +37,9 @@ import {
 } from "./api";
 import { dispatchDeepLink, type DeepLinkHandlers } from "./lib/deepLink";
 import { locate, type Region } from "./lib/region";
+import { useNodeCheck } from "./lib/useNodeCheck";
 import { useNodePings } from "./lib/useNodePings";
+import { useServiceChecks } from "./lib/useServiceChecks";
 import { useSessionClock, formatUptime } from "./lib/useSessionClock";
 import { useTrafficHistory } from "./lib/useTrafficHistory";
 import { useUpdateCheck } from "./lib/useUpdateCheck";
@@ -50,6 +57,11 @@ type Overlay = "profiles" | "settings" | "logs" | null;
 const SIMPLE_MODE_KEY = "tenebra.simpleMode";
 function readSimpleMode(): boolean {
   const v = localStorage.getItem(SIMPLE_MODE_KEY);
+  // The full shell is the default. Simple mode stays available for anyone who
+  // wants one button and nothing else, but the shell is not the problem it was
+  // taken for: what a first-run user lacked was not fewer controls, it was the
+  // two setup steps being somewhere else. Those now live on the main screen
+  // (see SimpleSetup), so the rich view is approachable without being stripped.
   return v === "1" || v === "true";
 }
 
@@ -69,6 +81,134 @@ export function App() {
   const [query, setQuery] = useState("");
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [busy, setBusy] = useState(false);
+
+  // Blocklist import. It lives on the main screen rather than inside Settings
+  // because it is something the user does with a file in hand, not something
+  // they go looking for while configuring — burying it two screens deep is how
+  // an import feature ends up unused.
+  const [blocklistOpen, setBlocklistOpen] = useState(false);
+  const [blocklists, setBlocklists] = useState<BlocklistSource[]>([]);
+
+  const importBlocklist = useCallback(async (files: File[]) => {
+    // A zapret bundle is a different thing from a blocklist and is recognised
+    // by content, not by name: it is a zip carrying bin/winws.exe and a set of
+    // strategy .bat files. Sending it to the core is what makes "drop the
+    // archive into the VPN" actually work, instead of the reader trying to
+    // parse an executable as a list of domains.
+    if (files.length === 1 && (await looksLikeZapretBundle(files[0]))) {
+      const bytes = new Uint8Array(await files[0].arrayBuffer());
+      const bundle = await api.importZapret(bytes, files[0].name);
+      await afterZapretImport(files[0].name, bundle.strategies?.length ?? 0);
+      return;
+    }
+
+    const parsed = await readBlocklistFiles(files);
+    // One drop is one entry, however many files it held: dropping an unpacked
+    // release means dropping a dozen files, and listing each would bury the one
+    // number that matters — how many rules are now loaded.
+    const label =
+      files.length === 1
+        ? files[0].name
+        : `${files[0].name} + ${files.length - 1}`;
+    setBlocklists((prev) => [
+      // Re-importing the same source replaces it instead of stacking duplicates,
+      // which is what happens when a user re-drops an updated list.
+      ...prev.filter((s) => s.label !== label),
+      { id: label, label, rules: parsed.rules.length },
+    ]);
+  }, []);
+
+  /**
+   * Shared tail of a bundle import: record it, then find the strategy that
+   * works here.
+   *
+   * The probe is started automatically because the answer is not guessable — a
+   * bundle ships ~20 strategies precisely because which one defeats a given
+   * ISP's DPI cannot be known in advance. Leaving the user to pick from a list
+   * of names would hand them the exact problem the import was meant to solve.
+   */
+  const afterZapretImport = useCallback(async (label: string, strategies: number) => {
+    setBlocklists((prev) => [
+      ...prev.filter((s) => s.label !== label),
+      { id: label, label, rules: strategies },
+    ]);
+    pushToast(`zapret: ${strategies} стратегий, подбираю рабочую…`);
+
+    try {
+      const pick = await api.pickZapret();
+      if (pick.improved && pick.best) {
+        // The core leaves the winner running, so reflect that here rather than
+        // showing the bypass as off while it is actually on.
+        setZapretActive(pick.best);
+        pushToast(`zapret: включена ${pick.best}`);
+      } else {
+        // Saying "nothing helped" is more useful than silently keeping the
+        // least-bad option and letting the user believe the block is handled.
+        pushToast(
+          `zapret: ни одна стратегия не улучшила (уже работает ${pick.baseline}/${pick.targets})`,
+        );
+      }
+    } catch (e) {
+      pushToast(describeCoreError(e, t));
+    }
+  }, [t]);
+
+  /**
+   * Import from paths — an archive or an already-unpacked folder.
+   *
+   * The core decides what a path is: it checks for bin/winws.exe and strategy
+   * .bat files rather than trusting the name, so "zapret", "zapret (1)" and a
+   * folder the user renamed all work the same. A path that is not a bundle
+   * comes back as an error the panel shows.
+   */
+  const importFromPaths = useCallback(
+    async (paths: string[]) => {
+      if (paths.length === 0) return;
+      const bundle = await api.importZapretPath(paths[0]);
+      const label = paths[0].split(/[\\/]/).pop() ?? paths[0];
+      await afterZapretImport(label, bundle.strategies?.length ?? 0);
+    },
+    [afterZapretImport],
+  );
+
+  // Which bypass strategy is running, or "" when it is off. Held here so the
+  // panel can name it and the button knows which way it flips.
+  const [zapretActive, setZapretActive] = useState("");
+
+  const enableZapret = useCallback(async () => {
+    const r = await api.startZapret();
+    setZapretActive(r.active);
+    pushToast(`zapret: включён (${r.active})`);
+  }, []);
+
+  const disableZapret = useCallback(async () => {
+    await api.stopZapret();
+    setZapretActive("");
+    pushToast("zapret: выключен");
+  }, []);
+
+  /**
+   * Import a subscription from a link pasted on the simple screen.
+   *
+   * Named after the profile's own host so the user sees something recognisable
+   * instead of an untitled entry: they pasted a link, not a name, and asking
+   * for one would be a step for nothing.
+   */
+  const handleSimpleSubscribe = useCallback(async (url: string) => {
+    let name = "VPN";
+    try {
+      name = new URL(url).hostname || name;
+    } catch {
+      // Not a URL the parser likes — the core will reject it with a better
+      // message than anything guessed here.
+    }
+    await api.importSubscription(url, name);
+  }, []);
+
+  const removeBlocklist = useCallback(
+    (id: string) => setBlocklists((prev) => prev.filter((s) => s.id !== id)),
+    [],
+  );
 
   // Simple mode: the Settings toggle writes `tenebra.simpleMode`; we mirror it here
   // and swap the whole shell for SimpleView when it's on. A cross-window write
@@ -106,6 +246,25 @@ export function App() {
   const [importPreset, setImportPreset] = useState<string | null>(null);
   const [pendingConnect, setPendingConnect] = useState<string | null>(null);
   const clearImportPreset = useCallback(() => setImportPreset(null), []);
+
+  // The tun-conflict override asks its question in-app. `window.confirm` is
+  // brokered by the Tauri dialog plugin, which this app grants only for the file
+  // picker, so the call threw "plugin:dialog|confirm not allowed by ACL" and the
+  // connect died on the guard instead of asking. Holding the promise's resolve
+  // here turns the modal back into an awaitable question.
+  const [tunOverrideAsk, setTunOverrideAsk] = useState<{
+    resolve: (ok: boolean) => void;
+  } | null>(null);
+  const askTunOverride = useCallback(
+    () => new Promise<boolean>((resolve) => setTunOverrideAsk({ resolve })),
+    [],
+  );
+  const answerTunOverride = useCallback((ok: boolean) => {
+    setTunOverrideAsk((ask) => {
+      ask?.resolve(ok);
+      return null;
+    });
+  }, []);
 
   // A connect deep link never fires on arrival: it can be handed to the app by
   // any visited web page. `connectRequest` holds the profile a link asked to
@@ -197,6 +356,12 @@ export function App() {
   // Latency probes for the browsed profile, feeding the per-row ping + the
   // dead flag, and the live ping stat for the connected node.
   const pings = useNodePings(selectedProfileId);
+  // What actually survives each node, measured on demand — the connect button
+  // runs it before choosing an exit (see handlePrimary).
+  const nodeCheck = useNodeCheck();
+  // And, once connected, whether the three things the user came for actually
+  // work: video, voice, game latency.
+  const services = useServiceChecks(phase);
   const sessionSecs = useSessionClock(phase);
   const history = useTrafficHistory(phase, traffic.downRate, traffic.upRate);
 
@@ -287,17 +452,63 @@ export function App() {
           // order; it is read fresh (like autoconnect) so a Settings toggle takes
           // effect on the next connect without prop-threading. When a node is
           // selected, auto is moot — the core honours the explicit exit.
-          const node = selectedNodeId || undefined;
-          const auto = node ? undefined : getAutoFastest();
-          await tenebra.connect(selectedProfileId, node, auto);
+          let node = selectedNodeId || undefined;
+          let auto = node ? undefined : getAutoFastest();
+
+          // Before letting latency decide, find out what actually carries
+          // traffic. A node whose proxy handshake has stopped answering still
+          // completes a TCP dial instantly, so it reads as the *fastest* node and
+          // wins a latency-ranked pick while every request through it hangs —
+          // which is precisely how a working-looking connect left the user with
+          // no internet. Measuring first costs seconds; picking blind costs the
+          // session.
+          if (!node) {
+            const best = await nodeCheck.run(selectedProfileId);
+            if (best) {
+              node = best;
+              auto = undefined;
+            } else {
+              // Nothing passed. Say so — and still try: the core's fallback walk
+              // tries nodes in turn and may get through where a one-shot probe
+              // did not, and refusing to connect at all would be a worse answer
+              // than a slow one.
+              pushToast(t.servers.noneUsable);
+            }
+          }
+          try {
+            await tenebra.connect(selectedProfileId, node, auto);
+          } catch (e) {
+            // The guard refuses to raise our tun while another VPN owns the
+            // default route. That refusal is correct by default — two tunnels
+            // routing everything leave the machine offline — but it must not be
+            // a dead end: the user is the only one who knows whether the other
+            // tunnel overlaps, so ask, and honour the answer for this connect
+            // only.
+            if (!isTunConflict(e)) throw e;
+            pushToast(describeCoreError(e, t));
+            if (!(await askTunOverride())) throw e;
+            await tenebra.connect(selectedProfileId, node, auto, true);
+          }
         }
-      } catch {
-        // Surfaced on the state/log channels.
+      } catch (e) {
+        // Say why nothing happened. A refused connect leaves the button exactly
+        // where it was, and swallowing the reason (the old behaviour) turned
+        // every refusal — a guard, a vanished node, a core that will not answer —
+        // into "the button does not work", which is unanswerable from the outside.
+        pushToast(describeCoreError(e, t));
       } finally {
         setBusy(false);
       }
     })();
-  }, [busy, connected, phase, tenebra, selectedProfileId, selectedNodeId]);
+  }, [
+    busy,
+    connected,
+    phase,
+    tenebra,
+    selectedProfileId,
+    selectedNodeId,
+    askTunOverride,
+  ]);
 
   const handleSelectNode = useCallback(
     (id: string) => {
@@ -532,6 +743,13 @@ export function App() {
           selectedNodeId={selectedNodeId}
           onSelectNode={handleSelectNode}
           onSelectAuto={handleSelectAuto}
+          hasBypass={blocklists.length > 0}
+          bypassActive={zapretActive}
+          onSubscribe={handleSimpleSubscribe}
+          onBypassFiles={importBlocklist}
+          onBypassPaths={importFromPaths}
+          serviceChecks={services.checks}
+          serviceChecking={services.checking}
         />
         <EclipseOverlay active={eclipse} onDone={endEclipse} />
         <ToastHost />
@@ -597,6 +815,18 @@ export function App() {
         />
       )}
 
+      {/* The two setup steps live on the main screen, not behind a menu: what a
+          first-run user lacked was never fewer controls, it was these being
+          somewhere else. The strip removes itself the moment both are done, so
+          it costs a returning user nothing. */}
+      <SimpleSetup
+        hasProfile={profiles.length > 0}
+        hasBypass={blocklists.length > 0}
+        onSubscribe={handleSimpleSubscribe}
+        onBypassFiles={importBlocklist}
+        onBypassPaths={importFromPaths}
+      />
+
       <div className="app-body">
         <ConnectionPanel
           phase={phase}
@@ -649,7 +879,22 @@ export function App() {
         onToggleKillSwitch={handleToggleKill}
         onLeakCheck={() => setOverlay("logs")}
         onSettings={() => setOverlay("settings")}
+        onBlocklist={() => setBlocklistOpen(true)}
+        blocklistCount={blocklists.length}
       />
+
+      {blocklistOpen && (
+        <BlocklistPanel
+          sources={blocklists}
+          onImportFiles={importBlocklist}
+          onImportPaths={importFromPaths}
+          onEnable={enableZapret}
+          onDisable={disableZapret}
+          active={zapretActive}
+          onRemove={removeBlocklist}
+          onClose={() => setBlocklistOpen(false)}
+        />
+      )}
 
       {overlay && (
         <div
@@ -694,6 +939,13 @@ export function App() {
           }
           onConfirm={confirmConnectRequest}
           onCancel={cancelConnectRequest}
+        />
+      )}
+
+      {tunOverrideAsk && (
+        <TunConflictConfirm
+          onConfirm={() => answerTunOverride(true)}
+          onCancel={() => answerTunOverride(false)}
         />
       )}
 

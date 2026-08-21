@@ -427,8 +427,27 @@ describe("actions", () => {
       await result.current.connect("p1", "node-1");
     });
 
-    expect(mockApi.connect).toHaveBeenCalledWith("p1", "node-1", undefined);
+    expect(mockApi.connect).toHaveBeenCalledWith(
+      "p1",
+      "node-1",
+      undefined,
+      undefined,
+    );
     expect(result.current.state).toEqual(next);
+  });
+
+  it("connect forwards the tun-conflict override, so a refused connect is not a dead end", async () => {
+    // The guard's refusal is correct by default, but the user is the only one who
+    // knows whether the two tunnels overlap — the flag has to reach the core.
+    const next: State = { state: "connecting", profile: "p1" };
+    mockApi.connect.mockResolvedValue(next);
+    const { result } = await mountReady();
+
+    await act(async () => {
+      await result.current.connect("p1", undefined, undefined, true);
+    });
+
+    expect(mockApi.connect).toHaveBeenCalledWith("p1", undefined, undefined, true);
   });
 
   it("connect forwards the auto flag to api.connect", async () => {
@@ -440,7 +459,7 @@ describe("actions", () => {
       await result.current.connect("p1", undefined, true);
     });
 
-    expect(mockApi.connect).toHaveBeenCalledWith("p1", undefined, true);
+    expect(mockApi.connect).toHaveBeenCalledWith("p1", undefined, true, undefined);
     expect(result.current.state).toEqual(next);
   });
 

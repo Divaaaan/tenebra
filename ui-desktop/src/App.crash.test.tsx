@@ -77,6 +77,10 @@ function armEvents() {
 describe("App crash-reporting wiring", () => {
   beforeEach(() => {
     localStorage.clear();
+    // Simple mode is the app's default now, but this suite drives the full
+    // shell (overlays, shortcuts, banners). The clear above would drop it into
+    // the one-button view where none of that exists, so restate the opt-out.
+    localStorage.setItem("tenebra.simpleMode", "0");
     armEvents();
     mocks.listProfiles.mockResolvedValue([]);
     mocks.ping.mockResolvedValue([]);

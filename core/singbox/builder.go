@@ -141,6 +141,18 @@ type TunOptions struct {
 	// desktop path — where sing-box owns the tun and needs auto_route — is unchanged.
 	ExternalTun  bool
 	ClashAPIPort int
+	// Address is the IPv4 CIDR the tun carries. Empty takes the historical
+	// default. It is settable because that address is not ours alone — other VPN
+	// clients hand their tun the same 172.19.0.1, and two adapters cannot hold one
+	// address: the second to start fails to configure and its sing-box exits while
+	// the app that launched it keeps reporting a healthy tunnel. See
+	// FreeTunAddresses, which the control layer uses to pick a pair that is
+	// actually free on the machine. Address6 moves with it: the IPv6 ULA collides
+	// just as readily — that is the collision Windows actually reports ("set ipv6
+	// address: The object already exists") — so fixing only IPv4 leaves the
+	// failure exactly where it was.
+	Address  string
+	Address6 string
 	// CacheDir is the directory sing-box's cache_file is written to. When empty,
 	// the cache file is enabled without an explicit path and sing-box resolves it
 	// against the process working directory — correct for the GUI sidecar. The
@@ -149,6 +161,16 @@ type TunOptions struct {
 	// absolute home; otherwise sing-box aborts at startup on every connect.
 	CacheDir string
 }
+
+// DefaultTUNName is the interface name an unset TunOptions.InterfaceName
+// resolves to on this platform (empty on macOS, where the kernel dictates
+// utun<N>; the branded name elsewhere).
+//
+// Exported so callers that must reason about *our* interface before a config
+// exists — the tun-conflict guard, which has to exclude our own tun from the
+// interfaces it scans — read the name from the one place that assigns it,
+// instead of re-deriving it and drifting.
+func DefaultTUNName() string { return platformTUNName }
 
 func (t TunOptions) normalize() TunOptions {
 	if t.Mode == "" {
@@ -531,7 +553,7 @@ func tunInbound(t TunOptions, strictRoute bool) map[string]any {
 	in := map[string]any{
 		"type":    "tun",
 		"tag":     tunTag,
-		"address": []string{tunAddr, tunAddr6},
+		"address": tunAddressesFor(t),
 		"mtu":     t.MTU,
 		"stack":   t.Stack,
 	}

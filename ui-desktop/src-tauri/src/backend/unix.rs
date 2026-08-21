@@ -347,6 +347,13 @@ fn reconnecting_state() -> State {
         rules_proxy: None,
         preset_ru_banking: None,
         preset_ru_gov: None,
+        // The bypass lives in the daemon too, so its state is just as unknown
+        // while the daemon is away — and claiming the bypass is off would be a
+        // worse guess than saying nothing, since the UI offers to start it.
+        zapret_active: None,
+        zapret_strategy: None,
+        zapret_version: None,
+        zapret_auto_update: None,
         crash_reports: None,
         crash_reports_asked: false,
         error: Some("Reconnecting to the Tenebra daemon…".to_string()),
@@ -384,6 +391,11 @@ fn lost_state() -> State {
         rules_proxy: None,
         preset_ru_banking: None,
         preset_ru_gov: None,
+        // Unknown while the daemon is away (see reconnecting_state).
+        zapret_active: None,
+        zapret_strategy: None,
+        zapret_version: None,
+        zapret_auto_update: None,
         crash_reports: None,
         crash_reports_asked: false,
         error: Some("Lost the connection to the Tenebra daemon; reconnecting.".to_string()),

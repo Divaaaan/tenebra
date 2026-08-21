@@ -115,6 +115,14 @@ export interface Strings {
     insecureTitle: string;
     /** Per-profile summary; "{n}"/"{m}" interpolated (insecure / total nodes). */
     insecureSummary: string;
+    /** Shown while the connect button is measuring which nodes actually work. */
+    checking: string;
+    /**
+     * Shown when the measurement found no node that carries traffic. It says the
+     * connect is still being attempted, because it is — the core's fallback walk
+     * runs anyway, and a refusal would be a worse answer than a slow connect.
+     */
+    noneUsable: string;
   };
 
   /** Bottom bar: routing segmented control, kill-switch, quick actions. */
@@ -212,6 +220,21 @@ export interface Strings {
     commandUnknown: string;
     /** Any other refused command: the setting simply did not take effect. */
     commandFailed: string;
+    /**
+     * The connect the tun guard refused: another VPN already owns the machine's
+     * default route. Named specifically because the fix is specific — turn the
+     * other tunnel off — and because the generic "refused" wording sends the user
+     * looking for a fault in this app instead.
+     */
+    tunConflict: string;
+    /** Offered after tunConflict: connect anyway, overriding the guard. */
+    tunConflictOverride: string;
+    /** Title of the override prompt that carries tunConflictOverride. */
+    tunConflictOverrideTitle: string;
+    /** Override prompt: accept, connect despite the other tunnel. */
+    tunConflictOverrideConfirm: string;
+    /** Override prompt: decline and leave the guard's refusal standing. */
+    tunConflictOverrideCancel: string;
   };
 
   /**
@@ -260,6 +283,20 @@ export interface Strings {
    * words are reused from `home`/`state`.
    */
   simple: {
+    /** Step 1 label: paste the subscription link. */
+    setupLink: string;
+    setupLinkPlaceholder: string;
+    /** Step 2 label: drop the bypass bundle. */
+    setupBypass: string;
+    setupBypassHint: string;
+    /**
+     * Summary of the folded-away manual bundle import. It has to say the thing
+     * happens by itself, otherwise a user who remembers the old flow goes looking
+     * for the step that is no longer there.
+     */
+    setupBypassOptional: string;
+    /** Sub-line under the status when the bypass is running. */
+    bypassOn: string;
     /** Reassurance line under the status word while connected. */
     statusOn: string;
     /** Calm line under the status word while idle or errored. */
@@ -479,6 +516,15 @@ export interface Strings {
     bypass: string;
     bypassHint: string;
     tlsFragment: string;
+    /** Installed bypass-bundle version, and the control that moves it. */
+    bypassVersion: string;
+    bypassVersionInstalled: string;
+    bypassVersionUnknown: string;
+    bypassUpdate: string;
+    bypassUpdating: string;
+    bypassUpToDate: string;
+    bypassAutoUpdate: string;
+    bypassAutoUpdateHint: string;
     tlsFragmentHint: string;
     /**
      * Multihop section: the optional two-hop chain that routes through an entry
@@ -584,6 +630,73 @@ export interface Strings {
     leakDnsResolvers: string;
   };
 
+  blocklist: {
+    title: string;
+    /** One line explaining what the panel takes and where server links go. */
+    hint: string;
+    /** Text inside the drop zone. */
+    dropHint: string;
+    loading: string;
+    /** Shown when the dropped file is not an accepted format. */
+    badFile: string;
+    /** Unit after a rule count, e.g. "12 400 rules". */
+    rules: string;
+    /** Placeholder while a list is still being parsed. */
+    counting: string;
+    remove: string;
+    close: string;
+    /** Label of the settings row that opens the panel. */
+    open: string;
+    /** Button that switches the bypass on. */
+    enable: string;
+    /** Button that switches it off. */
+    disable: string;
+    /** Shown while the strategy probe runs. */
+    picking: string;
+    /** Accessible label of the "?" trigger. */
+    helpLabel: string;
+    /** Title inside the hint popover. */
+    helpTitle: string;
+    /** Step lines shown in the hint, in order. */
+    helpLines: string[];
+  };
+
+  check: {
+    /** Label of the action that probes every node end to end. */
+    run: string;
+    running: string;
+    /** Row state while this node is being probed. */
+    probing: string;
+    /** Node carried a majority of the control targets. */
+    usable: string;
+    /** Node never answered at its address. */
+    stageDial: string;
+    /** Address answered, proxy handshake never completed. */
+    stageHandshake: string;
+    /** Tunnel came up, traffic did not survive it. */
+    stageProbe: string;
+    /** Shown on the node auto-selection picked. */
+    best: string;
+    /** Shown when no node carried a majority of targets. */
+    noneUsable: string;
+    /** "3/5 targets" style summary. */
+    coverage: string;
+  };
+
+  /**
+   * The post-connect service checks: the three things the user installed this
+   * for, named the way they would name them.
+   */
+  checks: {
+    video: string;
+    voice: string;
+    games: string;
+    /** Shown while the probes are in flight. */
+    running: string;
+    /** Shown instead of a latency when a check failed. */
+    failed: string;
+  };
+
   units: {
     ms: string;
   };
@@ -678,6 +791,8 @@ const en: Strings = {
     insecureTitle: "TLS verification off — on-path interception possible",
     insecureSummary:
       "{n} of {m} nodes skip TLS verification — on-path interception possible",
+    checking: "Checking which nodes actually work…",
+    noneUsable: "No node carried traffic — connecting anyway, node by node",
   },
   bottom: {
     routing: "Routing",
@@ -729,6 +844,13 @@ const en: Strings = {
       "The background service is older than this app and doesn't know this setting — update or reinstall the service.",
     commandFailed:
       "The setting didn't apply — the background service refused it. See the log for details.",
+    tunConflict:
+      "Another VPN already owns the default route, so the tunnel was not raised — two tunnels routing everything take the machine offline rather than sharing. Turn the other one off and try again.",
+    tunConflictOverride:
+      "Connect anyway? Do this only if you know the two tunnels do not overlap.",
+    tunConflictOverrideTitle: "Another VPN holds the route",
+    tunConflictOverrideConfirm: "Connect anyway",
+    tunConflictOverrideCancel: "Cancel",
   },
   crash: {
     consentText:
@@ -761,6 +883,12 @@ const en: Strings = {
     sessionTraffic: "This session",
   },
   simple: {
+    setupLink: "Paste your subscription link",
+    setupLinkPlaceholder: "https://…",
+    setupBypass: "Drop the bypass archive here",
+    setupBypassHint: "zapret archive or folder — drag it in, or click",
+    setupBypassOptional: "The bypass installs itself — or add your own bundle",
+    bypassOn: "bypass on",
     statusOn: "You're protected",
     statusOff: "You're not connected",
     server: "Server",
@@ -946,6 +1074,15 @@ const en: Strings = {
     bypassHint:
       "Defeat deep-packet inspection that fingerprints and blocks the tunnel handshake.",
     tlsFragment: "DPI bypass — TLS fragmentation",
+    bypassVersion: "Bypass bundle",
+    bypassVersionInstalled: "installed",
+    bypassVersionUnknown: "not installed yet",
+    bypassUpdate: "Update",
+    bypassUpdating: "Updating…",
+    bypassUpToDate: "already current:",
+    bypassAutoUpdate: "Update the bundle automatically",
+    bypassAutoUpdateHint:
+      "A bundle a few releases behind does not get slower — it stops working, and looks exactly like a dead node.",
     tlsFragmentHint:
       "Split the TLS ClientHello across packets so filters can't match it whole. Applies to every TLS-bearing outbound; connects get a touch slower.",
     multihop: "Multihop",
@@ -1017,6 +1154,51 @@ const en: Strings = {
     leakDnsInconclusive: "Inconclusive — not enough signal for a verdict. This is not a pass.",
     leakDnsUnavailable: "Couldn't run the DNS probe. This is not a pass.",
     leakDnsResolvers: "Resolvers",
+  },
+  blocklist: {
+    title: "Blocklist",
+    hint: "Drop a zapret folder or archive — the DPI bypass for YouTube and Discord. The app finds the strategy that works here.",
+    dropHint: "Drop the zapret folder or its archive",
+    loading: "Reading…",
+    badFile: "This does not look like a zapret bundle: no bin\\winws.exe and no .bat strategies inside",
+    rules: "strategies",
+    counting: "reading…",
+    remove: "Remove",
+    close: "Close",
+    open: "Open",
+    enable: "Turn on",
+    disable: "Turn off",
+    picking: "Finding a working strategy…",
+    helpLabel: "How this works",
+    helpTitle: "What this is",
+    helpLines: [
+      "zapret defeats DPI blocking at packet level: YouTube and Discord work directly, with no tunnel and no added latency.",
+      "Download the zapret-discord-youtube bundle and drop the folder or the archive here.",
+      "The app finds the strategies and probes them: enabling each one and checking whether YouTube and Discord came back.",
+      "There are about twenty because every ISP DPI fails differently — it cannot be guessed, only measured.",
+      "The run takes minutes and the connection will flicker: there is no other way to measure it.",
+      "If none of them helps it will say so, rather than pretend the block is handled.",
+    ],
+  },
+
+  check: {
+    run: "Check nodes",
+    running: "Checking",
+    probing: "probing",
+    usable: "works",
+    stageDial: "no answer",
+    stageHandshake: "handshake failed",
+    stageProbe: "no traffic",
+    best: "best",
+    noneUsable: "No node carried traffic. Nothing to auto-select.",
+    coverage: "targets",
+  },
+  checks: {
+    video: "YouTube",
+    voice: "Discord voice",
+    games: "Games",
+    running: "checking what works…",
+    failed: "not working",
   },
   units: {
     ms: "ms",
@@ -1111,6 +1293,8 @@ const ru: Strings = {
     insecureTitle: "Проверка TLS отключена — возможен перехват трафика",
     insecureSummary:
       "{n} из {m} узлов без проверки TLS — возможен перехват трафика",
+    checking: "Проверяю, какие узлы реально работают…",
+    noneUsable: "Ни один узел не пропустил трафик — подключаюсь перебором",
   },
   bottom: {
     routing: "Маршрут",
@@ -1162,6 +1346,13 @@ const ru: Strings = {
       "Фоновая служба старее приложения и не знает эту настройку — обновите или переустановите службу.",
     commandFailed:
       "Настройка не применилась — фоновая служба отклонила команду. Подробности в журнале.",
+    tunConflict:
+      "Маршрут по умолчанию уже держит другой VPN, туннель не поднят — два туннеля не делят машину, а оставляют её без сети. Выключи второй и попробуй снова.",
+    tunConflictOverride:
+      "Подключиться всё равно? Только если точно знаешь, что туннели не пересекаются.",
+    tunConflictOverrideTitle: "Маршрут держит другой VPN",
+    tunConflictOverrideConfirm: "Всё равно подключить",
+    tunConflictOverrideCancel: "Отмена",
   },
   crash: {
     consentText:
@@ -1194,6 +1385,13 @@ const ru: Strings = {
     sessionTraffic: "За сессию",
   },
   simple: {
+    /** Step 1 label: paste the subscription link. */
+    setupLink: "Вставь ссылку на подписку",
+    setupLinkPlaceholder: "https://…",
+    setupBypass: "Закинь сюда запрет",
+    setupBypassHint: "Архив или папка zapret — перетащи или нажми",
+    setupBypassOptional: "Обход поставится сам — или подложи свою сборку",
+    bypassOn: "запрет включён",
     statusOn: "Вы под защитой",
     statusOff: "Вы не подключены",
     server: "Сервер",
@@ -1379,6 +1577,15 @@ const ru: Strings = {
     bypassHint:
       "Обойти глубокую инспекцию пакетов (DPI), которая распознаёт и блокирует рукопожатие туннеля.",
     tlsFragment: "Обход DPI — фрагментация TLS",
+    bypassVersion: "Сборка обхода",
+    bypassVersionInstalled: "установлена",
+    bypassVersionUnknown: "ещё не установлена",
+    bypassUpdate: "Обновить",
+    bypassUpdating: "Обновляю…",
+    bypassUpToDate: "уже свежая:",
+    bypassAutoUpdate: "Обновлять сборку самому",
+    bypassAutoUpdateHint:
+      "Устаревшая сборка не тормозит, а перестаёт работать — и выглядит это ровно как мёртвый узел.",
     tlsFragmentHint:
       "Режет TLS-рукопожатие (ClientHello) на пакеты, чтобы фильтры не могли распознать его целиком. Применяется ко всем TLS-соединениям; коннект чуть медленнее.",
     multihop: "Multihop",
@@ -1451,6 +1658,51 @@ const ru: Strings = {
     leakDnsUnavailable: "Не удалось выполнить проверку DNS. Это не гарантия.",
     leakDnsResolvers: "Резолверы",
   },
+  blocklist: {
+    title: "Запрет",
+    hint: "Перетащи папку или архив zapret — обходчик блокировок РКН для YouTube и Discord. Приложение само подберёт рабочую стратегию.",
+    dropHint: "Перетащи сюда папку zapret или её архив",
+    loading: "Читаю…",
+    badFile: "Это не похоже на сборку zapret: внутри нет bin\\winws.exe и стратегий .bat",
+    rules: "стратегий",
+    counting: "разбираю…",
+    remove: "Убрать",
+    close: "Закрыть",
+    open: "Открыть",
+    enable: "Включить",
+    disable: "Выключить",
+    picking: "Подбираю рабочую стратегию…",
+    helpLabel: "Как это работает",
+    helpTitle: "Что это и что сюда класть",
+    helpLines: [
+      "zapret обходит блокировки РКН на уровне пакетов: YouTube и Discord работают напрямую, без туннеля и без лишнего пинга.",
+      "Скачай сборку zapret-discord-youtube и перетащи сюда папку или архив — как удобно.",
+      "Приложение само найдёт стратегии и переберёт их: включит каждую и проверит, ожили ли YouTube и Discord.",
+      "Стратегий около двадцати, потому что у каждого провайдера DPI ломается по-своему — угадать нельзя, только измерить.",
+      "Перебор занимает несколько минут, и связь будет моргать: иначе проверить нечем.",
+      "Если ни одна не поможет — так и скажет, а не сделает вид, что всё исправлено.",
+    ],
+  },
+
+  check: {
+    run: "Проверить узлы",
+    running: "Проверяю",
+    probing: "проверка",
+    usable: "работает",
+    stageDial: "не отвечает",
+    stageHandshake: "рукопожатие не прошло",
+    stageProbe: "трафик не идёт",
+    best: "лучший",
+    noneUsable: "Ни один узел не пропустил трафик. Выбирать нечего.",
+    coverage: "целей",
+  },
+  checks: {
+    video: "Ютюб",
+    voice: "Голос в дискорде",
+    games: "Игры",
+    running: "проверяю, что работает…",
+    failed: "не работает",
+  },
   units: {
     ms: "мс",
   },
@@ -1491,7 +1743,28 @@ export const dictionaries: Record<Language, Strings> = { en, ru };
  */
 export function describeCoreError(e: unknown, t: Strings): string {
   const raw = e instanceof Error ? e.message : String(e ?? "");
-  return raw.toLowerCase().includes("unknown command")
-    ? t.daemon.commandUnknown
-    : t.daemon.commandFailed;
+  const lower = raw.toLowerCase();
+  if (lower.includes("unknown command")) {
+    return t.daemon.commandUnknown;
+  }
+  // The tun-conflict refusal has a fix the user can act on, and it is not in
+  // this app — say which situation they are in rather than "the command was
+  // refused", which reads as a bug here.
+  if (isTunConflict(e)) {
+    return t.daemon.tunConflict;
+  }
+  return t.daemon.commandFailed;
+}
+
+/**
+ * Whether an error is the core's tun-conflict refusal: another VPN already owns
+ * the default route.
+ *
+ * Matched on the core's wording because the protocol carries no error codes. It
+ * is deliberately narrow — the phrase names the exact guard — so an unrelated
+ * failure never offers an override that would raise a second tunnel.
+ */
+export function isTunConflict(e: unknown): boolean {
+  const raw = (e instanceof Error ? e.message : String(e ?? "")).toLowerCase();
+  return raw.includes("default route");
 }

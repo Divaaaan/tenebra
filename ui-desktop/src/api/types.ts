@@ -9,11 +9,7 @@
  * the new node follows.
  */
 export type ConnectionState =
-  | "idle"
-  | "connecting"
-  | "connected"
-  | "error"
-  | "health_reconnecting";
+  "idle" | "connecting" | "connected" | "error" | "health_reconnecting";
 
 export type RoutingMode = "smart" | "global" | "direct";
 
@@ -35,12 +31,7 @@ export type TunStack = "system" | "gvisor" | "mixed";
 export type ConnectionMode = "tun" | "system-proxy";
 
 export type NodeProtocol =
-  | "vless"
-  | "hysteria2"
-  | "amneziawg"
-  | "shadowsocks"
-  | "trojan"
-  | "vmess";
+  "vless" | "hysteria2" | "amneziawg" | "shadowsocks" | "trojan" | "vmess";
 
 export interface State {
   state: ConnectionState;
@@ -67,6 +58,18 @@ export interface State {
    * override); omitted (treated as off) when it isn't.
    */
   tls_fragment?: boolean;
+  /**
+   * The DPI bypass: whether it is carrying anything, which strategy is up, which
+   * bundle version is installed, and whether the bundle updates itself.
+   *
+   * The version is here rather than buried in a panel because a stale bundle does
+   * not degrade — it stops working, and the symptom is indistinguishable from a
+   * dead node or an expired subscription. It is the one fact that separates them.
+   */
+  zapret_active?: boolean;
+  zapret_strategy?: string;
+  zapret_version?: string;
+  zapret_auto_update?: boolean;
   /**
    * The two-hop chain selection: whether it is enabled and which entry/exit
    * servers (by stable id) it chains through. Omitted until the user has picked a
@@ -211,6 +214,71 @@ export interface PingResult {
 }
 
 /**
+ * How far a probe got before it failed. Mirrors the core's `nodecheck.Stage`.
+ *
+ * The distinction is what a plain ping cannot express: `dial` means the address
+ * never answered, `handshake` means it answered TCP and then never completed the
+ * proxy handshake — a node in that state passes a TCP ping and looks like the
+ * *fastest* one — and `probe` means the tunnel came up but traffic did not
+ * survive it.
+ */
+export type CheckStage = "ok" | "dial" | "handshake" | "probe";
+
+/** One control request through one node. */
+export interface CheckTarget {
+  target: string;
+  stage: CheckStage;
+  /** Time to first byte in ms; meaningful only when stage is "ok". */
+  rttMs: number;
+}
+
+/**
+ * Everything measured through a single node. A node counts as usable only when a
+ * strict majority of its targets succeeded — one lucky destination is exactly
+ * how a black-holed node passes a naive check.
+ */
+export interface NodeCheckResult {
+  node: string;
+  targets: CheckTarget[];
+}
+
+/**
+ * The full verdict of a `check_nodes` run: every node ranked best-first, plus the
+ * one to connect to.
+ *
+ * `best` is empty when nothing works, and the UI must say exactly that. Falling
+ * back to the least-bad node is the failure the command exists to prevent — the
+ * node that broke on 2026-08-18 was the one a "least bad" rule would have picked.
+ */
+export interface NodeCheck {
+  results: NodeCheckResult[];
+  best: string;
+}
+
+/**
+ * One answer to "is the thing I installed this for working?".
+ *
+ * Named after what the user recognises rather than after the mechanism: video,
+ * voice, games. Everything else the app reports — exit IP, DNS verdict,
+ * throughput, node latency — leaves someone staring at a spinning YouTube unable
+ * to say whether the tunnel, the bypass or their own network is at fault.
+ */
+export interface ServiceCheck {
+  /** Stable key: "video" | "voice" | "games". */
+  service: string;
+  ok: boolean;
+  /** What it cost in ms; meaningful only when ok. */
+  rttMs: number;
+  /** The destination measured, so a failure can be repeated by hand. */
+  detail: string;
+}
+
+/** Result of `check_services`. */
+export interface ServiceChecks {
+  checks: ServiceCheck[];
+}
+
+/**
  * Result of a batch link import (`import_links`): the single profile built from
  * all the valid links, plus how many links were imported and how many were
  * skipped because they didn't parse. Mirror of the core's wrapped response — the
@@ -334,4 +402,47 @@ export interface Attempt {
 export interface AttemptsEvent {
   items: Attempt[];
   outcome: "" | "ok" | "exhausted";
+}
+
+/** An installed zapret bundle: where it lives and what strategies it offers. */
+export interface ZapretBundle {
+  dir: string;
+  /** Strategy names, best-guess default first; empty when nothing is installed. */
+  strategies: string[] | null;
+}
+
+/** One strategy's measured outcome. */
+export interface ZapretResult {
+  strategy: string;
+  /** Whether winws actually came up — distinct from "came up and did not help". */
+  started: boolean;
+  targets: { target: string; ok: boolean; rtt_ms: number }[] | null;
+}
+
+/**
+ * The outcome of probing every strategy.
+ *
+ * `baseline` is how many targets already worked with zapret off; `improved` is
+ * false when nothing beat it, which means the block is elsewhere — or there is
+ * no block — and enabling a packet filter would buy nothing.
+ */
+/**
+ * What `update_zapret` did: the version that was installed, the newest published
+ * one, and whether anything changed.
+ *
+ * Both versions are reported even when nothing changed, because "already current"
+ * and "could not check" are different answers and only one of them is fine.
+ */
+export interface ZapretUpdate {
+  installed: string;
+  latest: string;
+  updated: boolean;
+}
+
+export interface ZapretPick {
+  baseline: number;
+  targets: number;
+  best?: string;
+  improved: boolean;
+  results: ZapretResult[] | null;
 }

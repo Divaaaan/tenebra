@@ -23,7 +23,8 @@ use tauri_plugin_notification::NotificationExt;
 
 use backend::{
     AttemptsSnapshot, Backend, ConnectionMode, ConnectionState, EventSink, ImportLinksResult,
-    LeakCheck, PingResult, Profile, RoutingMode, SpeedTest, SplitMode, State, StunCheck, TunStack,
+    LeakCheck, NodeCheck, PingResult, Profile, RoutingMode, ServiceChecks, SpeedTest, SplitMode,
+    State, StunCheck, TunStack, ZapretActive, ZapretBundle, ZapretPick, ZapretUpdate,
     EVENT_ATTEMPTS, EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
@@ -632,13 +633,16 @@ async fn connect(
     state: TauriState<'_, AppState>,
     profile: String,
     node: Option<String>,
-    // Optional so an older/leaner caller can omit it; Tauri maps a missing arg to
-    // None, which we treat as "not auto" — the protocol's default order.
     auto: Option<bool>,
+    allow_tun_conflict: Option<bool>,
 ) -> Result<State, String> {
-    let auto = auto.unwrap_or(false);
     off_thread(Arc::clone(&state.backend), move |b| {
-        b.connect(profile, node, auto)
+        b.connect(
+            profile,
+            node,
+            auto.unwrap_or(false),
+            allow_tun_conflict.unwrap_or(false),
+        )
     })
     .await
 }
@@ -654,6 +658,24 @@ async fn ping(state: TauriState<'_, AppState>, profile: String) -> Result<PingLi
         b.ping(profile).map(|results| PingList { results })
     })
     .await
+}
+
+/// Measure what actually survives each node. Unlike `ping` this opens real
+/// connections through every node, so it takes seconds rather than milliseconds —
+/// the UI must show it running rather than appear frozen.
+#[tauri::command]
+async fn check_nodes(
+    state: TauriState<'_, AppState>,
+    profile: String,
+) -> Result<NodeCheck, String> {
+    off_thread(Arc::clone(&state.backend), move |b| b.check_nodes(profile)).await
+}
+
+/// Check whether video, voice and game latency work right now. Costs about one
+/// timeout: the core runs its three probes concurrently.
+#[tauri::command]
+async fn check_services(state: TauriState<'_, AppState>) -> Result<ServiceChecks, String> {
+    off_thread(Arc::clone(&state.backend), move |b| b.check_services()).await
 }
 
 #[tauri::command]
@@ -776,6 +798,72 @@ async fn run_speed_test(state: TauriState<'_, AppState>) -> Result<SpeedTest, St
     off_thread(Arc::clone(&state.backend), |b| b.run_speed_test()).await
 }
 
+/// Install a zapret DPI-bypass bundle.
+///
+/// The UI can hand over either the archive's bytes (a file dropped into the
+/// webview has contents but no path) or a filesystem path (Tauri's drag-drop
+/// gives real paths, which is the only way a dropped FOLDER can be taken at all).
+/// `name` carries the dropped file's name when the UI knows it: the release
+/// archives are named after their version, and reading it here is what keeps the
+/// first update check from re-downloading the bundle the user just installed.
+#[tauri::command]
+async fn import_zapret(
+    state: TauriState<'_, AppState>,
+    data: Option<String>,
+    path: Option<String>,
+    name: Option<String>,
+) -> Result<ZapretBundle, String> {
+    off_thread(Arc::clone(&state.backend), move |b| {
+        b.import_zapret(data, path, name)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_zapret(state: TauriState<'_, AppState>) -> Result<ZapretBundle, String> {
+    off_thread(Arc::clone(&state.backend), |b| b.list_zapret()).await
+}
+
+/// Probe every strategy and report which to keep. Minutes long by nature — each
+/// strategy is attached, measured and detached — so it runs off-thread like every
+/// other backend call and the UI shows progress from the core's log events.
+#[tauri::command]
+async fn pick_zapret(state: TauriState<'_, AppState>) -> Result<ZapretPick, String> {
+    off_thread(Arc::clone(&state.backend), |b| b.pick_zapret()).await
+}
+
+#[tauri::command]
+async fn start_zapret(
+    state: TauriState<'_, AppState>,
+    name: Option<String>,
+) -> Result<ZapretActive, String> {
+    off_thread(Arc::clone(&state.backend), move |b| b.start_zapret(name)).await
+}
+
+#[tauri::command]
+async fn stop_zapret(state: TauriState<'_, AppState>) -> Result<(), String> {
+    off_thread(Arc::clone(&state.backend), |b| b.stop_zapret()).await
+}
+
+/// Check for a newer published bundle and install it, downloading one outright
+/// when none is installed. The core also does this on its own schedule; this is
+/// the "check now" the user reaches for when video stops loading.
+#[tauri::command]
+async fn update_zapret(state: TauriState<'_, AppState>) -> Result<ZapretUpdate, String> {
+    off_thread(Arc::clone(&state.backend), |b| b.update_zapret()).await
+}
+
+#[tauri::command]
+async fn set_zapret_auto_update(
+    state: TauriState<'_, AppState>,
+    on: bool,
+) -> Result<State, String> {
+    off_thread(Arc::clone(&state.backend), move |b| {
+        b.set_zapret_auto_update(on)
+    })
+    .await
+}
+
 /// Quit the whole app. Closing the window only hides it (see the close handler
 /// in `run`); this is the explicit "really exit" path the tray's Quit item and
 /// the front end share.
@@ -892,6 +980,8 @@ pub fn run() {
             connect,
             disconnect,
             ping,
+            check_nodes,
+            check_services,
             set_routing,
             set_split,
             set_kill_switch,
@@ -907,6 +997,13 @@ pub fn run() {
             leak_check,
             run_stun_check,
             run_speed_test,
+            import_zapret,
+            list_zapret,
+            pick_zapret,
+            start_zapret,
+            stop_zapret,
+            update_zapret,
+            set_zapret_auto_update,
             quit_app,
             set_language,
             take_launch_deep_links,
@@ -1010,7 +1107,9 @@ fn connect_backend(app: &AppHandle, profile: String, node: Option<String>) {
     let backend = Arc::clone(&state.backend);
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        if let Err(e) = backend.connect(profile, node, false) {
+        // The tray connect never overrides the tun-conflict guard: there is no
+        // window in front of the user to explain what it would be overriding.
+        if let Err(e) = backend.connect(profile, node, false, false) {
             let _ = app.emit(
                 EVENT_LOG,
                 json!({ "level": "error", "msg": format!("connect failed: {e}") }),
@@ -1142,6 +1241,10 @@ mod tests {
             preset_ru_gov: None,
             crash_reports: None,
             crash_reports_asked: false,
+            zapret_active: None,
+            zapret_strategy: None,
+            zapret_version: None,
+            zapret_auto_update: None,
             error: None,
         }
     }

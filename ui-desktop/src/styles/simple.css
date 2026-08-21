@@ -212,3 +212,265 @@
 .simple-advanced:hover {
   color: var(--text);
 }
+
+/* ── first-run setup ───────────────────────────────────────────────────── */
+
+/*
+ * The two things a new user supplies, on the same screen as the button. Each
+ * step disappears the moment it is satisfied — a finished step left on screen is
+ * clutter, and clutter is exactly what this view exists to avoid.
+ */
+
+.setup {
+  display: grid;
+  gap: var(--sp-4);
+  width: min(460px, 100%);
+  margin-top: var(--sp-5);
+  animation: setup-in var(--t-base) var(--t-enter) both;
+}
+
+@keyframes setup-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.setup-step {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--sp-3);
+  align-items: start;
+}
+
+/* A number, not an icon: it says how many steps remain, which is the only
+   thing a first-time user wants to know here. */
+.setup-num {
+  display: grid;
+  place-items: center;
+  width: 1.6em;
+  height: 1.6em;
+  color: var(--text-dim);
+  border: var(--bw) solid var(--line-2);
+  border-radius: var(--radius-max);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+}
+
+.setup-body {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.setup-title {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--track-label);
+}
+
+.setup-row {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.setup-input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--sp-2) var(--sp-3);
+  color: var(--text);
+  background: var(--surface-2);
+  border: var(--bw) solid var(--line-2);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  transition: border-color var(--t-fast) var(--t-base);
+}
+
+.setup-input:focus {
+  border-color: var(--signal);
+  outline: none;
+}
+
+.setup-go {
+  padding: 0 var(--sp-4);
+  color: var(--on-signal);
+  background: var(--signal);
+  border: 0;
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  cursor: pointer;
+  transition: opacity var(--t-fast) var(--t-base);
+}
+
+.setup-go:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* The post-connect checks. Three lines, each with the latency it measured: for
+   voice and games the difference between "works" and "works at 240ms" is the
+   entire reason the routing is split, so a bare tick would drop the fact worth
+   showing. */
+.svc-checks {
+  display: grid;
+  gap: var(--sp-1);
+  margin: var(--sp-4) 0 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+}
+
+.svc-check {
+  display: grid;
+  grid-template-columns: 1.2em 1fr auto;
+  gap: var(--sp-2);
+  align-items: baseline;
+  color: var(--text-dim);
+}
+
+.svc-check.is-ok .svc-mark {
+  color: var(--signal);
+}
+
+.svc-check.is-bad {
+  color: var(--text);
+}
+
+.svc-check.is-bad .svc-mark,
+.svc-check.is-bad .svc-rtt {
+  color: var(--danger, #e5484d);
+}
+
+.svc-rtt {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The manual bundle import, folded away. It is no longer a step — the core
+   installs a bundle on the first connect — so it reads as a quiet aside rather
+   than something standing between the user and the button. */
+.setup-optional {
+  margin-top: var(--sp-2);
+}
+
+.setup-optional-summary {
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  cursor: pointer;
+  list-style: none;
+  transition: color var(--t-fast) var(--t-base);
+}
+
+.setup-optional-summary::-webkit-details-marker {
+  display: none;
+}
+
+.setup-optional-summary::before {
+  content: "+ ";
+}
+
+.setup-optional[open] .setup-optional-summary::before {
+  content: "− ";
+}
+
+.setup-optional-summary:hover {
+  color: var(--text);
+}
+
+.setup-optional .setup-body {
+  margin-top: var(--sp-3);
+}
+
+.setup-drop {
+  display: grid;
+  place-items: center;
+  padding: var(--sp-4);
+  border: var(--bw) dashed var(--line-2);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  text-align: center;
+  cursor: pointer;
+  transition:
+    border-color var(--t-fast) var(--t-base),
+    color var(--t-fast) var(--t-base),
+    background var(--t-fast) var(--t-base);
+}
+
+.setup-drop:hover {
+  border-color: var(--signal-soft);
+  color: var(--text);
+}
+
+/* Unmistakable while a file is over it: the pointer is carrying something and
+   the user is not reading labels. */
+.setup-drop.is-dragging {
+  border-color: var(--signal);
+  border-style: solid;
+  color: var(--text);
+  background: var(--signal-faint);
+}
+
+.setup-drop.is-busy {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.setup-file {
+  display: none;
+}
+
+.setup-error {
+  margin: 0;
+  color: var(--signal);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+}
+
+/* ── bypass status ─────────────────────────────────────────────────────── */
+
+/* Named, not just flagged: which bypass is running is the useful fact, since
+   they behave differently and the app just chose one by measurement. */
+.simple-bypass {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: var(--sp-2) 0 0;
+  color: var(--good);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+}
+
+.simple-bypass-dot {
+  width: 0.5em;
+  height: 0.5em;
+  background: currentColor;
+  border-radius: var(--radius-max);
+  animation: bypass-pulse 2.4s ease-in-out infinite;
+}
+
+/* Slow and shallow: it says "live" without competing with the status word. */
+@keyframes bypass-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setup,
+  .simple-bypass-dot {
+    animation: none;
+  }
+}

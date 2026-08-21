@@ -9,9 +9,11 @@ use std::thread;
 use std::time::Duration;
 
 use super::{
-    Backend, ConnectionMode, ConnectionState, DnsResult, DnsStatus, EventSink, ExitMatch,
-    ImportLinksResult, LeakCheck, Multihop, NatType, Node, PingResult, Profile, Protocol,
-    RoutingMode, Source, SpeedTest, SplitMode, State, StunCheck, TunStack, Verdict,
+    Backend, CheckStage, CheckTarget, ConnectionMode, ConnectionState, DnsResult, DnsStatus,
+    EventSink, ExitMatch, ImportLinksResult, LeakCheck, Multihop, NatType, Node, NodeCheck,
+    NodeCheckResult, PingResult, Profile, Protocol, RoutingMode, ServiceCheck, ServiceChecks,
+    Source, SpeedTest, SplitMode, State, StunCheck, TunStack, Verdict, ZapretActive, ZapretBundle,
+    ZapretPick, ZapretResult, ZapretTarget, ZapretUpdate,
 };
 
 /// How long the fake "dial" takes before flipping to connected.
@@ -22,6 +24,11 @@ const TRAFFIC_TICK: Duration = Duration::from_millis(1000);
 struct Inner {
     state: State,
     profiles: Vec<Profile>,
+    /// The bundle the mock pretends is installed, and which strategy is running.
+    /// Empty until something is imported, so the UI's "nothing installed yet"
+    /// path is the first thing a mock run exercises.
+    zapret_strategies: Vec<String>,
+    zapret_active: Option<String>,
     /// Bumped on every connect/disconnect so a stale timer or ticker from a
     /// previous attempt can tell it has been superseded and bail out.
     generation: u64,
@@ -54,6 +61,8 @@ pub struct MockBackend {
 impl MockBackend {
     pub fn new(sink: Arc<dyn EventSink>) -> Self {
         let inner = Inner {
+            zapret_strategies: Vec::new(),
+            zapret_active: None,
             state: State {
                 state: ConnectionState::Idle,
                 node: None,
@@ -93,6 +102,12 @@ impl MockBackend {
                 // Not asked yet: the mock starts fresh, so the GUI shows its
                 // first-run consent prompt just as it would against a new core.
                 crash_reports: None,
+                // The bypass reports itself only once a bundle is installed; the
+                // updater is on by default, matching the core.
+                zapret_active: None,
+                zapret_strategy: None,
+                zapret_version: None,
+                zapret_auto_update: Some(true),
                 crash_reports_asked: false,
                 error: None,
             },
@@ -348,7 +363,13 @@ impl Backend for MockBackend {
         Ok(updated)
     }
 
-    fn connect(&self, profile: String, node: Option<String>, auto: bool) -> Result<State, String> {
+    fn connect(
+        &self,
+        profile: String,
+        node: Option<String>,
+        auto: bool,
+        _allow_tun_conflict: bool,
+    ) -> Result<State, String> {
         let mut inner = self.shared.inner.lock().unwrap();
         let p = inner
             .profiles
@@ -415,6 +436,47 @@ impl Backend for MockBackend {
             .find(|p| p.id == profile)
             .ok_or("profile not found")?;
         Ok(synth_ping(p))
+    }
+
+    fn check_nodes(&self, profile: String) -> Result<NodeCheck, String> {
+        let inner = self.shared.inner.lock().unwrap();
+        let p = inner
+            .profiles
+            .iter()
+            .find(|p| p.id == profile)
+            .ok_or("profile not found")?;
+        Ok(synth_check(p))
+    }
+
+    fn check_services(&self) -> Result<ServiceChecks, String> {
+        // The demo mirrors the split the product promises: video and games on the
+        // physical link at native latency, voice through the tunnel because its
+        // servers are not reachable directly here.
+        let connected = {
+            let inner = self.shared.inner.lock().unwrap();
+            inner.state.state == ConnectionState::Connected
+        };
+        let checks = vec![
+            ServiceCheck {
+                service: "video".into(),
+                ok: true,
+                rtt_ms: 41,
+                detail: "https://www.youtube.com/generate_204".into(),
+            },
+            ServiceCheck {
+                service: "voice".into(),
+                ok: connected,
+                rtt_ms: if connected { 89 } else { 0 },
+                detail: "gateway.discord.gg:443".into(),
+            },
+            ServiceCheck {
+                service: "games".into(),
+                ok: true,
+                rtt_ms: 9,
+                detail: "77.88.8.8:443".into(),
+            },
+        ];
+        Ok(ServiceChecks { checks })
     }
 
     fn set_routing(&self, mode: RoutingMode) -> Result<State, String> {
@@ -727,6 +789,119 @@ impl Backend for MockBackend {
             duration_ms: 890,
         })
     }
+
+    fn import_zapret(
+        &self,
+        data: Option<String>,
+        path: Option<String>,
+        _name: Option<String>,
+    ) -> Result<ZapretBundle, String> {
+        // Refuse an empty drop the way the core does, so the UI's error path is
+        // exercised in mock runs instead of only in front of a real core.
+        if data.as_deref().unwrap_or("").is_empty() && path.as_deref().unwrap_or("").is_empty() {
+            return Err("import_zapret: пустой архив".into());
+        }
+        let mut inner = self.shared.inner.lock().unwrap();
+        inner.zapret_strategies = demo_strategies();
+        Ok(ZapretBundle {
+            dir: MOCK_ZAPRET_DIR.into(),
+            strategies: Some(inner.zapret_strategies.clone()),
+        })
+    }
+
+    fn list_zapret(&self) -> Result<ZapretBundle, String> {
+        let inner = self.shared.inner.lock().unwrap();
+        let strategies = if inner.zapret_strategies.is_empty() {
+            None
+        } else {
+            Some(inner.zapret_strategies.clone())
+        };
+        Ok(ZapretBundle {
+            dir: MOCK_ZAPRET_DIR.into(),
+            strategies,
+        })
+    }
+
+    fn pick_zapret(&self) -> Result<ZapretPick, String> {
+        let mut inner = self.shared.inner.lock().unwrap();
+        if inner.zapret_strategies.is_empty() {
+            return Err("pick_zapret: сначала загрузи сборку zapret".into());
+        }
+        // A believable measurement: the baseline already carries some targets, and
+        // the winner carries more. The winner is left running, as the core does.
+        let best = "general (FAKE TLS AUTO)".to_string();
+        inner.zapret_active = Some(best.clone());
+        Ok(ZapretPick {
+            baseline: 3,
+            targets: 5,
+            best: Some(best.clone()),
+            improved: true,
+            results: Some(vec![ZapretResult {
+                strategy: best,
+                started: true,
+                targets: Some(vec![ZapretTarget {
+                    target: "https://www.youtube.com/generate_204".into(),
+                    ok: true,
+                    rtt_ms: 162,
+                }]),
+            }]),
+        })
+    }
+
+    fn start_zapret(&self, name: Option<String>) -> Result<ZapretActive, String> {
+        let mut inner = self.shared.inner.lock().unwrap();
+        if inner.zapret_strategies.is_empty() {
+            return Err("start_zapret: сначала загрузи сборку zapret".into());
+        }
+        let chosen = name
+            .or_else(|| inner.zapret_active.clone())
+            .unwrap_or_else(|| inner.zapret_strategies[0].clone());
+        if !inner.zapret_strategies.contains(&chosen) {
+            return Err(format!("start_zapret: стратегии {chosen:?} нет в сборке"));
+        }
+        inner.zapret_active = Some(chosen.clone());
+        Ok(ZapretActive { active: chosen })
+    }
+
+    fn stop_zapret(&self) -> Result<(), String> {
+        // The pick survives a stop, as in the core: stopping is not un-picking.
+        Ok(())
+    }
+
+    fn update_zapret(&self) -> Result<ZapretUpdate, String> {
+        let mut inner = self.shared.inner.lock().unwrap();
+        let had = !inner.zapret_strategies.is_empty();
+        inner.zapret_strategies = demo_strategies();
+        Ok(ZapretUpdate {
+            installed: if had { "1.10.0".into() } else { String::new() },
+            latest: "1.10.1".into(),
+            updated: true,
+        })
+    }
+
+    fn set_zapret_auto_update(&self, on: bool) -> Result<State, String> {
+        let mut inner = self.shared.inner.lock().unwrap();
+        inner.state.zapret_auto_update = Some(on);
+        let state = inner.state.clone();
+        drop(inner);
+        self.shared.emit_state(&state);
+        Ok(state)
+    }
+}
+
+/// Where the mock pretends the bundle lives.
+const MOCK_ZAPRET_DIR: &str = r"C:\ProgramData\Tenebra\data\zapret";
+
+/// The strategy names a real 1.10.x bundle ships, trimmed to a handful — enough
+/// for the UI to render a list and a pick without pretending to be exhaustive.
+fn demo_strategies() -> Vec<String> {
+    vec![
+        "general".into(),
+        "general (ALT)".into(),
+        "general (ALT2)".into(),
+        "general (FAKE TLS AUTO)".into(),
+        "general (SIMPLE FAKE)".into(),
+    ]
 }
 
 // --- demo data and small helpers ----------------------------------------------
@@ -758,6 +933,63 @@ fn synth_ping(p: &Profile) -> Vec<PingResult> {
             }
         })
         .collect()
+}
+
+/// Deterministic synthetic node check, built so the demo shows the case the
+/// command exists for rather than a tidy one.
+///
+/// It reuses `synth_ping`, then deliberately breaks one node that the ping says
+/// is fine and fast: the "answers TCP, carries nothing" exit. Without such a node
+/// in the demo, the panel looks like a slower ping and the reason to run it is
+/// invisible. A node the ping calls unreachable fails at `dial`, which is the
+/// honest mapping.
+fn synth_check(p: &Profile) -> NodeCheck {
+    const TARGETS: [&str; 3] = [
+        "https://www.gstatic.com/generate_204",
+        "https://www.youtube.com/generate_204",
+        "https://discord.com/robots.txt",
+    ];
+    let pings = synth_ping(p);
+    // The black hole is the fastest *reachable* node, so the demo shows a check
+    // overruling the ping rather than agreeing with it.
+    let black_hole = pings
+        .iter()
+        .filter(|r| r.ok)
+        .min_by_key(|r| r.rtt_ms)
+        .map(|r| r.node.clone());
+
+    let results: Vec<NodeCheckResult> = pings
+        .iter()
+        .map(|r| {
+            let stage = if !r.ok {
+                CheckStage::Dial
+            } else if Some(&r.node) == black_hole.as_ref() {
+                CheckStage::Handshake
+            } else {
+                CheckStage::Ok
+            };
+            NodeCheckResult {
+                node: r.node.clone(),
+                targets: TARGETS
+                    .iter()
+                    .map(|t| CheckTarget {
+                        target: (*t).into(),
+                        stage,
+                        rtt_ms: if stage == CheckStage::Ok { r.rtt_ms } else { 0 },
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
+
+    let best = results
+        .iter()
+        .filter(|r| r.targets.iter().all(|t| t.stage == CheckStage::Ok))
+        .min_by_key(|r| r.targets.first().map(|t| t.rtt_ms).unwrap_or(i64::MAX))
+        .map(|r| r.node.clone())
+        .unwrap_or_default();
+
+    NodeCheck { results, best }
 }
 
 /// The id of the reachable node with the lowest synthetic ping, or `None` when
@@ -1488,7 +1720,7 @@ mod tests {
     #[test]
     fn connect_transitions_to_connecting() {
         let (b, sink) = backend();
-        let s = b.connect("demo-sub".into(), None, false).unwrap();
+        let s = b.connect("demo-sub".into(), None, false, false).unwrap();
         assert_eq!(s.state, ConnectionState::Connecting);
         // Default (non-auto) node selection picks the head of the list.
         assert_eq!(s.node, Some("demo-nl".into()));
@@ -1506,7 +1738,7 @@ mod tests {
     fn connect_honours_an_explicit_node() {
         let (b, _) = backend();
         let s = b
-            .connect("demo-sub".into(), Some("demo-de".into()), false)
+            .connect("demo-sub".into(), Some("demo-de".into()), false, false)
             .unwrap();
         assert_eq!(s.node, Some("demo-de".into()));
         let _ = b.disconnect();
@@ -1518,7 +1750,7 @@ mod tests {
         // matching the core, where auto is ignored when a node is named.
         let (b, _) = backend();
         let s = b
-            .connect("demo-sub".into(), Some("demo-de".into()), true)
+            .connect("demo-sub".into(), Some("demo-de".into()), true, false)
             .unwrap();
         assert_eq!(s.node, Some("demo-de".into()));
         let _ = b.disconnect();
@@ -1533,7 +1765,7 @@ mod tests {
         let sub = profiles.iter().find(|p| p.id == "demo-sub").unwrap();
         let expected = fastest_node(sub).expect("at least one reachable demo node");
 
-        let s = b.connect("demo-sub".into(), None, true).unwrap();
+        let s = b.connect("demo-sub".into(), None, true, false).unwrap();
         assert_eq!(s.node, Some(expected));
         let _ = b.disconnect();
     }
@@ -1542,20 +1774,22 @@ mod tests {
     fn connect_rejects_unknown_node_and_profile() {
         assert!(b_connect_err(Some("nope".into())));
         let (b, _) = backend();
-        assert!(b.connect("does-not-exist".into(), None, false).is_err());
+        assert!(b
+            .connect("does-not-exist".into(), None, false, false)
+            .is_err());
     }
 
     /// Helper: a connect to demo-sub with the given node that is expected to
     /// fail, returning whether it did. Keeps the rejection test terse.
     fn b_connect_err(node: Option<String>) -> bool {
         let (b, _) = backend();
-        b.connect("demo-sub".into(), node, false).is_err()
+        b.connect("demo-sub".into(), node, false, false).is_err()
     }
 
     #[test]
     fn disconnect_returns_to_idle() {
         let (b, _) = backend();
-        let _ = b.connect("demo-sub".into(), None, false).unwrap();
+        let _ = b.connect("demo-sub".into(), None, false, false).unwrap();
         let s = b.disconnect().unwrap();
         assert_eq!(s.state, ConnectionState::Idle);
         assert_eq!(s.node, None);
@@ -1635,7 +1869,7 @@ mod tests {
     fn run_speed_test_reports_throughput_when_connected() {
         // Once the mock's dial completes, the probe returns a believable sample.
         let (b, _) = backend();
-        b.connect("demo-sub".into(), None, false).unwrap();
+        b.connect("demo-sub".into(), None, false, false).unwrap();
 
         // The mock flips to connected on a timer; wait for it rather than sleeping
         // a fixed span, so the test is neither flaky nor slower than it must be.
@@ -1660,7 +1894,7 @@ mod tests {
     #[test]
     fn removing_the_active_profile_tears_down_the_tunnel() {
         let (b, sink) = backend();
-        let _ = b.connect("demo-sub".into(), None, false).unwrap();
+        let _ = b.connect("demo-sub".into(), None, false, false).unwrap();
         let states_before = sink.state_count();
         b.remove_profile("demo-sub".into()).unwrap();
         // Removing the connected profile emits an extra idle state event.
