@@ -15,6 +15,15 @@ import (
 // tunnel comes up normally; flipping it to false is the failure being modelled.
 func connectedWithTunWatch(t *testing.T) (*harness, *atomic.Bool) {
 	t.Helper()
+	// Where the kernel names the device there is no name to poll, and the watch
+	// stays inert on purpose (macOS utunN — see watchTunInterface). Nothing below
+	// can be exercised there, so the assertions would only be reporting the
+	// documented design as a failure. Keyed off the same value the watch itself
+	// reads rather than off GOOS, so the skip cannot drift away from the rule it
+	// stands for.
+	if singbox.DefaultTUNName() == "" {
+		t.Skip("the platform lets the kernel name the tun device; the watch is inert by design")
+	}
 	h := newHarness(t)
 	var present atomic.Bool
 	var looks atomic.Int32
