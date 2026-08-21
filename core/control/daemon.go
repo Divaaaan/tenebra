@@ -103,16 +103,6 @@ type Daemon struct {
 	// the check has not been ported to.
 	ifaceProbe func() ([]tunguard.Iface, error)
 
-	// newProbeRunner builds a throwaway Runner for a node check: a second
-	// sing-box that exposes every node as its own loopback proxy (see
-	// singbox.BuildProbe) and is stopped when the check ends.
-	//
-	// A separate process rather than the live tunnel's clash API, because the
-	// check exists precisely to decide *where to connect* — it has to work while
-	// the tunnel is down, and while it is up it must not disturb it. Set once at
-	// construction, then only read. nil disables the check.
-	newProbeRunner func() Runner
-
 	// zapretActive is the DPI-bypass strategy the user settled on, or empty. It is
 	// what a plain start_zapret re-launches, so the picked strategy survives a
 	// stop/start — and a restart, since it is persisted — without them naming it
