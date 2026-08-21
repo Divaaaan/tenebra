@@ -11,6 +11,8 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-21
+
 ### Added
 
 - **The connect button measures before it picks an exit.** A node whose proxy
@@ -41,6 +43,19 @@ All notable changes to Tenebra are documented here. The format follows
 
 ### Fixed
 
+- **Overriding the "another VPN owns the default route" refusal is reachable
+  again.** The core declines to raise a tunnel while another VPN holds the
+  default route, and that refusal was always meant to be overridable — but the
+  question was asked through `window.confirm`, which Tauri routes to the dialog
+  plugin, and the capability set deliberately grants the file dialog and nothing
+  else. So the prompt never appeared: the ACL denial fell into the generic catch
+  and reached the user as "could not connect", with no way through. The question
+  is now a component in the app. Every ambiguous gesture — Escape, a click on the
+  backdrop, the initial focus — resolves to cancel, because taking the override
+  by accident can leave a machine with no network at all. Granting
+  `dialog:allow-confirm` would have been worse than the bug: the brokered confirm
+  is asynchronous, so `if (!window.confirm(...))` reads a pending promise as
+  truthy and would have walked past the guard without ever asking.
 - **The bypass no longer steals Discord's voice out of the tunnel.** The bundle
   ships a block that punches voice and STUN through the DPI on the direct path —
   right for a machine with no tunnel, wrong with one: WinDivert takes those
@@ -663,7 +678,8 @@ Initial tagged release.
   first run. Updates delivered in-app are minisign-verified against the bundled
   key; only the initial download is unsigned.
 
-[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.4.6...HEAD
+[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Divaaaan/tenebra/compare/v0.4.6...v0.5.0
 [0.4.6]: https://github.com/Divaaaan/tenebra/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/Divaaaan/tenebra/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/Divaaaan/tenebra/compare/v0.4.3...v0.4.4
