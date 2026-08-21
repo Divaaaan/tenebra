@@ -16,4 +16,4 @@ package buildinfo
 
 // Version is the semantic version of this build, kept in sync with the
 // desktop app's version by scripts/set-version.mjs.
-const Version = "0.4.6"
+const Version = "0.5.0"
