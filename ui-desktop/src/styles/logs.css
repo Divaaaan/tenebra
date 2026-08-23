@@ -291,13 +291,17 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Level glyph: fixed-width column, coloured by severity. info stays dim, warn is
-   the soft amber heads-up, error claims the lone accent. */
+/* Level glyph: fixed-width column, coloured by severity. debug recedes furthest
+   (it only appears in a support session, in volume), info stays dim, warn is the
+   soft amber heads-up, error claims the lone accent. */
 .log-lvl {
   text-transform: uppercase;
   letter-spacing: var(--track-label);
   white-space: nowrap;
   min-width: 38px;
+}
+.log-lvl--debug {
+  color: var(--text-dim-2);
 }
 .log-lvl--info {
   color: var(--text-dim);

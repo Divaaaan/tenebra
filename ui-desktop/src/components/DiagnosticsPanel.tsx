@@ -46,6 +46,10 @@ export function DiagnosticsPanel({ connected }: DiagnosticsPanelProps) {
   const [speedBusy, setSpeedBusy] = useState(false);
   const [speedError, setSpeedError] = useState(false);
 
+  const [bundlePath, setBundlePath] = useState<string | null>(null);
+  const [bundleBusy, setBundleBusy] = useState(false);
+  const [bundleError, setBundleError] = useState(false);
+
   async function runStun() {
     if (stunBusy) {
       return;
@@ -77,6 +81,24 @@ export function DiagnosticsPanel({ connected }: DiagnosticsPanelProps) {
       setSpeedError(true);
     } finally {
       setSpeedBusy(false);
+    }
+  }
+
+  async function saveBundle() {
+    // Not gated on anything: the report is most useful precisely when nothing
+    // works, and it reads state the core holds whether or not a tunnel is up.
+    if (bundleBusy) {
+      return;
+    }
+    setBundleBusy(true);
+    setBundleError(false);
+    try {
+      setBundlePath(await api.collectDiagnostics());
+    } catch {
+      setBundlePath(null);
+      setBundleError(true);
+    } finally {
+      setBundleBusy(false);
     }
   }
 
@@ -170,6 +192,44 @@ export function DiagnosticsPanel({ connected }: DiagnosticsPanelProps) {
                     .replace("{s}", sampleSecs)}
                 </span>
               </dd>
+            </div>
+          </dl>
+        )}
+      </div>
+
+      {/* Support bundle — never gated: it is worth most when nothing works. */}
+      <div className="set-diag-probe">
+        <div className="set-row">
+          <span className="set-row-text">
+            <span className="set-row-label">{t.settings.supportBundle}</span>
+            <span id="bundle-hint" className="set-row-hint">
+              {t.settings.supportBundleHint}
+            </span>
+          </span>
+          <button
+            type="button"
+            className="set-btn"
+            onClick={() => void saveBundle()}
+            disabled={bundleBusy}
+            aria-describedby="bundle-hint"
+          >
+            {bundleBusy
+              ? t.settings.supportBundleWorking
+              : t.settings.supportBundle}
+          </button>
+        </div>
+
+        {bundleError && (
+          <p className="set-error" role="alert">
+            {t.settings.supportBundleError}
+          </p>
+        )}
+
+        {bundlePath && !bundleError && (
+          <dl className="set-facts" role="status">
+            <div className="set-fact" data-tone="good">
+              <dt>{t.settings.supportBundleSaved}</dt>
+              <dd className="selectable">{bundlePath}</dd>
             </div>
           </dl>
         )}

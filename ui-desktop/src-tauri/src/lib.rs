@@ -798,6 +798,36 @@ async fn run_speed_test(state: TauriState<'_, AppState>) -> Result<SpeedTest, St
     off_thread(Arc::clone(&state.backend), |b| b.run_speed_test()).await
 }
 
+/// Ask the core for a support bundle and save it next to the crash log, then
+/// hand the UI the path.
+///
+/// The file is written here rather than by the core because the core may be a
+/// LocalSystem service whose data directory the reporting user cannot read. It
+/// lands in the same per-user directory as `crash-gui.txt` and `core.log`, so
+/// "the place to look when something went wrong" stays one directory rather
+/// than three.
+///
+/// The core decides the filename, but only its last component is used and a
+/// separator in it is refused outright: a filename is not a place to accept a
+/// path from another process, however trusted.
+#[tauri::command]
+async fn collect_diagnostics(state: TauriState<'_, AppState>) -> Result<String, String> {
+    off_thread(Arc::clone(&state.backend), |b| {
+        let bundle = b.collect_diagnostics()?;
+        let name = std::path::Path::new(&bundle.filename)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .filter(|n| !n.is_empty() && *n != "." && *n != "..")
+            .ok_or_else(|| "the core suggested an unusable filename".to_string())?;
+        let dir = crash::data_dir().ok_or_else(|| "no writable data directory".to_string())?;
+        let path = dir.join(name);
+        std::fs::write(&path, bundle.text.as_bytes())
+            .map_err(|e| format!("could not write {}: {e}", path.display()))?;
+        Ok(path.to_string_lossy().into_owned())
+    })
+    .await
+}
+
 /// Install a zapret DPI-bypass bundle.
 ///
 /// The UI can hand over either the archive's bytes (a file dropped into the
@@ -997,6 +1027,7 @@ pub fn run() {
             leak_check,
             run_stun_check,
             run_speed_test,
+            collect_diagnostics,
             import_zapret,
             list_zapret,
             pick_zapret,

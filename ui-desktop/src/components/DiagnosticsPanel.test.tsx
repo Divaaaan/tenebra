@@ -13,7 +13,12 @@ vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
     ...actual,
-    api: { ...actual.api, runStunCheck: vi.fn(), runSpeedTest: vi.fn() },
+    api: {
+      ...actual.api,
+      runStunCheck: vi.fn(),
+      runSpeedTest: vi.fn(),
+      collectDiagnostics: vi.fn(),
+    },
   };
 });
 
@@ -146,6 +151,50 @@ describe("DiagnosticsPanel", () => {
 
       expect(await screen.findByRole("alert")).toHaveTextContent(
         "The speed test failed",
+      );
+    });
+  });
+
+  describe("support bundle", () => {
+    it("collects the report and shows where it was saved", async () => {
+      vi.mocked(api.collectDiagnostics).mockResolvedValue(
+        String.raw`C:\Users\me\AppData\Local\Tenebra\tenebra-diagnostics-20260824-011500.txt`,
+      );
+      const user = userEvent.setup();
+      renderWithProviders(<DiagnosticsPanel connected={false} />);
+
+      await user.click(
+        screen.getByRole("button", { name: "Save diagnostics report" }),
+      );
+
+      expect(
+        await screen.findByText(/tenebra-diagnostics-20260824-011500\.txt/),
+      ).toBeInTheDocument();
+      expect(api.collectDiagnostics).toHaveBeenCalledTimes(1);
+    });
+
+    it("is not gated on a connection — it is worth most when nothing works", async () => {
+      vi.mocked(api.collectDiagnostics).mockResolvedValue("/tmp/report.txt");
+      renderWithProviders(<DiagnosticsPanel connected={false} />);
+
+      expect(
+        screen.getByRole("button", { name: "Save diagnostics report" }),
+      ).toBeEnabled();
+    });
+
+    it("surfaces a write failure as an alert", async () => {
+      vi.mocked(api.collectDiagnostics).mockRejectedValue(
+        new Error("no writable data directory"),
+      );
+      const user = userEvent.setup();
+      renderWithProviders(<DiagnosticsPanel connected={false} />);
+
+      await user.click(
+        screen.getByRole("button", { name: "Save diagnostics report" }),
+      );
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Couldn't write the report",
       );
     });
   });

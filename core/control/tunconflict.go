@@ -1,6 +1,8 @@
 package control
 
 import (
+	"fmt"
+
 	"github.com/Divaaaan/tenebra/core/singbox"
 	"github.com/Divaaaan/tenebra/core/tunguard"
 )
@@ -36,7 +38,12 @@ func (d *Daemon) SetInterfaceProbe(probe func() ([]tunguard.Iface, error)) {
 //
 // override comes from the user's explicit escape hatch, never from a default.
 func (d *Daemon) checkTunConflict(override bool) error {
-	if d.ifaceProbe == nil || override {
+	if d.ifaceProbe == nil {
+		d.emitDebug("tun guard: no route enumeration on this platform; not checking")
+		return nil
+	}
+	if override {
+		d.emitLog(LogWarn, "tun guard: overridden by the request; raising our tun without checking the default route")
 		return nil
 	}
 
@@ -44,12 +51,17 @@ func (d *Daemon) checkTunConflict(override bool) error {
 	tun := d.tun
 	d.mu.Unlock()
 	if tun.IsSystemProxy() {
-		return nil // no tun, no route, nothing to collide with
+		d.emitDebug("tun guard: system-proxy mode creates no tun; nothing to collide with")
+		return nil
 	}
 
 	ifaces, err := d.ifaceProbe()
 	if err != nil {
-		return nil // unknown is not a conflict; see above
+		// Worth a line: "the guard did not fire" and "the guard could not look"
+		// are the same silence otherwise, and they mean opposite things when a
+		// user later reports the exact failure this exists to prevent.
+		d.emitLog(LogWarn, fmt.Sprintf("tun guard: could not read the route table (%v); proceeding unchecked", err))
+		return nil
 	}
 
 	// Our own tun is excluded by the name the builder will give it, so a
@@ -59,5 +71,22 @@ func (d *Daemon) checkTunConflict(override bool) error {
 	if name == "" {
 		name = singbox.DefaultTUNName()
 	}
-	return tunguard.Check(ifaces, false, name)
+
+	// Say what the guard saw, not only what it decided. The decision is one bit;
+	// the evidence is what tells a maintainer whether a refusal was right, and
+	// whether a clean pass merely means the adapter enumerated nothing.
+	d.emitDebug(fmt.Sprintf("tun guard: %d interface(s) enumerated, ours is %q", len(ifaces), name))
+	for _, ifc := range ifaces {
+		if !ifc.HasDefaultRoute {
+			continue
+		}
+		d.emitDebug(fmt.Sprintf("tun guard: default route on %q (tunnel=%t, metric=%d)",
+			ifc.Name, tunguard.IsTunnelIface(ifc), ifc.RouteMetric))
+	}
+
+	err = tunguard.Check(ifaces, false, name)
+	if err != nil {
+		d.emitLog(LogWarn, "tun guard: "+err.Error())
+	}
+	return err
 }

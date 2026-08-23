@@ -34,15 +34,23 @@ const (
 // background fallback loop. It returns as soon as the attempt is launched;
 // progress arrives as state events.
 func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
+	// Every refusal below is logged, not just returned. A rejected connect never
+	// reaches the fallback loop, so without this the log for "it will not
+	// connect" is a blank space between the user's click and nothing happening —
+	// the response goes to whichever caller asked, and a caller that dropped it
+	// (a tray click, a deep link, an autoconnect) takes the only explanation
+	// with it.
 	if req.Profile == "" {
-		return newError(req.ID, "connect: missing profile")
+		return d.refuseConnect(req, "connect: missing profile", "")
 	}
 	p, ok := d.store.Get(req.Profile)
 	if !ok {
-		return newError(req.ID, profile.ErrNotFound.Error())
+		return d.refuseConnect(req, profile.ErrNotFound.Error(),
+			fmt.Sprintf("connect refused: profile %q is not in the store", req.Profile))
 	}
 	if len(p.Servers) == 0 {
-		return newError(req.ID, "connect: profile has no servers")
+		return d.refuseConnect(req, "connect: profile has no servers",
+			fmt.Sprintf("connect refused: profile %q (%s) carries no servers", p.Name, p.ID))
 	}
 
 	// Refuse to raise a second tun over another VPN's default route. Checked here
@@ -52,7 +60,7 @@ func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 	// into a tunnel that cannot come back. The user can retry with
 	// AllowTunConflict once they have read which interface is in the way.
 	if err := d.checkTunConflict(req.AllowTunConflict); err != nil {
-		return newError(req.ID, err.Error())
+		return d.refuseConnect(req, err.Error(), "connect refused by the tun-conflict guard: "+err.Error())
 	}
 
 	// Bring the DPI bypass up with the tunnel, so one press does the whole job:
@@ -77,13 +85,78 @@ func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 	st, err := d.startConnect(ctx, p, req.Node, req.Auto, true, "")
 	d.connMu.Unlock()
 	if err != nil {
-		return newError(req.ID, err.Error())
+		return d.refuseConnect(req, err.Error(), "connect refused: "+err.Error())
 	}
 	resp, err := newResult(req.ID, st)
 	if err != nil {
 		return newError(req.ID, err.Error())
 	}
 	return resp
+}
+
+// refuseConnect logs why a connect was turned away and returns the error
+// response. wire is what the caller sees (unchanged from what it has always
+// been, so clients matching on it keep working); detail, when non-empty, is the
+// richer line the log gets instead — it may name the profile and the offending
+// interface, which the wire error deliberately does not.
+func (d *Daemon) refuseConnect(req Request, wire, detail string) Response {
+	msg := detail
+	if msg == "" {
+		msg = wire
+	}
+	d.emitLog(LogWarn, msg)
+	return newError(req.ID, wire)
+}
+
+// logConnectPlan writes down which exit this walk will lead with and on what
+// grounds, plus — at debug level — the whole resolved order with the round-trips
+// that produced it.
+//
+// The summary is info because it is one line per connect and answers the
+// question a user actually asks ("why that server?"). The full order is debug
+// because a fifty-node profile would otherwise put fifty lines in the log every
+// time someone presses connect, which is how a log stops being read.
+func (d *Daemon) logConnectPlan(p profile.Profile, m *fallback.Machine, explicitNode, avoid, strategy string, rtt map[string]int64) {
+	order := m.Order()
+	lastGoodID := ""
+	if d.lastGood != nil {
+		if id, ok := d.lastGood.Get(p.ID); ok {
+			lastGoodID = id
+		}
+	}
+
+	reason := "ordered by " + strategy
+	switch {
+	case explicitNode != "":
+		reason = "exit pinned by the request"
+	case avoid != "":
+		reason = fmt.Sprintf("ordered by %s, avoiding %s", strategy, avoid)
+	}
+	if lastGoodID != "" && explicitNode == "" {
+		reason += fmt.Sprintf(", last-good %s leads", lastGoodID)
+	}
+
+	lead := "-"
+	if len(order) > 0 {
+		lead = fmt.Sprintf("%s %s", protoLabel(order[0].Node), order[0].NodeID)
+	}
+	d.emitLog(LogInfo, fmt.Sprintf("connect: profile %q, %d candidate(s), %s; first up is %s",
+		p.Name, len(order), reason, lead))
+
+	for i, a := range order {
+		note := ""
+		if a.NodeID == lastGoodID {
+			note = " last-good"
+		}
+		if ms, ok := rtt[a.NodeID]; ok {
+			note += fmt.Sprintf(" rtt=%dms", ms)
+		} else if rtt != nil {
+			// Measured and unreachable is a different fact from never measured,
+			// and it is the one that explains a candidate at the back of the walk.
+			note += " rtt=unreachable"
+		}
+		d.emitDebug(fmt.Sprintf("connect: plan %d/%d %s %s%s", i+1, len(order), protoLabel(a.Node), a.NodeID, note))
+	}
 }
 
 // startConnect launches a connection attempt to profile p and returns the
@@ -139,16 +212,27 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 	// next candidate when the lead's connect-probe is blocked) is preserved in
 	// both modes.
 	var m *fallback.Machine
+	var rtt map[string]int64
+	strategy := "protocol preference"
 	if auto && explicitNode == "" {
 		// pingCandidates dials only the candidate servers, concurrently and
 		// briefly (see pingOne's pingDialTimeout), so probing never blocks the
 		// connect path for long. Unreachable candidates fall to the back of the
 		// latency order but are still tried.
-		rtt := d.pingCandidates(ctx, p, candidates)
+		rtt = d.pingCandidates(ctx, p, candidates)
 		m = fallback.NewByLatency(p.ID, candidates, rtt, d.lastGood)
+		strategy = "measured latency"
 	} else {
 		m = fallback.New(p.ID, candidates, fallback.DefaultOrder, d.lastGood)
 	}
+	// Record the plan before anything is started. Which exit this connect leads
+	// with is a decision made from four inputs that are all invisible afterwards
+	// — an explicit pick, the persisted last-good, the measured round-trips, the
+	// node a failover is running away from — and once the walk is under way the
+	// only trace left is which node happened to come up. A report that says "it
+	// picked a node in Amsterdam and I do not know why" is unanswerable without
+	// this line.
+	d.logConnectPlan(p, m, explicitNode, avoid, strategy, rtt)
 
 	// Snapshot routing/tun under lock so the loop builds every per-candidate
 	// config against a consistent view even if set_routing runs meanwhile.
@@ -592,11 +676,18 @@ func (d *Daemon) attemptNode(ctx context.Context, loop fallbackLoop, attempt fal
 	strategies := fallback.DefaultStrategies
 	censored := false // the node showed the interference fingerprint at least once
 
+	// who names the candidate the same way in every line of this attempt, so a
+	// log reader can grep one node's whole story out of a walk over fifty of them.
+	who := fmt.Sprintf("%s %s", protoLabel(attempt.Node), attempt.NodeID)
+
 	for si, strat := range strategies {
 		if ctx.Err() != nil || !d.isCurrent(loop.gen) {
 			_ = d.runner.Stop()
 			return nodeSuperseded, ""
 		}
+
+		d.emitDebug(fmt.Sprintf("connect: trying %s, transport strategy %s (%d/%d)",
+			who, strat.Name, si+1, len(strategies)))
 
 		// Build this candidate's config with the strategy's handshake reshaping
 		// folded into the selected node. The default (first) strategy reshapes
@@ -606,7 +697,7 @@ func (d *Daemon) attemptNode(ctx context.Context, loop fallbackLoop, attempt fal
 		if err != nil {
 			// A node we can't even render is not worth a process, and no handshake
 			// reshaping fixes a render error — abandon the node outright.
-			d.emitLog(LogWarn, fmt.Sprintf("connect: skip %s: %v", protoLabel(attempt.Node), err))
+			d.emitLog(LogWarn, fmt.Sprintf("connect: skip %s, its config will not build: %v", who, err))
 			return nodeFailed, ""
 		}
 
@@ -615,7 +706,7 @@ func (d *Daemon) attemptNode(ctx context.Context, loop fallbackLoop, attempt fal
 				_ = d.runner.Stop()
 				return nodeSuperseded, ""
 			}
-			d.emitLog(LogWarn, fmt.Sprintf("connect: start %s failed: %v", protoLabel(attempt.Node), err))
+			d.emitLog(LogWarn, fmt.Sprintf("connect: sing-box would not start for %s: %v", who, err))
 			return nodeFailed, ""
 		}
 
@@ -642,23 +733,31 @@ func (d *Daemon) attemptNode(ctx context.Context, loop fallbackLoop, attempt fal
 		// or ambiguous node gains nothing from a reshaped handshake, so we stop and
 		// let the outer loop advance to the next node.
 		if si < len(strategies)-1 {
-			if d.classify(ctx, attempt.Node, stalled) == fallback.Censored {
+			class := d.classify(ctx, attempt.Node, stalled)
+			d.emitDebug(fmt.Sprintf("connect: %s failed on %s (stalled=%t), classified %s",
+				who, strat.Name, stalled, class))
+			if class == fallback.Censored {
 				censored = true
 				next := strategies[si+1]
 				d.emitLog(LogWarn, fmt.Sprintf("connect: %s handshake stalled; escalating transport strategy to %s",
-					protoLabel(attempt.Node), next.Name))
+					who, next.Name))
 				tracker.escalating(attempt, next)
 				continue
 			}
+			break
 		}
+		d.emitDebug(fmt.Sprintf("connect: %s failed on %s (stalled=%t); no further transport strategy",
+			who, strat.Name, stalled))
 		break
 	}
 
-	d.emitLog(LogWarn, fmt.Sprintf("connect: %s blocked, trying next", protoLabel(attempt.Node)))
 	reason := ""
+	why := "no traffic came back through it"
 	if censored {
 		reason = fallback.Censored.String()
+		why = "its handshake looked interfered with under every transport strategy"
 	}
+	d.emitLog(LogWarn, fmt.Sprintf("connect: giving up on %s — %s; moving to the next candidate", who, why))
 	return nodeFailed, reason
 }
 
@@ -678,6 +777,21 @@ func (d *Daemon) recordSuccess(ctx context.Context, loop fallbackLoop, attempt f
 		d.rememberLastConn(loop.profileID, loop.requestedNode)
 	}
 	tracker.succeeded(attempt, strat)
+	// Name the exit that won and what it took to get there. "tunnel up" a few
+	// lines earlier says a probe returned; this says which of the candidates it
+	// returned through, whether the handshake had to be reshaped to manage it,
+	// and where the traffic is now going — the three facts a later "why am I
+	// coming out of Frankfurt" question needs.
+	via := "its own parameters"
+	if !strat.IsDefault() {
+		via = "transport strategy " + strat.Name
+	}
+	egress := "tun"
+	if loop.tun.IsSystemProxy() {
+		egress = "system proxy on " + loop.tun.MixedHostPort()
+	}
+	d.emitLog(LogInfo, fmt.Sprintf("connect: up on %s %s via %s; routing %s, egress %s",
+		protoLabel(attempt.Node), attempt.NodeID, via, loop.ro.Mode, egress))
 	// Capture the connected instant before publishing it, so the uptime the
 	// relaunch budget reads later is measured from a fixed point.
 	connectedAt := d.now()
@@ -741,7 +855,8 @@ func (d *Daemon) probeUntilUp(ctx context.Context, gen uint64) (up bool, stalled
 			if !d.isCurrent(gen) {
 				return false, false
 			}
-			d.emitLog(LogInfo, fmt.Sprintf("connect: tunnel up (%dms)", delay))
+			d.emitDebug(fmt.Sprintf("connect: probe through the selector came back in %dms after %s",
+				delay, elapsed.Round(time.Millisecond)))
 			return true, false
 		}
 		// A probe that ran most of its deadline before failing made no progress: a
@@ -1208,15 +1323,43 @@ func (d *Daemon) emitTraffic(ev TrafficEvent) {
 	}
 }
 
-// emitLog pushes a diagnostic log line to the UI, if an emitter is set.
+// emitLog records one diagnostic line: to the in-memory ring the diagnostics
+// bundle reads, to the process log sink (the rotating file, in service mode),
+// and to the UI if one is attached. Lines below the daemon's level threshold are
+// dropped before any of that, so raising the level to debug is the only thing
+// that costs anything.
+//
+// All three destinations are fed from one place on purpose. The UI is the least
+// reliable of them — it may not be running, and it certainly is not at boot,
+// which is when the interesting failures happen — so a line that went only there
+// was a line that did not exist.
 func (d *Daemon) emitLog(level, msg string) {
 	d.mu.Lock()
+	if logSeverity(level) < logSeverity(d.logLevel) {
+		d.mu.Unlock()
+		return
+	}
 	emit := d.emit
+	sink := d.logSink
+	now := d.now
 	d.mu.Unlock()
+
+	at := time.Now()
+	if now != nil {
+		at = now()
+	}
+	d.logs.add(logEntry{At: at, Level: level, Msg: msg})
+	if sink != nil {
+		sink(level, msg)
+	}
 	if emit != nil {
 		emit(EventLog, LogEvent{Level: level, Msg: msg})
 	}
 }
+
+// emitDebug is emitLog at debug level, spelled short because the decision trail
+// uses it heavily.
+func (d *Daemon) emitDebug(msg string) { d.emitLog(LogDebug, msg) }
 
 // singboxTailLines is how many trailing sing-box log lines emitSingboxTail
 // surfaces — enough to show why a start or handshake failed without flooding the
