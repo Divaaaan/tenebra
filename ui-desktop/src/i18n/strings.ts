@@ -156,6 +156,16 @@ export interface Strings {
     profileImported: string;
     /** Raised when the log console is cleared. */
     logsCleared: string;
+    /**
+     * Raised when picking another node moved the exit without taking the tunnel
+     * down — the core steered the running sing-box instead of rebuilding it, so
+     * the session survived. "{node}" is the node's name. Its counterpart,
+     * `nodeReconnecting`, is raised when that was not possible and the tunnel
+     * really is coming back up: the two must stay distinguishable, because the
+     * whole point is that the user can see which of the two just happened.
+     */
+    nodeSwitched: string;
+    nodeReconnecting: string;
     /** Raised when the diagnostics bundle is copied to the clipboard. */
     diagnosticsCopied: string;
     /** Accessible label for a small self-dismissing card's close control. */
@@ -814,6 +824,8 @@ const en: Strings = {
     profileRemoved: "profile removed · {name}",
     profileImported: "profile imported · {name}",
     logsCleared: "log cleared",
+    nodeSwitched: "exit · {node} · connection kept",
+    nodeReconnecting: "exit · {node} · reconnecting",
     diagnosticsCopied: "diagnostics copied",
     dismiss: "Dismiss",
   },
@@ -1316,6 +1328,8 @@ const ru: Strings = {
     profileRemoved: "профиль удалён · {name}",
     profileImported: "профиль импортирован · {name}",
     logsCleared: "журнал очищен",
+    nodeSwitched: "выход · {node} · соединение сохранено",
+    nodeReconnecting: "выход · {node} · переподключение",
     diagnosticsCopied: "диагностика скопирована",
     dismiss: "Закрыть",
   },

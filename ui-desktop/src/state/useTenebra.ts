@@ -83,12 +83,20 @@ export interface Tenebra {
    */
   attempts: AttemptsEvent | null;
 
+  /**
+   * Start, or move, the tunnel. The resolved state says which of the two just
+   * happened when a node is named on a live tunnel: `connected` means the core
+   * steered the running sing-box and nothing was reconnected, `connecting` means
+   * it could not and the tunnel is coming back up. Callers that report the switch
+   * to the user need that distinction, so the state is handed back rather than
+   * only stored.
+   */
   connect: (
     profile: string,
     node?: string,
     auto?: boolean,
     allowTunConflict?: boolean,
-  ) => Promise<void>;
+  ) => Promise<State>;
   disconnect: () => Promise<void>;
   setRouting: (mode: RoutingMode) => Promise<void>;
   setSplit: (mode: SplitMode, apps: string[]) => Promise<void>;
@@ -302,6 +310,7 @@ export function useTenebra(): Tenebra {
     ) => {
       const next = await api.connect(profile, node, auto, allowTunConflict);
       setState(next);
+      return next;
     },
     [],
   );
