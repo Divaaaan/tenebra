@@ -80,6 +80,71 @@ textarea {
   background: var(--line-2);
 }
 
+/* ── shared motion vocabulary ───────────────────────────────────────────────
+   The keyframes the whole app enters and leaves by, so an overlay, a modal, a
+   list row, a settings section and a hint all move the same way. Anything with
+   motion of its own (the connecting rail, the live dot, the eclipse) keeps its
+   local keyframes; these are for the ordinary business of appearing and going
+   away, which was previously reinvented in eight stylesheets with eight
+   durations.
+
+   Enters rise and settle; exits sink a couple of pixels and are gone. The exit
+   travel is deliberately smaller than the enter's and its duration shorter — by
+   the time something leaves, the user is already looking at what replaced it,
+   and a departure that fights for that attention reads as a stutter. */
+@keyframes ui-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ui-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ui-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* Panels and modal cards: the rise, plus a hair of scale so a large surface
+   reads as coming forward rather than sliding up a wall. */
+@keyframes ui-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ui-panel-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(4px) scale(0.99);
+  }
+}
+
 /* Honour reduced-motion everywhere: neutralise transitions/animations and the
    View Transitions cross-fade, and tell JS-driven effects to stand down.
    Essential feedback (a value changing, a colour flipping) still happens. */
@@ -95,6 +160,12 @@ textarea {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
+    /* Zeroing duration alone left every stagger intact, so a cascade of rows
+       still dealt itself out one delay at a time — each row now flashing into
+       place instead of easing, which is worse than the animation it replaced.
+       Delays go with the durations. */
+    animation-delay: 0ms !important;
+    transition-delay: 0ms !important;
   }
 
   ::view-transition-group(*),

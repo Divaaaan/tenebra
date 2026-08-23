@@ -38,7 +38,12 @@
   text-transform: uppercase;
   color: var(--text-dim);
   flex: none;
-  transition: color var(--t-fast);
+  transition:
+    color var(--t-fast),
+    transform var(--d-micro) var(--e-out);
+}
+.srv-add:active {
+  transform: scale(0.96);
 }
 .srv-add:hover {
   color: var(--signal);
@@ -116,7 +121,11 @@
   transition:
     color var(--t-fast),
     border-color var(--t-fast),
-    background var(--t-fast);
+    background-color var(--t-fast),
+    transform var(--d-micro) var(--e-out);
+}
+.chip:active {
+  transform: scale(0.96);
 }
 .chip::before {
   content: "[ ";
@@ -197,6 +206,9 @@
   flex-direction: column;
   gap: 10px;
   align-items: center;
+  /* It replaces the whole row list, so it arrives as a surface rather than as
+     one more row. */
+  animation: ui-rise var(--d-slow) var(--e-out) backwards;
 }
 /* Escape-hatch button under an empty state: clear the filter, or import a
    subscription. Bordered accent that fills on hover — a live affordance, never a
@@ -211,17 +223,22 @@
   padding: 4px 10px;
   transition:
     color var(--t-base),
-    background var(--t-base);
+    background-color var(--t-base),
+    transform var(--d-micro) var(--e-out);
 }
 .srv-empty-cta:hover {
   background: var(--signal);
   color: var(--on-signal);
+}
+.srv-empty-cta:active {
+  transform: scale(0.96);
 }
 
 /* Pinned AUTO row: sits above the node list, lets the core pick the lowest-ping
    node. Same geometry as a node row but its own three-column grid (name · best
    ping · dashed AUTO tag). Carries the active state whenever no node is pinned. */
 .srv-auto {
+  position: relative;
   display: grid;
   grid-template-columns: 1fr auto auto;
   align-items: center;
@@ -229,18 +246,14 @@
   padding: 13px 22px;
   border-bottom: var(--bw) solid var(--line);
   cursor: pointer;
-  transition:
-    background var(--t-fast),
-    box-shadow var(--t-fast);
-  animation: srv-row-in var(--t-enter) both;
+  transition: background-color var(--t-base);
+  animation: srv-row-in var(--d-slow) var(--e-out) backwards;
 }
 .srv-auto:hover {
   background: var(--surface);
-  box-shadow: inset 2px 0 0 var(--signal);
 }
 .srv-auto.on {
   background: var(--surface-2);
-  box-shadow: inset 2px 0 0 var(--signal);
 }
 .srv-auto-name {
   display: flex;
@@ -298,6 +311,7 @@
 }
 
 .srv-row {
+  position: relative;
   display: grid;
   grid-template-columns: 1fr auto auto auto;
   align-items: center;
@@ -306,19 +320,42 @@
   border-bottom: var(--bw) solid var(--line);
   cursor: pointer;
   transition:
-    background var(--t-fast),
-    box-shadow var(--t-fast);
+    background-color var(--t-base),
+    opacity var(--t-base);
   /* Rows cascade in on appearance; the per-row stagger delay is set inline (it's
-     a dynamic index). Neutralised under reduced-motion below. */
-  animation: srv-row-in var(--t-enter) both;
+     a dynamic index, capped in ServerList so a long list never deals itself out
+     for seconds). Neutralised under reduced-motion below. */
+  animation: srv-row-in var(--d-slow) var(--e-out) backwards;
+}
+
+/* The accent tick on a hovered / selected row. It used to be an inset box-shadow,
+   which paints on the main thread and could only fade; as a pseudo-element it
+   scales in from the top edge on the compositor, so the marker *arrives* along
+   the row instead of materialising over it. */
+.srv-row::before,
+.srv-auto::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: 2px;
+  background: var(--signal);
+  transform: scaleY(0);
+  transform-origin: top center;
+  transition: transform var(--d-base) var(--e-out);
+  pointer-events: none;
+}
+.srv-row:hover::before,
+.srv-row.active::before,
+.srv-auto:hover::before,
+.srv-auto.on::before {
+  transform: scaleY(1);
 }
 .srv-row:hover {
   background: var(--surface);
-  box-shadow: inset 2px 0 0 var(--signal);
 }
 .srv-row.active {
   background: var(--surface-2);
-  box-shadow: inset 2px 0 0 var(--signal);
 }
 .srv-row.active .srv-node {
   color: var(--signal);
@@ -330,7 +367,9 @@
 }
 .srv-row.is-dead:hover {
   background: transparent;
-  box-shadow: none;
+}
+.srv-row.is-dead:hover::before {
+  transform: scaleY(0);
 }
 .srv-name {
   display: flex;
@@ -412,13 +451,19 @@
   text-align: center;
 }
 
-/* Row-entrance cascade (fade + a short lift). The global reduced-motion rule
-   only zeroes duration, which would leave the inline stagger delay flashing rows
-   in one by one — so the motion budget here is dropped outright instead. */
+/* Row-entrance cascade: a fade and a short lift, nothing more. A row is one line
+   of a table — anything larger turns a filter keystroke into a performance.
+
+   Filled `backwards`, not `both`. A filled final frame outranks ordinary author
+   declarations, so `both` left every row pinned at the keyframe's opacity: 1 for
+   good — which is why `.srv-row.is-dead { opacity: 0.55 }` never dimmed a dead
+   node at all. `backwards` still holds the first frame through the stagger delay
+   (the part an entrance actually needs) and hands the row back to the stylesheet
+   the moment it lands. The same applies to every entrance in the app. */
 @keyframes srv-row-in {
   from {
     opacity: 0;
-    transform: translateY(5px);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
@@ -429,5 +474,10 @@
   .srv-row,
   .srv-auto {
     animation: none;
+  }
+  /* The tick still marks the row — it just stops travelling to get there. */
+  .srv-row::before,
+  .srv-auto::before {
+    transition: none;
   }
 }

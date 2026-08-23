@@ -65,8 +65,50 @@
   color: var(--text-dim);
   transition:
     color var(--t-fast),
-    background var(--t-fast),
+    background-color var(--t-fast),
     border-color var(--t-fast);
+  /* The rail cascades once, on the row step: thirteen items on the chunk step
+     would still be arriving after the user had started reading them. The
+     nth-child delays run to twelve and everything past that shares the last
+     one — a tail, not a queue. */
+  animation: ui-rise var(--d-slow) var(--e-out) backwards;
+  animation-delay: calc(var(--stagger) * 12);
+}
+.set-nav-item:nth-child(1) {
+  animation-delay: 0ms;
+}
+.set-nav-item:nth-child(2) {
+  animation-delay: var(--stagger);
+}
+.set-nav-item:nth-child(3) {
+  animation-delay: calc(var(--stagger) * 2);
+}
+.set-nav-item:nth-child(4) {
+  animation-delay: calc(var(--stagger) * 3);
+}
+.set-nav-item:nth-child(5) {
+  animation-delay: calc(var(--stagger) * 4);
+}
+.set-nav-item:nth-child(6) {
+  animation-delay: calc(var(--stagger) * 5);
+}
+.set-nav-item:nth-child(7) {
+  animation-delay: calc(var(--stagger) * 6);
+}
+.set-nav-item:nth-child(8) {
+  animation-delay: calc(var(--stagger) * 7);
+}
+.set-nav-item:nth-child(9) {
+  animation-delay: calc(var(--stagger) * 8);
+}
+.set-nav-item:nth-child(10) {
+  animation-delay: calc(var(--stagger) * 9);
+}
+.set-nav-item:nth-child(11) {
+  animation-delay: calc(var(--stagger) * 10);
+}
+.set-nav-item:nth-child(12) {
+  animation-delay: calc(var(--stagger) * 11);
 }
 .set-nav-item:hover {
   color: var(--text);
@@ -148,6 +190,20 @@
      pickActiveSection uses in SettingsScreen.tsx — a larger offset would stop
      the jump from registering and the rail would keep the previous item lit. */
   scroll-margin-top: 56px;
+  /* Sections are semantic blocks, not rows, so they take the longer beat — but
+     only the first few carry a delay. A pane the user scrolls should be settled
+     by the time they reach its middle. */
+  animation: ui-rise var(--d-slow) var(--e-out) backwards;
+  animation-delay: calc(var(--stagger-chunk) * 3);
+}
+.set-section:nth-of-type(1) {
+  animation-delay: 0ms;
+}
+.set-section:nth-of-type(2) {
+  animation-delay: var(--stagger-chunk);
+}
+.set-section:nth-of-type(3) {
+  animation-delay: calc(var(--stagger-chunk) * 2);
 }
 /* The first section sits directly under the sticky close bar, so it drops the
    top rule and extra margin the stacked sections carry. */
@@ -194,7 +250,7 @@
   transition:
     color var(--t-fast),
     border-color var(--t-fast),
-    background var(--t-fast);
+    background-color var(--t-fast);
 }
 .set-option:hover {
   border-color: var(--text-dim);
@@ -314,13 +370,17 @@
   border: var(--bw-emphasis) solid var(--signal);
   color: var(--signal);
   transition:
-    background var(--t-base),
+    background-color var(--t-base),
     color var(--t-base),
-    border-color var(--t-base);
+    border-color var(--t-base),
+    transform var(--d-micro) var(--e-out);
 }
 .set-btn:hover {
   background: var(--signal);
   color: var(--on-signal);
+}
+.set-btn:active:not(:disabled) {
+  transform: scale(0.96);
 }
 .set-btn:disabled {
   border-color: var(--line);
@@ -456,7 +516,11 @@
   color: var(--text-dim);
   transition:
     color var(--t-fast),
-    border-color var(--t-fast);
+    border-color var(--t-fast),
+    transform var(--d-micro) var(--e-out);
+}
+.set-switch:active:not(:disabled) {
+  transform: scale(0.96);
 }
 .set-switch:hover {
   color: var(--text);

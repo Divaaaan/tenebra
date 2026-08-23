@@ -425,8 +425,35 @@ describe("ServerList", () => {
       );
       expect(rows).toHaveLength(3);
       expect(rows[0].style.animationDelay).toBe("0ms");
-      expect(rows[1].style.animationDelay).toBe("26ms");
-      expect(rows[2].style.animationDelay).toBe("52ms");
+      expect(rows[1].style.animationDelay).toBe("24ms");
+      expect(rows[2].style.animationDelay).toBe("48ms");
+    });
+
+    it("stops growing the delay past the cap, so a long list still settles fast", () => {
+      // Twenty nodes is an ordinary subscription. Uncapped, the last row would
+      // wait almost half a second to appear and a sixty-node list well over a
+      // second — the rows nobody has scrolled to yet paying for the cascade the
+      // first screenful already finished. Past the cap every row shares the last
+      // delay, so the tail arrives as one block.
+      const many: ServerRow[] = Array.from({ length: 20 }, (_, i) => ({
+        id: `n-${i}`,
+        name: `DE-FRA-${i}`,
+        city: "frankfurt",
+        region: "EU" as const,
+        protocol: "vless" as const,
+        rttMs: 20 + i,
+        dead: false,
+        insecure: false,
+      }));
+      const { container } = renderWithProviders(
+        <ServerList {...baseProps({ rows: many })} />,
+      );
+      const rows = Array.from(
+        container.querySelectorAll<HTMLElement>(".srv-row"),
+      );
+      expect(rows).toHaveLength(20);
+      expect(rows[12].style.animationDelay).toBe("288ms");
+      expect(rows[19].style.animationDelay).toBe("288ms");
     });
   });
 });

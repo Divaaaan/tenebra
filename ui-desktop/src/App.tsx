@@ -38,6 +38,7 @@ import {
 import { dispatchDeepLink, type DeepLinkHandlers } from "./lib/deepLink";
 import { locate, type Region } from "./lib/region";
 import { useNodeCheck } from "./lib/useNodeCheck";
+import { usePresence } from "./lib/usePresence";
 import { useNodePings } from "./lib/useNodePings";
 import { useServiceChecks } from "./lib/useServiceChecks";
 import { useSessionClock, formatUptime } from "./lib/useSessionClock";
@@ -553,6 +554,22 @@ export function App() {
     searchRef.current?.focus();
   }, []);
 
+  // Every surface that covers the app is held open a beat past its dismissal so
+  // it can animate out. React tears a conditional child down in the same tick
+  // the condition flips, which is why all of these used to rise in politely and
+  // then vanish mid-blink — the half of the transition a user reads as "did that
+  // crash?". The hook latches the last value too, so a modal whose content is
+  // cleared on cancel (the deep-link profile, the crash report) leaves showing
+  // what it showed, not an empty card. Under reduced motion it drops instantly.
+  const overlayShown = usePresence(overlay);
+  const blocklistShown = usePresence(blocklistOpen || null);
+  const connectRequestShown = usePresence(connectRequest);
+  const tunOverrideShown = usePresence(tunOverrideAsk);
+  const updateConfirmShown = usePresence(update.confirming || null);
+  const crashReportShown = usePresence(
+    viewingReport && crash.report ? crash.report : null,
+  );
+
   // Close overlays on Escape.
   useEffect(() => {
     if (!overlay) return;
@@ -848,6 +865,7 @@ export function App() {
           cumulativeDown={traffic.down}
           cumulativeUp={traffic.up}
           errorMsg={state.error}
+          checking={nodeCheck.checking}
           onPrimary={handlePrimary}
           disabled={!canPrimary}
           onChange={focusSearch}
@@ -883,7 +901,7 @@ export function App() {
         blocklistCount={blocklists.length}
       />
 
-      {blocklistOpen && (
+      {blocklistShown.value && (
         <BlocklistPanel
           sources={blocklists}
           onImportFiles={importBlocklist}
@@ -893,18 +911,21 @@ export function App() {
           active={zapretActive}
           onRemove={removeBlocklist}
           onClose={() => setBlocklistOpen(false)}
+          leaving={blocklistShown.leaving}
         />
       )}
 
-      {overlay && (
+      {overlayShown.value && (
         <div
-          className="overlay"
+          className={`overlay${overlayShown.leaving ? " is-leaving" : ""}`}
           role="dialog"
           aria-modal="true"
           onClick={(e) => {
             if (e.target === e.currentTarget) setOverlay(null);
           }}
         >
+          {/* The panel's own exit is driven off the scrim's class
+              (.overlay.is-leaving .overlay-panel), so it needs no flag here. */}
           <div className="overlay-panel">
             <button
               type="button"
@@ -915,7 +936,7 @@ export function App() {
               ✕
             </button>
             <div className="overlay-body">
-              {overlay === "profiles" && (
+              {overlayShown.value === "profiles" && (
                 <ProfilesScreen
                   tenebra={tenebra}
                   selectedProfileId={selectedProfileId}
@@ -925,41 +946,48 @@ export function App() {
                   onConnected={() => setOverlay(null)}
                 />
               )}
-              {overlay === "settings" && <SettingsScreen tenebra={tenebra} />}
-              {overlay === "logs" && <LogsScreen tenebra={tenebra} />}
+              {overlayShown.value === "settings" && (
+                <SettingsScreen tenebra={tenebra} />
+              )}
+              {overlayShown.value === "logs" && <LogsScreen tenebra={tenebra} />}
             </div>
           </div>
         </div>
       )}
 
-      {connectRequest && (
+      {connectRequestShown.value && (
         <DeepLinkConfirm
           profile={
-            profiles.find((p) => p.id === connectRequest)?.name ?? connectRequest
+            profiles.find((p) => p.id === connectRequestShown.value)?.name ??
+            connectRequestShown.value
           }
           onConfirm={confirmConnectRequest}
           onCancel={cancelConnectRequest}
+          leaving={connectRequestShown.leaving}
         />
       )}
 
-      {tunOverrideAsk && (
+      {tunOverrideShown.value && (
         <TunConflictConfirm
           onConfirm={() => answerTunOverride(true)}
           onCancel={() => answerTunOverride(false)}
+          leaving={tunOverrideShown.leaving}
         />
       )}
 
-      {update.confirming && (
+      {updateConfirmShown.value && (
         <UpdateConfirm
           onConfirm={update.confirmInstall}
           onCancel={update.cancelInstall}
+          leaving={updateConfirmShown.leaving}
         />
       )}
 
-      {viewingReport && crash.report && (
+      {crashReportShown.value && (
         <CrashReportModal
-          report={crash.report.text}
+          report={crashReportShown.value.text}
           onClose={() => setViewingReport(false)}
+          leaving={crashReportShown.leaving}
         />
       )}
 

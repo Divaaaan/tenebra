@@ -36,6 +36,11 @@ interface BlocklistPanelProps {
   onRemove: (id: string) => void;
   /** Close the panel (it is opened as an overlay from the settings row). */
   onClose: () => void;
+  /**
+   * True while the surface is playing its exit. The owner keeps it mounted for
+   * that beat (see lib/usePresence); this only paints it.
+   */
+  leaving?: boolean;
 }
 
 /**
@@ -68,6 +73,7 @@ export function BlocklistPanel({
   active,
   onRemove,
   onClose,
+  leaving = false,
 }: BlocklistPanelProps) {
   const { t } = useI18n();
   const [busy, setBusy] = useState(false);
@@ -153,7 +159,11 @@ export function BlocklistPanel({
   }, [onImportPaths]);
 
   return (
-    <div className="bl-scrim" onClick={onClose} role="presentation">
+    <div
+      className={`bl-scrim${leaving ? " is-leaving" : ""}`}
+      onClick={onClose}
+      role="presentation"
+    >
       <section
         className="bl-panel"
         aria-label={t.blocklist.title}
@@ -270,8 +280,9 @@ export function BlocklistPanel({
                 key={s.id}
                 className="bl-item"
                 // Stagger so an imported batch cascades in instead of landing as
-                // one block; capped so a long list does not crawl.
-                style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
+                // one block; capped so a long list does not crawl. Same row step
+                // the node list uses — one cascade rhythm across the app.
+                style={{ animationDelay: `${Math.min(i, 8) * 24}ms` }}
               >
                 <span className="bl-item__label">{s.label}</span>
                 <span className="bl-item__rules">

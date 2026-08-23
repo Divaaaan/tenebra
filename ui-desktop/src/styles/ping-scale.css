@@ -12,6 +12,10 @@
 .ping-scale-bar {
   width: 3px;
   background: var(--line);
+  /* Probes land row by row and a node's rating can change under a re-probe, so
+     the bars fade between tones instead of snapping. Height is fixed per bar —
+     nothing here animates geometry. */
+  transition: background-color var(--t-base);
 }
 .ping-scale-bar:nth-child(1) {
   height: 4px;

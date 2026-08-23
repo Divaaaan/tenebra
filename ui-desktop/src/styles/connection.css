@@ -55,6 +55,10 @@
   display: flex;
   align-items: center;
   gap: 14px;
+  /* The hero word crosses between five tones (off → measuring → pending → on →
+     alarm). At --d-fast the change registered as a flicker on a 52px word; the
+     hero step is long enough to read as one colour travelling. */
+  transition: color var(--d-hero) var(--e-move);
 }
 
 .conn-word-text {
@@ -68,6 +72,13 @@
   height: 16px;
   display: inline-block;
   flex: none;
+  /* The indicator changes shape as well as colour between states (square →
+     round for a recovery), so the radius rides along with the tone instead of
+     snapping a frame ahead of it. */
+  transition:
+    background-color var(--d-hero) var(--e-move),
+    border-color var(--d-hero) var(--e-move),
+    border-radius var(--d-base) var(--e-out);
 }
 
 .conn-word.idle {
@@ -75,6 +86,38 @@
 }
 .conn-word.idle .ind {
   border: var(--bw-emphasis) solid var(--text-dim-2);
+}
+
+/* Measuring which nodes actually carry traffic — before any tunnel exists, and
+   before the core has a phase to report. It is the longest wait in the product
+   (seconds of real probing), so it gets its own word and its own indicator: a
+   bar sweeping across the square, scanning, distinct from the connecting blink
+   and from the connected breath. */
+.conn-word.checking {
+  color: var(--word-pending);
+}
+.conn-word.checking .ind {
+  background: color-mix(in srgb, var(--word-pending) 22%, transparent);
+  border: var(--bw) solid var(--word-pending);
+  position: relative;
+  overflow: hidden;
+}
+.conn-word.checking .ind::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--word-pending);
+  transform: translateX(-100%);
+  animation: ind-scan 1.4s var(--e-move) infinite;
+}
+@keyframes ind-scan {
+  0% {
+    transform: translateX(-100%);
+  }
+  55%,
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 .conn-word.connecting {
@@ -152,9 +195,14 @@
   }
 }
 
-/* Connecting progress rail: a runner sweeps left→right under the status word. Its
-   resting position (left: -30%) is off-screen, so reduced-motion parks it unseen
-   rather than freezing a stray bar mid-track. */
+/* Progress rail: a runner sweeps left→right under the status word while the app
+   is working — measuring nodes, handshaking, or recovering.
+
+   The rail is always in the DOM. It used to mount and unmount with the work,
+   which shifted 4px of everything below it at the exact moment the user was
+   reading the status — a jump on the one line that has to stay legible. Now the
+   track is a permanent hairline (it reads as a rule under the word, which the
+   spec-sheet has plenty of) and only the runner comes and goes, on opacity. */
 .conn-rail {
   position: relative;
   height: 2px;
@@ -166,28 +214,59 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -30%;
+  left: 0;
   width: 30%;
   background: var(--warn-soft);
-  animation: rail-sweep 1.1s linear infinite;
+  opacity: 0;
+  /* Parked off the left edge, so a reduced-motion run leaves no stray bar. */
+  transform: translateX(-100%);
+  transition:
+    opacity var(--d-base) var(--e-out),
+    background-color var(--d-base) var(--e-out);
 }
+.conn-rail.is-live .conn-rail-run {
+  opacity: 1;
+  animation: rail-sweep 1.1s linear infinite;
+  /* Only while it runs. The track is permanent now, and a layer promoted for the
+     whole session to serve a few seconds of sweep is the classic misuse. */
+  will-change: transform;
+}
+/* Translating the runner rather than moving `left` keeps the sweep on the
+   compositor: animating an offset relayouts the rail on every frame, which is
+   the one thing a "we are working" indicator must not do. */
 @keyframes rail-sweep {
   0% {
-    left: -30%;
+    transform: translateX(-100%);
   }
   100% {
-    left: 100%;
+    /* The runner is 30% of the track, and translateX is a share of the runner's
+       own width — so one full track is 100/30 ≈ 333%, i.e. left edge exactly at
+       the right end. */
+    transform: translateX(334%);
   }
 }
 /* Recovery rail rides the accent instead of the warn tone of a plain connect. */
 .conn-rail.reconnecting .conn-rail-run {
   background: var(--signal);
 }
+/* Measuring is not yet a connect: dimmer than the warn-toned handshake, so the
+   two reads apart at a glance. */
+.conn-rail.checking .conn-rail-run {
+  background: var(--text-dim);
+}
 
 .conn-sub {
   font-size: var(--fs-data);
   color: var(--text-dim);
   letter-spacing: var(--track-body);
+  /* Reserve the line so a one-line → two-line sub never nudges the button. */
+  min-height: 1.45em;
+}
+/* The sub-line is re-keyed on every phase change, so each new explanation rises
+   into place instead of swapping character-for-character under the eye. */
+.conn-sub-line {
+  display: inline-block;
+  animation: ui-rise var(--d-slow) var(--e-out) backwards;
 }
 .conn-sub .sig {
   color: var(--signal);
@@ -214,20 +293,31 @@
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
+  /* Named properties, never `all`: this button also carries an animated
+     background-image in its pending state, and transitioning that costs a
+     repaint per frame for nothing. */
   transition:
-    background 160ms ease,
-    color 160ms ease,
-    border-color 160ms ease,
-    transform 80ms ease;
+    background-color var(--d-base) var(--e-out),
+    color var(--d-base) var(--e-out),
+    border-color var(--d-base) var(--e-out),
+    opacity var(--d-base) var(--e-out),
+    transform var(--d-micro) var(--e-out);
 }
 /* Idle / error: fill on hover. Scoped away from the on/pending/reconnecting
    variants so their own hover rules aren't overridden by the fill. */
-.connect-btn:not(.on):not(.pending):not(.reconnecting):hover {
+.connect-btn:not(.on):not(.pending):not(.reconnecting):not(.checking):hover {
   background: var(--signal);
   color: var(--on-signal);
 }
 .connect-btn:active {
-  transform: scale(0.985);
+  transform: scale(0.96);
+}
+.connect-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.connect-btn:disabled:active {
+  transform: none;
 }
 .connect-btn.on {
   border-color: var(--text-dim-2);
@@ -237,6 +327,26 @@
   border-color: var(--signal);
   color: var(--signal);
 }
+/* Measuring: the same crawling stripes as a connect, but dimmed to the neutral
+   tone — work is happening, and it is not yet a handshake. The click is swallowed
+   while it runs (App guards on `busy`), so the button also stops offering the
+   hover fill: an affordance that does nothing is worse than none. */
+.connect-btn.checking {
+  border-color: var(--text-dim);
+  color: var(--text-dim);
+  cursor: progress;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--text-dim) 8%, transparent) 0 7px,
+    transparent 7px 14px
+  );
+  background-size: 28px 100%;
+  animation: stripes 0.8s linear infinite;
+}
+.connect-btn.checking:active {
+  transform: none;
+}
+
 /* Connecting: warning-toned with slow diagonal stripes crawling across. */
 .connect-btn.pending {
   border-color: var(--warn-soft);
@@ -297,6 +407,10 @@
   grid-template-columns: 1fr auto;
   gap: var(--sp-2) var(--sp-4);
   align-items: center;
+  /* The card and the fallback-walk panel trade places in this slot. Giving the
+     card the same entrance the panel has means the swap reads as one surface
+     turning over, not as two unrelated things blinking. */
+  animation: ui-panel-in var(--d-slow) var(--e-out) backwards;
 }
 /* Cross-hair "+" ticks sitting just outside the corners, punched over the canvas. */
 .cur-server .tick {
@@ -399,11 +513,15 @@
   padding: 4px 9px;
   transition:
     color var(--t-fast),
-    border-color var(--t-fast);
+    border-color var(--t-fast),
+    transform var(--d-micro) var(--e-out);
 }
 .cur-server .swap:hover {
   color: var(--signal);
   border-color: var(--signal);
+}
+.cur-server .swap:active {
+  transform: scale(0.96);
 }
 
 /* ── stats row ── */
@@ -439,6 +557,10 @@
   letter-spacing: var(--track-kpi);
   line-height: 1;
   font-variant-numeric: tabular-nums;
+  /* Three stats go live together the moment the tunnel comes up. Fading them in
+     over the hero step ties them to the status word instead of letting three
+     numbers snap on a frame apart from it. */
+  transition: color var(--d-hero) var(--e-out);
 }
 .stat-val .u {
   font-family: var(--mono);
@@ -517,5 +639,21 @@
   }
   100% {
     opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The looping indicators are dropped outright rather than run at 0.001ms,
+     which would strobe them. Colour still carries every state: the word, the
+     dot and the button all stay exactly where the phase puts them, and the rail
+     runner rests invisible at opacity 0. */
+  .conn-word.checking .ind::after,
+  .conn-rail.is-live .conn-rail-run {
+    animation: none;
+  }
+
+  .conn-sub-line,
+  .cur-server {
+    animation: none;
   }
 }

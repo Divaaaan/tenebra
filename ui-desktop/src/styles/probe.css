@@ -66,19 +66,8 @@
 
 .probe-badge--ok,
 .probe-badge--fail {
-  animation: probe-verdict-in var(--t-base) var(--t-enter) both;
-}
-
-@keyframes probe-verdict-in {
-  from {
-    opacity: 0;
-    /* Rises from below: the row's measurement "settles" into place. */
-    transform: translateY(3px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
+  /* Rises from below: the row's measurement settles into place. */
+  animation: ui-rise var(--d-slow) var(--e-out) backwards;
 }
 
 .probe-badge--ok {
@@ -119,7 +108,7 @@
 }
 
 .probe-badge--best .probe-badge__best {
-  animation: probe-best-pulse 900ms var(--t-enter) 1 both;
+  animation: probe-best-pulse var(--d-hero) var(--e-out) 1 backwards;
 }
 
 @keyframes probe-best-pulse {

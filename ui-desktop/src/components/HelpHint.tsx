@@ -55,8 +55,10 @@ export function HelpHint({ title, lines, label }: HelpHintProps) {
               key={line}
               className="hint__line"
               // Lines cascade so the eye follows the order of the steps rather
-              // than being handed a block of text at once.
-              style={{ animationDelay: `${i * 45}ms` }}
+              // than being handed a block of text at once. The chunk step (not
+              // the row step): there are only ever a handful, and each is meant
+              // to be landed on.
+              style={{ animationDelay: `${i * 60}ms` }}
             >
               {line}
             </span>

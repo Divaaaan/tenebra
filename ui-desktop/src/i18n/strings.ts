@@ -44,6 +44,16 @@ export interface Strings {
     subReconnecting: string;
     /** Trailing reassurance on the connected sub-line; prefix is server·proto. */
     subConnected: string;
+    /**
+     * Status word while the connect measures which nodes actually carry traffic.
+     * A pseudo-phase: the core reports nothing during that check (the tunnel does
+     * not exist yet), so it lives beside `state.*` rather than in it.
+     */
+    wordChecking: string;
+    /** Sub-line for that check — what the seconds are being spent on. */
+    subChecking: string;
+    /** Primary-button label while the check runs. */
+    measuring: string;
     abort: string;
     exitIp: string;
     change: string;
@@ -746,6 +756,9 @@ const en: Strings = {
     subPending: "establishing tunnel · negotiating · · ·",
     subReconnecting: "node failed · switching to a healthy exit on its own",
     subConnected: "no logs",
+    wordChecking: "Measuring…",
+    subChecking: "probing every node · finding one that carries traffic",
+    measuring: "MEASURING",
     abort: "ABORT",
     exitIp: "exit node",
     change: "change",
@@ -1248,6 +1261,9 @@ const ru: Strings = {
     subPending: "поднимаю туннель · согласование · · ·",
     subReconnecting: "узел отказал · сам переключаюсь на рабочий выход",
     subConnected: "без логов",
+    wordChecking: "Замеряю…",
+    subChecking: "проверяю каждый узел · ищу тот, через который идёт трафик",
+    measuring: "ЗАМЕР",
     abort: "ОТМЕНА",
     exitIp: "узел выхода",
     change: "сменить",
