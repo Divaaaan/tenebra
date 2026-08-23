@@ -347,6 +347,9 @@ fn reconnecting_state() -> State {
         rules_proxy: None,
         preset_ru_banking: None,
         preset_ru_gov: None,
+        preset_games_direct: None,
+        preset_voice_direct: None,
+        preset_unblock_services: None,
         // The bypass lives in the daemon too, so its state is just as unknown
         // while the daemon is away — and claiming the bypass is off would be a
         // worse guess than saying nothing, since the UI offers to start it.
@@ -391,6 +394,9 @@ fn lost_state() -> State {
         rules_proxy: None,
         preset_ru_banking: None,
         preset_ru_gov: None,
+        preset_games_direct: None,
+        preset_voice_direct: None,
+        preset_unblock_services: None,
         // Unknown while the daemon is away (see reconnecting_state).
         zapret_active: None,
         zapret_strategy: None,

@@ -172,7 +172,7 @@ func (o Options) RouteRules() []map[string]any {
 		}
 	}
 
-	if o.BypassLAN {
+	if o.lanBypassActive() {
 		// Private/LAN destinations should never traverse the tunnel. Match the
 		// well-known private ranges directly instead of relying on a rule-set so
 		// this works offline before any download completes.
@@ -182,6 +182,21 @@ func (o Options) RouteRules() []map[string]any {
 	}
 
 	return rules
+}
+
+// lanBypassActive reports whether private/LAN destinations get their own direct
+// rule. It is a direct pin like the presets, so it yields to the kill switch and
+// is inert in direct mode (see directPinAllowed).
+//
+// The trade is deliberate: with the kill switch armed, the router's admin page, a
+// NAS and a local printer stop answering, because the rule that excused them is
+// exactly the rule that lets traffic out of the tunnel. `ip_is_private` is also
+// wider than a home LAN — it covers the carrier-grade NAT range real ISPs hand
+// out and the range a mesh VPN assigns — so "private" is not a synonym for "never
+// leaves this building". Somebody who arms the kill switch is asking for the
+// strict reading; the switch is the control they turn off to get their LAN back.
+func (o Options) lanBypassActive() bool {
+	return o.BypassLAN && o.directPinAllowed()
 }
 
 // route builds a single "action":"route" rule with the given match fields and

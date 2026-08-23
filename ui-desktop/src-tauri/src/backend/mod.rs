@@ -220,6 +220,21 @@ pub struct State {
     pub preset_ru_banking: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset_ru_gov: Option<bool>,
+    /// The three routing presets `set_presets` toggles: game clients pinned to the
+    /// direct outbound, real-time UDP (ports 50000-65535) pinned direct, and the
+    /// commonly-censored services pinned to the tunnel. Absent (treated as off)
+    /// when a preset is off.
+    ///
+    /// `preset_unblock_services` is on by default in the core; the two that route
+    /// traffic *out* of the tunnel are off by default, which is what makes their
+    /// visibility here load-bearing — for three releases nothing carried them to
+    /// the UI, so a user could not see what was leaving.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset_games_direct: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset_voice_direct: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset_unblock_services: Option<bool>,
     /// Crash-report consent as a tri-state: `None` when the user has not been
     /// asked yet, `Some(true)` opted in, `Some(false)` declined. Mirrors the
     /// core's `*bool` so the UI can tell "declined" apart from "not asked".
@@ -779,6 +794,25 @@ pub trait Backend: Send + Sync + 'static {
         preset_ru_banking: bool,
         preset_ru_gov: bool,
     ) -> Result<State, String>;
+    /// Toggle the bundled routing presets: `games` pins game clients to the direct
+    /// outbound by executable name, `voice` sends real-time UDP direct, and
+    /// `services` pins the commonly-censored domains to the tunnel.
+    ///
+    /// Every argument is optional and a `None` leaves that preset alone — the core
+    /// reads an absent field as "unchanged". They are three separate `Option`s
+    /// rather than three booleans because a caller forced to restate all three to
+    /// change one would eventually restate one wrong, and two of the three decide
+    /// whether a class of traffic leaves the tunnel. A call naming none of them is
+    /// refused by the core.
+    ///
+    /// The core persists the choice and, when a tunnel is live, re-applies it in
+    /// place by hot-swapping sing-box on the same node.
+    fn set_presets(
+        &self,
+        games: Option<bool>,
+        voice: Option<bool>,
+        services: Option<bool>,
+    ) -> Result<State, String>;
     fn leak_check(&self) -> Result<LeakCheck, String>;
     /// Probe the current network path with a STUN Binding Request: whether
     /// outbound UDP works, the reflexive public IP, and a best-effort NAT
@@ -1025,6 +1059,9 @@ mod tests {
             rules_proxy: Some(vec!["work.example".into()]),
             preset_ru_banking: Some(true),
             preset_ru_gov: Some(true),
+            preset_games_direct: Some(true),
+            preset_voice_direct: Some(true),
+            preset_unblock_services: Some(true),
             crash_reports: Some(true),
             crash_reports_asked: true,
             zapret_active: Some(true),
@@ -1064,6 +1101,9 @@ mod tests {
             rules_proxy: None,
             preset_ru_banking: None,
             preset_ru_gov: None,
+            preset_games_direct: None,
+            preset_voice_direct: None,
+            preset_unblock_services: None,
             crash_reports: None,
             crash_reports_asked: false,
             zapret_active: None,
@@ -1098,6 +1138,9 @@ mod tests {
             "rules_proxy",
             "preset_ru_banking",
             "preset_ru_gov",
+            "preset_games_direct",
+            "preset_voice_direct",
+            "preset_unblock_services",
             "crash_reports",
             "crash_reports_asked",
             "error",

@@ -57,8 +57,9 @@ const (
 	CmdSetRouting          = "set_routing"
 	CmdSetSplit            = "set_split"
 	// CmdSetPresets toggles the routing presets: games direct, real-time UDP
-	// direct, censored services unblocked. All three default on and each is
-	// independently switchable; an omitted field leaves that preset unchanged.
+	// direct, censored services unblocked. Censored services defaults on; the two
+	// that route traffic out of the tunnel default off. Each is independently
+	// switchable, and an omitted field leaves that preset unchanged.
 	CmdSetPresets      = "set_presets"
 	CmdSetKillSwitch   = "set_kill_switch"
 	CmdSetTLSFragment  = "set_tls_fragment"
@@ -350,6 +351,19 @@ type State struct {
 	// government direct-rule presets are on. Omitted when off, like the kill switch.
 	PresetRuBanking bool `json:"preset_ru_banking,omitempty"`
 	PresetRuGov     bool `json:"preset_ru_gov,omitempty"`
+	// PresetGamesDirect, PresetVoiceDirect and PresetUnblockServices report the
+	// three routing presets set_presets toggles: game clients direct, real-time UDP
+	// direct, and the censored-services list. Omitted when off, like the kill
+	// switch.
+	//
+	// They are reported at all because for three releases they were not: the
+	// commands existed only in the core, no field carried them to a client, and the
+	// only way to change one was to hand-edit the settings file. Two of them route
+	// traffic around the tunnel, so a client that cannot see them cannot tell the
+	// user what is actually leaving.
+	PresetGamesDirect     bool `json:"preset_games_direct,omitempty"`
+	PresetVoiceDirect     bool `json:"preset_voice_direct,omitempty"`
+	PresetUnblockServices bool `json:"preset_unblock_services,omitempty"`
 	// CrashReports reports the crash-report consent as a tri-state pointer: nil
 	// when the user has not been asked yet, else a pointer to their explicit
 	// choice. Unlike the other bool flags it is a *bool so a declined choice

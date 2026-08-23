@@ -36,12 +36,11 @@ type persistedSettings struct {
 	RoutingMode string `json:"routing_mode,omitempty"`
 
 	// PresetGamesDirect, PresetVoiceDirect and PresetUnblockServices remember the
-	// three routing presets. They are *bool for the same reason AutoFailover is:
-	// all three default ON, so absent (an old file, or one written before the
-	// fields existed) has to read back as on, and only an explicit false is the
-	// user's choice to turn one off. Stored as plain bools these would have read
-	// as "off" on the first launch after an upgrade and quietly moved games and
-	// voice back into the tunnel.
+	// three routing presets. They are *bool because absent and false are different
+	// answers here: the defaults are per-preset (unblock-services on, the two that
+	// take traffic out of the tunnel off), so "the file does not say" has to reach
+	// SetSettings as nil and pick up that preset's default, while a stored value —
+	// either value — is the user's choice and is honoured as written.
 	PresetGamesDirect     *bool `json:"preset_games_direct,omitempty"`
 	PresetVoiceDirect     *bool `json:"preset_voice_direct,omitempty"`
 	PresetUnblockServices *bool `json:"preset_unblock_services,omitempty"`

@@ -129,6 +129,16 @@ export interface State {
   preset_ru_banking?: boolean;
   preset_ru_gov?: boolean;
   /**
+   * The three routing presets `setPresets` toggles. `preset_unblock_services`
+   * pins the commonly-censored domains to the tunnel and is on by default; the
+   * other two take a class of traffic *out* of the tunnel (game clients by
+   * executable name, all UDP above port 50000) and are off by default. Each is
+   * omitted when off, like the kill switch.
+   */
+  preset_games_direct?: boolean;
+  preset_voice_direct?: boolean;
+  preset_unblock_services?: boolean;
+  /**
    * Crash-report consent as a tri-state: `undefined` (omitted) when the user has
    * not been asked yet, `true` opted in, `false` declined. Distinct from
    * `crash_reports_asked` so "declined" reads apart from "not asked".

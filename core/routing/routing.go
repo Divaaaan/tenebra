@@ -165,8 +165,8 @@ type Options struct {
 	//
 	// This is the one split every user of a Russian ISP ends up building by hand,
 	// and building it by hand is where it goes wrong: miss `steamwebhelper.exe`
-	// and the Steam overlay stalls the game, miss `javaw.exe` and Minecraft
-	// servers time out. The preset ships the list so the common case is one
+	// and the Steam overlay stalls the game, miss `riotclientservices.exe` and the
+	// match never starts. The preset ships the list so the common case is one
 	// switch rather than a dozen remembered executable names.
 	//
 	// Games are the traffic that least needs a tunnel and suffers most from one:
@@ -348,6 +348,31 @@ func (o Options) Validate() error {
 		}
 	}
 	return nil
+}
+
+// directPinAllowed reports whether a rule that takes traffic out of the tunnel
+// may be emitted at all. Every such rule — the game and voice presets, the
+// services the bypass covers, the bundled RU banking/government rule presets and
+// the user's own direct rules, the LAN bypass — has to ask this before it emits,
+// on the route layer and on the DNS layer alike.
+//
+// Two answers, for different reasons:
+//
+//   - Direct mode tunnels nothing, so "keep this direct" is a no-op there and a
+//     "force this through the tunnel" rule would re-tunnel traffic the user asked
+//     to send straight out.
+//   - The kill switch's promise is that nothing leaves outside the tunnel. A rule
+//     that quietly exempts a class of traffic makes that promise false without the
+//     user ever choosing it, and the exemptions are not small: voice UDP carries
+//     the real address to whoever is on the call, and the banking/government
+//     presets carry the names of the sites being visited to the ISP's resolver.
+//
+// It deliberately does not cover the user's own split-exclude app list. That list
+// is typed in one executable at a time, so it is the explicit per-application
+// choice the presets are not; the preset half merged into it still drops out,
+// because gamesDirectActive asks here first.
+func (o Options) directPinAllowed() bool {
+	return o.Mode != ModeDirect && !o.KillSwitch
 }
 
 // strategy returns the DNS resolution strategy, or "" to omit it.

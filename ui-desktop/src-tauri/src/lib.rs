@@ -783,6 +783,24 @@ async fn set_rules(
     .await
 }
 
+// Every argument is optional, and an omitted one leaves that preset alone — the
+// core reads an absent field as "unchanged". Tauri fills a missing argument with
+// `None` for an `Option`, so the JS side sends only the presets it means to
+// change. The names are single words, so no rename_all is needed here (see
+// set_dns for why the multi-word commands pin it).
+#[tauri::command]
+async fn set_presets(
+    state: TauriState<'_, AppState>,
+    games: Option<bool>,
+    voice: Option<bool>,
+    services: Option<bool>,
+) -> Result<State, String> {
+    off_thread(Arc::clone(&state.backend), move |b| {
+        b.set_presets(games, voice, services)
+    })
+    .await
+}
+
 #[tauri::command]
 async fn leak_check(state: TauriState<'_, AppState>) -> Result<LeakCheck, String> {
     off_thread(Arc::clone(&state.backend), |b| b.leak_check()).await
@@ -993,6 +1011,7 @@ pub fn run() {
             set_auto_failover,
             set_dns,
             set_rules,
+            set_presets,
             set_crash_reports,
             leak_check,
             run_stun_check,
@@ -1239,6 +1258,9 @@ mod tests {
             rules_proxy: None,
             preset_ru_banking: None,
             preset_ru_gov: None,
+            preset_games_direct: None,
+            preset_voice_direct: None,
+            preset_unblock_services: None,
             crash_reports: None,
             crash_reports_asked: false,
             zapret_active: None,

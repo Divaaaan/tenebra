@@ -261,6 +261,35 @@ export const api = {
     });
   },
 
+  // Toggle the bundled routing presets: `games` pins game clients to the direct
+  // outbound by executable name, `voice` sends real-time UDP (ports
+  // 50000-65535) direct, and `services` pins the commonly-censored domains to
+  // the tunnel ahead of the geo split.
+  //
+  // Every field is optional and an omitted one leaves that preset alone, which
+  // is why they travel in an object rather than as three positional booleans: a
+  // caller that had to restate all three to change one would eventually restate
+  // one wrong, and two of the three decide whether a class of traffic leaves the
+  // tunnel. Undefined keys are dropped rather than sent, so "not named" reaches
+  // the core as absent.
+  setPresets(presets: {
+    games?: boolean;
+    voice?: boolean;
+    services?: boolean;
+  }): Promise<State> {
+    const args: Record<string, boolean> = {};
+    if (presets.games !== undefined) {
+      args.games = presets.games;
+    }
+    if (presets.voice !== undefined) {
+      args.voice = presets.voice;
+    }
+    if (presets.services !== undefined) {
+      args.services = presets.services;
+    }
+    return invoke<State>("set_presets", args);
+  },
+
   /**
    * Run the IP / DNS leak check. The core performs the probes and returns the
    * assembled verdict (see {@link LeakCheck}); a live tunnel is needed for a

@@ -11,6 +11,39 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **The two presets that route traffic around the tunnel no longer ship on, and
+  are finally on screen.** `set_presets` existed only in the core: nothing
+  carried the presets to the app, no switch showed them, and the only way to turn
+  one off was to hand-edit `settings.json` — while games-direct and real-time-UDP
+  direct were both on from the first launch. Real-time UDP is ports 50000-65535,
+  which on a desktop is browser calls and torrents, so a fresh install showed
+  "connected" while handing the ISP address to whoever was on the other end of a
+  call. Both now default off and both have a switch in Settings that says what
+  they cost; unblock-services keeps its default, because it only ever moves
+  traffic *into* the tunnel. A stored choice is honoured either way — an install
+  that already has them on keeps them until the switch is used.
+- **`java.exe`, `javaw.exe` and `launcher.exe` are out of the games preset.**
+  Matching is by bare executable name, so those three took every JVM program on
+  the machine — an IDE, a corporate client, a build tool — plus any of the many
+  unrelated binaries shipped as `launcher.exe` out of the tunnel, under a switch
+  the user read as "keep games direct". Minecraft's Java edition now needs a
+  hand-added entry; its launcher is still covered.
+- **The kill switch holds on every path, not two of six.** Only the games and
+  voice presets asked whether it was armed. Everything else that pins traffic to
+  the direct outbound ignored it: the services handed to a running DPI bypass
+  (YouTube, googlevideo, ytimg, all of Discord), the bundled Russian banking and
+  government rule presets, custom `rules_direct` suffixes, and the LAN bypass —
+  each on the routing layer and again on the DNS layer, so the names were also
+  resolved by the ISP's resolver while the app showed the kill switch armed. All
+  of them now yield to it. Proxy-direction rules are deliberately untouched
+  (dropping those would hand a domain back to the geo split, which in smart mode
+  can send it direct), and apps the user listed under split-exclude stay direct,
+  since that is a choice made one executable at a time. Note the LAN
+  consequence: with the kill switch armed, a router's admin page, a NAS or a
+  local printer stops answering.
+
 ## [0.5.0] - 2026-08-21
 
 ### Added

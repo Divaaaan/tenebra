@@ -300,6 +300,30 @@ describe("api command wrappers", () => {
     });
   });
 
+  it("setPresets forwards only the presets it names", async () => {
+    const armed: State = {
+      state: "idle",
+      preset_voice_direct: true,
+      preset_unblock_services: true,
+    };
+    mockInvoke.mockResolvedValueOnce(armed);
+    await expect(api.setPresets({ voice: true })).resolves.toEqual(armed);
+    // An omitted preset must stay omitted on the wire: the core reads a missing
+    // field as "leave this one alone", so sending `undefined` explicitly would be
+    // the caller silently restating a preset it was not asked to change.
+    expect(mockInvoke).toHaveBeenCalledWith("set_presets", { voice: true });
+  });
+
+  it("setPresets can carry all three at once", async () => {
+    mockInvoke.mockResolvedValueOnce({ state: "idle" } as State);
+    await api.setPresets({ games: false, voice: false, services: true });
+    expect(mockInvoke).toHaveBeenCalledWith("set_presets", {
+      games: false,
+      voice: false,
+      services: true,
+    });
+  });
+
   it("leakCheck passes the LeakCheck verdict through", async () => {
     const leak: LeakCheck = {
       connected: false,

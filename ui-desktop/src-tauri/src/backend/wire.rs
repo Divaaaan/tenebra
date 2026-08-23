@@ -339,6 +339,7 @@ const CMD_SET_AUTO_FAILOVER: &str = "set_auto_failover";
 const CMD_SET_CRASH_REPORTS: &str = "set_crash_reports";
 const CMD_SET_DNS: &str = "set_dns";
 const CMD_SET_RULES: &str = "set_rules";
+const CMD_SET_PRESETS: &str = "set_presets";
 const CMD_LEAK_CHECK: &str = "leak_check";
 const CMD_RUN_STUN_CHECK: &str = "run_stun_check";
 const CMD_RUN_SPEED_TEST: &str = "run_speed_test";
@@ -572,6 +573,26 @@ impl<T: WireSession> Backend for T {
                 ("rules_proxy", json!(rules_proxy)),
                 ("preset_ru_banking", json!(preset_ru_banking)),
                 ("preset_ru_gov", json!(preset_ru_gov)),
+            ]),
+        )
+    }
+
+    fn set_presets(
+        &self,
+        games: Option<bool>,
+        voice: Option<bool>,
+        services: Option<bool>,
+    ) -> Result<State, String> {
+        // `obj` drops the None fields, so a preset the caller did not name never
+        // reaches the wire — which is exactly how the core reads "leave this one
+        // alone". Restating all three on every change is how a UI silently moves
+        // the two presets that decide what leaves the tunnel.
+        self.session()?.request_into(
+            CMD_SET_PRESETS,
+            obj([
+                ("games", games.map(Value::from).unwrap_or(Value::Null)),
+                ("voice", voice.map(Value::from).unwrap_or(Value::Null)),
+                ("services", services.map(Value::from).unwrap_or(Value::Null)),
             ]),
         )
     }
@@ -1100,6 +1121,91 @@ mod tests {
         );
         assert_eq!(state.preset_ru_banking, Some(true));
         assert_eq!(state.preset_ru_gov, None);
+
+        server.join().expect("server thread");
+        stop.store(true, Ordering::SeqCst); // unstick the reader
+        reader.join().expect("reader thread");
+    }
+
+    #[test]
+    fn set_presets_omits_the_presets_it_does_not_name() {
+        // The core reads a missing field as "leave that preset alone", so a call
+        // naming one preset must put exactly one preset key on the wire. Sending
+        // the other two would restate them — and two of the three decide whether a
+        // class of traffic leaves the tunnel.
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ours, theirs) = duplex(&stop);
+
+        let client = WireClient::new(ours.writer);
+        let sink: Arc<dyn EventSink> = Arc::new(Rec::default());
+        let reader_client = Arc::clone(&client);
+        let reader = thread::spawn(move || read_loop(ours.reader, reader_client, sink));
+
+        let mut server_writer = theirs.writer;
+        let server = thread::spawn(move || {
+            let mut lines = BufReader::new(theirs.reader).lines();
+            let line = lines.next().expect("a request line").expect("readable");
+            let req: Value = serde_json::from_str(&line).expect("request is JSON");
+            assert_eq!(req["cmd"].as_str(), Some("set_presets"));
+            assert_eq!(req["voice"].as_bool(), Some(true));
+            let obj = req.as_object().expect("request is an object");
+            assert!(!obj.contains_key("games"), "unnamed preset sent: {req}");
+            assert!(!obj.contains_key("services"), "unnamed preset sent: {req}");
+            let id = req["id"].as_u64().expect("request carries an id");
+            let response = json!({
+                "id": id, "ok": true,
+                "data": {
+                    "state": "idle",
+                    "preset_voice_direct": true,
+                    "preset_unblock_services": true,
+                },
+            });
+            writeln!(server_writer, "{response}").expect("write response");
+        });
+
+        let backend = FixedSession(Arc::clone(&client));
+        let state = backend
+            .set_presets(None, Some(true), None)
+            .expect("a response");
+        assert_eq!(state.preset_voice_direct, Some(true));
+        assert_eq!(state.preset_unblock_services, Some(true));
+        assert_eq!(state.preset_games_direct, None);
+
+        server.join().expect("server thread");
+        stop.store(true, Ordering::SeqCst); // unstick the reader
+        reader.join().expect("reader thread");
+    }
+
+    #[test]
+    fn set_presets_sends_an_explicit_false() {
+        // An explicit off is a value, not an absence: `Some(false)` has to reach
+        // the core as `false`, or turning a preset off would read as "unchanged"
+        // and the switch would do nothing.
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ours, theirs) = duplex(&stop);
+
+        let client = WireClient::new(ours.writer);
+        let sink: Arc<dyn EventSink> = Arc::new(Rec::default());
+        let reader_client = Arc::clone(&client);
+        let reader = thread::spawn(move || read_loop(ours.reader, reader_client, sink));
+
+        let mut server_writer = theirs.writer;
+        let server = thread::spawn(move || {
+            let mut lines = BufReader::new(theirs.reader).lines();
+            let line = lines.next().expect("a request line").expect("readable");
+            let req: Value = serde_json::from_str(&line).expect("request is JSON");
+            assert_eq!(req["cmd"].as_str(), Some("set_presets"));
+            assert_eq!(req["games"].as_bool(), Some(false));
+            let id = req["id"].as_u64().expect("request carries an id");
+            let response = json!({ "id": id, "ok": true, "data": { "state": "idle" } });
+            writeln!(server_writer, "{response}").expect("write response");
+        });
+
+        let backend = FixedSession(Arc::clone(&client));
+        let state = backend
+            .set_presets(Some(false), None, None)
+            .expect("a response");
+        assert_eq!(state.preset_games_direct, None);
 
         server.join().expect("server thread");
         stop.store(true, Ordering::SeqCst); // unstick the reader

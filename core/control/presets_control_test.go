@@ -1,6 +1,7 @@
 package control
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,22 +11,57 @@ import (
 
 func boolp(b bool) *bool { return &b }
 
-// TestSetPresetsChangesOnlyWhatItNames: all three presets ship on, so a command
-// that names one must leave the other two alone. Restating them on every change
-// is how a user who turns off "unblock services" would silently lose the presets
-// that keep games and voice off the tunnel — i.e. their ping.
+// TestSetPresetsChangesOnlyWhatItNames: a command that names one preset must
+// leave the other two alone, in both directions. Restating all three on every
+// change is how a UI that flips one switch silently moves the others.
 func TestSetPresetsChangesOnlyWhatItNames(t *testing.T) {
 	h := newHarness(t)
 
-	h.send(Request{ID: 1, Cmd: CmdSetPresets, Games: boolp(false)})
+	h.send(Request{ID: 1, Cmd: CmdSetPresets, Games: boolp(true)})
 	h.await()
 
 	ro := h.daemon.snapshotRouting()
-	if ro.GamesDirect {
-		t.Error("games-direct stayed on after being switched off")
+	if !ro.GamesDirect {
+		t.Error("games-direct stayed off after being switched on")
 	}
-	if !ro.VoiceDirect || !ro.UnblockServices {
-		t.Errorf("an unnamed preset was changed: voice=%v services=%v", ro.VoiceDirect, ro.UnblockServices)
+	if ro.VoiceDirect {
+		t.Error("voice-direct was switched on by a command that did not name it")
+	}
+	if !ro.UnblockServices {
+		t.Error("unblock-services was switched off by a command that did not name it")
+	}
+
+	h.send(Request{ID: 2, Cmd: CmdSetPresets, Services: boolp(false)})
+	h.await()
+
+	ro = h.daemon.snapshotRouting()
+	if ro.UnblockServices {
+		t.Error("unblock-services stayed on after being switched off")
+	}
+	if !ro.GamesDirect {
+		t.Error("games-direct was switched off by a command that did not name it")
+	}
+}
+
+// TestTrafficLeakingPresetsAreOffByDefault: GamesDirect and VoiceDirect each send
+// a whole class of traffic around the tunnel — every game client's connections,
+// and all UDP above port 50000, which is where browser WebRTC calls and torrents
+// live. Shipping them on means a fresh install hands the user's real address to
+// whoever is on the other end of a call while the app reports itself connected,
+// without the user having chosen anything. UnblockServices is the opposite shape:
+// it pins censored domains *to* the tunnel, so it stays on.
+func TestTrafficLeakingPresetsAreOffByDefault(t *testing.T) {
+	h := newHarness(t)
+
+	ro := h.daemon.snapshotRouting()
+	if ro.GamesDirect {
+		t.Error("games-direct is on in a fresh daemon")
+	}
+	if ro.VoiceDirect {
+		t.Error("voice-direct is on in a fresh daemon")
+	}
+	if !ro.UnblockServices {
+		t.Error("unblock-services is off in a fresh daemon")
 	}
 }
 
@@ -43,8 +79,8 @@ func TestSetPresetsRejectsAnEmptyCommand(t *testing.T) {
 }
 
 // TestPresetsSurviveARestart: the presets were previously set in the constructor
-// and never written down, so switching one off lasted exactly until the next
-// launch — a setting that silently reverts is worse than one that is missing.
+// and never written down, so changing one lasted exactly until the next launch —
+// a setting that silently reverts is worse than one that is missing.
 func TestPresetsSurviveARestart(t *testing.T) {
 	dir := t.TempDir()
 
@@ -55,7 +91,7 @@ func TestPresetsSurviveARestart(t *testing.T) {
 	}
 	h.daemon.SetSettings(st)
 
-	h.send(Request{ID: 1, Cmd: CmdSetPresets, Games: boolp(false), Voice: boolp(false)})
+	h.send(Request{ID: 1, Cmd: CmdSetPresets, Games: boolp(true), Services: boolp(false)})
 	h.await()
 
 	h2 := newHarness(t)
@@ -66,19 +102,23 @@ func TestPresetsSurviveARestart(t *testing.T) {
 	h2.daemon.SetSettings(st2)
 
 	ro := h2.daemon.snapshotRouting()
-	if ro.GamesDirect || ro.VoiceDirect {
-		t.Errorf("presets came back on after a restart: games=%v voice=%v", ro.GamesDirect, ro.VoiceDirect)
+	if !ro.GamesDirect {
+		t.Error("a preset switched on came back off after a restart")
 	}
-	if !ro.UnblockServices {
-		t.Error("the preset that was never touched came back off")
+	if ro.UnblockServices {
+		t.Error("a preset switched off came back on after a restart")
+	}
+	if ro.VoiceDirect {
+		t.Error("the preset that was never touched came back on")
 	}
 }
 
-// TestPresetsDefaultOnForAnOldSettingsFile: a file written before these fields
-// existed has none of them. Reading that as "off" would move games and voice
-// back into the tunnel on the first launch after an upgrade — a silent
-// regression in exactly the thing the app is for.
-func TestPresetsDefaultOnForAnOldSettingsFile(t *testing.T) {
+// TestPresetDefaultsForAnOldSettingsFile: a file written before these fields
+// existed has none of them, and so does one written by a version that only ever
+// wrote the two it had. Absent has to read as the safe value per preset, not one
+// blanket answer: off for the two that route traffic out of the tunnel, on for
+// the one that routes censored domains into it.
+func TestPresetDefaultsForAnOldSettingsFile(t *testing.T) {
 	dir := t.TempDir()
 	// An old file as it actually looks on disk: version stamped, preset fields
 	// absent entirely.
@@ -91,9 +131,72 @@ func TestPresetsDefaultOnForAnOldSettingsFile(t *testing.T) {
 	h.daemon.SetSettings(settingsAt(t, dir))
 
 	ro := h.daemon.snapshotRouting()
-	if !ro.GamesDirect || !ro.VoiceDirect || !ro.UnblockServices {
-		t.Errorf("an old settings file turned presets off: games=%v voice=%v services=%v",
-			ro.GamesDirect, ro.VoiceDirect, ro.UnblockServices)
+	if ro.GamesDirect || ro.VoiceDirect {
+		t.Errorf("an old settings file left a traffic-leaking preset on: games=%v voice=%v",
+			ro.GamesDirect, ro.VoiceDirect)
+	}
+	if !ro.UnblockServices {
+		t.Error("an old settings file turned unblock-services off")
+	}
+}
+
+// TestStoredPresetChoicesAreKept: 0.5.0 shipped all three presets on and wrote
+// that down, so an upgraded install has `true` on disk for presets its owner may
+// well have wanted. An explicit stored value is the user's, not a default to
+// re-decide: flipping it on upgrade would be the same silent change in the other
+// direction. Turning them off is the UI's job now that it has the switches.
+func TestStoredPresetChoicesAreKept(t *testing.T) {
+	dir := t.TempDir()
+	stored := []byte(`{"version":1,"preset_games_direct":true,"preset_voice_direct":true,` +
+		`"preset_unblock_services":false}`)
+	if err := os.WriteFile(filepath.Join(dir, settingsFile), stored, 0o644); err != nil {
+		t.Fatalf("seed settings file: %v", err)
+	}
+
+	h := newHarness(t)
+	h.daemon.SetSettings(settingsAt(t, dir))
+
+	ro := h.daemon.snapshotRouting()
+	if !ro.GamesDirect || !ro.VoiceDirect {
+		t.Errorf("an explicit stored true was overridden: games=%v voice=%v",
+			ro.GamesDirect, ro.VoiceDirect)
+	}
+	if ro.UnblockServices {
+		t.Error("an explicit stored false was overridden")
+	}
+}
+
+// TestPresetsAreReportedInState: the presets existed only as a Go-side command —
+// no field in the snapshot, so no interface could show them, and the one way to
+// change them was to hand-edit the settings file. A switch nobody can see is a
+// switch nobody can turn off.
+func TestPresetsAreReportedInState(t *testing.T) {
+	h := newHarness(t)
+
+	if st := h.daemon.snapshotState(); st.PresetGamesDirect || st.PresetVoiceDirect {
+		t.Errorf("state reports a leaking preset on by default: games=%v voice=%v",
+			st.PresetGamesDirect, st.PresetVoiceDirect)
+	}
+
+	h.send(Request{ID: 1, Cmd: CmdSetPresets, Games: boolp(true), Voice: boolp(true), Services: boolp(false)})
+	resp := h.await()
+	if resp.Error != "" {
+		t.Fatalf("set_presets: %v", resp.Error)
+	}
+
+	var got State
+	if err := json.Unmarshal(resp.Data, &got); err != nil {
+		t.Fatalf("decode set_presets state: %v", err)
+	}
+	if !got.PresetGamesDirect || !got.PresetVoiceDirect || got.PresetUnblockServices {
+		t.Errorf("set_presets answered with the wrong state: games=%v voice=%v services=%v",
+			got.PresetGamesDirect, got.PresetVoiceDirect, got.PresetUnblockServices)
+	}
+
+	st := h.daemon.snapshotState()
+	if !st.PresetGamesDirect || !st.PresetVoiceDirect || st.PresetUnblockServices {
+		t.Errorf("status does not report the presets: games=%v voice=%v services=%v",
+			st.PresetGamesDirect, st.PresetVoiceDirect, st.PresetUnblockServices)
 	}
 }
 

@@ -531,6 +531,91 @@ describe("SettingsScreen", () => {
     });
   });
 
+  describe("routing presets", () => {
+    // Same shape as the RU preset rows: the switch's accessible name is its own
+    // ON/OFF text, so find the row by its label and take the switch inside it.
+    function presetToggle(label: string): HTMLElement {
+      const row = screen.getByText(label).closest(".set-row");
+      if (!row) {
+        throw new Error(`${label} row not found`);
+      }
+      const toggle = row.querySelector('[role="switch"]');
+      if (!toggle) {
+        throw new Error(`${label} switch not found`);
+      }
+      return toggle as HTMLElement;
+    }
+
+    const presetState = {
+      state: "idle",
+      preset_voice_direct: true,
+      preset_unblock_services: true,
+    } as State;
+
+    // These shipped on and invisible: the command existed only in the core, so
+    // the two presets that route traffic around the tunnel could not be seen or
+    // switched off from the app at all.
+    it("reflects the presets from core state", () => {
+      const tenebra = makeTenebra({ state: presetState });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(presetToggle("Real-time UDP skips the tunnel")).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+      expect(presetToggle("Games skip the tunnel")).toHaveAttribute(
+        "aria-checked",
+        "false",
+      );
+      expect(presetToggle("Unblock censored services")).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+    });
+
+    it("toggling one preset names only that one", async () => {
+      const tenebra = makeTenebra({ state: presetState });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(presetToggle("Games skip the tunnel"));
+      expect(tenebra.setPresets).toHaveBeenCalledWith({ games: true });
+
+      await user.click(presetToggle("Real-time UDP skips the tunnel"));
+      expect(tenebra.setPresets).toHaveBeenCalledWith({ voice: false });
+    });
+
+    // A switch that sends the user's real address to whoever is on the call has
+    // to say so where the user decides, not in a changelog.
+    it("says what the traffic-leaking presets cost", () => {
+      const tenebra = makeTenebra({ state: presetState });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      const voiceRow = screen
+        .getByText("Real-time UDP skips the tunnel")
+        .closest(".set-row");
+      expect(voiceRow).toHaveTextContent(/real IP address/i);
+
+      const gamesRow = screen
+        .getByText("Games skip the tunnel")
+        .closest(".set-row");
+      expect(gamesRow).toHaveTextContent(/real IP address/i);
+    });
+
+    it("keeps the russian strings for the same rows", () => {
+      const tenebra = makeTenebra({ state: presetState });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />, { lang: "ru" });
+
+      expect(
+        presetToggle(dictionaries.ru.settings.presetVoiceDirect),
+      ).toHaveAttribute("aria-checked", "true");
+      const voiceRow = screen
+        .getByText(dictionaries.ru.settings.presetVoiceDirect)
+        .closest(".set-row");
+      expect(voiceRow).toHaveTextContent(/реальный IP/i);
+    });
+  });
+
   describe("custom rules", () => {
     const rulesState = {
       state: "idle",
@@ -1377,16 +1462,17 @@ describe("SettingsScreen", () => {
 
       const rail = screen.getByRole("navigation", { name: "Settings sections" });
       const links = within(rail).getAllByRole("button");
-      // routing, split, rules, mode, tunnel, dns, bypass, multihop, reliability,
-      // diagnostics, appearance, startup, updates.
-      expect(links).toHaveLength(13);
+      // routing, split, presets, rules, mode, tunnel, dns, bypass, multihop,
+      // reliability, diagnostics, appearance, startup, updates.
+      expect(links).toHaveLength(14);
       expect(links[0]).toHaveTextContent("Routing");
-      expect(links[2]).toHaveTextContent("Custom rules");
-      expect(links[3]).toHaveTextContent("Connection mode");
-      expect(links[6]).toHaveTextContent("Censorship bypass");
-      expect(links[7]).toHaveTextContent("Multihop");
-      expect(links[9]).toHaveTextContent("Diagnostics");
-      expect(links[12]).toHaveTextContent("Updates");
+      expect(links[2]).toHaveTextContent("Routing presets");
+      expect(links[3]).toHaveTextContent("Custom rules");
+      expect(links[4]).toHaveTextContent("Connection mode");
+      expect(links[7]).toHaveTextContent("Censorship bypass");
+      expect(links[8]).toHaveTextContent("Multihop");
+      expect(links[10]).toHaveTextContent("Diagnostics");
+      expect(links[13]).toHaveTextContent("Updates");
     });
 
     it("scrolls to a section and highlights its link on click", async () => {
