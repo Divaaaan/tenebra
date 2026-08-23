@@ -2,10 +2,13 @@ package zapret
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,38 +56,133 @@ func TestVersionFromName(t *testing.T) {
 	}
 }
 
-// releaseServer serves a GitHub-shaped release pointing at archivePath.
-func releaseServer(t *testing.T, version, archivePath string, prerelease bool) *httptest.Server {
+// releaseFeed describes the fake GitHub release a test serves.
+//
+// announce and serve are separate on purpose: the feed publishes the size and
+// SHA-256 of one file while the server hands over another, which is exactly the
+// shape of "something swapped the bytes between the release page and this
+// machine".
+type releaseFeed struct {
+	version    string
+	prerelease bool
+	// announce is the archive the feed describes. serve is the archive actually
+	// delivered; empty means "the announced one", i.e. an honest release.
+	announce string
+	serve    string
+	// digest overrides the published checksum: "" publishes the truth about
+	// announce, "none" publishes none at all, anything else is published as-is.
+	digest string
+	// size overrides the published byte count; 0 publishes the truth.
+	size int64
+	// url overrides the published browser_download_url.
+	url string
+	// redirect, when set, is where the archive request is sent instead of being
+	// answered with a file.
+	redirect string
+}
+
+// releaseServer serves a GitHub-shaped release feed and the archive behind it.
+func releaseServer(t *testing.T, f releaseFeed) *httptest.Server {
 	t.Helper()
+	if f.serve == "" {
+		f.serve = f.announce
+	}
 	mux := http.NewServeMux()
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
 	mux.HandleFunc("/archive.zip", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, archivePath)
+		if f.redirect != "" {
+			http.Redirect(w, r, f.redirect, http.StatusFound)
+			return
+		}
+		http.ServeFile(w, r, f.serve)
 	})
-	mux.HandleFunc("/release", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/release", func(w http.ResponseWriter, _ *http.Request) {
+		zip := map[string]any{
+			"name":                 fmt.Sprintf("zapret-%s.zip", f.version),
+			"browser_download_url": srv.URL + "/archive.zip",
+			"size":                 fileSize(t, f.announce),
+			"digest":               "sha256:" + fileSum(t, f.announce),
+		}
+		if f.url != "" {
+			zip["browser_download_url"] = f.url
+		}
+		if f.size != 0 {
+			zip["size"] = f.size
+		}
+		switch f.digest {
+		case "":
+			// the truth about the announced archive
+		case "none":
+			delete(zip, "digest")
+		default:
+			zip["digest"] = f.digest
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"tag_name":   version,
-			"prerelease": prerelease,
+			"tag_name":   f.version,
+			"prerelease": f.prerelease,
 			"assets": []map[string]any{
 				// The .rar comes first on purpose: only the zip can be installed, so
 				// picking by position rather than by extension would break every update.
-				{"name": fmt.Sprintf("zapret-%s.rar", version), "browser_download_url": srv.URL + "/archive.rar"},
-				{"name": fmt.Sprintf("zapret-%s.zip", version), "browser_download_url": srv.URL + "/archive.zip", "size": 1234},
+				{"name": fmt.Sprintf("zapret-%s.rar", f.version), "browser_download_url": srv.URL + "/archive.rar"},
+				zip,
 			},
 		})
 	})
 	return srv
 }
 
+// fileSum is the SHA-256 of a file, lowercase hex — what a release feed
+// publishes for its asset.
+func fileSum(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("hash %s: %v", path, err)
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// fileSize is the byte count a release feed publishes for its asset.
+func fileSize(t *testing.T, path string) int64 {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	return info.Size()
+}
+
+// allowTestOrigin lets checkArchiveURL and the redirect guard accept one extra
+// origin — the given httptest server — without turning the host policy off, so
+// the policy stays exercised for every OTHER host (which is what the policy tests
+// rely on). The hook is a function, not a settable string, which is the point:
+// it is how a test overrides the origin without leaving a `-ldflags -X` handle in
+// the shipped binary. Restored at the end of the test.
+func allowTestOrigin(t *testing.T, srv *httptest.Server) {
+	t.Helper()
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("parse test server url %q: %v", srv.URL, err)
+	}
+	host := u.Host
+	saved := archiveURLAllowExtra
+	archiveURLAllowExtra = func(candidate *url.URL) bool {
+		return candidate.Host == host
+	}
+	t.Cleanup(func() { archiveURLAllowExtra = saved })
+}
+
 // latest points the package at the test server and returns what it parses, so
 // the asset choice and the draft/pre-release rules are exercised for real.
 func latest(t *testing.T, srv *httptest.Server) (Release, error) {
 	t.Helper()
-	saved := releaseAPI
+	savedAPI := releaseAPI
 	releaseAPI = srv.URL + "/release"
-	t.Cleanup(func() { releaseAPI = saved })
+	allowTestOrigin(t, srv)
+	t.Cleanup(func() { releaseAPI = savedAPI })
 	return LatestRelease(context.Background(), srv.Client())
 }
 
@@ -93,7 +191,7 @@ func latest(t *testing.T, srv *httptest.Server) (Release, error) {
 // what looks like a network fault.
 func TestLatestReleasePicksTheZip(t *testing.T) {
 	archive := bundleZip(t, "zapret-discord-youtube-1.11.0", nil)
-	srv := releaseServer(t, "1.11.0", archive, false)
+	srv := releaseServer(t, releaseFeed{version: "1.11.0", announce: archive})
 
 	rel, err := latest(t, srv)
 	if err != nil {
@@ -111,7 +209,7 @@ func TestLatestReleasePicksTheZip(t *testing.T) {
 // unasked is not what "keep the bypass current" means.
 func TestLatestReleaseRefusesPrerelease(t *testing.T) {
 	archive := bundleZip(t, "zapret-discord-youtube-1.11.0", nil)
-	srv := releaseServer(t, "1.11.0", archive, true)
+	srv := releaseServer(t, releaseFeed{version: "1.11.0", announce: archive, prerelease: true})
 
 	if _, err := latest(t, srv); err == nil {
 		t.Fatal("a pre-release was accepted as the latest bundle")
@@ -121,12 +219,15 @@ func TestLatestReleaseRefusesPrerelease(t *testing.T) {
 // An update must not cost the user the entries they added by hand, nor the node
 // addresses kept out of the packet filter — losing the latter silently puts the
 // bypass back on top of the tunnel's own handshakes.
+// The version is pinned for the duration so this exercises the install path
+// itself: under Variant A only a pinned version is installed at all.
 func TestApplyKeepsLocalStateAndStampsVersion(t *testing.T) {
-	archive := bundleZip(t, "zapret-discord-youtube-1.10.1", map[string]string{
+	archive := bundleZip(t, "zapret-discord-youtube-1.11.0", map[string]string{
 		"utils/check_updates.enabled": "true",
 		"lists/list-general-user.txt": "# Never leave this file empty\ndomain.example.abc\n",
 	})
-	srv := releaseServer(t, "1.10.1", archive, false)
+	pinFor(t, "1.11.0", fileSum(t, archive))
+	srv := releaseServer(t, releaseFeed{version: "1.11.0", announce: archive})
 
 	dir := filepath.Join(t.TempDir(), "zapret")
 	if _, err := Install(archive, dir); err != nil {
@@ -155,8 +256,8 @@ func TestApplyKeepsLocalStateAndStampsVersion(t *testing.T) {
 	if err != nil || !strings.Contains(string(excl), "95.163.176.178") {
 		t.Errorf("node exclusions were lost by the update: %q (%v)", excl, err)
 	}
-	if got := Version(dir); got != "1.10.1" {
-		t.Errorf("installed version = %q, want 1.10.1", got)
+	if got := Version(dir); got != "1.11.0" {
+		t.Errorf("installed version = %q, want 1.11.0", got)
 	}
 	// Upstream's own updater is disabled: two mechanisms fetching the same
 	// releases on different schedules is one more than can be reasoned about.
@@ -187,7 +288,7 @@ func TestApplyKeepsTheOldBundleWhenTheNewOneIsBad(t *testing.T) {
 	if err := os.WriteFile(junk, []byte("not a zip at all"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	srv := releaseServer(t, "1.11.0", junk, false)
+	srv := releaseServer(t, releaseFeed{version: "1.11.0", announce: junk})
 
 	rel, err := latest(t, srv)
 	if err != nil {

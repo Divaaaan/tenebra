@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -48,11 +49,8 @@ func (d *Daemon) RunZapretAutoUpdate(ctx context.Context) {
 		enabled := d.zapretAutoUpdate
 		d.mu.Unlock()
 		if enabled {
-			if _, _, updated, err := d.updateZapret(ctx); err != nil {
-				// Not a warning: an update check failing because the network is
-				// down or GitHub is unreachable is an ordinary event, and logging
-				// it as a problem would train the user to ignore the log.
-				d.emitLog(LogInfo, fmt.Sprintf("zapret: проверка обновления не удалась: %v", err))
+			if _, to, updated, err := d.updateZapret(ctx); err != nil {
+				d.reportZapretUpdateOutcome(to, err)
 			} else if updated {
 				d.emitLog(LogInfo, "zapret: сборка обновлена")
 			}
@@ -60,6 +58,47 @@ func (d *Daemon) RunZapretAutoUpdate(ctx context.Context) {
 
 		timer.Reset(zapretUpdateInterval)
 	}
+}
+
+// reportZapretUpdateOutcome logs the result of a background update attempt that
+// did not install anything, at the volume it deserves. It layers the "there is a
+// newer bundle this client does not yet trust" case on top of the
+// failure/ordinary split in reportZapretUpdateFailure.
+//
+// That case is neither a failure nor an alarm: upstream shipped a version newer
+// than any checksum pinned into this build, so the safe move is to keep the
+// working bundle and tell the user to update Tenebra, which carries the next pin.
+// It is logged quietly at info level and names the version, so the line is
+// actionable rather than noise.
+func (d *Daemon) reportZapretUpdateOutcome(version string, err error) {
+	if errors.Is(err, zapret.ErrUntrustedVersion) {
+		d.emitLog(LogInfo, fmt.Sprintf(
+			"zapret: доступна новая сборка обхода %s, но она новее вшитых в Tenebra проверок — "+
+				"обнови Tenebra, чтобы получить её (обход пока работает на текущей сборке).", versionLabel(version)))
+		return
+	}
+	d.reportZapretUpdateFailure(err)
+}
+
+// reportZapretUpdateFailure puts a failed bundle update on the log channel at the
+// volume it deserves.
+//
+// The two cases are different events, not two severities of one. A check that
+// could not reach the release feed is ordinary — the network is down, GitHub is
+// blocked, the retry is in twelve hours — and logging that as a problem trains
+// the user to scroll past the log. An archive that arrived and did not verify
+// means something between the release page and this machine rewrote bytes that
+// were about to be unpacked into the daemon's directory, where a .bat out of them
+// gets handed to cmd.exe by a service running as LocalSystem. Nothing else this
+// updater can report comes close, so nothing else gets this level.
+func (d *Daemon) reportZapretUpdateFailure(err error) {
+	if errors.Is(err, zapret.ErrIntegrity) {
+		d.emitLog(LogError, fmt.Sprintf(
+			"%v. Скачанный архив не совпал с опубликованным — сборка обхода НЕ установлена, "+
+				"осталась прежняя. Если это повторяется, сеть между тобой и GitHub подменяет файлы.", err))
+		return
+	}
+	d.emitLog(LogInfo, fmt.Sprintf("zapret: проверка обновления не удалась: %v", err))
 }
 
 // updateZapret installs the newest published bundle when it is newer than the
@@ -88,6 +127,18 @@ func (d *Daemon) updateZapret(ctx context.Context) (from, to string, updated boo
 	}
 	if !zapret.Newer(from, rel.Version) {
 		return from, rel.Version, false, nil
+	}
+
+	// A newer bundle exists, but auto-install is limited to versions this client
+	// pins a checksum for. The digest GitHub publishes beside the asset cannot
+	// stand in: it rides the same TLS connection as the archive, so the
+	// trusted-root proxy this product defends against forges both together. So an
+	// unpinned version is reported (ErrUntrustedVersion, which the callers turn
+	// into an "update Tenebra" notice) and nothing else happens — no download, and
+	// the running bypass is left alone rather than being stopped for an install
+	// that will not come. The pin ships with the next Tenebra release.
+	if zapret.PinnedSum(rel.Version) == "" {
+		return from, rel.Version, false, zapret.ErrUntrustedVersion
 	}
 
 	// A running strategy pins the bundle directory on Windows, so the filter comes
@@ -203,16 +254,21 @@ func discoverStrategies(dir string) []zapret.Strategy {
 // is not an answer.
 func (d *Daemon) handleUpdateZapret(ctx context.Context, req Request) Response {
 	from, to, updated, err := d.updateZapret(ctx)
-	if err != nil {
+	// A version newer than any pin is not something the user can fix by retrying:
+	// it is "there is an update, but this Tenebra build does not trust it yet".
+	// Report it as a normal result flagged blocked, so the screen can say "update
+	// Tenebra" rather than show a red failure the way a real refusal would.
+	if err != nil && !errors.Is(err, zapret.ErrUntrustedVersion) {
 		return newError(req.ID, err.Error())
 	}
-	resp, err := newResult(req.ID, struct {
+	resp, mErr := newResult(req.ID, struct {
 		Installed string `json:"installed"`
 		Latest    string `json:"latest"`
 		Updated   bool   `json:"updated"`
-	}{Installed: from, Latest: to, Updated: updated})
-	if err != nil {
-		return newError(req.ID, err.Error())
+		Blocked   bool   `json:"blocked"`
+	}{Installed: from, Latest: to, Updated: updated, Blocked: errors.Is(err, zapret.ErrUntrustedVersion)})
+	if mErr != nil {
+		return newError(req.ID, mErr.Error())
 	}
 	return resp
 }

@@ -428,15 +428,21 @@ export interface ZapretResult {
  */
 /**
  * What `update_zapret` did: the version that was installed, the newest published
- * one, and whether anything changed.
+ * one, whether anything changed, and whether a newer one was found but held back.
  *
  * Both versions are reported even when nothing changed, because "already current"
  * and "could not check" are different answers and only one of them is fine.
+ *
+ * `blocked` is the third success case: a newer bundle exists, but its checksum is
+ * not pinned into this client, so it is not auto-installed (its digest travels the
+ * same connection as the archive and cannot be trusted on its own — see
+ * core/zapret/verify.go). `latest` then names the version to update Tenebra for.
  */
 export interface ZapretUpdate {
   installed: string;
   latest: string;
   updated: boolean;
+  blocked: boolean;
 }
 
 export interface ZapretPick {

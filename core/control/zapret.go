@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -287,8 +288,23 @@ func (d *Daemon) installZapretIfMissing(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, zapretInstallBudget)
 	defer cancel()
 	if _, to, ok, err := d.updateZapret(ctx); err != nil {
-		d.emitLog(LogWarn, fmt.Sprintf(
-			"zapret: не удалось поставить сборку (%v) — туннель работает без обхода", err))
+		switch {
+		case errors.Is(err, zapret.ErrIntegrity):
+			// A bundle that failed verification is not "could not download": the
+			// archive arrived and was not what upstream published. Everything else on
+			// this path is a connectivity problem the user can ignore; this one is not.
+			d.reportZapretUpdateFailure(err)
+		case errors.Is(err, zapret.ErrUntrustedVersion):
+			// Upstream has moved past every pin this build carries, so there is no
+			// bundle it can install on trust. Nothing is fetched; the tunnel carries
+			// the censored services on its own until a Tenebra update brings the pin.
+			d.emitLog(LogInfo, fmt.Sprintf(
+				"zapret: доступна сборка обхода %s, но она новее вшитых в Tenebra проверок — "+
+					"обнови Tenebra; туннель пока работает без обхода", versionLabel(to)))
+		default:
+			d.emitLog(LogWarn, fmt.Sprintf(
+				"zapret: не удалось поставить сборку (%v) — туннель работает без обхода", err))
+		}
 	} else if ok {
 		d.emitLog(LogInfo, fmt.Sprintf("zapret: поставлена сборка %s", to))
 	}
