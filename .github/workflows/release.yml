@@ -66,7 +66,16 @@ jobs:
           projectPath: ui-desktop
           tagName: ${{ github.ref_name }}
           releaseName: Tenebra ${{ github.ref_name }}
-          releaseDraft: false
+          # A draft, and so are the two jobs after it: four jobs upload into this
+          # one release over the better part of an hour, and a release published
+          # by the first of them is a download page users and winget can reach
+          # while the rest of the files are still building — or, when a later job
+          # fails, one that stays short a file for good. The `publish` job at the
+          # end of this workflow is what makes the release visible, and only once
+          # every expected asset is attached. tauri-action finds an existing
+          # draft by listing releases (GitHub cannot look one up by tag), which
+          # is why all three of these must agree on draft.
+          releaseDraft: true
           prerelease: ${{ steps.channel.outputs.prerelease }}
           includeUpdaterJson: true
           # --locked makes a stale Cargo.lock fail the build instead of silently
@@ -174,7 +183,9 @@ jobs:
           projectPath: ui-desktop
           tagName: ${{ github.ref_name }}
           releaseName: Tenebra ${{ github.ref_name }}
-          releaseDraft: false
+          # Draft, like the Windows job: this uploads into the same release, and
+          # the `publish` job publishes it once everything has landed.
+          releaseDraft: true
           prerelease: ${{ steps.channel.outputs.prerelease }}
           includeUpdaterJson: true
           args: --target universal-apple-darwin --bundles app,dmg -- --locked
@@ -270,7 +281,8 @@ jobs:
           projectPath: ui-desktop
           tagName: ${{ github.ref_name }}
           releaseName: Tenebra ${{ github.ref_name }}
-          releaseDraft: false
+          # Draft, like the two jobs before it; `publish` closes the release out.
+          releaseDraft: true
           prerelease: ${{ steps.channel.outputs.prerelease }}
           # Only the AppImage carries an updater artifact — the Tauri updater
           # cannot replace a package-managed install, which is why the app hides
@@ -371,9 +383,64 @@ jobs:
           env -u TENEBRA_SINGBOX timeout 5 /usr/lib/tenebra/tenebra-core --socket 2>&1 |
             tee /tmp/core.log || true
           grep -q 'sing-box at /usr/lib/tenebra/sing-box' /tmp/core.log
-          grep -q 'rule-set' /tmp/core.log && echo 'rule-sets reported' || true
+          # And it must resolve all three packaged rule-sets out of that same
+          # directory. The core logs one line either way, so grepping for
+          # "rule-set" alone matched the failure sentence as happily as the
+          # success one — matching the whole sentence is what makes this an
+          # assertion. A miss means the packaged install falls back to
+          # downloading the sets from GitHub at every connect: a ~10s stall, or
+          # a sing-box FATAL when raw.githubusercontent.com is throttled.
+          grep -q 'loading RU rule-sets locally from /usr/lib/tenebra' /tmp/core.log
       - name: Attach the package to the release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # gh works out which repository it is talking to by shelling out to
+          # git. The build step above chowns the checkout to `builder` so makepkg
+          # will run, this step runs as root, and git refuses a repository it
+          # does not own ("detected dubious ownership") — so gh exited 1 here
+          # before it ever reached the API, on every release since this job was
+          # added; v0.4.6's package was attached by hand afterwards. Naming the
+          # repository keeps git out of the path entirely, the same way
+          # scripts/publish-beta-manifest.mjs passes --repo.
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
-        run: gh release upload "$TAG" packaging/arch/*.pkg.tar.zst --clobber
+        run: |
+          set -eu
+          # An unmatched glob expands to the pattern itself, so without nullglob
+          # this would hand gh a path that does not exist instead of saying that
+          # makepkg produced nothing.
+          shopt -s nullglob
+          pkgs=(packaging/arch/*.pkg.tar.zst)
+          if [ ${#pkgs[@]} -eq 0 ]; then
+            echo "no package under packaging/arch/ to attach" >&2
+            exit 1
+          fi
+          gh release upload "$TAG" "${pkgs[@]}" --clobber
+  publish:
+    # The one step that makes the release visible. Everything above builds into a
+    # single draft, and this compares what is really attached against what a tag
+    # of this kind is supposed to carry: complete, and it is published; short a
+    # file, and it stays a draft and the run goes red.
+    #
+    # The alternative — what this replaces — was each build job publishing as it
+    # finished, which put a half-populated download page in front of users while
+    # the rest was still compiling and left it permanently short a file whenever
+    # a later job failed. That is how v0.4.6 and v0.5.0 both shipped without the
+    # Arch package with nothing turning red over it.
+    #
+    # A stranded draft is recoverable by hand in one click; a published release
+    # with a missing file is not, so this is the direction to fail in.
+    needs: [windows, macos, linux, arch-package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Verify every expected asset landed, then publish
+        env:
+          # gh authenticates with GITHUB_TOKEN; the script reads the repository
+          # from GITHUB_REPOSITORY, which the runner always sets, and hands it to
+          # gh explicitly rather than letting gh work it out from git.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node .github/scripts/publish-release.mjs "$GITHUB_REF_NAME"

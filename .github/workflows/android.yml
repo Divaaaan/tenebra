@@ -119,32 +119,41 @@ jobs:
 
   release-gate:
     # A v* tag drives the desktop release too, and Android can only join it if
-    # the release signing secrets exist. Without them the release job used to
-    # fail, painting a desktop tag red over an Android release nobody asked it
-    # to cut. Decide once here so the job is skipped rather than broken — and
-    # starts running on its own the day the secrets are added.
+    # the release signing secrets exist. This job used to resolve them into a
+    # "signable" flag and let the release job skip when they were absent — and a
+    # skipped job counts as success, so every tagged run since finished green
+    # having built nothing: no APK on the release, no failure to look at, and a
+    # seven-second run that read like a build. An Android release that cannot be
+    # signed is a failed Android release, so say so out loud. This is its own
+    # workflow run — a red job here does not touch the desktop release — and the
+    # day the secrets are added it arms itself.
     if: ${{ startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
-    outputs:
-      signable: ${{ steps.check.outputs.signable }}
     steps:
-      - id: check
+      - name: Require the release signing key
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
         run: |
-          if [ -n "${KEYSTORE_B64:-}" ]; then
-            echo "signable=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "signable=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Android release skipped::ANDROID_KEYSTORE_B64 is not set; see docs/porting/android.md#release-signing."
+          set -eu
+          if [ -z "${KEYSTORE_B64:-}" ]; then
+            {
+              echo "## Android was NOT built for \`$GITHUB_REF_NAME\`"
+              echo
+              echo "\`ANDROID_KEYSTORE_B64\` is not configured, so this tag ships no APK."
+              echo "Create the keystore and add the signing secrets per"
+              echo "\`docs/porting/android.md#release-signing\`, then re-run this workflow."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error title=Android not built::ANDROID_KEYSTORE_B64 is not set; $GITHUB_REF_NAME ships no APK. See docs/porting/android.md#release-signing."
+            exit 1
           fi
+          echo "Release signing key present; building a signed APK for $GITHUB_REF_NAME."
 
   release:
     # v* tags only: build a signed release APK and attach it to the GitHub
     # release. The desktop release.yml publishes to this same tag's release; this
     # job only adds the APK asset and never rewrites the release body.
     needs: release-gate
-    if: ${{ startsWith(github.ref, 'refs/tags/') && needs.release-gate.outputs.signable == 'true' }}
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

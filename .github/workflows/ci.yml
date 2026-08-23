@@ -7,6 +7,24 @@ on:
   workflow_call:
 
 jobs:
+  workflows:
+    # The pipeline's own checks. Every other job here tests the product; this one
+    # tests the promises the workflows make — that a release cannot be published
+    # short an artifact, that an upload cannot succeed on a glob matching
+    # nothing, that a missing signing key is not reported as a build. Those are
+    # failures no test living inside the product can see, and each of these
+    # checks is here because the pipeline once got it wrong.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Check the workflow invariants
+        # Quoted so node expands the pattern itself: its test-file discovery
+        # walks past directories whose name begins with a dot, so handing it
+        # .github/scripts as a directory finds nothing.
+        run: node --test ".github/scripts/*.test.mjs"
   core:
     runs-on: ubuntu-latest
     steps:
@@ -84,6 +102,9 @@ jobs:
         with:
           name: tenebra-windows-installer
           path: ui-desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+          # A bundler that moved its output, or a typo in the path above, would
+          # otherwise leave a green job with no installer attached to it.
+          if-no-files-found: error
   linux:
     # Proves the Linux desktop shell builds: the unix-socket backend that drives
     # the systemd daemon, and the deb bundle itself. The `core` job above already
@@ -145,6 +166,9 @@ jobs:
         with:
           name: tenebra-linux-deb
           path: ui-desktop/src-tauri/target/release/bundle/deb/*.deb
+          # As on the Windows job: an empty match is a build that produced
+          # nothing, not a job that has nothing to say.
+          if-no-files-found: error
   arch-package:
     # Lints the Arch packaging on every push. It stops short of a full makepkg on
     # purpose: the PKGBUILD takes its source from a git tag, so building it only
