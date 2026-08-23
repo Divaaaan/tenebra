@@ -261,11 +261,22 @@ func Build(nodes []model.Node, selectedTag string, ro routing.Options, tun TunOp
 	}
 
 	// Shared outbounds: the selector over the eligible nodes, plus direct/block.
+	//
+	// interrupt_exist_connections is pinned OFF, and stated rather than left to the
+	// default, because it is what makes a live exit change seamless: when the
+	// control layer points this selector at another node, sing-box keeps every
+	// already-established inbound connection on the outbound it was dialled
+	// through and sends only new ones to the new exit. Turning it on would close
+	// them all — the download, the call, the ssh session — which is exactly the
+	// interruption a live switch exists to avoid. sing-box still interrupts its own
+	// internal connections regardless of this flag, which is what we want: those
+	// are its DNS and probe dials, not the user's traffic.
 	selector := map[string]any{
-		"type":      "selector",
-		"tag":       proxyTag,
-		"outbounds": selOutbounds,
-		"default":   def,
+		"type":                        "selector",
+		"tag":                         proxyTag,
+		"outbounds":                   selOutbounds,
+		"default":                     def,
+		"interrupt_exist_connections": false,
 	}
 	outbounds := make([]map[string]any, 0, len(outs)+3)
 	outbounds = append(outbounds, selector)
@@ -609,6 +620,65 @@ func contains(s []string, v string) bool {
 func outboundByTag(outs []map[string]any, tag string) (map[string]any, bool) {
 	for _, o := range outs {
 		if t, _ := o["tag"].(string); t == tag {
+			return o, true
+		}
+	}
+	return nil, false
+}
+
+// SelectorTag is the tag Build gives the proxy selector. It is exported because
+// the control layer has to name that group when it steers the running tunnel
+// over the clash API (PUT /proxies/<tag>), and a second hardcoded "proxy" there
+// would be free to drift from the one the builder actually emits.
+const SelectorTag = proxyTag
+
+// SelectorDefault returns the outbound tag the selector in cfg starts on, and
+// whether cfg carries a selector at all. It reads the built config rather than
+// re-deriving the choice because the effective default is not simply the tag the
+// caller asked for: an unknown tag falls back to the first node, and multihop
+// collapses the selector onto the exit. The control layer pins the running
+// selector to this tag right after a start, so a selection left in sing-box's
+// cache file cannot quietly seat the tunnel on a different exit than the one the
+// config (and the reported state) names.
+func SelectorDefault(cfg map[string]any) (string, bool) {
+	sel, ok := proxySelector(cfg)
+	if !ok {
+		return "", false
+	}
+	tag, _ := sel["default"].(string)
+	return tag, tag != ""
+}
+
+// SelectorMembers returns the outbound tags the selector in cfg can be switched
+// between, in selector order. It is the exact set a live switch may target: a tag
+// outside it is not in the running process, so pointing the selector at it would
+// fail and the caller must fall back to a full reconnect instead. A config with
+// no selector yields nil.
+func SelectorMembers(cfg map[string]any) []string {
+	sel, ok := proxySelector(cfg)
+	if !ok {
+		return nil
+	}
+	raw, ok := sel["outbounds"].([]string)
+	if !ok {
+		return nil
+	}
+	out := make([]string, len(raw))
+	copy(out, raw)
+	return out
+}
+
+// proxySelector finds the selector object inside a built config.
+func proxySelector(cfg map[string]any) (map[string]any, bool) {
+	outs, ok := cfg["outbounds"].([]map[string]any)
+	if !ok {
+		return nil, false
+	}
+	for _, o := range outs {
+		if t, _ := o["type"].(string); t != "selector" {
+			continue
+		}
+		if t, _ := o["tag"].(string); t == proxyTag {
 			return o, true
 		}
 	}

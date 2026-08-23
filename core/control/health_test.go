@@ -50,16 +50,16 @@ func (h *harness) tuneHealth(interval, probeTimeout time.Duration, threshold int
 	h.daemon.healthProbe = probe
 }
 
-// TestHealthWatchFailsOverAfterThreshold: with the active node failing its health
-// probe threshold times in a row, the watchdog reconnects — on its own — to a
-// different node, emitting a health_reconnecting state on the way and excluding the
-// degraded node from the walk.
-func TestHealthWatchFailsOverAfterThreshold(t *testing.T) {
+// TestHealthWatchMovesTheExitWithoutReconnecting: with the active node failing its
+// health probe threshold times in a row, the watchdog moves the exit on its own —
+// through the running process, so the tunnel is never taken down. The user keeps
+// their session; the state never claims a reconnect that did not happen.
+func TestHealthWatchMovesTheExitWithoutReconnecting(t *testing.T) {
 	h := newHarness(t)
 	p := seedMultiProto(t, h)
 
 	// Fail the first three probes (the vless node's watchdog), then report healthy —
-	// so the node the failover lands on is not itself failed straight back over.
+	// so the exit it moves to is not itself failed straight back over.
 	probe := &scriptedProbe{verdict: func(call int) error {
 		if call <= 3 {
 			return errors.New("probe: node down")
@@ -74,8 +74,62 @@ func TestHealthWatchFailsOverAfterThreshold(t *testing.T) {
 		t.Fatalf("initial connect landed on %v, want vless-id", c["node"])
 	}
 
-	// The watchdog trips and announces the health-driven switch, naming the node it
-	// is leaving, before the reconnect walks to another exit.
+	// The next connected state names a different exit, with no reconnect in between.
+	c := h.awaitState(StateConnected)
+	if c["node"] != "hy2-id" {
+		t.Fatalf("the watchdog moved to %v, want hy2-id (vless degraded, next by profile order)", c["node"])
+	}
+	if got := h.runner.starts(); got != 1 {
+		t.Errorf("starts = %d, want 1 — the watchdog rebuilt the tunnel instead of steering it", got)
+	}
+	if id, _ := h.daemon.lastGood.Get(p.ID); id != "hy2-id" {
+		t.Errorf("last-good = %q, want hy2-id after the switch", id)
+	}
+	// The candidate was measured through the live process against every check
+	// target before anything moved, rather than guessed at.
+	if len(h.runner.viaProbes()) == 0 {
+		t.Error("the watchdog switched without measuring any candidate")
+	}
+
+	// The exit it moved to probes healthy, so it must not churn onward.
+	time.Sleep(40 * time.Millisecond)
+	if got := h.runner.starts(); got != 1 {
+		t.Errorf("starts = %d after settling, want a stable 1 (no churn on a healthy exit)", got)
+	}
+	if st := h.daemon.snapshotState(); st.State != StateConnected || st.Node != "hy2-id" {
+		t.Errorf("state = %q on %q, want connected on hy2-id", st.State, st.Node)
+	}
+}
+
+// TestHealthWatchReconnectsWhenTheExitCannotBeSteered: a runner that cannot move
+// the selector falls back to the reconnect-based failover — the behaviour that
+// existed before live switching — announcing health_reconnecting and excluding the
+// degraded node from the walk. A degradation must never end in "nothing happened"
+// because the fast path was unavailable.
+func TestHealthWatchReconnectsWhenTheExitCannotBeSteered(t *testing.T) {
+	h := newHarness(t)
+	p := seedMultiProto(t, h)
+
+	probe := &scriptedProbe{verdict: func(call int) error {
+		if call <= 3 {
+			return errors.New("probe: node down")
+		}
+		return nil
+	}}
+	h.tuneHealth(5*time.Millisecond, 100*time.Millisecond, 3, probe.fn)
+
+	h.send(Request{ID: 1, Cmd: CmdConnect, Profile: p.ID})
+	h.await()
+	if c := h.awaitState(StateConnected); c["node"] != "vless-id" {
+		t.Fatalf("initial connect landed on %v, want vless-id", c["node"])
+	}
+
+	// From here the clash API refuses every selection, so the live switch is not
+	// available and the watchdog must still get the user off the degraded exit.
+	h.runner.mu.Lock()
+	h.runner.selectErr = errSelectRefused
+	h.runner.mu.Unlock()
+
 	if hr := h.awaitState(StateHealthReconnecting); hr["node"] != "vless-id" {
 		t.Errorf("health_reconnecting named %v, want the degraded vless-id", hr["node"])
 	}
@@ -84,19 +138,7 @@ func TestHealthWatchFailsOverAfterThreshold(t *testing.T) {
 		t.Fatalf("failover landed on %v, want hy2-id (vless excluded, next by preference)", c["node"])
 	}
 	if got := h.runner.starts(); got != 2 {
-		t.Errorf("starts = %d, want 2 (initial + one failover)", got)
-	}
-	if id, _ := h.daemon.lastGood.Get(p.ID); id != "hy2-id" {
-		t.Errorf("last-good = %q, want hy2-id after failover", id)
-	}
-
-	// The node it moved to probes healthy, so it must not churn onward.
-	time.Sleep(40 * time.Millisecond)
-	if got := h.runner.starts(); got != 2 {
-		t.Errorf("starts = %d after settling, want a stable 2 (no churn on a healthy node)", got)
-	}
-	if st := h.daemon.snapshotState(); st.State != StateConnected || st.Node != "hy2-id" {
-		t.Errorf("state = %q on %q, want connected on hy2-id", st.State, st.Node)
+		t.Errorf("starts = %d, want 2 (initial + one failover reconnect)", got)
 	}
 }
 
@@ -314,4 +356,37 @@ func TestDefaultHealthProbeUsesRunner(t *testing.T) {
 	if err := h.daemon.defaultHealthProbe(context.Background()); err != nil {
 		t.Errorf("default health probe should pass through a healthy outbound, got %v", err)
 	}
+}
+
+// TestHealthWatchReconnectsWhenNoOtherExitCarriesTraffic: the seamless path only
+// moves onto an exit it has measured, and a candidate that answers nothing is not
+// one. With every other exit black-holing the same control destinations, the
+// watchdog must not point the tunnel at one anyway — it says so and falls back to
+// the reconnect walk, which at least rebuilds the handshake from scratch.
+func TestHealthWatchReconnectsWhenNoOtherExitCarriesTraffic(t *testing.T) {
+	h := newHarness(t)
+	p := seedMultiProto(t, h)
+
+	// Nothing measures usable through the live process, from the start.
+	h.runner.failAllVia()
+
+	probe := &scriptedProbe{verdict: func(call int) error {
+		if call <= 3 {
+			return errors.New("probe: node down")
+		}
+		return nil
+	}}
+	h.tuneHealth(5*time.Millisecond, 100*time.Millisecond, 3, probe.fn)
+
+	h.send(Request{ID: 1, Cmd: CmdConnect, Profile: p.ID})
+	h.await()
+	if c := h.awaitState(StateConnected); c["node"] != "vless-id" {
+		t.Fatalf("initial connect landed on %v, want vless-id", c["node"])
+	}
+
+	h.awaitLogContaining("none of the others carried traffic either")
+	if hr := h.awaitState(StateHealthReconnecting); hr["node"] != "vless-id" {
+		t.Errorf("health_reconnecting named %v, want the degraded vless-id", hr["node"])
+	}
+	h.waitStarts(2)
 }

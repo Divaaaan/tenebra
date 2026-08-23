@@ -229,7 +229,7 @@ func TestApplyStrategyRendersIntoConfig(t *testing.T) {
 	strat := fallback.Strategy{Name: "alt-sni", Fingerprint: "firefox", ServerName: "static.example"}
 
 	out := applyStrategyToNodes(nodes, nodeIDs, "vless-id", strat)
-	cfgJSON, err := buildConfigJSON(out, "Reality-1", routing.Options{Mode: routing.ModeSmart}, singbox.TunOptions{})
+	cfgJSON, _, err := buildConfigJSON(out, "Reality-1", routing.Options{Mode: routing.ModeSmart}, singbox.TunOptions{})
 	if err != nil {
 		t.Fatalf("build config: %v", err)
 	}

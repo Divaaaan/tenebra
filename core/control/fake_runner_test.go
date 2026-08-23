@@ -68,10 +68,46 @@ type fakeRunner struct {
 	// a process exit. n is the cumulative probe count. It runs before the
 	// fail/success decision.
 	onProbe func(ctx context.Context, n int)
+
+	// selects records every Select call, in order, so a test can assert what the
+	// live selector was pointed at (and, by their absence, that nothing was
+	// steered). selectErr, when set, makes every Select fail — the runner that
+	// cannot steer, which must degrade to a full reconnect.
+	selects   []selectCall
+	selectErr error
+
+	// viaDelays and viaErrs script ProbeVia per outbound tag: a tag present in
+	// viaErrs fails, otherwise the delay from viaDelays (or viaDefault) is
+	// returned. viaErrAll fails every tag — the field where no exit carries
+	// traffic. viaCalls records every call so a scan's shape is assertable.
+	viaDelays  map[string]int
+	viaErrs    map[string]error
+	viaErrAll  error
+	viaDefault int
+	viaCalls   []viaCall
+}
+
+// selectCall is one recorded Select: the group steered and the outbound it was
+// pointed at.
+type selectCall struct {
+	group string
+	tag   string
+}
+
+// viaCall is one recorded ProbeVia: the outbound measured and the destination it
+// was measured against.
+type viaCall struct {
+	tag    string
+	target string
 }
 
 func newFakeRunner() *fakeRunner {
-	return &fakeRunner{done: make(chan error)} // never fires until Start
+	return &fakeRunner{
+		done:       make(chan error), // never fires until Start
+		viaDelays:  map[string]int{},
+		viaErrs:    map[string]error{},
+		viaDefault: 20,
+	}
 }
 
 func (f *fakeRunner) Start(ctx context.Context, configJSON []byte) error {
@@ -130,6 +166,70 @@ func (f *fakeRunner) Probe(ctx context.Context, tag string) (int, error) {
 		return 0, errors.New("fake probe: blocked")
 	}
 	return delay, nil
+}
+
+// Select records the requested selection and reports the scripted outcome. A
+// successful Select does NOT change what Probe answers: a runner that accepts a
+// selection and then carries nothing is exactly the case the switch path has to
+// catch, so tests drive the two independently.
+func (f *fakeRunner) Select(ctx context.Context, group, tag string) error {
+	f.mu.Lock()
+	f.selects = append(f.selects, selectCall{group: group, tag: tag})
+	err := f.selectErr
+	f.mu.Unlock()
+	if cerr := ctx.Err(); cerr != nil {
+		return cerr
+	}
+	return err
+}
+
+// ProbeVia answers per-outbound: a tag scripted in viaErrs fails, anything else
+// returns its scripted delay (or viaDefault).
+func (f *fakeRunner) ProbeVia(ctx context.Context, tag, target string) (int, error) {
+	f.mu.Lock()
+	f.viaCalls = append(f.viaCalls, viaCall{tag: tag, target: target})
+	err := f.viaErrs[tag]
+	if err == nil {
+		err = f.viaErrAll
+	}
+	delay, ok := f.viaDelays[tag]
+	if !ok {
+		delay = f.viaDefault
+	}
+	f.mu.Unlock()
+	if cerr := ctx.Err(); cerr != nil {
+		return 0, cerr
+	}
+	if err != nil {
+		return 0, err
+	}
+	return delay, nil
+}
+
+// selectCalls returns a copy of every Select the runner was asked to make.
+func (f *fakeRunner) selectCalls() []selectCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]selectCall, len(f.selects))
+	copy(out, f.selects)
+	return out
+}
+
+// viaProbes returns a copy of every ProbeVia call, in order.
+func (f *fakeRunner) viaProbes() []viaCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]viaCall, len(f.viaCalls))
+	copy(out, f.viaCalls)
+	return out
+}
+
+// failAllVia scripts ProbeVia to fail for every outbound: the machine where no
+// exit carries traffic, so a degradation has nowhere better to go.
+func (f *fakeRunner) failAllVia() {
+	f.mu.Lock()
+	f.viaErrAll = errors.New("fake probe via: blocked")
+	f.mu.Unlock()
 }
 
 // Logs returns a copy of the seeded sing-box output tail, satisfying the

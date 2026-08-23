@@ -49,6 +49,19 @@ type Runner interface {
 	// flows through that outbound; any error (blocked protocol, dead upstream, API
 	// not yet listening, ctx cancelled) means it does not. ctx bounds the call.
 	Probe(ctx context.Context, tag string) (delayMs int, err error)
+	// ProbeVia is Probe against a caller-chosen destination, through any outbound
+	// in the running config rather than only the selector. It is how a candidate
+	// exit is judged before the tunnel is moved onto it: several unalike targets
+	// through the candidate's own outbound, measured by the process that is
+	// already running, so nothing is torn down to find out whether somewhere else
+	// works (see core/nodecheck for why one target is not enough).
+	ProbeVia(ctx context.Context, tag, target string) (delayMs int, err error)
+	// Select points the running process's selector group at the outbound named
+	// tag. A nil error means the live tunnel now egresses through that node with
+	// no restart: same process, same tun, same routes. Any error means the switch
+	// did not take and the caller must fall back to a reconnect rather than
+	// report a move that did not happen.
+	Select(ctx context.Context, group, tag string) error
 	// Done delivers the process's exit: it sends the exit error (nil on a clean
 	// exit) once and is closed afterwards. Before any Start it must block.
 	Done() <-chan error
@@ -154,6 +167,21 @@ type Daemon struct {
 	// its status re-sync; teardown clears it when a walk ends or is superseded.
 	// Guarded by mu.
 	attempts *attemptsEvent
+
+	// live describes the sing-box config the running process was started with: the
+	// selector group it exposes and which node each of its members is. It is what a
+	// live exit change is decided against — the running process, not a profile that
+	// may have been refreshed since it started. nil while nothing is connected;
+	// teardown clears it. Guarded by mu.
+	live *liveConfig
+
+	// autoSwitches are the times the watchdog last moved the exit on its own, and
+	// degradedAt when each node last ran out of health probes. Together they are the
+	// hysteresis: a node that just failed is not switched back to, and a field of
+	// exits that all keep failing stops being churned (see hotswitch.go). Guarded by
+	// mu.
+	autoSwitches []time.Time
+	degradedAt   map[string]time.Time
 
 	// lastGood remembers the node that last connected per profile, feeding node
 	// selection on a connect without an explicit node.
@@ -266,6 +294,22 @@ type Daemon struct {
 	healthProbeTimeout  time.Duration
 	healthFailThreshold int
 	healthProbe         func(ctx context.Context) error
+
+	// live-switch timings, injectable so tests drive them without waiting out the
+	// production values. switchVerifyBudget caps the confirmation that traffic
+	// really flows through a newly selected exit; switchProbeTimeout bounds one
+	// call inside it. autoSwitchCooldown is the minimum gap between two automatic
+	// exit changes, autoSwitchWindow the span over which maxAutoSwitches of them
+	// are allowed, and degradedRetryAfter how long a node that ran out of health
+	// probes is passed over. switchScanLimit caps how many candidates one
+	// degradation scan measures.
+	switchProbeTimeout time.Duration
+	switchVerifyBudget time.Duration
+	autoSwitchCooldown time.Duration
+	autoSwitchWindow   time.Duration
+	maxAutoSwitches    int
+	degradedRetryAfter time.Duration
+	switchScanLimit    int
 
 	// fetch retrieves a subscription body. It is injectable so the auto-refresh
 	// logic can be unit-tested offline; production uses subscription.Fetch.
@@ -455,6 +499,14 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 		healthInterval:      defaultHealthInterval,
 		healthProbeTimeout:  defaultHealthProbeTimeout,
 		healthFailThreshold: defaultHealthFailThreshold,
+
+		switchProbeTimeout: defaultSwitchProbeTimeout,
+		switchVerifyBudget: defaultSwitchVerifyBudget,
+		autoSwitchCooldown: defaultAutoSwitchCooldown,
+		autoSwitchWindow:   defaultAutoSwitchWindow,
+		maxAutoSwitches:    defaultMaxAutoSwitches,
+		degradedRetryAfter: defaultDegradedRetryAfter,
+		switchScanLimit:    defaultSwitchScanLimit,
 
 		relaunchResetAfter: defaultRelaunchReset,
 	}

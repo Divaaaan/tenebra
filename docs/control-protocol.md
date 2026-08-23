@@ -259,6 +259,42 @@ request:  {"id":7,"cmd":"connect","profile":"p1","auto":true}
 response: {"id":7,"ok":true,"data":{"state":"connecting","profile":"p1"}}
 ```
 
+### Changing the exit on a live tunnel
+
+A `connect` naming a `node` while the tunnel is already up on that profile does
+**not** rebuild the tunnel. Every node of the profile is already an outbound in
+the running sing-box, behind one selector, so the core points that selector at
+the requested node over the process's own loopback clash API: the sing-box
+process, the tun device and its routes stay exactly as they are.
+
+Connections already established are **not** cut. The selector is built with
+`interrupt_exist_connections: false`, so an in-flight download, call or ssh
+session finishes through the exit it was dialled through and only *new*
+connections take the new node. (sing-box still interrupts its own internal dials,
+which is what makes DNS follow the new exit immediately.)
+
+The switch is confirmed before it is reported: the core probes through the newly
+selected exit, and a probe that does not come up puts the previous exit back and
+falls through to the ordinary reconnect. The **response says which happened**:
+
+```
+request:  {"id":8,"cmd":"connect","profile":"p1","node":"n3"}
+response: {"id":8,"ok":true,"data":{"state":"connected","node":"n3"}}   // steered, nothing reconnected
+response: {"id":8,"ok":true,"data":{"state":"connecting","node":"n3"}}  // could not steer; rebuilding
+```
+
+A steered switch emits no `connecting` state at all — only a `connected` state
+naming the new node, an `attempts` snapshot holding that one node, and a log line.
+A UI must not render "reconnecting" for it, because nothing reconnected.
+
+The core falls back to the full reconnect whenever the running process cannot be
+steered to the request: nothing connected, a different profile, a node the running
+config never rendered (added by a subscription refresh since the connect), a
+selector that does not carry it (which is what **multihop** looks like — the chain
+collapses the selector onto the exit), or a clash API that refuses the selection.
+The fallback is the behaviour every node change had before, so a switch that is
+impossible costs the user a reconnect, never an error.
+
 ### Batch link import (`import_links`)
 
 `import_links` collects several share links into **one** manual profile holding
@@ -459,17 +495,39 @@ response: {"id":11,"ok":true,"data":{"state":"idle","tun_stack":"system","autoco
 While `connected`, the core runs a watchdog that probes the active node through
 the tunnel on an interval (a clash-API delay test through the selector — the same
 in-tunnel reachability check a connect uses to confirm a node came up). When the
-node misses several probes in a row, the core reconnects **on its own** to a
-different node, reusing the ordinary fallback walk with the degraded node excluded
-so it lands on another exit rather than the one it just left. No user action is
-involved; the walk records the new node as last-good like any connect.
+node misses several probes in a row, the core moves the user off it **on its own**.
+No user action is involved; the new node is recorded as last-good like any connect.
 
-The switch is announced with a one-shot `health_reconnecting` state (naming the
-node being left) right before the reconnect, so a UI can tell an automatic
-failover apart from a user connect; the ordinary `connecting` → `connected`
-sequence to the new node follows. A profile with no other usable node has nowhere
-to fail over to, so the core logs it and keeps the (possibly recoverable) tunnel
-up rather than churning the same node.
+It moves the exit the cheap way first. Candidate exits are measured *through the
+running process* — each one's own outbound is asked to fetch the same set of
+unalike control destinations `check_nodes` uses, and a candidate counts only if a
+strict majority of them survive it — and the best one is then selected live, the
+same seamless path a user-driven node change takes. The tunnel is never taken
+down, so the session survives a degraded exit.
+
+Only when that is impossible (a config that cannot be steered, a selection the API
+refuses, or a candidate that does not carry traffic once selected) does the core
+fall back to reconnecting: the ordinary fallback walk with the degraded node
+excluded, announced with a one-shot `health_reconnecting` state naming the node
+being left, followed by the usual `connecting` → `connected` sequence. A profile
+with no other usable node has nowhere to go, so the core logs it and keeps the
+(possibly recoverable) tunnel up rather than churning the same node.
+
+Automatic switching is deliberately damped, so a bad local network cannot walk the
+user around the whole node list:
+
+- three consecutive failed probes (~75s at the default interval) before anything
+  moves at all;
+- at most one automatic switch every **3 minutes** — one move has to be given the
+  chance to prove itself;
+- at most **3** automatic switches in any **15-minute** window, after which the
+  core says so in the log and stops moving: three exits that all failed to fix it
+  is evidence the problem is not the exit;
+- a node that ran out of health probes is passed over for **10 minutes**, so two
+  flapping exits cannot hand the user back and forth.
+
+A probe that succeeds clears the run of failures, and the 15-minute window slides,
+so a session that settles recovers its full budget on its own.
 
 `on: true` (the default) arms the watchdog; `false` disarms it. The preference is
 persisted in `settings.json` and reported as `auto_failover` in `State`. Unlike

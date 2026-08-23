@@ -73,8 +73,22 @@ func (d *Daemon) healthWatch(ctx context.Context, gen uint64, profileID, nodeID 
 				continue
 			}
 
-			// Threshold reached: the node has missed too many probes in a row.
-			switch d.healthFailover(gen, profileID, nodeID) {
+			// A live switch moves the exit without a new generation, so the node this
+			// goroutine was started on may not be the one degrading. Everything past
+			// here is about the exit actually carrying traffic right now.
+			active := d.liveNode(nodeID)
+
+			// Threshold reached: the node has missed too many probes in a row. Try to
+			// move the exit without touching the tunnel first — the user keeps their
+			// session, and everything already open finishes on the old exit instead of
+			// being cut. Only when that is impossible or does not hold up does this
+			// fall through to the reconnect-based failover.
+			if d.autoSwitchAway(ctx, gen, profileID, active) {
+				fails, warnedNoAlt = 0, false
+				continue
+			}
+
+			switch d.healthFailover(gen, profileID, active) {
 			case failoverStarted:
 				return // the reconnect owns the connection from here
 			case failoverNoAlternative:
