@@ -38,9 +38,11 @@ func (d *Daemon) physicalIfaceIndex() int {
 	own := strings.ToLower(singbox.DefaultTUNName())
 
 	var best tunguard.Iface
+	bestMetric := 0
 	found, tied := false, false
 	for _, i := range ifaces {
-		if !i.HasDefaultRoute || tunguard.IsTunnelIface(i) {
+		metric, hasDefault := i.BestMetric()
+		if !hasDefault || tunguard.IsTunnelIface(i) {
 			continue
 		}
 		if own != "" && strings.HasPrefix(strings.ToLower(i.Name), own) {
@@ -48,10 +50,10 @@ func (d *Daemon) physicalIfaceIndex() int {
 		}
 		switch {
 		case !found:
-			best, found = i, true
-		case i.RouteMetric < best.RouteMetric:
-			best, tied = i, false
-		case i.RouteMetric == best.RouteMetric:
+			best, bestMetric, found = i, metric, true
+		case metric < bestMetric:
+			best, bestMetric, tied = i, metric, false
+		case metric == bestMetric:
 			tied = true
 		}
 	}

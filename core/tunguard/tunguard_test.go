@@ -8,7 +8,7 @@ import (
 
 // physical is the machine's real uplink: it owns a default route, and that is
 // entirely normal.
-var physical = Iface{Name: "Ethernet", HasDefaultRoute: true, RouteMetric: 25}
+var physical = Iface{Name: "Ethernet", HasDefault4: true, Metric4: 25}
 
 func TestConflictsFindsTheSecondTunnel(t *testing.T) {
 	// The 2026-08-18 layout: two sing-tun adapters, both holding a default route
@@ -16,8 +16,8 @@ func TestConflictsFindsTheSecondTunnel(t *testing.T) {
 	// clients reported themselves connected.
 	ifaces := []Iface{
 		physical,
-		{Name: "vpnfix", IsTunnel: true, HasDefaultRoute: true},
-		{Name: "tun0", IsTunnel: true, HasDefaultRoute: true},
+		{Name: "vpnfix", IsTunnel: true, HasDefault4: true},
+		{Name: "tun0", IsTunnel: true, HasDefault4: true},
 	}
 
 	got := Conflicts(ifaces, "vpnfix")
@@ -31,7 +31,7 @@ func TestConflictsIgnoresOurOwnInterfaces(t *testing.T) {
 	// about to take over would make the guard unusable.
 	ifaces := []Iface{
 		physical,
-		{Name: "tenebra", IsTunnel: true, HasDefaultRoute: true},
+		{Name: "tenebra", IsTunnel: true, HasDefault4: true},
 	}
 	if got := Conflicts(ifaces, "tenebra"); len(got) != 0 {
 		t.Fatalf("Conflicts = %+v, want none (that is our own tun)", got)
@@ -49,8 +49,8 @@ func TestConflictsIgnoresTunnelParkedAtAWorseMetric(t *testing.T) {
 	// that cries wolf gets switched off, taking the real protection with it.
 	ifaces := []Iface{
 		physical, // Ethernet, metric 25
-		{Name: "Radmin VPN", HasDefaultRoute: true, RouteMetric: 9257},
-		{Name: "tun0", IsTunnel: true, HasDefaultRoute: true, RouteMetric: 0},
+		{Name: "Radmin VPN", HasDefault4: true, Metric4: 9257},
+		{Name: "tun0", IsTunnel: true, HasDefault4: true, Metric4: 0},
 	}
 
 	got := Conflicts(ifaces, "tenebra")
@@ -62,7 +62,7 @@ func TestConflictsIgnoresTunnelParkedAtAWorseMetric(t *testing.T) {
 func TestConflictsFlagsEveryTunnelWhenThereIsNoUplink(t *testing.T) {
 	// With no physical default route there is nothing for a tunnel to lose to,
 	// so even a high metric wins by default and must still be reported.
-	ifaces := []Iface{{Name: "tun0", IsTunnel: true, HasDefaultRoute: true, RouteMetric: 9000}}
+	ifaces := []Iface{{Name: "tun0", IsTunnel: true, HasDefault4: true, Metric4: 9000}}
 	if got := Conflicts(ifaces, "tenebra"); len(got) != 1 {
 		t.Fatalf("Conflicts = %+v, want tun0 flagged", got)
 	}
@@ -79,7 +79,7 @@ func TestConflictsIgnoresTunnelWithoutDefaultRoute(t *testing.T) {
 	// packets, so it is not a conflict however tunnel-like its name is.
 	ifaces := []Iface{
 		physical,
-		{Name: "wg-corp", IsTunnel: true, HasDefaultRoute: false},
+		{Name: "wg-corp", IsTunnel: true, HasDefault4: false},
 	}
 	if got := Conflicts(ifaces); len(got) != 0 {
 		t.Fatalf("Conflicts = %+v, want none — no default route", got)
@@ -91,7 +91,7 @@ func TestConflictsFallsBackToNameWhenAdapterCannotClassify(t *testing.T) {
 	// then the only signal, and vendors ship names like these.
 	for _, name := range []string{"tun0", "utun4", "VpnFix", "Hiddify Tunnel", "sing-tun Tunnel", "wg0"} {
 		t.Run(name, func(t *testing.T) {
-			got := Conflicts([]Iface{{Name: name, HasDefaultRoute: true}})
+			got := Conflicts([]Iface{{Name: name, HasDefault4: true}})
 			if len(got) != 1 {
 				t.Fatalf("Conflicts(%q) = %+v, want it flagged", name, got)
 			}
@@ -100,7 +100,7 @@ func TestConflictsFallsBackToNameWhenAdapterCannotClassify(t *testing.T) {
 	// And a plain NIC name must not be dragged in by the heuristic.
 	for _, name := range []string{"Ethernet", "Wi-Fi", "eth0", "en0"} {
 		t.Run(name, func(t *testing.T) {
-			got := Conflicts([]Iface{{Name: name, HasDefaultRoute: true}})
+			got := Conflicts([]Iface{{Name: name, HasDefault4: true}})
 			if len(got) != 0 {
 				t.Fatalf("Conflicts(%q) = %+v, want it ignored", name, got)
 			}
@@ -111,7 +111,7 @@ func TestConflictsFallsBackToNameWhenAdapterCannotClassify(t *testing.T) {
 func TestCheckRefusesAndExplains(t *testing.T) {
 	ifaces := []Iface{
 		physical,
-		{Name: "tun0", IsTunnel: true, HasDefaultRoute: true, RouteMetric: 0},
+		{Name: "tun0", IsTunnel: true, HasDefault4: true, Metric4: 0},
 	}
 
 	err := Check(ifaces, false, "tenebra")
@@ -146,7 +146,7 @@ func TestOverrideIsExplicitAndWins(t *testing.T) {
 	// The escape hatch must work for the user who knows their routes do not
 	// overlap — but it is only ever reachable by an explicit action, never a
 	// default, since a silently-set override restores the original bug.
-	ifaces := []Iface{{Name: "tun0", IsTunnel: true, HasDefaultRoute: true}}
+	ifaces := []Iface{{Name: "tun0", IsTunnel: true, HasDefault4: true}}
 	if err := Check(ifaces, true, "tenebra"); err != nil {
 		t.Fatalf("override did not pass: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestOverrideIsExplicitAndWins(t *testing.T) {
 func TestConflictsFindsTunnelsWhoseNameSaysNothingGeneric(t *testing.T) {
 	for _, name := range []string{"Tailscale", "NordLynx", "CloudflareWARP", "Mullvad", "ZeroTier One"} {
 		t.Run(name, func(t *testing.T) {
-			ifaces := []Iface{physical, {Name: name, HasDefaultRoute: true, RouteMetric: 0}}
+			ifaces := []Iface{physical, {Name: name, HasDefault4: true, Metric4: 0}}
 			if got := Conflicts(ifaces, "tenebra"); len(got) != 1 {
 				t.Fatalf("Conflicts(%q) = %+v, want it flagged", name, got)
 			}
@@ -176,7 +176,7 @@ func TestConflictsFindsTunnelsWhoseNameSaysNothingGeneric(t *testing.T) {
 func TestConflictsReadsTheAdapterDescription(t *testing.T) {
 	ifaces := []Iface{
 		physical,
-		{Name: "Ethernet 2", Description: "TAP-Windows Adapter V9", HasDefaultRoute: true},
+		{Name: "Ethernet 2", Description: "TAP-Windows Adapter V9", HasDefault4: true},
 	}
 	got := Conflicts(ifaces, "tenebra")
 	if len(got) != 1 || got[0].Name != "Ethernet 2" {
@@ -223,9 +223,9 @@ func TestUnrecognisedTunnelDoesNotZeroTheUplink(t *testing.T) {
 		physical, // Ethernet, metric 25
 		// OpenVPN's TAP adapter: an ordinary-looking name, a default route, and
 		// the metric 0 every tunnel installs.
-		{Name: "Ethernet 2", Description: "TAP-Windows Adapter V9", HasDefaultRoute: true, RouteMetric: 0},
+		{Name: "Ethernet 2", Description: "TAP-Windows Adapter V9", HasDefault4: true, Metric4: 0},
 		// A second VPN that does beat the physical uplink and must be reported.
-		{Name: "Tailscale", HasDefaultRoute: true, RouteMetric: 5},
+		{Name: "Tailscale", HasDefault4: true, Metric4: 5},
 	}
 
 	got := Conflicts(ifaces, "tenebra")
@@ -241,15 +241,117 @@ func TestUnrecognisedTunnelDoesNotZeroTheUplink(t *testing.T) {
 func TestOurOwnTunIsNotForeignWhenWindowsRenamesIt(t *testing.T) {
 	ifaces := []Iface{
 		physical,
-		{Name: "tenebra 2", Description: "sing-tun Tunnel", HasDefaultRoute: true, RouteMetric: 0},
+		{Name: "tenebra 2", Description: "sing-tun Tunnel", HasDefault4: true, Metric4: 0},
 	}
 	if got := Conflicts(ifaces, "tenebra"); len(got) != 0 {
 		t.Fatalf("Conflicts = %+v, want none — that is our own tun under a Windows suffix", got)
 	}
 	// And it must not be counted as the physical uplink either, or it drags the
 	// comparison bar down to its own metric.
-	ifaces = append(ifaces, Iface{Name: "Tailscale", HasDefaultRoute: true, RouteMetric: 5})
+	ifaces = append(ifaces, Iface{Name: "Tailscale", HasDefault4: true, Metric4: 5})
 	if got := Conflicts(ifaces, "tenebra"); len(got) != 1 || got[0].Name != "Tailscale" {
 		t.Fatalf("Conflicts = %+v, want only Tailscale", got)
+	}
+}
+
+// TestConflictsComparesWithinAddressFamily is the family-mixing bug (issue 2): a
+// tunnel that wins the IPv4 route must be flagged even when the machine's IPv6
+// uplink has a lower metric. Collapsing the two families into one number let the
+// v6 figure (5) stand in for the v4 comparison, so a tunnel beating the v4 uplink
+// (25) at metric 10 read as "parked at a losing metric" and sailed through.
+func TestConflictsComparesWithinAddressFamily(t *testing.T) {
+	ifaces := []Iface{
+		// The physical uplink: an ordinary v4 metric, but a very low v6 one.
+		{Name: "Ethernet", HasDefault4: true, Metric4: 25, HasDefault6: true, Metric6: 5},
+		// A tunnel that owns IPv4 at a metric that beats the v4 uplink.
+		{Name: "tun0", IsTunnel: true, HasDefault4: true, Metric4: 10},
+	}
+	got := Conflicts(ifaces, "tenebra")
+	if len(got) != 1 || got[0].Name != "tun0" {
+		t.Fatalf("Conflicts = %+v, want tun0 flagged: it wins the v4 route, and the v6 uplink metric is a different scale", got)
+	}
+}
+
+// TestConflictsFindsAV6OnlyTunnel is issue 3: a tunnel that owns only ::/0
+// captures every AAAA-resolved destination on a dual-stack machine — most of
+// them. With the route table read for IPv4 only, or with no IPv6 uplink to
+// compare against, it was invisible.
+func TestConflictsFindsAV6OnlyTunnel(t *testing.T) {
+	ifaces := []Iface{
+		{Name: "Ethernet", HasDefault4: true, Metric4: 25},            // v4 uplink only
+		{Name: "tun0", IsTunnel: true, HasDefault6: true, Metric6: 0}, // owns ::/0 only
+	}
+	got := Conflicts(ifaces, "tenebra")
+	if len(got) != 1 || got[0].Name != "tun0" {
+		t.Fatalf("Conflicts = %+v, want the ::/0 tunnel flagged; a v4 uplink does not cover for a missing v6 one", got)
+	}
+}
+
+// TestConflictsIgnoresAV6TunnelParkedBehindAV6Uplink: the parked-metric rule
+// holds per family too. A v6 tunnel the stack will never choose because the v6
+// uplink is better is a false alarm, not a conflict.
+func TestConflictsIgnoresAV6TunnelParkedBehindAV6Uplink(t *testing.T) {
+	ifaces := []Iface{
+		{Name: "Ethernet", HasDefault4: true, Metric4: 25, HasDefault6: true, Metric6: 25},
+		{Name: "tun0", IsTunnel: true, HasDefault6: true, Metric6: 9000},
+	}
+	if got := Conflicts(ifaces, "tenebra"); len(got) != 0 {
+		t.Fatalf("Conflicts = %+v, want none — the v6 tunnel loses to the v6 uplink", got)
+	}
+}
+
+// TestConflictsFlagsATunnelThatWinsOnlyOneFamily: losing the route on IPv4 does
+// not clear a tunnel that wins it on IPv6. Half the machine's traffic still goes
+// to the wrong place, which is the whole failure the guard exists to stop.
+func TestConflictsFlagsATunnelThatWinsOnlyOneFamily(t *testing.T) {
+	ifaces := []Iface{
+		{Name: "Ethernet", HasDefault4: true, Metric4: 25, HasDefault6: true, Metric6: 25},
+		// Parked on v4 (9000 > 25), but beats the v6 uplink (5 < 25).
+		{Name: "tun0", IsTunnel: true, HasDefault4: true, Metric4: 9000, HasDefault6: true, Metric6: 5},
+	}
+	got := Conflicts(ifaces, "tenebra")
+	if len(got) != 1 || got[0].Name != "tun0" {
+		t.Fatalf("Conflicts = %+v, want tun0 flagged: it wins the v6 route", got)
+	}
+}
+
+// TestUplinkExcludesOurOwnTunUnderACustomName is the ownNames-in-uplinkMetric
+// case (issue 5): our own tun is excluded from the physical-uplink metric by
+// name, not only when it carries the hardcoded brand. A user-set InterfaceName
+// with no tunnel fragment in it, holding the default route at metric 0 as every
+// tun does, would otherwise be counted as a metric-0 uplink and drag the bar
+// every foreign tunnel is measured against down to 0 — waving the real conflict
+// through as "parked".
+func TestUplinkExcludesOurOwnTunUnderACustomName(t *testing.T) {
+	ifaces := []Iface{
+		{Name: "Ethernet", HasDefault4: true, Metric4: 25},
+		// Our own tun under a user-chosen name with no tunnel fragment, so only
+		// ownNames can keep it from being read as a physical uplink.
+		{Name: "corp-gw", HasDefault4: true, Metric4: 0},
+		// A foreign tunnel that beats the real uplink and must still be flagged.
+		{Name: "tun0", IsTunnel: true, HasDefault4: true, Metric4: 5},
+	}
+	got := Conflicts(ifaces, "corp-gw")
+	if len(got) != 1 || got[0].Name != "tun0" {
+		t.Fatalf("Conflicts = %+v, want only tun0 — our own custom-named tun must not zero the uplink bar", got)
+	}
+}
+
+// TestOwnTunUnderCustomNameWithWindowsSuffix: the "<name> 2" rename applies to a
+// custom InterfaceName too — Windows appends the suffix to whatever name we asked
+// for, not only to the brand. Matched by prefix, "corp-gw 2" is still ours, and
+// must be neither flagged nor counted as the uplink.
+func TestOwnTunUnderCustomNameWithWindowsSuffix(t *testing.T) {
+	ifaces := []Iface{
+		{Name: "Ethernet", HasDefault4: true, Metric4: 25},
+		{Name: "corp-gw 2", IsTunnel: true, HasDefault4: true, Metric4: 0},
+	}
+	if got := Conflicts(ifaces, "corp-gw"); len(got) != 0 {
+		t.Fatalf("Conflicts = %+v, want none — that is our own tun under a Windows suffix", got)
+	}
+	// It must not be the uplink either: add a foreign tunnel and only it should show.
+	ifaces = append(ifaces, Iface{Name: "tun0", IsTunnel: true, HasDefault4: true, Metric4: 5})
+	if got := Conflicts(ifaces, "corp-gw"); len(got) != 1 || got[0].Name != "tun0" {
+		t.Fatalf("Conflicts = %+v, want only tun0", got)
 	}
 }

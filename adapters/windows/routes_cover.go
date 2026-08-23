@@ -1,5 +1,10 @@
 package windows
 
+import (
+	"math/big"
+	"sort"
+)
+
 // Default-route coverage: what it takes for one interface to be able to capture
 // arbitrary traffic, which is the only question the tun-conflict guard asks of a
 // route table.
@@ -15,33 +20,41 @@ package windows
 // literal-/0 test finds nothing and the guard reports "all clear" for a client
 // carrying 100% of the traffic.
 //
+// The /1 pair is only the common instance of a general shape. Any set of
+// prefixes whose ranges tile the whole address space captures everything: /0, the
+// /1 pair, the four /2s (0.0.0.0/2 + 64.0.0.0/2 + 128.0.0.0/2 + 192.0.0.0/2), or
+// a mix of sizes. Pattern-matching one fixed shape would miss the next one, so
+// coverage is decided honestly — by asking whether the interface's routes, taken
+// together, leave any address in the family uncovered. A lone half (/1) or
+// quarter (/2) is deliberately not coverage: that is a scoped tunnel, which the
+// guard lets through, since refusing to connect over a tunnel that cannot swallow
+// our packets is a false alarm the user cannot act on.
+//
 // The accumulation lives in its own file, free of any OS import, so the rule can
 // be tested on every platform the CI builds rather than only where a real route
 // table exists.
 
-// routeCover accumulates, for one interface and one address family, the
-// default-shaped prefixes that interface has claimed, plus the best metric among
-// them.
-type routeCover struct {
-	full   bool // 0.0.0.0/0 or ::/0
-	lower  bool // the /1 below the midpoint: 0.0.0.0/1, ::/1
-	upper  bool // the /1 above it: 128.0.0.0/1, 8000::/1
+// coverPrefix is one route reduced to what the coverage math needs: how many
+// leading bits are fixed, the network address those bits spell, and the effective
+// metric the stack ranks the route by.
+type coverPrefix struct {
+	ones   int
+	addr   []byte // network address; 4 bytes for IPv4, 16 for IPv6
 	metric uint32
-	seen   bool
 }
 
-// covers reports whether the accumulated prefixes reach every address in the
-// family: a default route, or both halves of the split pair.
-//
-// One half on its own is not enough. It routes half the address space and leaves
-// the other half where it was, which is a scoped tunnel — the case the guard
-// deliberately lets through, since refusing to connect over a tunnel that cannot
-// swallow our packets is a false alarm the user cannot act on.
-func (c routeCover) covers() bool { return c.full || (c.lower && c.upper) }
+// routeCover accumulates, for one interface and one address family, the routes
+// that interface has claimed. Whether the set tiles the family, and the metric it
+// does so at, are derived from the whole set rather than tracked incrementally:
+// coverage is a property no single route carries on its own.
+type routeCover struct {
+	prefixes []coverPrefix
+}
 
 // coverKey identifies one accumulator. The address family is part of it so a
-// half claimed over IPv4 and a half claimed over IPv6 never add up to coverage
-// of either.
+// half claimed over IPv4 and a half claimed over IPv6 never add up to coverage of
+// either, and so the two families' metrics — which the stack never ranks against
+// each other — stay apart.
 type coverKey struct {
 	index  uint32
 	family uint16 // whatever the platform calls IPv4/IPv6; only used to keep them apart
@@ -51,13 +64,17 @@ type coverKey struct {
 type coverTable map[coverKey]*routeCover
 
 // add records one route: the interface it belongs to, its address family, the
-// destination network address, the prefix length, and the metric by which the
-// stack ranks it.
+// destination network address, the prefix length, and the effective metric by
+// which the stack ranks it.
 //
-// Prefixes other than /0 and the two halves cannot cover the address space alone
-// or together, so they are dropped here rather than stored and filtered later.
+// A route whose destination is not the network address of its own prefix is
+// dropped: 1.2.3.4/1 is a route somebody wrote by hand, not half the internet,
+// and folding it into coverage would invent a tunnel that is not there. Every
+// well-formed prefix length is kept — not only /0 and /1 — because coverage is a
+// property of the whole set, and a set of /2s tiles the space no less than the /1
+// pair does.
 func (t coverTable) add(index uint32, family uint16, dest []byte, ones int, metric uint32) {
-	if len(dest) == 0 || ones > 1 || ones < 0 || !isNetworkAddress(dest, ones) {
+	if len(dest) == 0 || ones < 0 || ones > len(dest)*8 || !isNetworkAddress(dest, ones) {
 		return
 	}
 	key := coverKey{index: index, family: family}
@@ -66,34 +83,105 @@ func (t coverTable) add(index uint32, family uint16, dest []byte, ones int, metr
 		c = &routeCover{}
 		t[key] = c
 	}
-	switch {
-	case ones == 0:
-		c.full = true
-	case dest[0]&0x80 == 0:
-		c.lower = true
-	default:
-		c.upper = true
-	}
-	if !c.seen || metric < c.metric {
-		c.metric, c.seen = metric, true
-	}
+	// Copy the address: dest points into the OS route-table buffer the caller
+	// frees the moment it has walked the rows, and this slice outlives that walk.
+	addr := append([]byte(nil), dest...)
+	c.prefixes = append(c.prefixes, coverPrefix{ones: ones, addr: addr, metric: metric})
 }
 
-// defaults returns, per interface index, the metric of the best route by which
-// that interface can capture arbitrary traffic. An interface absent from the map
-// has no such route.
+// coverMetric reports whether this interface can capture the whole address family
+// and, if so, the lowest metric at which it captures all of it: the smallest M
+// for which the routes of metric <= M already tile the space.
 //
-// An interface that covers both families is reported at its better metric: that
-// is the one the stack compares against the other interfaces when it picks a
-// path, and the one the guard's "parked at a losing metric" test needs.
-func (t coverTable) defaults() map[uint32]uint32 {
-	out := make(map[uint32]uint32, 4)
-	for key, c := range t {
-		if !c.covers() {
+// That threshold, not the best metric of any one route, is what the stack
+// effectively ranks the interface by. Taking the minimum metric over every stored
+// route would let a /24 LAN route at a wonderful metric masquerade as a
+// wonderful-metric default route and drag the figure the guard compares against
+// down with it — the physical uplink would then look like a metric-0 path and
+// wave every real conflict through. Requiring the whole space to be covered at the
+// threshold keeps a specific route from speaking for the default route.
+func (c routeCover) coverMetric() (uint32, bool) {
+	if len(c.prefixes) == 0 {
+		return 0, false
+	}
+	for _, m := range distinctMetricsAscending(c.prefixes) {
+		if coversWithin(c.prefixes, m) {
+			return m, true
+		}
+	}
+	return 0, false
+}
+
+// distinctMetricsAscending returns the distinct metrics present, sorted, so
+// coverMetric can try them best-first and stop at the first that already covers
+// everything.
+func distinctMetricsAscending(prefixes []coverPrefix) []uint32 {
+	seen := make(map[uint32]struct{}, len(prefixes))
+	out := make([]uint32, 0, len(prefixes))
+	for _, p := range prefixes {
+		if _, ok := seen[p.metric]; ok {
 			continue
 		}
-		if cur, ok := out[key.index]; !ok || c.metric < cur {
-			out[key.index] = c.metric
+		seen[p.metric] = struct{}{}
+		out = append(out, p.metric)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+// coversWithin reports whether the prefixes of metric <= maxMetric, taken
+// together, cover every address in the family.
+//
+// Each prefix is the aligned interval [start, start+2^(bits-ones)). Their union
+// covers the space iff, walking them by ascending start, none begins past the
+// first still-uncovered address: once a gap is left below some start, no later
+// prefix — every one of which starts no earlier — can reach back to fill it.
+// big.Int carries the arithmetic so the same routine answers for a 32-bit and a
+// 128-bit space without special-casing IPv6.
+func coversWithin(prefixes []coverPrefix, maxMetric uint32) bool {
+	bits := len(prefixes[0].addr) * 8
+	total := new(big.Int).Lsh(big.NewInt(1), uint(bits)) // 2^bits
+
+	type span struct{ start, end *big.Int }
+	spans := make([]span, 0, len(prefixes))
+	for _, p := range prefixes {
+		if p.metric > maxMetric {
+			continue
+		}
+		start := new(big.Int).SetBytes(p.addr)
+		size := new(big.Int).Lsh(big.NewInt(1), uint(bits-p.ones))
+		spans = append(spans, span{start: start, end: new(big.Int).Add(start, size)})
+	}
+	sort.Slice(spans, func(i, j int) bool { return spans[i].start.Cmp(spans[j].start) < 0 })
+
+	covered := big.NewInt(0)
+	for _, s := range spans {
+		if s.start.Cmp(covered) > 0 {
+			return false // a gap below s.start that nothing later can reach
+		}
+		if s.end.Cmp(covered) > 0 {
+			covered = s.end
+		}
+		if covered.Cmp(total) >= 0 {
+			return true
+		}
+	}
+	return covered.Cmp(total) >= 0
+}
+
+// defaults returns, per interface index and address family, the metric at which
+// that interface can capture the whole of that family. A key absent from the map
+// has no such coverage.
+//
+// Families are kept separate on purpose. The stack ranks IPv4 routes only against
+// other IPv4 routes and IPv6 only against IPv6, so collapsing an interface's two
+// families into one metric would compare a v4 tunnel against a v6 uplink and call
+// a genuine conflict "parked". The caller splits the result back out per family.
+func (t coverTable) defaults() map[coverKey]uint32 {
+	out := make(map[coverKey]uint32, len(t))
+	for key, c := range t {
+		if m, ok := c.coverMetric(); ok {
+			out[key] = m
 		}
 	}
 	return out

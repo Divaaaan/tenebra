@@ -41,8 +41,8 @@ func TestPhysicalIfaceIndexPicksTheUplink(t *testing.T) {
 	d, _ := daemonForConflictTest(t)
 	d.SetInterfaceProbe(func() ([]tunguard.Iface, error) {
 		return []tunguard.Iface{
-			{Name: name, HasDefaultRoute: true, RouteMetric: 25},
-			{Name: "tenebra", IsTunnel: true, HasDefaultRoute: true, RouteMetric: 0},
+			{Name: name, HasDefault4: true, Metric4: 25},
+			{Name: "tenebra", IsTunnel: true, HasDefault4: true, Metric4: 0},
 		}, nil
 	})
 
@@ -65,8 +65,8 @@ func TestPhysicalIfaceIndexIgnoresAnotherVPNsAdapter(t *testing.T) {
 		return []tunguard.Iface{
 			// Exactly what the Windows probe produces: IsTunnel unset on both, and
 			// the other VPN holding the better metric.
-			{Name: "vpnfix", HasDefaultRoute: true, RouteMetric: 0},
-			{Name: name, HasDefaultRoute: true, RouteMetric: 25},
+			{Name: "vpnfix", HasDefault4: true, Metric4: 0},
+			{Name: name, HasDefault4: true, Metric4: 25},
 		}, nil
 	})
 
@@ -86,8 +86,8 @@ func TestPhysicalIfaceIndexIgnoresOurOwnTun(t *testing.T) {
 	d, _ := daemonForConflictTest(t)
 	d.SetInterfaceProbe(func() ([]tunguard.Iface, error) {
 		return []tunguard.Iface{
-			{Name: own, HasDefaultRoute: true, RouteMetric: 0},
-			{Name: name, HasDefaultRoute: true, RouteMetric: 25},
+			{Name: own, HasDefault4: true, Metric4: 0},
+			{Name: name, HasDefault4: true, Metric4: 25},
 		}, nil
 	})
 
@@ -103,8 +103,8 @@ func TestPhysicalIfaceIndexPrefersTheLowerMetric(t *testing.T) {
 	d, _ := daemonForConflictTest(t)
 	d.SetInterfaceProbe(func() ([]tunguard.Iface, error) {
 		return []tunguard.Iface{
-			{Name: "SomeOtherUplink", HasDefaultRoute: true, RouteMetric: 50},
-			{Name: name, HasDefaultRoute: true, RouteMetric: 5},
+			{Name: "SomeOtherUplink", HasDefault4: true, Metric4: 50},
+			{Name: name, HasDefault4: true, Metric4: 5},
 		}, nil
 	})
 
@@ -125,19 +125,19 @@ func TestPhysicalIfaceIndexRefusesToGuess(t *testing.T) {
 		{"no probe installed", nil},
 		{"probe failed", func() ([]tunguard.Iface, error) { return nil, errors.New("route table unavailable") }},
 		{"only a tunnel has a default route", func() ([]tunguard.Iface, error) {
-			return []tunguard.Iface{{Name: "tenebra", IsTunnel: true, HasDefaultRoute: true}}, nil
+			return []tunguard.Iface{{Name: "tenebra", IsTunnel: true, HasDefault4: true}}, nil
 		}},
 		{"no default route at all", func() ([]tunguard.Iface, error) {
 			return []tunguard.Iface{{Name: name}}, nil
 		}},
 		{"two uplinks tied on metric", func() ([]tunguard.Iface, error) {
 			return []tunguard.Iface{
-				{Name: name, HasDefaultRoute: true, RouteMetric: 25},
-				{Name: "SecondUplink", HasDefaultRoute: true, RouteMetric: 25},
+				{Name: name, HasDefault4: true, Metric4: 25},
+				{Name: "SecondUplink", HasDefault4: true, Metric4: 25},
 			}, nil
 		}},
 		{"the winner is not a known interface", func() ([]tunguard.Iface, error) {
-			return []tunguard.Iface{{Name: "NoSuchAdapter9c1f", HasDefaultRoute: true, RouteMetric: 1}}, nil
+			return []tunguard.Iface{{Name: "NoSuchAdapter9c1f", HasDefault4: true, Metric4: 1}}, nil
 		}},
 	}
 

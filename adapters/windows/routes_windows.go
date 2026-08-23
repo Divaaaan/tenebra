@@ -161,18 +161,40 @@ func addMetric(route, iface uint32) uint32 {
 	return uint32(sum)
 }
 
-// defaultRoutes returns, per interface index, the metric of the best route by
-// which that interface can capture arbitrary traffic — over either address
-// family, and by a literal default route or by the split pair. An interface
-// absent from the map has no such route and therefore cannot swallow ours.
-func defaultRoutes(info map[uint32]adapter) (map[uint32]uint32, error) {
+// ifaceDefaults is one interface's default-route coverage, split by address
+// family so the guard compares v4 against v4 and v6 against v6. A tunnel can hold
+// one family and leave the other; collapsing them lost that distinction and, with
+// it, the tunnel that owns only ::/0.
+type ifaceDefaults struct {
+	has4, has6       bool
+	metric4, metric6 uint32
+}
+
+// defaultRoutes returns, per interface index, the effective metric at which that
+// interface can capture each address family in full — by a literal default route,
+// the split pair, or any partition that tiles the space. Both families are read:
+// a tunnel that owns only ::/0 captures every AAAA-resolved destination on a
+// dual-stack machine, and reading IPv4 alone left it invisible. An interface
+// absent from the map has no such route in either family and cannot swallow ours.
+func defaultRoutes(info map[uint32]adapter) (map[uint32]ifaceDefaults, error) {
 	table := coverTable{}
 	for _, family := range []uint16{winsys.AF_INET, winsys.AF_INET6} {
 		if err := readRoutes(family, info, table); err != nil {
 			return nil, err
 		}
 	}
-	return table.defaults(), nil
+	out := make(map[uint32]ifaceDefaults, 4)
+	for key, metric := range table.defaults() {
+		d := out[key.index]
+		switch key.family {
+		case winsys.AF_INET:
+			d.has4, d.metric4 = true, metric
+		case winsys.AF_INET6:
+			d.has6, d.metric6 = true, metric
+		}
+		out[key.index] = d
+	}
+	return out, nil
 }
 
 // Interfaces reports the machine's up interfaces annotated with whether they own
@@ -207,13 +229,15 @@ func Interfaces() ([]tunguard.Iface, error) {
 			continue
 		}
 		a := info[uint32(ifc.Index)]
-		metric, hasDefault := routes[uint32(ifc.Index)]
+		d := routes[uint32(ifc.Index)]
 		out = append(out, tunguard.Iface{
-			Name:            ifc.Name,
-			Description:     a.description,
-			IsTunnel:        a.tunnel,
-			HasDefaultRoute: hasDefault,
-			RouteMetric:     int(metric),
+			Name:        ifc.Name,
+			Description: a.description,
+			IsTunnel:    a.tunnel,
+			HasDefault4: d.has4,
+			Metric4:     int(d.metric4),
+			HasDefault6: d.has6,
+			Metric6:     int(d.metric6),
 		})
 	}
 	return out, nil

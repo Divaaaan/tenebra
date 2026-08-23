@@ -22,9 +22,12 @@ All notable changes to Tenebra are documented here. The format follows
     `0.0.0.0/1` + `128.0.0.0/1` over it — two routes covering the same address
     space, each more specific than a default route, so they win whatever its
     metric. That is what OpenVPN installs for `redirect-gateway def1` and what a
-    Tailscale exit node installs. The route table is also read for IPv6 now, as
-    the guard always claimed it was: a tunnel owning `::/0` takes every
-    AAAA-resolved destination on a dual-stack machine.
+    Tailscale exit node installs. Coverage is now decided honestly, by asking
+    whether an interface's routes leave any address uncovered, so the four
+    `/2`s or any other partition that tiles the space is caught as surely as the
+    `/1` pair — not just the one shape the check happened to know. The route table
+    is also read for IPv6 now, as the guard always claimed it was: a tunnel owning
+    `::/0` takes every AAAA-resolved destination on a dual-stack machine.
   - Tunnels were recognised by a short list of name fragments, which is not
     enough. Tailscale, NordLynx, Cloudflare WARP and OpenVPN's TAP adapter — the
     last of which Windows calls "Ethernet 2" — all read as ordinary network
@@ -37,9 +40,13 @@ All notable changes to Tenebra are documented here. The format follows
     metric — one invisible tunnel switched the guard off for all the visible
     ones. Our own tun is excluded from that calculation too, by prefix, so the
     "tenebra 2" name Windows hands back when the first is still going away is
-    still recognised as ours. Metrics are now the effective ones Windows compares
+    still recognised as ours — and by whatever interface name the user configured,
+    not just the built-in one. Metrics are now the effective ones Windows compares
     (route metric plus interface metric), not the route metric alone, which is 0
-    for a physical uplink behind a Hyper-V switch as readily as for a tunnel.
+    for a physical uplink behind a Hyper-V switch as readily as for a tunnel; and
+    they are compared within an address family, since the stack ranks IPv4 routes
+    against IPv4 and IPv6 against IPv6 — collapsing the two made a tunnel winning
+    on IPv4 look parked next to a cheaper IPv6 uplink.
   - Autoconnect never consulted the guard at all — so it was off on exactly the
     path it was written for: a machine starting up with another VPN's service
     already running, with nobody watching to work out why the internet died.
