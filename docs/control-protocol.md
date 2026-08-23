@@ -154,6 +154,10 @@ The honest limits of that model:
   the pipe remotely requires administrator credentials — a caller that already
   administers the machine.
 
+Driving the tunnel is where that trust stops. The commands that hand the daemon
+executable code need more than admission — see
+[Commands that need the daemon's own authority](#commands-that-need-the-daemons-own-authority).
+
 The listener claims the name with `FILE_FLAG_FIRST_PIPE_INSTANCE`, so if
 something else already holds it the service fails loudly at start instead of
 silently sharing the name. That flag does not stop an *already-admitted*
@@ -187,16 +191,51 @@ pipe DACL still grants, and it is where the two platforms differ in what
   session-manager state, not kernel interfaces: a host running seatd or no
   session manager publishes neither.
 
-**The lookup fails open.** When the interactive user cannot be determined —
+**The lookup fails closed.** When the interactive user cannot be determined —
 no seat state, a session mid-transition, two seats disagreeing, an unparseable
-value — the peer is admitted and the daemon logs a warning naming the reason.
-A wrong deny bricks GUI attach, the product's core interaction, on legitimate
-edge cases; the fail-open leaves the exposure exactly where the transport
-already stood, and makes it auditable in the log rather than silent.
+value — or when the peer's own identity cannot be read at all, the peer is
+refused and the daemon logs a warning naming the reason. An identity the daemon
+cannot establish is not one it may act for: this channel drives a
+LocalSystem/root process, so admitting an unknown caller hands the machine to
+whoever asked first. A refused GUI is recoverable and diagnosable from the log;
+a privilege escalation is neither.
 
 The honest limits are the pipe's, restated: the tunnel is machine-wide, a
 second user at the same seat inherits control of it, and processes of the same
 user are not defended against each other.
+
+### Commands that need the daemon's own authority
+
+Being admitted to the channel is not being admitted to all of it. Four commands
+carry executable code into the daemon's directory, or run what is there:
+`import_zapret`, `update_zapret`, `pick_zapret` and `start_zapret`. The bundle's
+strategies are `.bat` files the daemon runs through `cmd.exe` — as LocalSystem
+in a service install, into a directory the service clamps to
+SYSTEM+Administrators at every start (see `secureDataDir`) precisely so an
+unprivileged user cannot plant something it will trust. A command that writes
+there on an unprivileged caller's behalf reopens that hole from inside, and
+hands any local user SYSTEM without a UAC prompt.
+
+So these four additionally require a peer that already holds the daemon's
+authority, decided per connection alongside the admission check:
+
+- the peer runs as the daemon's own account — there is no boundary to cross.
+  This covers the core running as an ordinary process of the user who owns the
+  GUI (the stdio sidecar, or `--pipe` from that user's console), where importing
+  a bundle changes nothing about who can run what; or
+- the peer's token carries an **enabled** Administrators membership (uid 0 on
+  unix). Such a caller can replace the service outright, so letting it hand the
+  daemon a bundle grants it nothing new. *Enabled* is the operative word: a
+  UAC-filtered token still lists Administrators, marked deny-only, and that
+  reads as non-administrative here — the prompt is the point.
+
+Everyone else gets an error naming the missing rights, not silence. Nothing else
+is gated: `status`, `connect`, `stop_zapret` and the routing settings stay open
+to the interactive user, whose tunnel it is. `connect` may still auto-start an
+installed bundle — running already-trusted code is not the escalation, supplying
+the code is — and the daemon's own first-run install and 12-hour auto-update run
+on its behalf, not a caller's, so an unprivileged user still gets a working
+bypass without ever handing the daemon a file.
 
 ## Requests
 

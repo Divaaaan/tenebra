@@ -11,6 +11,31 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- **Any local user could run code as SYSTEM.** `import_zapret` accepted an
+  arbitrary zip and unpacked it into the daemon's own directory — validating only
+  that the archive held a `.bat` and a `bin/winws.exe`, never their contents —
+  and `start_zapret` then ran the named `.bat` through `cmd.exe`, which in a
+  service install is LocalSystem. The pipe DACL admits any interactive user by
+  design, so an unprivileged process could send both and get SYSTEM with no UAC
+  prompt, straight through the directory clamp that exists to stop exactly that.
+  The four commands that carry executable code into the daemon's directory or run
+  what is there — `import_zapret`, `update_zapret`, `pick_zapret`,
+  `start_zapret` — now additionally require a peer that already holds the
+  daemon's authority: its own account (the core running as an ordinary process of
+  its user, where there is no boundary to cross), or a token with an *enabled*
+  Administrators membership. A UAC-filtered token lists Administrators deny-only
+  and does not count; the prompt is the point. Everything else — status, connect,
+  routing, `stop_zapret` — stays open to the interactive user, and the daemon's
+  own first-run install and auto-update are unaffected, so a bypass still arrives
+  without anyone handing the daemon a file.
+- **Peer authentication now fails closed.** A peer whose identity could not be
+  read, or a console user the daemon could not determine, used to be *admitted*
+  with a warning rather than refused — which is what made the escalation above
+  reachable from an unidentified caller. Both are now refusals, still logged with
+  the reason so a genuinely stuck attach is diagnosable instead of mysterious.
+
 ## [0.5.0] - 2026-08-21
 
 ### Added

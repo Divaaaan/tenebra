@@ -105,22 +105,35 @@ func TestAuthorizePeerAllowsSelfOverUnixSocket(t *testing.T) {
 	}
 	defer server.Close()
 
-	if !d.authorizePeer(server) {
+	allowed, privileged := d.authorizePeer(server)
+	if !allowed {
 		t.Errorf("authorizePeer denied a same-account (uid %s) peer; the GUI's own account must attach", strconv.Itoa(os.Getuid()))
+	}
+	// Same account as the daemon means no privilege boundary: this is the core
+	// running as an ordinary process of its own user, where importing a bypass
+	// bundle must keep working without any elevation.
+	if !privileged {
+		t.Error("a same-account peer must hold the daemon's authority; the non-service install imports bundles")
 	}
 }
 
-// TestAuthorizePeerFailsOpenOnNonUnixConn: a conn we can't read a uid from (an
-// in-memory pipe, as the listener tests use) is allowed — the transport-unknown
-// fail-open path — so the policy never bricks a connection it can't identify.
-func TestAuthorizePeerFailsOpenOnNonUnixConn(t *testing.T) {
+// TestAuthorizePeerRefusesNonUnixConn: a conn we can't read a uid from is
+// REFUSED. Production's listener only ever yields unix sockets, whose
+// credentials the kernel always attaches, so an unreadable uid means the lookup
+// failed — and an unidentified caller must not be handed a channel that drives
+// root.
+func TestAuthorizePeerRefusesNonUnixConn(t *testing.T) {
 	d, _ := newTestDaemon(t)
 
 	a, b := net.Pipe()
 	defer a.Close()
 	defer b.Close()
 
-	if !d.authorizePeer(a) {
-		t.Error("authorizePeer must fail open on a conn whose peer uid can't be read")
+	allowed, privileged := d.authorizePeer(a)
+	if allowed {
+		t.Error("authorizePeer must refuse a conn whose peer uid can't be read")
+	}
+	if privileged {
+		t.Error("a refused peer must never be reported as privileged")
 	}
 }

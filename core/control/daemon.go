@@ -271,6 +271,14 @@ type Daemon struct {
 	// logic can be unit-tested offline; production uses subscription.Fetch.
 	fetch func(ctx context.Context, url string) ([]byte, http.Header, error)
 
+	// authorizeConn decides whether a peer accepted on the control channel may
+	// drive the daemon, and whether it holds the daemon's own authority (see
+	// peer_auth.go). Production wires the platform check, which reads credentials
+	// the kernel attached to the connection; it is a field so the listener tests,
+	// whose in-memory conns carry no OS credentials at all and are refused by
+	// that check, can state the verdict they mean to exercise.
+	authorizeConn func(net.Conn) (allowed, privileged bool)
+
 	// httpGet performs a plain HTTP GET for the leak check's IP and DNS echo
 	// requests. It is a separate, header-less getter from fetch so leak_check can
 	// be unit-tested offline with canned responses; production uses
@@ -464,6 +472,9 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 	// local tun rather than the real server. Binding the socket to the physical NIC
 	// steers each probe past the tun so the RTT readout stays meaningful mid-session.
 	d.dial = newPingDialer().DialContext
+	// The peer check needs the daemon (it logs its refusals), so it is bound
+	// after construction like the other self-referential seams below.
+	d.authorizeConn = d.authorizePeer
 	// The adaptive-transport escalation asks classify why an attempt failed; the
 	// production classifier pairs a direct TCP probe of the entry with the probe's
 	// stall signal (see classifyAttemptFailure).
@@ -700,8 +711,21 @@ func (d *Daemon) settingsLocked() persistedSettings {
 // Handle dispatches one request to its command handler and returns the response
 // to send. Unknown commands produce an error response rather than a transport
 // failure. ctx bounds any network work the command performs (subscription
-// fetch, ping).
+// fetch, ping), and carries what the peer that sent the request is allowed to
+// ask for.
+//
+// The privilege gate sits here, in front of the switch, rather than inside each
+// handler: a command that places or runs executable code in the daemon's
+// directory is a privilege boundary, and a boundary that has to be re-stated in
+// every new handler is one that will eventually be forgotten in one. Refusals
+// are answered and logged, never dropped — a UI that asked has to be able to
+// tell "you need administrator rights" from a daemon that hung.
 func (d *Daemon) Handle(ctx context.Context, req Request) Response {
+	if requiresAdminPeer(req.Cmd) && !peerPrivilegeFrom(ctx) {
+		d.emitLog(LogWarn, fmt.Sprintf("control: refusing %s: the peer holds no administrative rights", req.Cmd))
+		return newError(req.ID, fmt.Sprintf(
+			"%s: нужны права администратора — команда ставит или запускает код от имени службы", req.Cmd))
+	}
 	switch req.Cmd {
 	case CmdStatus:
 		return d.handleStatus(req)

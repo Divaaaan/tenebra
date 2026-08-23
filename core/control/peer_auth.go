@@ -1,12 +1,15 @@
 package control
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // consoleUser reports the identity the interactive GUI is expected to run as —
 // a numeric uid string on unix, a user SID string on Windows. A non-nil error
 // (or an empty string) means the console user could not be determined: no one
 // is logged in at the physical console, or the OS lookup failed. The policy
-// treats that as "unknown" and fails open (see peerAllowed).
+// treats that as "unknown" and refuses (see peerAllowed).
 type consoleUser func() (string, error)
 
 // peerAllowed is the peer-authentication policy, factored out as a pure function
@@ -25,21 +28,113 @@ type consoleUser func() (string, error)
 //     from this shortcut), so a failed self-lookup can't turn into a blanket
 //     allow here.
 //   - Otherwise the peer is allowed iff it matches the console user.
-//   - If the console user cannot be determined, the policy FAILS OPEN with a
-//     warning rather than closed. A wrong "deny" here bricks the unprivileged
-//     GUI's attach — the product's core interaction — on legitimate edge cases
-//     (fast user switching, a session in the middle of coming up, a transient OS
-//     lookup failure), which is a worse outcome than briefly retaining the old
-//     any-local-user exposure. The warning makes the degraded state auditable in
-//     the daemon log instead of silently widening or narrowing the trust.
+//   - If the console user cannot be determined, the policy FAILS CLOSED and
+//     warns. An identity the daemon cannot establish is not an identity it may
+//     act for: the whole channel drives a LocalSystem/root process, so admitting
+//     an unknown caller hands the machine to whoever asked first. The cost is
+//     real — a session mid-transition or a host with no session manager cannot
+//     attach its GUI until the lookup answers — but a stuck GUI is recoverable
+//     and a privilege escalation is not. The warning names the reason so the
+//     refusal is diagnosable from the daemon log instead of looking like a bug.
 func peerAllowed(peer, self string, console consoleUser, warn func(string)) bool {
 	if peer != "" && peer == self {
 		return true
 	}
+	if peer == "" {
+		warn("control: refusing a peer whose identity could not be established")
+		return false
+	}
 	cu, err := console()
 	if err != nil || cu == "" {
-		warn(fmt.Sprintf("control: cannot determine console user (err=%v); allowing peer %q (fail-open)", err, peer))
-		return true
+		warn(fmt.Sprintf("control: cannot determine console user (err=%v); refusing peer %q (fail-closed)", err, peer))
+		return false
 	}
 	return peer == cu
+}
+
+// peerPrivileged reports whether an already-admitted peer holds the daemon's own
+// authority, which is what the commands in adminOnlyCommands need. Two ways to
+// hold it, and they are not the same statement:
+//
+//   - peer == self: there is no privilege boundary to cross. This is the core
+//     running as an ordinary process of the user who owns the GUI (the stdio
+//     sidecar, or `--pipe` started from that user's console) — the daemon is
+//     already that user, so handing it code changes nothing about who can run
+//     what. Note the "" guard: an unresolved identity on either side must not
+//     collapse into a match.
+//   - admin: the peer's token/uid carries administrative rights (a member of
+//     Administrators with the group enabled on Windows, uid 0 on unix). Such a
+//     caller can install a service or rewrite the daemon's binary anyway, so
+//     letting it place code in the daemon's directory grants it nothing new.
+//
+// Everyone else — the ordinary interactive user talking to the LocalSystem
+// service, including an administrator's UAC-filtered token, whose Administrators
+// membership is deny-only — is admitted to the channel but not to these
+// commands. That is the whole point: the filtered token is what UAC exists to
+// make ask.
+func peerPrivileged(peer, self string, admin bool) bool {
+	if peer != "" && peer == self {
+		return true
+	}
+	return admin
+}
+
+// adminOnlyCommands are the control commands that place executable code into the
+// daemon's own directory, or run code from it. In a service installation that
+// directory is clamped to SYSTEM+Administrators precisely so an unprivileged
+// user cannot plant something the service will trust (see secureDataDir), and
+// the daemon runs the bundle's .bat through cmd.exe as LocalSystem — so a
+// command that writes there on an unprivileged caller's behalf hands that caller
+// SYSTEM without ever showing a UAC prompt.
+//
+// What is deliberately NOT here:
+//
+//   - stop_zapret, set_zapret_auto_update: neither places nor starts code. The
+//     auto-update flag only re-arms a background job whose payload comes from
+//     the upstream release, not from the caller; gating it would also stop an
+//     ordinary user turning it OFF, which is the safer direction.
+//   - connect: it may auto-start an installed bundle, but the bundle's contents
+//     were placed by an administrator (or by the updater). Choosing to run
+//     already-trusted code is not the escalation — supplying the code is.
+var adminOnlyCommands = map[string]struct{}{
+	CmdImportZapret: {},
+	CmdPickZapret:   {},
+	CmdStartZapret:  {},
+	CmdUpdateZapret: {},
+}
+
+// requiresAdminPeer reports whether cmd may only be run by a peer that already
+// holds the daemon's authority.
+func requiresAdminPeer(cmd string) bool {
+	_, ok := adminOnlyCommands[cmd]
+	return ok
+}
+
+// peerPrivilegeKey is the context key under which a session records what the
+// peer on the other end of its stream is allowed to ask for.
+type peerPrivilegeKey struct{}
+
+// withPeerPrivilege stamps a request context with the privilege of the peer the
+// request came from. Every transport that carries an EXTERNAL peer sets it:
+// ServeListener stamps each session from the credentials the kernel attached to
+// the accepted connection, and Serve stamps the stdio sidecar, whose "peer" is
+// the parent process that spawned this one and therefore already holds at least
+// its privileges.
+func withPeerPrivilege(ctx context.Context, privileged bool) context.Context {
+	return context.WithValue(ctx, peerPrivilegeKey{}, privileged)
+}
+
+// peerPrivilegeFrom reports the privilege recorded for the peer a request is
+// being served for. An unstamped context means there is no external peer at all
+// — an in-process call, which is the daemon acting on its own behalf (its own
+// background jobs, and unit tests calling Handle directly) — so it carries the
+// daemon's authority. That is not a fail-open default: both transports that can
+// introduce a caller from outside this process stamp the context unconditionally
+// before a single request is dispatched.
+func peerPrivilegeFrom(ctx context.Context) bool {
+	privileged, stamped := ctx.Value(peerPrivilegeKey{}).(bool)
+	if !stamped {
+		return true
+	}
+	return privileged
 }
