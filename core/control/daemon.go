@@ -539,9 +539,12 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	// blanket answer: the two that route traffic out of the tunnel are off unless
 	// the file says otherwise, the one that routes censored domains into it is on
 	// unless the file says otherwise. A stored value either way is the user's
-	// choice and is honoured as written — including the `true` that 0.5.0 wrote
-	// for all three, which is why turning them off is a job for the switches in
-	// Settings rather than for a silent rewrite here.
+	// choice and is honoured as written. The `true` that 0.5.0 wrote for the two
+	// outward presets is the exception, and it is handled before it reaches here:
+	// the v1->v2 migration (see migrateV1toV2) clears preset_games_direct and
+	// preset_voice_direct, because 0.5.0 had no way to see or change them, so that
+	// true was never a choice. What survives to this point is a genuine v2 choice
+	// or the migrated default.
 	d.routing.GamesDirect = ps.PresetGamesDirect != nil && *ps.PresetGamesDirect
 	d.routing.VoiceDirect = ps.PresetVoiceDirect != nil && *ps.PresetVoiceDirect
 	d.routing.UnblockServices = ps.PresetUnblockServices == nil || *ps.PresetUnblockServices

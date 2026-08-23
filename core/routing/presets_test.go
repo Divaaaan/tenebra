@@ -359,6 +359,40 @@ func TestVoiceDirectDoesNotCoverQUICOrDNS(t *testing.T) {
 	}
 }
 
+// Include split tunnelling is an explicit per-application choice — the user picks
+// "include" and lists the apps one at a time — so it is governed by the mode, not
+// cut by the kill switch, exactly like the split-exclude list directPinAllowed
+// already exempts. Under the kill switch, and even with the base mode set to
+// global, the listed apps still go to the proxy (fail-closed: nothing falls them
+// back to direct if the tunnel drops) while everything unlisted still falls
+// through to a direct final. Forcing the final to the proxy here would silently
+// turn "only these apps" into "everything", tunnelling the very traffic the user
+// chose to keep out — a different violation of intent than the one the kill
+// switch guards against.
+func TestKillSwitchLeavesIncludeSplitToTheUser(t *testing.T) {
+	o := Options{
+		Mode:       ModeGlobal,
+		KillSwitch: true,
+		SplitMode:  SplitInclude,
+		SplitApps:  []string{"work.exe"},
+	}.Normalize()
+
+	if got := o.FinalOutbound(); got != tagDirect {
+		t.Errorf("include-mode final = %q under the kill switch, want direct", got)
+	}
+	r := ruleFor(o.RouteRules(), "process_name")
+	if r == nil {
+		t.Fatal("include split emitted no process rule under the kill switch")
+	}
+	if r["outbound"] != tagProxy {
+		t.Errorf("the listed app is pinned to %v under the kill switch, want the proxy", r["outbound"])
+	}
+	apps, _ := r["process_name"].([]string)
+	if !contains(apps, "work.exe") {
+		t.Errorf("the user's listed app was dropped: %v", apps)
+	}
+}
+
 func TestPresetsOffByDefault(t *testing.T) {
 	o := Options{Mode: ModeSmart}.Normalize()
 	rules := o.RouteRules()

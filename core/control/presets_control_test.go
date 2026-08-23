@@ -113,15 +113,16 @@ func TestPresetsSurviveARestart(t *testing.T) {
 	}
 }
 
-// TestPresetDefaultsForAnOldSettingsFile: a file written before these fields
-// existed has none of them, and so does one written by a version that only ever
-// wrote the two it had. Absent has to read as the safe value per preset, not one
-// blanket answer: off for the two that route traffic out of the tunnel, on for
-// the one that routes censored domains into it.
+// TestPresetDefaultsForAnOldSettingsFile: a v1 file with the preset fields absent
+// entirely (a partial or hand-edited file, not the full one 0.5.0 wrote). The two
+// outward presets have to end up off and unblock-services on, per preset, not by
+// one blanket answer. For a v1 file both routes to "off" meet: the v1->v2
+// migration forces games/voice to an explicit false, and the absent-field default
+// would read them off anyway; unblock-services, which the migration leaves alone,
+// falls to its absent default of on.
 func TestPresetDefaultsForAnOldSettingsFile(t *testing.T) {
 	dir := t.TempDir()
-	// An old file as it actually looks on disk: version stamped, preset fields
-	// absent entirely.
+	// A v1 file with the preset fields absent entirely.
 	old := []byte(`{"version":1,"split_mode":"off","kill_switch":true}`)
 	if err := os.WriteFile(filepath.Join(dir, settingsFile), old, 0o644); err != nil {
 		t.Fatalf("seed settings file: %v", err)
@@ -140,14 +141,54 @@ func TestPresetDefaultsForAnOldSettingsFile(t *testing.T) {
 	}
 }
 
-// TestStoredPresetChoicesAreKept: 0.5.0 shipped all three presets on and wrote
-// that down, so an upgraded install has `true` on disk for presets its owner may
-// well have wanted. An explicit stored value is the user's, not a default to
-// re-decide: flipping it on upgrade would be the same silent change in the other
-// direction. Turning them off is the UI's job now that it has the switches.
-func TestStoredPresetChoicesAreKept(t *testing.T) {
+// TestV1StoredPresetsAreClearedByMigration: 0.5.0 (the only v1 writer) shipped
+// games-direct and voice-direct on and persisted that `true`, but gave no UI,
+// wire command or reported state to see or change them — so the stored value was
+// a default the user was never shown, not a choice. The v1->v2 migration clears
+// exactly those two, closing on an upgraded install the same leak the new
+// defaults close on a fresh one. It must not touch anything else the file holds:
+// unblock-services (which only pins domains into the tunnel) and every conscious
+// setting — here the kill switch and the split config — are the user's and must
+// survive verbatim.
+func TestV1StoredPresetsAreClearedByMigration(t *testing.T) {
 	dir := t.TempDir()
 	stored := []byte(`{"version":1,"preset_games_direct":true,"preset_voice_direct":true,` +
+		`"preset_unblock_services":false,"kill_switch":true,"split_mode":"exclude",` +
+		`"split_apps":["chrome.exe"]}`)
+	if err := os.WriteFile(filepath.Join(dir, settingsFile), stored, 0o644); err != nil {
+		t.Fatalf("seed settings file: %v", err)
+	}
+
+	h := newHarness(t)
+	h.daemon.SetSettings(settingsAt(t, dir))
+
+	ro := h.daemon.snapshotRouting()
+	if ro.GamesDirect || ro.VoiceDirect {
+		t.Errorf("a v1 stored true survived the migration: games=%v voice=%v",
+			ro.GamesDirect, ro.VoiceDirect)
+	}
+	// The migration must leave the rest of the file alone.
+	if ro.UnblockServices {
+		t.Error("the migration flipped unblock-services, which it must not touch")
+	}
+	if !ro.KillSwitch {
+		t.Error("the migration dropped the user's kill-switch choice")
+	}
+	if ro.SplitMode != routing.SplitExclude ||
+		len(ro.SplitApps) != 1 || ro.SplitApps[0] != "chrome.exe" {
+		t.Errorf("the migration mangled the split config: mode=%q apps=%v",
+			ro.SplitMode, ro.SplitApps)
+	}
+}
+
+// TestV2StoredPresetChoicesAreKept: once the file is at v2 the presets are things
+// the user could actually see and toggle, so a stored value is a real choice and
+// is honoured as written — in both directions. The migration is a one-time reset
+// of the v1 non-choice, not a standing override; re-deciding a v2 choice on every
+// load would be the same silent change the fix set out to remove, just later.
+func TestV2StoredPresetChoicesAreKept(t *testing.T) {
+	dir := t.TempDir()
+	stored := []byte(`{"version":2,"preset_games_direct":true,"preset_voice_direct":true,` +
 		`"preset_unblock_services":false}`)
 	if err := os.WriteFile(filepath.Join(dir, settingsFile), stored, 0o644); err != nil {
 		t.Fatalf("seed settings file: %v", err)
@@ -158,11 +199,50 @@ func TestStoredPresetChoicesAreKept(t *testing.T) {
 
 	ro := h.daemon.snapshotRouting()
 	if !ro.GamesDirect || !ro.VoiceDirect {
-		t.Errorf("an explicit stored true was overridden: games=%v voice=%v",
+		t.Errorf("an explicit v2 stored true was overridden: games=%v voice=%v",
 			ro.GamesDirect, ro.VoiceDirect)
 	}
 	if ro.UnblockServices {
-		t.Error("an explicit stored false was overridden")
+		t.Error("an explicit v2 stored false was overridden")
+	}
+}
+
+// TestUpgradedPresetChoiceSticksAfterMigration: the migration clears the v1
+// non-choice once, then gets out of the way. A user who turns a preset back on
+// after upgrading writes a v2 file, and that choice must survive the next
+// restart rather than being re-cleared — otherwise the switch 0.5.0 never had
+// would still not work.
+func TestUpgradedPresetChoiceSticksAfterMigration(t *testing.T) {
+	dir := t.TempDir()
+	stored := []byte(`{"version":1,"preset_games_direct":true,"preset_voice_direct":true}`)
+	if err := os.WriteFile(filepath.Join(dir, settingsFile), stored, 0o644); err != nil {
+		t.Fatalf("seed settings file: %v", err)
+	}
+
+	// First launch after the upgrade: the migration clears both.
+	h := newHarness(t)
+	h.daemon.SetSettings(settingsAt(t, dir))
+	if ro := h.daemon.snapshotRouting(); ro.GamesDirect || ro.VoiceDirect {
+		t.Fatalf("migration did not clear the v1 presets: games=%v voice=%v",
+			ro.GamesDirect, ro.VoiceDirect)
+	}
+
+	// The user turns voice-direct on through the switch the upgrade gave them; this
+	// persists a v2 file.
+	h.send(Request{ID: 1, Cmd: CmdSetPresets, Voice: boolp(true)})
+	if resp := h.await(); resp.Error != "" {
+		t.Fatalf("set_presets: %v", resp.Error)
+	}
+
+	// Next restart: the v2 choice must be honoured, not re-cleared by the migration.
+	h2 := newHarness(t)
+	h2.daemon.SetSettings(settingsAt(t, dir))
+	ro := h2.daemon.snapshotRouting()
+	if !ro.VoiceDirect {
+		t.Error("a preset turned on after the upgrade was re-cleared on the next launch")
+	}
+	if ro.GamesDirect {
+		t.Error("a preset left off after the upgrade came back on")
 	}
 }
 
@@ -172,10 +252,24 @@ func TestStoredPresetChoicesAreKept(t *testing.T) {
 // switch nobody can turn off.
 func TestPresetsAreReportedInState(t *testing.T) {
 	h := newHarness(t)
+	// Load through the store, the way cmd/tenebra-core/main.go does. The reported
+	// state is filled by applySettingsToState from the live routing options; the
+	// builder's State literal leaves the preset fields at their zero value. Without
+	// this call the default-state check below would pass on that zero value rather
+	// than on what a running core actually reports — and would in particular miss
+	// unblock-services, which the literal leaves false while the routing default
+	// has it on. An empty temp dir gives the pure defaults.
+	h.daemon.SetSettings(settingsAt(t, t.TempDir()))
 
-	if st := h.daemon.snapshotState(); st.PresetGamesDirect || st.PresetVoiceDirect {
+	st := h.daemon.snapshotState()
+	if st.PresetGamesDirect || st.PresetVoiceDirect {
 		t.Errorf("state reports a leaking preset on by default: games=%v voice=%v",
 			st.PresetGamesDirect, st.PresetVoiceDirect)
+	}
+	// The default-on preset has to be reported on, not merely absent: this is what
+	// proves the state came through applySettingsToState and not the zero literal.
+	if !st.PresetUnblockServices {
+		t.Error("state does not report unblock-services on by default")
 	}
 
 	h.send(Request{ID: 1, Cmd: CmdSetPresets, Games: boolp(true), Voice: boolp(true), Services: boolp(false)})
@@ -193,7 +287,7 @@ func TestPresetsAreReportedInState(t *testing.T) {
 			got.PresetGamesDirect, got.PresetVoiceDirect, got.PresetUnblockServices)
 	}
 
-	st := h.daemon.snapshotState()
+	st = h.daemon.snapshotState()
 	if !st.PresetGamesDirect || !st.PresetVoiceDirect || st.PresetUnblockServices {
 		t.Errorf("status does not report the presets: games=%v voice=%v services=%v",
 			st.PresetGamesDirect, st.PresetVoiceDirect, st.PresetUnblockServices)

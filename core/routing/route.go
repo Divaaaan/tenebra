@@ -227,6 +227,18 @@ func (o Options) DefaultDomainResolver() map[string]any {
 // Include split tunnelling forces the final to direct: only the explicitly
 // listed apps are routed to the proxy (by an early process_name rule), so
 // everything that falls through must go direct to honour "only these apps".
+//
+// This is deliberately not gated by the kill switch, and does not ask
+// directPinAllowed. Include mode is the explicit per-application tunnelling
+// choice — the user picked "include" and typed the list one executable at a time
+// — which is exactly the category directPinAllowed already exempts for the
+// split-exclude list, and "everything else goes direct" is the whole meaning of
+// the mode. Forcing the final to the proxy under the kill switch would silently
+// turn include into global and tunnel the very apps the user chose to keep out,
+// a different violation of intent. The traffic the user did choose to tunnel —
+// the listed apps — is pinned to the proxy outbound with no direct fallback, so
+// it fails closed if the tunnel drops; the kill switch protects that, which is
+// the traffic its promise is about.
 func (o Options) FinalOutbound() string {
 	if o.SplitMode == SplitInclude && len(o.SplitApps) > 0 {
 		return tagDirect

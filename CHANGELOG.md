@@ -22,27 +22,29 @@ All notable changes to Tenebra are documented here. The format follows
   "connected" while handing the ISP address to whoever was on the other end of a
   call. Both now default off and both have a switch in Settings that says what
   they cost; unblock-services keeps its default, because it only ever moves
-  traffic *into* the tunnel. A stored choice is honoured either way — an install
-  that already has them on keeps them until the switch is used.
+  traffic *into* the tunnel. Upgrading from 0.5.0 closes the same leak: 0.5.0
+  wrote both presets on into `settings.json` while giving no way to see or change
+  them, so a one-time settings migration clears that stored `true` — it was a
+  default the user was never shown, not a choice — and both come up off, the same
+  as a fresh install. A choice made from now on, through the new switches, is
+  honoured and kept; unblock-services is left exactly as stored.
 - **`java.exe`, `javaw.exe` and `launcher.exe` are out of the games preset.**
   Matching is by bare executable name, so those three took every JVM program on
   the machine — an IDE, a corporate client, a build tool — plus any of the many
   unrelated binaries shipped as `launcher.exe` out of the tunnel, under a switch
   the user read as "keep games direct". Minecraft's Java edition now needs a
   hand-added entry; its launcher is still covered.
-- **The kill switch holds on every path, not two of six.** Only the games and
-  voice presets asked whether it was armed. Everything else that pins traffic to
-  the direct outbound ignored it: the services handed to a running DPI bypass
-  (YouTube, googlevideo, ytimg, all of Discord), the bundled Russian banking and
-  government rule presets, custom `rules_direct` suffixes, and the LAN bypass —
-  each on the routing layer and again on the DNS layer, so the names were also
-  resolved by the ISP's resolver while the app showed the kill switch armed. All
-  of them now yield to it. Proxy-direction rules are deliberately untouched
-  (dropping those would hand a domain back to the geo split, which in smart mode
-  can send it direct), and apps the user listed under split-exclude stay direct,
-  since that is a choice made one executable at a time. Note the LAN
-  consequence: with the kill switch armed, a router's admin page, a NAS or a
-  local printer stops answering.
+- **The kill switch holds on every direct-pin path, not two of five.** Only the
+  games and voice presets asked whether it was armed. Everything else that pins
+  traffic to the direct outbound ignored it: the services handed to a running DPI
+  bypass (YouTube, googlevideo, ytimg, all of Discord), the bundled Russian
+  banking and government rule presets, and custom `rules_direct` suffixes — each
+  on the routing layer and again on the DNS layer, so the names were also resolved
+  by the ISP's resolver while the app showed the kill switch armed. All of them
+  now yield to it. Proxy-direction rules are deliberately untouched (dropping
+  those would hand a domain back to the geo split, which in smart mode can send it
+  direct), and apps the user listed under split-exclude stay direct, since that is
+  a choice made one executable at a time.
 
 ## [0.5.0] - 2026-08-21
 
