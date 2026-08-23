@@ -224,8 +224,10 @@ func (s *Server) stopWriter() {
 
 // Serve reads and handles requests until the reader hits EOF or ctx is
 // cancelled, then tears down any live connection. It returns the scanner's error
-// (nil on clean EOF). Each request is handled synchronously in order; commands
-// that do network I/O (subscription fetch, ping) honour ctx.
+// (nil on clean EOF). Requests are handled in order and one at a time, except
+// for the few that would hold the loop too long to be served that way (see
+// runsInBackground); commands that do network I/O (subscription fetch, ping)
+// honour ctx.
 //
 // Serve is the single-client transport: the stream IS the daemon's lifetime, so
 // the end of the stream (the UI closing the sidecar's stdin) closes the daemon.
@@ -265,6 +267,15 @@ func (s *Server) Serve(ctx context.Context) error {
 func (s *Server) serveStream(ctx context.Context) error {
 	scan := newRequestScanner(s.r)
 
+	// The lane for the few commands that must not hold the loop (see
+	// backgroundLane). Cancel first, then join: deferred LIFO, so a stream that
+	// ended without ctx being cancelled — a sidecar's stdin reaching EOF — still
+	// tells a running command to unwind instead of waiting out its budget.
+	bgCtx, cancelBg := context.WithCancel(ctx)
+	bg := backgroundLane{ctx: bgCtx}
+	defer bg.wg.Wait()
+	defer cancelBg()
+
 	// Reading from s.r blocks, so cancellation can't interrupt a blocked Scan
 	// directly. We run the read loop in a goroutine and select on ctx so
 	// serveStream returns promptly on cancel; the goroutine ends when the reader
@@ -295,18 +306,71 @@ func (s *Server) serveStream(ctx context.Context) error {
 			if !ok {
 				return <-scanErr
 			}
-			s.handleLine(ctx, line)
+			s.handleLine(ctx, &bg, line)
 		}
 	}
 }
 
+// backgroundLane is where the request loop puts a command that must not hold it
+// (see runsInBackground). Its context ends with the session and its WaitGroup is
+// joined before the loop returns, so nothing it starts outlives the stream that
+// asked for it — the invariant the listener's shutdown leans on when it waits
+// every session out.
+type backgroundLane struct {
+	ctx context.Context
+	wg  sync.WaitGroup
+}
+
+// run hands one command to its own goroutine and returns at once.
+func (b *backgroundLane) run(fn func(context.Context)) {
+	b.wg.Add(1)
+	go func() {
+		defer b.wg.Done()
+		fn(b.ctx)
+	}()
+}
+
+// runsInBackground reports whether a command is served off the request loop
+// instead of in it.
+//
+// The loop is strictly serial otherwise, and that is worth keeping: every
+// handler then runs alone, with no handler written for concurrent callers and no
+// two commands interleaving on the tunnel. It costs nothing while handlers
+// answer in milliseconds.
+//
+// check_nodes does not answer in milliseconds. It opens real connections through
+// every node in a profile and is budgeted in tens of seconds (see
+// defaultCheckBudget), and the loop being serial meant that whole time was time
+// in which a status went unanswered, a disconnect went unactioned and the connect
+// the measurement was taken *for* sat waiting behind it — so measuring a profile
+// looked like an app that had stopped responding, right up until it caught up and
+// did everything at once.
+//
+// Only a handler that touches no daemon state belongs here. handleCheckNodes
+// reads the profile store and a state snapshot, both already synchronised, and
+// writes nothing back; its own single-flight guard keeps two runs from
+// overlapping, including across a session displacement. Anything else that grows
+// a long budget wants its own audit before it joins this list, not an entry.
+func runsInBackground(cmd string) bool { return cmd == CmdCheckNodes }
+
 // handleLine parses one request line and writes its response. A malformed line
 // gets an error response with id 0 (the id is unknown), so the UI still sees a
 // reply rather than silence.
-func (s *Server) handleLine(ctx context.Context, line []byte) {
+//
+// A response for a background command arrives after responses to requests that
+// were sent later. That is within the protocol as written — a response is
+// correlated by its id, never by its position — and the UI's bridge keeps its
+// in-flight requests in a map keyed by exactly that.
+func (s *Server) handleLine(ctx context.Context, bg *backgroundLane, line []byte) {
 	req, err := decodeRequest(line)
 	if err != nil {
 		s.writeResponse(newError(0, err.Error()))
+		return
+	}
+	if runsInBackground(req.Cmd) {
+		bg.run(func(bgCtx context.Context) {
+			s.writeResponse(dispatchRequest(bgCtx, req, s.daemon.Handle))
+		})
 		return
 	}
 	s.writeResponse(dispatchRequest(ctx, req, s.daemon.Handle))

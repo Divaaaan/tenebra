@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"strconv"
 	"sync"
@@ -34,6 +35,14 @@ func newCheckHarness(t *testing.T, nodes []model.Node, basePort int) (*checkHarn
 	h.daemon.SetProbeRunner(func() Runner { return probe })
 	h.daemon.checkBasePort = basePort
 	h.daemon.checkTargets = []string{"https://a.example/204", "https://b.example/204"}
+
+	// None of these nodes exists, so the plain dial to a node's own address would
+	// spend a real DNS lookup to find that out. Fail it outright and in no time:
+	// that dial only decides how a failure is *named* (see probeNode), and every
+	// test here that cares about the naming says so explicitly.
+	h.daemon.dial = func(context.Context, string, string) (net.Conn, error) {
+		return nil, errors.New("no such host")
+	}
 
 	ch := &checkHarness{harness: h, probe: probe}
 	for i := range nodes {
