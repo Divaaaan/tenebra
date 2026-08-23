@@ -54,6 +54,10 @@ Everything below is implemented in this repo today (the UI features are desktop)
   direct and tunnels the rest; *Global* tunnels everything; *Direct* is the
   proxy off. Geodata is pulled from the official public sing-geoip / sing-geosite
   rule-sets at runtime — the client ships none of its own.
+- **DPI bypass, fetched rather than bundled.** Windows only: the client drives
+  [zapret](https://github.com/bol-van/zapret) so censored services work at their
+  own latency instead of through an exit node. The bundle is downloaded on the
+  first connect and is not part of the installer — see [DPI bypass](#dpi-bypass).
 - **Protocol fallback.** A pure state machine walks the last known-good node
   first, then by protocol preference (REALITY → Hysteria2 → AmneziaWG), so a
   blocked or throttled protocol is retried as another. The last good node leads
@@ -74,6 +78,45 @@ Everything below is implemented in this repo today (the UI features are desktop)
 The kill-switch (drop proxied traffic instead of leaking when the tunnel drops) is a
 UI toggle — best-effort by design, with the exact guarantee described in the
 [changelog](CHANGELOG.md); LAN bypass is a core routing option.
+
+## DPI bypass
+
+Blocking here is done by inspecting traffic, not by address: YouTube can be
+unwatchable on a connection that is otherwise fine, and a tunnel handshake can be
+dropped for looking like a tunnel handshake. **On Windows** Tenebra answers that
+with [zapret](https://github.com/bol-van/zapret) — a separate program that edits
+packets on the way out (splitting the TLS ClientHello, sending decoys, and so on)
+until the filter stops matching them. It runs beside the tunnel rather than
+inside it, so a service the bypass can reach directly stays direct at its own
+latency instead of taking the round trip through an exit node. There is no
+equivalent on macOS or Linux; the tunnel there carries everything.
+
+**It is a download, not a bundled file.** Tenebra ships none of this. Strategies
+are a moving target — a set that worked in March is a set the filter has since
+learned — so rather than freezing a copy into the installer, the core fetches the
+current release of the
+[Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube)
+bundle: zapret's Windows build (`winws.exe`), the
+[WinDivert](https://github.com/basil00/WinDivert) packet-interception driver it
+attaches to, the Cygwin runtime that build needs, and the strategy and host lists
+around them.
+
+**When it happens and where it lands.** On the first connect with no bundle
+present, the core downloads the latest published release and unpacks it into its
+own data directory — `%ProgramData%\Tenebra\data\zapret` under the Windows
+service — then re-checks for a newer one every twelve hours. It is a plain
+download from the upstream release page; nothing about you goes with the request.
+
+**How to decline it.** *Settings → Censorship bypass → Update the bundle
+automatically* governs both the first-connect install and the re-check. Turned
+off, Tenebra fetches nothing on its own: drag in a bundle yourself, press
+*Update* when you want one, or run with no bypass at all — the tunnel still
+carries every service, it simply carries the censored ones through the exit node
+instead of around the filter. Deleting the `zapret` directory removes what is
+already installed.
+
+Everything in the bundle, with its license and copyright holder, is listed in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md#2-components-downloaded-at-runtime).
 
 ## Installing
 
@@ -196,6 +239,7 @@ tenebra/
 │   ├── routing/          smart/global/direct + per-app split -> sing-box route/dns.
 │   ├── singbox/          Build a full sing-box config as plain JSON (no sing-box dep).
 │   ├── fallback/         Pure REALITY->Hysteria2->AmneziaWG fallback state machine.
+│   ├── zapret/           Drive the downloaded DPI-bypass bundle (Windows). See above.
 │   └── control/          The line-delimited JSON protocol + the daemon.
 ├── adapters/
 │   └── windows/          Spawn & supervise sing-box; traffic via its clash API.

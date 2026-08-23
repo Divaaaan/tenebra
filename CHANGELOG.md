@@ -11,6 +11,23 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The DPI-bypass bundle is credited to the projects it comes from.** Since
+  0.5.0 the app installs the bypass itself, which means it downloads the
+  [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube)
+  release onto the user's disk — [zapret](https://github.com/bol-van/zapret) by
+  bol-van (MIT), the [WinDivert](https://github.com/basil00/WinDivert) packet
+  driver, and the Cygwin runtime — and THIRD-PARTY-NOTICES.md mentioned none of
+  them. It now has a section for software fetched at run time, with WinDivert's
+  LGPLv3-or-GPLv2 choice settled on the record in favour of LGPLv3 and the
+  Cygwin linking exception quoted; the generator emits that section, so
+  regenerating cannot quietly drop it again. The README explains what is
+  downloaded, where it lands, and which switch stops it from being downloaded at
+  all. `github.com/sagernet/gomobile`, in `go.mod` since 0.4.5 and never
+  listed, is in the notice too — the generator had been refusing to run over it
+  since July.
+
 ## [0.5.0] - 2026-08-21
 
 ### Added
