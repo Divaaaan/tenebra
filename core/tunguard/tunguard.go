@@ -31,31 +31,74 @@ import (
 type Iface struct {
 	// Name is the OS-visible interface name, e.g. "vpnfix", "tun0", "utun4".
 	Name string
+	// Description is the driver's own description of the adapter, when the
+	// platform can supply one: "TAP-Windows Adapter V9", "Tailscale Tunnel",
+	// "Intel(R) Ethernet Connection I219-V". Empty where the OS offers none.
+	//
+	// It exists because a tunnel's name is not reliably tunnel-shaped. OpenVPN's
+	// TAP adapter arrives on Windows as plain "Ethernet 2" — no name list can
+	// ever catch that, and the adapter is holding the default route. The
+	// description is where the vendor writes down what the thing actually is.
+	Description string
 	// IsTunnel reports whether the adapter recognised this as a tunnel/virtual
 	// interface. Adapters that can determine this from the driver should set it;
 	// the guard falls back to name heuristics when they cannot.
 	IsTunnel bool
-	// HasDefaultRoute reports whether the interface carries a 0.0.0.0/0 (or
-	// ::/0) route. An interface without one cannot capture arbitrary traffic and
-	// is therefore not a conflict, however tunnel-like it looks.
+	// HasDefaultRoute reports whether the interface can capture arbitrary
+	// traffic. That is a 0.0.0.0/0 or ::/0 route, but also the split pair
+	// 0.0.0.0/1 + 128.0.0.0/1 (::/1 + 8000::/1), which covers the same address
+	// space while sitting more specific than any default route — the adapter is
+	// responsible for recognising both. An interface without such coverage is not
+	// a conflict, however tunnel-like it looks.
 	HasDefaultRoute bool
-	// RouteMetric is the metric of that default route, kept for the message so
-	// the user can see which one the stack prefers.
+	// RouteMetric is how the stack ranks that route, kept for the message so the
+	// user can see which one it prefers. Adapters report the effective figure,
+	// the one `route print` and `ip route` show: on Windows that is the route's
+	// own metric plus the interface metric, not the route metric alone — every
+	// tunnel writes its route at metric 0, so the route metric on its own says
+	// nothing about which path wins.
 	RouteMetric int
 }
 
-// tunnelPrefixes are interface-name patterns that mean "tunnel" across the
-// platforms Tenebra targets. Used only when the adapter could not classify the
-// interface itself: a false positive here costs a spurious refusal, so the list
-// stays to well-known virtual-adapter names rather than anything broad.
-var tunnelPrefixes = []string{"tun", "utun", "tap", "wg", "wintun", "sing", "nekoray", "hiddify", "vpn"}
+// tunnelPatterns are fragments that mean "tunnel" in an interface name or in the
+// driver description behind it. Used when the adapter could not classify the
+// interface itself, which on Windows is most of them.
+//
+// A false positive costs a spurious refusal on a machine with no VPN on it, so
+// nothing broad goes in here: "virtual" would catch Hyper-V's vEthernet, which
+// is the physical uplink on the author's machine. A false negative costs the
+// whole guard, which is what the first list did — everything in the third group
+// below was live on a machine that reported "all clear" while another client
+// held the default route.
+//
+// Our own tun is deliberately not in the list, even though leaving it
+// unrecognised is what let it be counted as a physical uplink holding the route
+// at metric 0, dragging the bar every foreign tunnel is measured against down to
+// 0 and making each of them look parked. The fix for that is ownNames, threaded
+// through Conflicts and uplinkMetric — not a brand fragment. A substring rule
+// for "tenebra" classifies the Hyper-V external switch on the author's machine,
+// "vEthernet (TenebraExt)", as a tunnel, and that adapter is the machine's
+// actual internet connection: the guard would then refuse every connect on a
+// machine with no other VPN on it at all.
+var tunnelPatterns = []string{
+	// Generic virtual-adapter vocabulary. "tun" also covers every driver whose
+	// description ends in "Tunnel": Tailscale's, WireGuard's, sing-box's.
+	"tun", "utun", "tap", "wg", "wintun", "vpn", "ipsec",
+	// Engines that ship an adapter under their own name.
+	"sing", "nekoray", "hiddify", "clash", "xray", "amnezia",
+	// Vendors whose adapter name carries no generic word at all. Measured live
+	// 2026-08-24: not one of these was recognised, and both a Tailscale exit node
+	// and NordLynx hold the default route while running.
+	"tailscale", "nordlynx", "cloudflare", "warp", "mullvad", "zerotier",
+	"netbird", "twingate", "wireguard", "openvpn",
+}
 
-// looksLikeTunnel reports whether the interface name matches a known tunnel
-// pattern. Matching is case-insensitive and on substrings, because vendors ship
-// names like "sing-tun Tunnel", "VpnFix" and "Hiddify Tunnel".
-func looksLikeTunnel(name string) bool {
-	n := strings.ToLower(name)
-	for _, p := range tunnelPrefixes {
+// matchesTunnelPattern reports whether a name or a description carries a known
+// tunnel fragment. Matching is case-insensitive and on substrings, because
+// vendors ship names like "sing-tun Tunnel", "VpnFix" and "Hiddify Tunnel".
+func matchesTunnelPattern(s string) bool {
+	n := strings.ToLower(s)
+	for _, p := range tunnelPatterns {
 		if strings.Contains(n, p) {
 			return true
 		}
@@ -64,26 +107,69 @@ func looksLikeTunnel(name string) bool {
 }
 
 // IsTunnelIface reports whether this interface is a tunnel: what the adapter
-// said, or failing that what its name looks like.
+// said, or failing that what its name or its driver description looks like.
 //
-// Exported because the name heuristic is not optional equipment. The Windows
-// adapter cannot classify an interface at all (net.Interfaces exposes no driver
-// description), so every Iface it returns has IsTunnel false — and a caller that
-// trusts that field alone treats another VPN's adapter as the machine's physical
-// uplink. That is not hypothetical: it is how the bypass ended up pinned to the
-// tunnel it was supposed to stay off.
-func IsTunnelIface(ifc Iface) bool { return ifc.IsTunnel || looksLikeTunnel(ifc.Name) }
+// Exported because the heuristic is not optional equipment. An adapter that
+// leaves IsTunnel false on everything — as this one did before it learnt to read
+// Windows' IfType — makes a caller that trusts the field alone treat another
+// VPN's adapter as the machine's physical uplink. That is not hypothetical: it
+// is how the bypass ended up pinned to the tunnel it was supposed to stay off.
+//
+// The description is read alongside the name because no list of names can win on
+// its own: OpenVPN's TAP adapter is called "Ethernet 2".
+func IsTunnelIface(ifc Iface) bool {
+	return ifc.IsTunnel || matchesTunnelPattern(ifc.Name) || matchesTunnelPattern(ifc.Description)
+}
 
 // isTunnel is the internal spelling, kept so this package reads as it did.
 func isTunnel(ifc Iface) bool { return IsTunnelIface(ifc) }
 
-// uplinkMetric is the best (lowest) default-route metric among the non-tunnel
-// interfaces — i.e. how good the machine's ordinary internet path is. Returns
-// false when no physical uplink carries a default route.
-func uplinkMetric(ifaces []Iface) (int, bool) {
+// lowerOwn lowercases the caller's own interface names, dropping the empties
+// (macOS, where the kernel names the tun and there is nothing to exclude).
+func lowerOwn(names []string) []string {
+	own := make([]string, 0, len(names))
+	for _, n := range names {
+		if n != "" {
+			own = append(own, strings.ToLower(n))
+		}
+	}
+	return own
+}
+
+// isOwn reports whether an interface is one the caller already owns.
+//
+// Matching is by case-insensitive prefix rather than equality because Windows
+// appends a suffix when an adapter name is taken: a tun raised beside one that
+// has not finished going away comes up as "tenebra 2", and compared for equality
+// against the name we asked for it reads as somebody else's VPN. Same rule as
+// control.defaultIfacePresent and control.physicalIfaceIndex, which learnt it
+// the same way.
+func isOwn(name string, own []string) bool {
+	n := strings.ToLower(name)
+	for _, o := range own {
+		if strings.HasPrefix(n, o) {
+			return true
+		}
+	}
+	return false
+}
+
+// uplinkMetric is the best (lowest) default-route metric among the interfaces
+// that are neither tunnels nor ours — i.e. how good the machine's ordinary
+// internet path is. Returns false when no physical uplink carries a default
+// route.
+//
+// Our own interfaces are excluded for the same reason foreign tunnels are, and
+// it matters more: our tun holds the default route at metric 0 by construction,
+// so counting it as the uplink sets the bar every foreign tunnel is compared
+// against to 0, and each of them is then waved through as "parked at a losing
+// metric". The guard would go blind the moment it started working. The same
+// happens for any tunnel the classifier fails to recognise, which is why the
+// pattern list above is not optional decoration.
+func uplinkMetric(ifaces []Iface, own []string) (int, bool) {
 	best, found := 0, false
 	for _, ifc := range ifaces {
-		if !ifc.HasDefaultRoute || isTunnel(ifc) {
+		if !ifc.HasDefaultRoute || isTunnel(ifc) || isOwn(ifc.Name, own) {
 			continue
 		}
 		if !found || ifc.RouteMetric < best {
@@ -112,20 +198,15 @@ func uplinkMetric(ifaces []Iface) (int, bool) {
 // and the name it is about to create), matched case-insensitively — reconnecting
 // must not be blocked by the tunnel being replaced.
 func Conflicts(ifaces []Iface, ownNames ...string) []Iface {
-	own := make(map[string]struct{}, len(ownNames))
-	for _, n := range ownNames {
-		if n != "" {
-			own[strings.ToLower(n)] = struct{}{}
-		}
-	}
-	uplink, hasUplink := uplinkMetric(ifaces)
+	own := lowerOwn(ownNames)
+	uplink, hasUplink := uplinkMetric(ifaces, own)
 
 	var out []Iface
 	for _, ifc := range ifaces {
 		if !ifc.HasDefaultRoute {
 			continue // cannot capture traffic; not a conflict
 		}
-		if _, ours := own[strings.ToLower(ifc.Name)]; ours {
+		if isOwn(ifc.Name, own) {
 			continue
 		}
 		if !isTunnel(ifc) {

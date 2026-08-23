@@ -19,14 +19,18 @@ func (d *Daemon) SetInterfaceProbe(probe func() ([]tunguard.Iface, error)) {
 // checkTunConflict reports whether raising our tun right now would collide with
 // another VPN that already owns the machine's default route.
 //
-// It is checked on a user-driven connect only, and only in tun mode:
+// It is checked on the two connects that start from nothing — the user-driven
+// one and the daemon-start autoconnect — and only in tun mode:
 //
 //   - System-proxy mode creates no tun and installs no route, so it cannot
 //     collide with anything; blocking it would be pure obstruction.
 //   - Relaunch and reconcile paths are excluded on purpose. They fire while our
 //     own tunnel is already up or mid-teardown, where the machine legitimately
 //     has our route in flight; refusing there would turn a recoverable blip into
-//     a tunnel that cannot come back on its own.
+//     a tunnel that cannot come back on its own. That reason does not extend to
+//     autoconnect, which raises its tun on a machine where we have nothing up —
+//     and where another client's service, started with the machine, is exactly
+//     what the guard exists to find.
 //
 // A probe error is deliberately NOT fatal: if the route table cannot be read we
 // know nothing, and converting "unknown" into "refuse" would strand the user
@@ -54,7 +58,9 @@ func (d *Daemon) checkTunConflict(override bool) error {
 
 	// Our own tun is excluded by the name the builder will give it, so a
 	// reconnect is never blocked by the interface it is about to replace. An
-	// unset name resolves to the platform default exactly as the builder would.
+	// unset name resolves to the platform default exactly as the builder would,
+	// and tunguard matches it by prefix, so the "tenebra 2" Windows hands back
+	// when the name is still taken is recognised as ours too.
 	name := tun.InterfaceName
 	if name == "" {
 		name = singbox.DefaultTUNName()

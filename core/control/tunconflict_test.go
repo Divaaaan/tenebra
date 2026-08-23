@@ -136,3 +136,56 @@ func TestConnectIgnoresOurOwnTun(t *testing.T) {
 		t.Fatalf("our own tun blocked the reconnect: %q", resp.Error)
 	}
 }
+
+// TestAutoconnectRefusesWhenAnotherTunnelOwnsTheRoute is the case the guard was
+// written for and the one it was not wired into: a machine starting up with
+// another VPN's service already running. The hand-pressed connect was guarded
+// from the first day; autoconnect — how the app starts on most days, and the
+// only path that runs before anyone is watching — raised its tun regardless.
+func TestAutoconnectRefusesWhenAnotherTunnelOwnsTheRoute(t *testing.T) {
+	dir := t.TempDir()
+	if err := settingsAt(t, dir).Save(persistedSettings{Autoconnect: true, LastProfile: "multi"}); err != nil {
+		t.Fatalf("seed settings: %v", err)
+	}
+
+	h := newHarness(t)
+	seedMultiProto(t, h)
+	h.daemon.SetSettings(settingsAt(t, dir))
+	h.daemon.SetInterfaceProbe(func() ([]tunguard.Iface, error) { return foreignTunnel(), nil })
+
+	if h.daemon.AutoconnectOnStart() {
+		t.Fatal("autoconnect launched an attempt while another VPN owned the default route")
+	}
+	// The refusal has to name the offender in the log: nobody is looking at the
+	// screen when the daemon starts, so the log is the only account of why the
+	// tunnel is not up.
+	h.awaitLogContains("tun0")
+	if h.runner.starts() != 0 {
+		t.Errorf("starts = %d, want 0 — no tun may be raised over another VPN's route", h.runner.starts())
+	}
+	if got := h.daemon.snapshotState().State; got != StateIdle {
+		t.Errorf("state = %q, want idle", got)
+	}
+}
+
+// TestAutoconnectProceedsWhenTheRouteIsFree keeps the guard from turning into a
+// blanket block on the start path: with only the machine's own uplink holding a
+// default route there is nothing to collide with.
+func TestAutoconnectProceedsWhenTheRouteIsFree(t *testing.T) {
+	dir := t.TempDir()
+	if err := settingsAt(t, dir).Save(persistedSettings{Autoconnect: true, LastProfile: "multi"}); err != nil {
+		t.Fatalf("seed settings: %v", err)
+	}
+
+	h := newHarness(t)
+	seedMultiProto(t, h)
+	h.daemon.SetSettings(settingsAt(t, dir))
+	h.daemon.SetInterfaceProbe(func() ([]tunguard.Iface, error) {
+		return []tunguard.Iface{{Name: "Ethernet", HasDefaultRoute: true, RouteMetric: 25}}, nil
+	})
+
+	if !h.daemon.AutoconnectOnStart() {
+		t.Fatal("autoconnect did not launch with the default route free")
+	}
+	h.awaitState(StateConnected)
+}

@@ -154,3 +154,102 @@ func TestOverrideIsExplicitAndWins(t *testing.T) {
 		t.Fatal("default must refuse")
 	}
 }
+
+// TestConflictsFindsTunnelsWhoseNameSaysNothingGeneric: measured live on the
+// author's machine 2026-08-24, where the guard reported "all clear" with three
+// VPN adapters up. None of these names carries a "tun"/"vpn"/"wg" fragment, so
+// a heuristic built only out of those reads them as ordinary network cards.
+func TestConflictsFindsTunnelsWhoseNameSaysNothingGeneric(t *testing.T) {
+	for _, name := range []string{"Tailscale", "NordLynx", "CloudflareWARP", "Mullvad", "ZeroTier One"} {
+		t.Run(name, func(t *testing.T) {
+			ifaces := []Iface{physical, {Name: name, HasDefaultRoute: true, RouteMetric: 0}}
+			if got := Conflicts(ifaces, "tenebra"); len(got) != 1 {
+				t.Fatalf("Conflicts(%q) = %+v, want it flagged", name, got)
+			}
+		})
+	}
+}
+
+// TestConflictsReadsTheAdapterDescription: OpenVPN's TAP adapter arrives on
+// Windows as plain "Ethernet 2" — nothing in the name says VPN, and no name list
+// can ever say otherwise. The driver's own description does.
+func TestConflictsReadsTheAdapterDescription(t *testing.T) {
+	ifaces := []Iface{
+		physical,
+		{Name: "Ethernet 2", Description: "TAP-Windows Adapter V9", HasDefaultRoute: true},
+	}
+	got := Conflicts(ifaces, "tenebra")
+	if len(got) != 1 || got[0].Name != "Ethernet 2" {
+		t.Fatalf("Conflicts = %+v, want the TAP adapter flagged", got)
+	}
+}
+
+// TestOrdinaryAdaptersStayOrdinary: a false positive here is a refusal to
+// connect on a machine with no VPN on it at all, so the descriptions real
+// network cards ship must not be dragged in by any of the fragments above.
+func TestOrdinaryAdaptersStayOrdinary(t *testing.T) {
+	cards := []Iface{
+		{Name: "Ethernet", Description: "Intel(R) Ethernet Connection (7) I219-V"},
+		{Name: "Wi-Fi", Description: "Intel(R) Wi-Fi 6E AX210 160MHz"},
+		{Name: "Ethernet 2", Description: "Realtek PCIe GbE Family Controller"},
+		{Name: "vEthernet (Ext)", Description: "Hyper-V Virtual Ethernet Adapter"},
+		// A Hyper-V external switch on the author's machine, and the interface the
+		// machine's traffic actually leaves by. Its name contains the product's
+		// own name, which is why our tun is excluded by ownNames rather than by a
+		// brand fragment in the pattern list.
+		{Name: "vEthernet (TenebraExt)", Description: "Hyper-V Virtual Ethernet Adapter #2"},
+		{Name: "Local Area Connection", Description: "ASIX AX88179 USB 3.0 to Gigabit Ethernet Adapter"},
+		{Name: "Bluetooth Network Connection", Description: "Bluetooth Device (Personal Area Network)"},
+		{Name: "eth0"},
+		{Name: "en0"},
+	}
+	for _, c := range cards {
+		t.Run(c.Name+"/"+c.Description, func(t *testing.T) {
+			if IsTunnelIface(c) {
+				t.Fatalf("%+v classified as a tunnel", c)
+			}
+		})
+	}
+}
+
+// TestUnrecognisedTunnelDoesNotZeroTheUplink is the second-order failure, and
+// the one that makes the guard worse than useless: a tunnel counted as a
+// physical uplink brings the bar it is compared against down to its own metric
+// of 0, and every genuine conflict at metric 1 or worse is then waved through as
+// "parked at a losing metric". One invisible tunnel disarms the guard for all
+// the visible ones.
+func TestUnrecognisedTunnelDoesNotZeroTheUplink(t *testing.T) {
+	ifaces := []Iface{
+		physical, // Ethernet, metric 25
+		// OpenVPN's TAP adapter: an ordinary-looking name, a default route, and
+		// the metric 0 every tunnel installs.
+		{Name: "Ethernet 2", Description: "TAP-Windows Adapter V9", HasDefaultRoute: true, RouteMetric: 0},
+		// A second VPN that does beat the physical uplink and must be reported.
+		{Name: "Tailscale", HasDefaultRoute: true, RouteMetric: 5},
+	}
+
+	got := Conflicts(ifaces, "tenebra")
+	if len(got) != 2 {
+		t.Fatalf("Conflicts = %+v, want both tunnels flagged", got)
+	}
+}
+
+// TestOurOwnTunIsNotForeignWhenWindowsRenamesIt: Windows appends a suffix when
+// an adapter name is already taken, so our second tun comes up as "tenebra 2".
+// Compared for equality against the name we asked for, our own interface is
+// reported as another VPN and the app refuses to reconnect to itself.
+func TestOurOwnTunIsNotForeignWhenWindowsRenamesIt(t *testing.T) {
+	ifaces := []Iface{
+		physical,
+		{Name: "tenebra 2", Description: "sing-tun Tunnel", HasDefaultRoute: true, RouteMetric: 0},
+	}
+	if got := Conflicts(ifaces, "tenebra"); len(got) != 0 {
+		t.Fatalf("Conflicts = %+v, want none — that is our own tun under a Windows suffix", got)
+	}
+	// And it must not be counted as the physical uplink either, or it drags the
+	// comparison bar down to its own metric.
+	ifaces = append(ifaces, Iface{Name: "Tailscale", HasDefaultRoute: true, RouteMetric: 5})
+	if got := Conflicts(ifaces, "tenebra"); len(got) != 1 || got[0].Name != "Tailscale" {
+		t.Fatalf("Conflicts = %+v, want only Tailscale", got)
+	}
+}

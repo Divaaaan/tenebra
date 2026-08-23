@@ -1024,6 +1024,27 @@ func (d *Daemon) AutoconnectOnStart() bool {
 		d.emitLog(LogWarn, "autoconnect: last profile no longer stored; staying idle")
 		return false
 	}
+	// Refuse to raise a tun over another VPN's default route here too. Daemon
+	// start is not an edge case for this check, it is the case it was written
+	// for: another client's service comes up with the machine, ours comes up
+	// beside it, and the two default routes take the machine off the internet
+	// before anyone has logged in to see it happen. The guard was wired into the
+	// pressed button only, which is the one path where somebody is watching and
+	// could have worked it out.
+	//
+	// The relaunch and reconcile paths are still excluded, and their reason does
+	// not stretch to here: those fire while our own tunnel is already up or
+	// mid-teardown, so refusing would turn a recoverable blip into a tunnel that
+	// cannot come back. Autoconnect starts from nothing.
+	//
+	// No override is available on this path — the escape hatch is an explicit
+	// user action per connect, and nobody is pressing anything at start. Staying
+	// idle is also the safe end: an autoconnect that declines leaves the machine
+	// exactly as it was, on the VPN that is already running.
+	if err := d.checkTunConflict(false); err != nil {
+		d.emitLog(LogWarn, fmt.Sprintf("autoconnect: %v; staying idle", err))
+		return false
+	}
 	d.emitLog(LogInfo, "autoconnect: reconnecting the last profile")
 	// Raise the bypass here too, exactly as a user-driven connect does. Without
 	// it, an autoconnected session is a different product from a hand-pressed one:

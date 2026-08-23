@@ -11,6 +11,39 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **The "another VPN owns the default route" guard can now see the VPNs it was
+  written to catch, and no longer mutes itself.** Four things were wrong at once,
+  and each of them alone was enough to make it report "all clear" on a machine
+  with another client holding every route:
+  - It looked for a literal `0.0.0.0/0` and nothing else. The usual way to take a
+    machine over is not to touch the default route at all but to lay
+    `0.0.0.0/1` + `128.0.0.0/1` over it — two routes covering the same address
+    space, each more specific than a default route, so they win whatever its
+    metric. That is what OpenVPN installs for `redirect-gateway def1` and what a
+    Tailscale exit node installs. The route table is also read for IPv6 now, as
+    the guard always claimed it was: a tunnel owning `::/0` takes every
+    AAAA-resolved destination on a dual-stack machine.
+  - Tunnels were recognised by a short list of name fragments, which is not
+    enough. Tailscale, NordLynx, Cloudflare WARP and OpenVPN's TAP adapter — the
+    last of which Windows calls "Ethernet 2" — all read as ordinary network
+    cards. Windows is now asked what it thinks (the interface type, and the
+    driver's own description), and the name list has grown the vendors that
+    describe themselves in no generic words at all.
+  - An unrecognised tunnel was counted as the machine's physical uplink. Since
+    tunnels write their route at metric 0, that set the bar to 0 and every
+    genuine conflict at metric 1 or worse was waved through as parked at a losing
+    metric — one invisible tunnel switched the guard off for all the visible
+    ones. Our own tun is excluded from that calculation too, by prefix, so the
+    "tenebra 2" name Windows hands back when the first is still going away is
+    still recognised as ours. Metrics are now the effective ones Windows compares
+    (route metric plus interface metric), not the route metric alone, which is 0
+    for a physical uplink behind a Hyper-V switch as readily as for a tunnel.
+  - Autoconnect never consulted the guard at all — so it was off on exactly the
+    path it was written for: a machine starting up with another VPN's service
+    already running, with nobody watching to work out why the internet died.
+
 ## [0.5.0] - 2026-08-21
 
 ### Added
