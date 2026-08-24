@@ -59,6 +59,24 @@ type listenerHarness struct {
 	// returns exactly once; cache its result.
 	doneOnce sync.Once
 	doneErr  error
+
+	// peerMu guards the verdict the daemon's peer check hands back for the next
+	// accepted conn. An in-memory pipe carries no OS credentials, so the real
+	// check refuses it outright (that is the fail-closed policy working); these
+	// tests state the verdict they mean to exercise instead. Default: an admitted
+	// peer holding the daemon's own authority, which is what every pre-existing
+	// session test assumes.
+	peerMu         sync.Mutex
+	peerAllowed    bool
+	peerPrivileged bool
+}
+
+// setPeerVerdict fixes what the listener's peer check returns for connections
+// accepted from here on.
+func (h *listenerHarness) setPeerVerdict(allowed, privileged bool) {
+	h.peerMu.Lock()
+	defer h.peerMu.Unlock()
+	h.peerAllowed, h.peerPrivileged = allowed, privileged
 }
 
 // newTestDaemon builds a daemon over a fresh store and fake runner with the
@@ -89,12 +107,19 @@ func newListenerHarness(t *testing.T) *listenerHarness {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &listenerHarness{
-		t:      t,
-		daemon: d,
-		runner: runner,
-		lis:    newMemListener(),
-		cancel: cancel,
-		done:   make(chan error, 1),
+		t:              t,
+		daemon:         d,
+		runner:         runner,
+		lis:            newMemListener(),
+		cancel:         cancel,
+		done:           make(chan error, 1),
+		peerAllowed:    true,
+		peerPrivileged: true,
+	}
+	d.authorizeConn = func(net.Conn) (bool, bool) {
+		h.peerMu.Lock()
+		defer h.peerMu.Unlock()
+		return h.peerAllowed, h.peerPrivileged
 	}
 	go func() { h.done <- ServeListener(ctx, d, h.lis) }()
 	t.Cleanup(func() {

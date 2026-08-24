@@ -236,6 +236,13 @@ func (s *Server) stopWriter() {
 // auto-refresh ticker under a child context and waits for it to stop before
 // returning, so the ticker's lifetime is exactly the serving session.
 func (s *Server) Serve(ctx context.Context) error {
+	// The sidecar's "peer" is the process that spawned it and owns its stdio: the
+	// UI, running as the user, with the core as its child. A child cannot hold
+	// more privilege than the parent that created it, so there is no boundary to
+	// cross here and the commands that place code in the daemon's directory are
+	// open — this is the case where the core is an ordinary process of the user
+	// rather than a service, and importing a bundle must keep working.
+	ctx = withPeerPrivilege(ctx, true)
 	bgCtx, stopBg := context.WithCancel(ctx)
 	var bg sync.WaitGroup
 	bg.Add(1)

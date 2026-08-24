@@ -192,10 +192,12 @@ func TestConsoleUserUIDAmbiguousRuntimeDirsRefuse(t *testing.T) {
 	}
 }
 
-// TestConsoleUserUIDNoSourcesFailsOpen: a machine publishing neither source (no
-// logind at all) yields an error, which peerAllowed turns into the documented
-// fail-open — the historical any-local-user trust, logged rather than silent.
-func TestConsoleUserUIDNoSourcesFailsOpen(t *testing.T) {
+// TestConsoleUserUIDNoSourcesFailsClosed: a machine publishing neither source
+// (no logind at all) yields an error, which peerAllowed turns into a refusal —
+// the daemon is root here, and a caller it cannot tie to the machine's
+// interactive user is not one it may act for. The reason is logged rather than
+// silent, so the refusal is diagnosable.
+func TestConsoleUserUIDNoSourcesFailsClosed(t *testing.T) {
 	base := t.TempDir()
 	lookup := func() (string, error) {
 		return consoleUserUIDIn(filepath.Join(base, "no-seats"), filepath.Join(base, "no-run-user"))
@@ -205,11 +207,11 @@ func TestConsoleUserUIDNoSourcesFailsOpen(t *testing.T) {
 	}
 
 	warned := false
-	if !peerAllowed("1000", "0", lookup, func(string) { warned = true }) {
-		t.Error("an undeterminable console user must fail open, not lock the GUI out")
+	if peerAllowed("1000", "0", lookup, func(string) { warned = true }) {
+		t.Error("an undeterminable console user must fail closed, not admit an unknown peer")
 	}
 	if !warned {
-		t.Error("the fail-open must be warned about")
+		t.Error("the refusal must be warned about")
 	}
 }
 

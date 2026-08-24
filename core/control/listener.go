@@ -75,7 +75,15 @@ func ServeListener(ctx context.Context, d *Daemon, l net.Listener) error {
 		// authorized session, so an unauthorized connect can't even be used to
 		// kick the real GUI off. An authorized client still displaces the old one
 		// with the usual takeover semantics.
-		if !d.authorizePeer(conn) {
+		//
+		// Being admitted is not the whole answer: privileged says whether this
+		// peer also holds the daemon's own authority, which the commands that
+		// place or run code in its directory require (see adminOnlyCommands). It
+		// is decided here, from the credentials the kernel attached to THIS
+		// connection, and carried on the session's context — never re-derived
+		// per request, where there is no connection left to ask about.
+		allowed, privileged := d.authorizeConn(conn)
+		if !allowed {
 			d.emitLog(LogWarn, "control: rejecting unauthorized local peer")
 			_ = conn.Close()
 			continue
@@ -92,7 +100,7 @@ func ServeListener(ctx context.Context, d *Daemon, l net.Listener) error {
 			cur.close()
 			cur = nil
 		}
-		cur = startSession(ctx, d, conn, &sessions)
+		cur = startSession(ctx, d, conn, &sessions, privileged)
 	}
 }
 
@@ -107,8 +115,13 @@ type session struct {
 // session ends on its own when the client goes away or stops taking delivery;
 // close ends it from the outside (displacement or shutdown). It registers with
 // wg for the duration, so the listener can wait every session out at shutdown.
-func startSession(ctx context.Context, d *Daemon, conn net.Conn, wg *sync.WaitGroup) *session {
-	sctx, cancel := context.WithCancel(ctx)
+//
+// privileged is the verdict the accept loop reached about this peer, stamped
+// onto the session context so every request it dispatches carries it. The stamp
+// is unconditional: a session that forgot to set it would fall back on the
+// in-process default and hand an external caller the daemon's authority.
+func startSession(ctx context.Context, d *Daemon, conn net.Conn, wg *sync.WaitGroup, privileged bool) *session {
+	sctx, cancel := context.WithCancel(withPeerPrivilege(ctx, privileged))
 	s := &session{cancel: cancel, conn: conn}
 	srv := NewServer(d, conn, conn)
 
