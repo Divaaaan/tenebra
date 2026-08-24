@@ -56,6 +56,27 @@ const (
 	checkListenerWait = 10 * time.Second
 )
 
+// defaultCheckBudget bounds a whole run — the wait for the probe's listeners and
+// every node measured after it — and is the reason the command can be pressed
+// without wondering what it will cost.
+//
+// Nothing under it was bounded before, only its pieces: the listener wait, then
+// one wave of checkFanout nodes after another, each node paying its dial plus a
+// request per target. A profile whose dead exits all time out therefore priced
+// the run in minutes, and two ceilings sit well below that. The desktop bridge
+// abandons a request after 60s (REQUEST_TIMEOUT in
+// ui-desktop/src-tauri/src/backend/wire.rs), so past that the caller is told the
+// measurement failed while the daemon is still spending its uplink on it. And a
+// run that overruns is exactly the run the user is about to press something
+// else during — the point of measuring is to connect afterwards — so the budget
+// is half the bridge's ceiling, leaving the other half to whatever comes next.
+//
+// Overrunning it is not an error: what has been measured is reported, and the
+// nodes that were not reached come back unmeasured. A partial answer beats a
+// bare failure, because a working exit found in the first wave is still the
+// right one to connect to.
+const defaultCheckBudget = 30 * time.Second
+
 // handleCheckNodes measures what actually survives each node and reports them
 // ranked, best first.
 //
@@ -77,6 +98,23 @@ func (d *Daemon) handleCheckNodes(ctx context.Context, req Request) Response {
 	if d.probeRunner == nil {
 		return newError(req.ID, "check_nodes: probe runner not configured")
 	}
+
+	// One run at a time for the whole daemon. The probe process binds a fixed
+	// range of loopback ports, so a second run started while the first still
+	// holds them would fail to bind and report every node dead — a measurement
+	// that lies is worse than one that is refused. The UI collapses its own
+	// double-presses, but it is not the only caller: a session displaced
+	// mid-check (the UI restarting) leaves its run unwinding while the new client
+	// is already able to ask for another.
+	if !d.checkRunning.CompareAndSwap(false, true) {
+		return newError(req.ID, "check_nodes: a check is already running")
+	}
+	defer d.checkRunning.Store(false)
+
+	// Everything below is bounded by one budget, and overrunning it truncates the
+	// run rather than failing it (see defaultCheckBudget).
+	ctx, cancel := context.WithTimeout(ctx, d.checkBudget)
+	defer cancel()
 
 	nodes := make([]model.Node, 0, len(p.Servers))
 	for _, s := range p.Servers {
@@ -163,47 +201,106 @@ func (d *Daemon) waitForProbeListeners(ctx context.Context, bindings []singbox.P
 
 // probeBindings measures every node, at most checkFanout at a time, and returns
 // one NodeResult per node in binding order.
+//
+// Every node is named before any of them is measured, so a run that spends its
+// budget still reports the ones it never reached — with no targets, which both
+// Usable and Score already read as "not measured, not usable" — rather than
+// dropping them from the answer or naming them with an empty id.
 func (d *Daemon) probeBindings(ctx context.Context, p profile.Profile, bindings []singbox.ProbeBinding) []nodecheck.NodeResult {
 	results := make([]nodecheck.NodeResult, len(bindings))
+	servers := make([]profile.Server, len(bindings))
+	for i, b := range bindings {
+		id := b.Tag
+		if b.Index >= 0 && b.Index < len(p.Servers) {
+			servers[i] = p.Servers[b.Index]
+			id = servers[i].ID
+		}
+		// An empty, non-nil slice: the UI iterates this field, and a JSON null
+		// there is a crash rather than an empty row.
+		results[i] = nodecheck.NodeResult{NodeID: id, Targets: []nodecheck.TargetResult{}}
+	}
+
 	sem := make(chan struct{}, checkFanout)
 	var wg sync.WaitGroup
 
 	for i, b := range bindings {
-		wg.Add(1)
+		// Out of budget: the remaining nodes stay unmeasured rather than the run
+		// carrying on past the deadline its caller was promised.
+		if ctx.Err() != nil {
+			break
+		}
 		sem <- struct{}{}
-		go func(i int, b singbox.ProbeBinding) {
+		wg.Add(1)
+		go func(i, port int, srv profile.Server) {
 			defer wg.Done()
 			defer func() { <-sem }()
-
-			id := b.Tag
-			var srv profile.Server
-			if b.Index >= 0 && b.Index < len(p.Servers) {
-				srv = p.Servers[b.Index]
-				id = srv.ID
-			}
-
-			// Whether the node's own address answers at all decides which failure the
-			// targets get reported as: unreachable address is a different problem for
-			// the user (routing, firewall, dead host) than an address that answers and
-			// then carries nothing.
-			reachable := srv.Server == "" || d.pingOne(ctx, srv).Ok
-
-			targets := make([]nodecheck.TargetResult, 0, len(d.checkTargets))
-			for _, t := range d.checkTargets {
-				if ctx.Err() != nil {
-					break
-				}
-				stage, rtt := d.checkProbe(ctx, b.Port, t)
-				if stage != nodecheck.StageOK && !reachable {
-					stage = nodecheck.StageDial
-				}
-				targets = append(targets, nodecheck.TargetResult{Target: t, Stage: stage, RTTMs: rtt})
-			}
-			results[i] = nodecheck.NodeResult{NodeID: id, Targets: targets}
-		}(i, b)
+			results[i].Targets = d.probeNode(ctx, port, srv)
+		}(i, b.Port, servers[i])
 	}
 	wg.Wait()
 	return results
+}
+
+// probeNode measures one node: every target through its loopback proxy, and a
+// plain dial to the node's own address, all at once.
+//
+// At once because the targets are independent and the wait is entirely network:
+// run in turn, four targets at checkProbeTimeout apiece cost a single dead node
+// most of a run's budget, and a handful of dead nodes in a profile is exactly
+// the state someone is in when they press this. Concurrency changes nothing
+// about the verdict — the ordering carried no information — while the load a
+// node sees, four cheap 204s at once, is less than opening one web page.
+func (d *Daemon) probeNode(ctx context.Context, port int, srv profile.Server) []nodecheck.TargetResult {
+	// Whether the node's own address answers at all decides which failure the
+	// targets get reported as: unreachable address is a different problem for the
+	// user (routing, firewall, dead host) than an address that answers and then
+	// carries nothing. Buffered, so the dial is never what the probes wait on.
+	reachable := make(chan bool, 1)
+	go func() { reachable <- srv.Server == "" || d.pingOne(ctx, srv).Ok }()
+
+	measured := make([]bool, len(d.checkTargets))
+	probed := make([]nodecheck.TargetResult, len(d.checkTargets))
+	var wg sync.WaitGroup
+	for i, t := range d.checkTargets {
+		if ctx.Err() != nil {
+			break
+		}
+		wg.Add(1)
+		go func(i int, t string) {
+			defer wg.Done()
+			stage, rtt := d.checkProbe(ctx, port, t)
+			probed[i] = nodecheck.TargetResult{Target: t, Stage: stage, RTTMs: rtt}
+			measured[i] = true
+		}(i, t)
+	}
+	wg.Wait()
+
+	targets := make([]nodecheck.TargetResult, 0, len(probed))
+	ok := 0
+	for i := range probed {
+		if !measured[i] {
+			continue
+		}
+		if probed[i].Stage == nodecheck.StageOK {
+			ok++
+		}
+		targets = append(targets, probed[i])
+	}
+
+	// The address failing to answer renames the failures — but only when nothing
+	// came back through the node at all. A single target that completed proves
+	// the address is reachable whatever the plain dial did, and the dial is not
+	// evidence on its own: a UDP-carried node (Hysteria2, WireGuard) never
+	// answers a TCP dial in the first place. Rewriting per-destination failures
+	// as "address unreachable" there buries the honest verdict — the handshake or
+	// probe stage the whole command exists to tell apart — under a wrong one, and
+	// shows a working exit as a dead host.
+	if ok == 0 && !<-reachable {
+		for i := range targets {
+			targets[i].Stage = nodecheck.StageDial
+		}
+	}
+	return targets
 }
 
 // defaultCheckProbe runs one control request through the loopback proxy on port
