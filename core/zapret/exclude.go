@@ -53,6 +53,38 @@ const resolveParallel = 16
 // whole file exists to prevent, at the worst possible moment.
 const cacheTTL = 30 * 24 * time.Hour
 
+// confirmedFor is how long a remembered address stands in for a fresh one. Under
+// it the name does not hold the call up at all: a live resolver agreed with this
+// address that recently, and a reconnect a moment later should not pay for DNS
+// again. Over it the address is a memory rather than a fact, so the call waits
+// for the resolver — and still writes the memory if the resolver says nothing.
+//
+// This is a different question from cacheTTL, and answering both with the same
+// number was a bug. cacheTTL is how long a remembered address is worth falling
+// back TO when the resolver cannot be reached, which is rightly measured in
+// weeks; using that same month-long window to decide whether to wait meant a node
+// that had changed address was protected on its old one for a whole connect. The
+// file was written from memory while the fresh answer was still in flight, and
+// winws — which reads its lists once, at startup — had already been handed the
+// old list by the time the answer landed. On the autoconnect path that is the
+// first connect of every launch, so the address written could be a month old and
+// never once confirmed.
+const confirmedFor = 2 * time.Minute
+
+// settleAfterFirst is how much longer a name that already has a usable address
+// keeps the call waiting for the rest of its resolvers.
+//
+// The wait has to end on the first answer rather than on the last resolver, or
+// one blocked resolver costs the whole budget for a name that was answered in a
+// millisecond — and the shipped default direct resolver is DoH, on lines where
+// DoH being blocked outright is the measured normal (see core/dnspick). But
+// ending flat on the first answer throws away the reason there is more than one
+// resolver: they disagree, and the address that must be excluded is the one the
+// tunnel's own resolver gave. A working encrypted resolver answers in tens of
+// milliseconds, so a short grace collects the second answer into the same file
+// while a dead resolver does not get to hold the connect.
+const settleAfterFirst = 400 * time.Millisecond
+
 // maxCacheEntries bounds the file. Profiles come and go; without a cap the
 // remembered set would only ever grow.
 const maxCacheEntries = 256
@@ -79,9 +111,12 @@ type ExcludeReport struct {
 	// nothing remembered. These nodes are still in the packet filter's way.
 	Unresolved []string
 	// FromCache are the names covered by an address DNS has not confirmed for a
-	// while (see staleAfter). Protected, but on an old answer — worth a debug
-	// line, not a warning. A name whose refresh simply has not landed yet is not
-	// in here: that is every name on every connect and says nothing.
+	// while (see staleAfter) and did not confirm now either: the resolvers had not
+	// answered by the time the file was written, so what the name last said is
+	// what went in. Protected, but on an old answer — worth a debug line, not a
+	// warning. A name whose address is recent enough to stand in for a fresh one
+	// (see confirmedFor) can never be in here, so this is not a line on every
+	// connect.
 	FromCache []string
 }
 
@@ -224,13 +259,17 @@ func splitServers(servers []string) (ips []string, hosts []string) {
 // write for each, which is the fresh answer when there is one and the last known
 // answer when there is not.
 //
-// What it waits for is the point. Every lookup is fired at once; the wait covers
-// only the names this call has nothing to write for, and ends the moment those
-// answer. A name already covered by a remembered address does not hold the
-// connect back: its lookup keeps running into the cache and lands in the file on
-// the next call. Neither does a name that came back with nothing very recently —
-// asking again is worth a background attempt, not another full budget on every
-// connect.
+// What it waits for is the point. Every lookup is fired at once, and the wait
+// covers only the names this call has nothing current to write for. It ends per
+// name and on the first usable answer, not on the last resolver: once a name has
+// an address, it holds the call for at most settleAfterFirst longer — long
+// enough to collect a second resolver that is merely slower, not long enough for
+// one that is blocked. A name whose remembered address was confirmed within
+// confirmedFor does not hold the call at all: its refresh keeps running into the
+// memory and lands in the file on the next call. Neither does a name that came
+// back with nothing very recently — asking again is worth a background attempt,
+// not another full budget on every connect. Whatever is left over ends at the
+// budget.
 func (e *Excluder) resolve(hosts []string, lookups []Lookup) (map[string][]string, ExcludeReport) {
 	// A nil in the slice would be a nil call inside a goroutine, which is a panic
 	// no recover can catch and a daemon that takes the user's tunnel down with it.
@@ -264,15 +303,26 @@ func (e *Excluder) resolve(hosts []string, lookups []Lookup) (map[string][]strin
 	slots := make(chan struct{}, resolveParallel)
 
 	launch := func(host string, holding bool) {
+		// A name the call is waiting on gets two signals: answered, closed by the
+		// first resolver that comes back with a usable address for it, and
+		// finished, closed once every resolver for it has stopped. The wait below
+		// sits between the two.
+		var (
+			answered chan struct{}
+			finished chan struct{}
+			once     sync.Once
+			pending  sync.WaitGroup
+		)
 		if holding {
-			blocking.Add(len(lookups))
+			answered, finished = make(chan struct{}), make(chan struct{})
+			pending.Add(len(lookups))
 		}
 		for _, lookup := range lookups {
 			all.Add(1)
 			go func(lookup Lookup) {
 				defer all.Done()
 				if holding {
-					defer blocking.Done()
+					defer pending.Done()
 				}
 				slots <- struct{}{}
 				defer func() { <-slots }()
@@ -309,8 +359,37 @@ func (e *Excluder) resolve(hosts []string, lookups []Lookup) (map[string][]strin
 				// goroutine may well outlive the call that started it, and its
 				// answer is exactly what the next one should not have to wait for.
 				e.remember(host, merged)
+				if holding {
+					once.Do(func() { close(answered) })
+				}
 			}(lookup)
 		}
+		if !holding {
+			return
+		}
+		go func() {
+			pending.Wait()
+			close(finished)
+		}()
+		blocking.Add(1)
+		go func() {
+			defer blocking.Done()
+			select {
+			case <-finished:
+			case <-ctx.Done():
+			case <-answered:
+				// Covered. The remaining resolvers may hold an address this one
+				// does not — that is why there is more than one — so they get a
+				// bounded moment to add it, and no more.
+				t := time.NewTimer(settleAfterFirst)
+				defer t.Stop()
+				select {
+				case <-finished:
+				case <-t.C:
+				case <-ctx.Done():
+				}
+			}
+		}()
 	}
 
 	// The names the call has to wait for go first, so on a warm cache one new
@@ -393,8 +472,8 @@ func (e *Excluder) fromCacheOnly(hosts []string) (map[string][]string, ExcludeRe
 	return out, report
 }
 
-// holdsTheWait reports whether this name is one the caller must wait for: it has
-// no remembered address, and it did not just fail.
+// holdsTheWait reports whether this name is one the caller must wait for: there
+// is no address current enough to write in its place, and it did not just fail.
 func (e *Excluder) holdsTheWait(host string) bool {
 	retry := e.RetryAfter
 	if retry <= 0 {
@@ -406,9 +485,16 @@ func (e *Excluder) holdsTheWait(host string) bool {
 	if !ok {
 		return true
 	}
-	if len(entry.Addrs) > 0 && time.Since(entry.Seen) < cacheTTL {
+	// Confirmed a moment ago: writing it is writing what DNS says, and the refresh
+	// already in flight lands in the file on the next call.
+	if len(entry.Addrs) > 0 && time.Since(entry.Seen) < confirmedFor {
 		return false
 	}
+	// Older than that — or nothing remembered at all — is worth waiting on. What
+	// the name last answered with is still what gets written if the wait comes
+	// back empty; it just stops being a substitute for asking. The exception is a
+	// name that came back with nothing very recently: asking again this soon buys
+	// the same silence for the whole budget.
 	return time.Since(entry.Failed) >= retry
 }
 

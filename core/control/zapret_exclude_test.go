@@ -11,6 +11,7 @@ import (
 
 	"github.com/Divaaaan/tenebra/core/model"
 	"github.com/Divaaaan/tenebra/core/profile"
+	"github.com/Divaaaan/tenebra/core/routing"
 	"github.com/Divaaaan/tenebra/core/zapret"
 )
 
@@ -186,6 +187,36 @@ func TestNodeLookupsFallBackWhenTheTransportIsUnknown(t *testing.T) {
 	d.mu.Unlock()
 	if got := len(d.nodeLookups()); got != 1 {
 		t.Fatalf("lookups = %d for a transport we cannot speak, want just the system one", got)
+	}
+}
+
+// ...and it says so. Dropping the configured resolver puts the node names back
+// through the machine's resolver alone, which is the behaviour the exclusion list
+// was fixed to stop having; without a line, a user on quic:// gets that behaviour
+// back and nothing anywhere connects it to their DNS setting.
+func TestNodeLookupsSaysWhenItCannotSpeakTheTransport(t *testing.T) {
+	d, _ := newTestDaemon(t)
+	d.mu.Lock()
+	d.routing.DNSDirect = "quic://dns.adguard.com"
+	d.mu.Unlock()
+
+	debug := collectLogs(t, d, LogDebug, func() { d.nodeLookups() })
+	found := false
+	for _, line := range debug {
+		if strings.Contains(line, "quic://dns.adguard.com") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("debug log = %v, want the resolver that could not be used named", debug)
+	}
+
+	// The usable case stays quiet: a resolver that works is not news.
+	d.mu.Lock()
+	d.routing.DNSDirect = routing.DefaultDNSDirect
+	d.mu.Unlock()
+	if quiet := collectLogs(t, d, LogDebug, func() { d.nodeLookups() }); len(quiet) != 0 {
+		t.Errorf("debug log = %v, want nothing when the configured resolver is usable", quiet)
 	}
 }
 

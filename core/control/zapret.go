@@ -215,15 +215,20 @@ func (d *Daemon) excludeNodesFromZapret(dir string) {
 //
 // A resolver whose transport this client cannot speak (DoQ) yields no second
 // lookup, and the system one carries the load — the same coverage as before this
-// existed, not less.
+// existed, not less. That fallback says so in the log: it is the behaviour this
+// function was written to replace, and silence about it leaves a user whose
+// nodes are still being desynced with nothing to go on.
 func (d *Daemon) nodeLookups() []zapret.Lookup {
 	d.mu.Lock()
-	direct := d.routing.DNSDirect
+	direct := strings.TrimSpace(d.routing.DNSDirect)
 	d.mu.Unlock()
 
 	lookups := []zapret.Lookup{zapret.SystemLookup}
 	if r, ok := dnswire.NewResolver(direct); ok {
 		lookups = append(lookups, r.LookupIP)
+	} else if direct != "" {
+		d.emitDebug(fmt.Sprintf(
+			"zapret: транспорт резолвера %s не поддерживается — адреса узлов спрашиваются только у системного", direct))
 	}
 	return lookups
 }

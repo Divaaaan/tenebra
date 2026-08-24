@@ -57,7 +57,7 @@ type Resolver struct {
 // answer. h3:// is served over HTTP/2 instead: same resolver, same URL, same
 // answer, one transport version down.
 func NewResolver(addr string) (*Resolver, bool) {
-	return newResolver(addr, dohClient())
+	return newResolver(addr, dohClient)
 }
 
 // newResolver is NewResolver with the HTTP client for DoH handed in, so a test
@@ -182,14 +182,24 @@ func dohQuery(client *http.Client, endpoint string) func(context.Context, []byte
 // caller's context; only the handshake gets a limit of its own, so a resolver
 // that accepts a connection and then says nothing cannot outlive the budget by
 // sitting in the TLS handshake.
-func dohClient() *http.Client {
-	return &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
-			ForceAttemptHTTP2:   true,
-			TLSHandshakeTimeout: 10 * time.Second,
-		},
-	}
+//
+// One client for the process, not one per resolver. NewResolver runs on every
+// connect, every bypass start and every strategy pick, and a client built in
+// there brought its own transport — and so its own connection pool — with it:
+// the pool outlives the call that made it, holding an idle TLS connection and
+// the goroutines reading it until the far end gives up. Sharing one means the
+// second question to the same resolver reuses the first one's connection instead
+// of opening another beside it.
+var dohClient = &http.Client{
+	Transport: &http.Transport{
+		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
+		ForceAttemptHTTP2:   true,
+		TLSHandshakeTimeout: 10 * time.Second,
+		// A connection to a resolver nobody is asking any more is closed rather
+		// than held for the life of the process; a bare Transport keeps idle
+		// connections forever.
+		IdleConnTimeout: 90 * time.Second,
+	},
 }
 
 // streamQuery returns a query function for DNS over a stream: TCP (RFC 1035

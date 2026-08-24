@@ -39,6 +39,23 @@ func table(answers map[string][]string) Lookup {
 	}
 }
 
+// delayed answers from a table, but only after d has passed — a resolver on a
+// real network rather than one in a map. The delay is what makes the difference
+// between waiting for the answer and writing the file before it lands visible.
+func delayed(d time.Duration, answers map[string][]string) Lookup {
+	inner := table(answers)
+	return func(ctx context.Context, host string) ([]net.IP, error) {
+		t := time.NewTimer(d)
+		defer t.Stop()
+		select {
+		case <-t.C:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return inner(ctx, host)
+	}
+}
+
 // dead is a resolver that is there but never answers, until the deadline.
 func dead(_ context.Context, _ string) ([]net.IP, error) {
 	return nil, &net.DNSError{Err: "server misbehaving", IsTemporary: true}
@@ -48,6 +65,23 @@ func dead(_ context.Context, _ string) ([]net.IP, error) {
 func stalls(ctx context.Context, _ string) ([]net.IP, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
+}
+
+// seedCache leaves a remembered set on disk the way a previous run of the client
+// would have.
+func seedCache(t *testing.T, dir string, hosts map[string]cacheEntry) {
+	t.Helper()
+	lists := filepath.Join(dir, "lists")
+	if err := os.MkdirAll(lists, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(cacheFile{Version: 1, Hosts: hosts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lists, nodeCacheFile), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // The exclusion is what stops the bypass from desyncing the tunnel's own
@@ -252,19 +286,9 @@ func TestExcludeNodesKeepsTheLastKnownAddressWhenDNSFails(t *testing.T) {
 // anyone gets, so it has to be said.
 func TestExcludeNodesNamesTheNodesRunningOnAnOldAnswer(t *testing.T) {
 	dir := t.TempDir()
-	lists := filepath.Join(dir, "lists")
-	if err := os.MkdirAll(lists, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	stale, err := json.Marshal(cacheFile{Version: 1, Hosts: map[string]cacheEntry{
+	seedCache(t, dir, map[string]cacheEntry{
 		"node.example.com": {Addrs: []string{"198.51.100.10"}, Seen: time.Now().Add(-3 * time.Hour)},
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(lists, nodeCacheFile), stale, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	})
 
 	report, err := (&Excluder{}).Exclude(dir, []string{"node.example.com"}, []Lookup{dead})
 	if err != nil {
@@ -278,6 +302,73 @@ func TestExcludeNodesNamesTheNodesRunningOnAnOldAnswer(t *testing.T) {
 	}
 	if got := readExclude(t, dir); !strings.Contains(got, "198.51.100.10") {
 		t.Errorf("the remembered address was not written:\n%s", got)
+	}
+}
+
+// The memory is insurance against a resolver that cannot be reached, not a
+// substitute for one that can. A node that changed address has to be protected
+// on the address it moved TO, on the first connect after the move: writing the
+// remembered one while a live resolver was still answering handed winws the old
+// list for the whole connect, and winws reads its lists once, at startup. Through
+// autoconnect that first connect is every launch of the client, so the address
+// written could be weeks old and never once confirmed.
+func TestExcludeNodesWritesTheFreshAnswerNotTheRememberedOne(t *testing.T) {
+	dir := t.TempDir()
+	// What the last run left behind: this node's address from a day ago, when it
+	// still lived somewhere else.
+	seedCache(t, dir, map[string]cacheEntry{
+		"node.example.com": {Addrs: []string{"198.51.100.10"}, Seen: time.Now().Add(-24 * time.Hour)},
+	})
+	live := []Lookup{delayed(80*time.Millisecond, map[string][]string{
+		"node.example.com": {"203.0.113.77"},
+	})}
+
+	report, err := (&Excluder{Budget: 2 * time.Second}).Exclude(dir, []string{"node.example.com"}, live)
+	if err != nil {
+		t.Fatalf("Exclude: %v", err)
+	}
+	if len(report.Unresolved) != 0 {
+		t.Fatalf("unresolved = %v, want none", report.Unresolved)
+	}
+	if len(report.FromCache) != 0 {
+		t.Errorf("fromCache = %v, want none: the resolver answered", report.FromCache)
+	}
+	got := readExclude(t, dir)
+	if !strings.Contains(got, "203.0.113.77") {
+		t.Errorf("the node moved and the filter was left aimed at where it used to be:\n%s", got)
+	}
+	if strings.Contains(got, "198.51.100.10") {
+		t.Errorf("a remembered address was written over a fresh answer:\n%s", got)
+	}
+}
+
+// The other half of that rule: when the resolver really is unreachable, the
+// remembered address is still what gets written, however old it is — and the
+// waiting the test above asks for stays inside the budget.
+func TestExcludeNodesFallsBackToAnOldMemoryWhenTheResolverIsDead(t *testing.T) {
+	dir := t.TempDir()
+	seedCache(t, dir, map[string]cacheEntry{
+		"node.example.com": {Addrs: []string{"198.51.100.10"}, Seen: time.Now().Add(-24 * time.Hour)},
+	})
+
+	e := &Excluder{Budget: 200 * time.Millisecond}
+	start := time.Now()
+	report, err := e.Exclude(dir, []string{"node.example.com"}, []Lookup{stalls})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("Exclude: %v", err)
+	}
+	if len(report.Unresolved) != 0 {
+		t.Fatalf("unresolved = %v, want none: the address was remembered", report.Unresolved)
+	}
+	if len(report.FromCache) != 1 || report.FromCache[0] != "node.example.com" {
+		t.Fatalf("fromCache = %v, want [node.example.com]", report.FromCache)
+	}
+	if got := readExclude(t, dir); !strings.Contains(got, "198.51.100.10") {
+		t.Errorf("a dead resolver erased an exclusion the memory could have covered:\n%s", got)
+	}
+	if elapsed > time.Second {
+		t.Errorf("the wait ran %v on a %v budget", elapsed, e.Budget)
 	}
 }
 
@@ -458,6 +549,54 @@ func TestExcludeNodesDoesNotWaitForNamesItAlreadyKnows(t *testing.T) {
 	}
 	if got := readExclude(t, dir); !strings.Contains(got, "198.51.100.10") {
 		t.Errorf("the known address was not written:\n%s", got)
+	}
+}
+
+// One resolver that never answers must not cost the whole budget for a name
+// another resolver answered in a millisecond. The shipped default direct
+// resolver is DoH, and a line that swallows DoH whole is the measured normal
+// this client is written for (see core/dnspick), so waiting for every resolver
+// to finish meant every new name paying the full budget on the first connect.
+func TestExcludeNodesStopsWaitingOnceANameIsCovered(t *testing.T) {
+	dir := t.TempDir()
+	e := &Excluder{Budget: 3 * time.Second}
+	quick := table(map[string][]string{"node.example.com": {"198.51.100.10"}})
+
+	start := time.Now()
+	report, err := e.Exclude(dir, []string{"node.example.com"}, []Lookup{quick, stalls})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("Exclude: %v", err)
+	}
+	if len(report.Unresolved) != 0 {
+		t.Fatalf("unresolved = %v, want none", report.Unresolved)
+	}
+	if elapsed > settleAfterFirst+time.Second {
+		t.Errorf("a name that was answered at once still waited %v, budget is %v", elapsed, e.Budget)
+	}
+	if got := readExclude(t, dir); !strings.Contains(got, "198.51.100.10") {
+		t.Errorf("the answer that did arrive was not written:\n%s", got)
+	}
+}
+
+// It does not end flat on the first answer either, and that is deliberate: the
+// reason there is a list of resolvers is that they disagree, and the address the
+// tunnel dials is whatever ITS resolver said. A resolver that is merely slower
+// than the other still lands in the same file.
+func TestExcludeNodesGivesTheSlowerResolverItsMoment(t *testing.T) {
+	dir := t.TempDir()
+	system := table(map[string][]string{"node.example.com": {"198.51.100.10"}})
+	direct := delayed(80*time.Millisecond, map[string][]string{"node.example.com": {"203.0.113.77"}})
+
+	e := &Excluder{Budget: 3 * time.Second}
+	if _, err := e.Exclude(dir, []string{"node.example.com"}, []Lookup{system, direct}); err != nil {
+		t.Fatalf("Exclude: %v", err)
+	}
+	got := readExclude(t, dir)
+	for _, want := range []string{"198.51.100.10", "203.0.113.77"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%s was not excluded — the wait ended before the slower resolver answered:\n%s", want, got)
+		}
 	}
 }
 

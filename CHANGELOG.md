@@ -38,11 +38,25 @@ All notable changes to Tenebra are documented here. The format follows
   remembered beside the list, carried across bundle updates and capped at 256
   names, so a DNS outage no longer erases an exclusion that was already working —
   the list is written from memory instead, and the nodes running on an answer
-  older than an hour are named in the debug log. Only a name with no address at
-  all holds the connect back: on the author's machine the first connect spends
-  133 ms on three names and the ones after it about 1 ms, while a name that is
-  simply dead costs the full two-second budget once and 1 ms on every connect
-  after, instead of two seconds every time. Answers no node can sit behind —
+  older than an hour are named in the debug log. That memory is insurance against
+  a resolver that cannot be reached, not a stand-in for one that can: an address
+  confirmed within the last two minutes is written straight out, and anything
+  older waits for the resolver first, so a node that has changed address is
+  protected on the address it moved to rather than on the one it left. Through
+  autoconnect that is the first connect of every launch, where the address
+  written could otherwise be weeks old and never once confirmed — winws reads its
+  lists once, at startup, so an answer that lands a moment later does nothing
+  until the next start. The waiting ends per name on the first resolver that
+  answers it, plus a short grace for a second resolver that is merely slower, so
+  one blocked resolver no longer costs a name the whole budget — which on a line
+  that swallows DoH, and the shipped default direct resolver is DoH, was every
+  new name on every first connect. Measured with one resolver answering at once
+  and one blocked: three names cost 2.0 s before and 0.40 s now, while a
+  reconnect a moment later stays at about 0.5 ms, and a name that is simply dead
+  still costs the budget once rather than every time. A resolver whose transport
+  this client cannot speak (`quic://`) leaves the machine's own resolver doing
+  the work as before, and now says so in the debug log instead of falling back in
+  silence. Answers no node can sit behind —
   `0.0.0.0`, loopback, link-local — are refused rather than written, since a
   resolver that hijacks a dead name would otherwise have the node counted as
   covered. Names left with no address are reported and logged by name, so a node
