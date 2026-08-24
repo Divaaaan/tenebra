@@ -136,6 +136,12 @@ type Daemon struct {
 	zapretLatest func(context.Context) (zapret.Release, error)
 	zapretApply  func(context.Context, string, zapret.Release) error
 
+	// zapretExclude writes the node addresses the packet filter must leave alone
+	// and reports the node hostnames it could not resolve. Injected for the same
+	// reason as the pair above: the real one performs DNS lookups, and a test of
+	// what the daemon does with the answer should not depend on a resolver.
+	zapretExclude func(dir string, servers []string) ([]string, error)
+
 	// zapretOpMu serializes every operation that drives the bypass: probing,
 	// starting, stopping and updating. They share one winws process and one
 	// directory on disk, and overlapping them replaces a bundle under a running
@@ -472,6 +478,7 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 		zapretApply: func(context.Context, string, zapret.Release) error {
 			return errors.New("zapret: updater not configured")
 		},
+		zapretExclude: zapret.ExcludeNodes,
 		// CacheDir pins sing-box's cache file to the writable store directory so
 		// the root launchd daemon (cwd "/", read-only) doesn't abort at startup;
 		// see singbox.TunOptions.CacheDir. Mode/MixedPort are seeded concrete (tun,

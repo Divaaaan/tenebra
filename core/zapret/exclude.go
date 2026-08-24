@@ -1,12 +1,15 @@
 package zapret
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 )
 
 // excludeFile is the bundle's user-editable exclusion list. Every shipped
@@ -18,8 +21,30 @@ const excludeFile = "ipset-exclude-user.txt"
 // own entries above it survive being rewritten.
 const excludeHeader = "# --- tenebra: VPN node addresses, managed automatically ---"
 
+// resolveBudget caps the wall clock the whole hostname lookup may spend. This
+// runs on the connect path, right before the bypass comes up, so the budget is
+// time added to every connect on a machine whose resolver is slow or gone; a
+// cached or healthy answer arrives in tens of milliseconds and never approaches
+// it. Two seconds buys a full round trip to an upstream resolver and a retry,
+// and is short enough to read as part of connecting rather than a hang. A
+// variable so tests can shrink it.
+var resolveBudget = 2 * time.Second
+
+// resolveParallel bounds the lookups in flight. A subscription can carry a
+// hundred nodes: one after another, the first slow name eats the whole budget,
+// while all hundred at once is a burst a local resolver answers with drops.
+const resolveParallel = 16
+
+// lookupIP resolves a node hostname to its addresses. A variable so tests can
+// exercise the path without a DNS server.
+var lookupIP = func(ctx context.Context, host string) ([]net.IP, error) {
+	return net.DefaultResolver.LookupIP(ctx, "ip", host)
+}
+
 // ExcludeNodes writes the exit-node addresses into the bundle's exclusion list,
-// preserving any lines the user put there themselves.
+// preserving any lines the user put there themselves. It returns the node
+// hostnames it could not resolve — the nodes still left in the filter's way — so
+// the caller can name them instead of leaving the gap silent.
 //
 // Why the bypass must not touch the tunnel's own traffic: winws attaches to
 // every interface and filters by port, and the ports it watches (443, 8443,
@@ -30,33 +55,23 @@ const excludeHeader = "# --- tenebra: VPN node addresses, managed automatically 
 // as "the node is down" and sends the user hunting through their subscription
 // for a fault that is on their own machine.
 //
-// Only IP literals are written. Resolving a hostname here would mean a DNS
-// lookup on a path that may not be up yet, and a wrong or stale answer would
-// exclude someone else's address while leaving the node exposed.
-func ExcludeNodes(dir string, servers []string) error {
+// Nodes given by name are resolved here and their addresses written. The file is
+// an ipset, not a hostlist: winws documents --ipset-exclude as "one ip/CIDR per
+// line, ipv4 and ipv6 accepted" and answers anything else with "bad ip or
+// subnet", so a hostname put in this file is a line thrown away, not a lookup
+// deferred to winws. Subscriptions that address their nodes by name are ordinary,
+// and every one of them used to drop out of this list without a word.
+//
+// The lookup happens at this moment rather than earlier because this is the last
+// point where the direct path is known good: the bypass is not running yet and
+// neither is the tunnel, so the answer comes over the same path sing-box will use
+// to dial the node seconds later. It is bounded by resolveBudget, so a dead
+// resolver costs a short pause and a warning rather than the connect.
+func ExcludeNodes(dir string, servers []string) ([]string, error) {
 	path := filepath.Join(dir, "lists", excludeFile)
 
 	kept := userLines(path)
-
-	seen := make(map[string]struct{})
-	var ips []string
-	for _, s := range servers {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			continue
-		}
-		// Bracketed IPv6 ("[2001:db8::1]") arrives from URL-shaped sources.
-		s = strings.TrimSuffix(strings.TrimPrefix(s, "["), "]")
-		if net.ParseIP(s) == nil {
-			continue // a hostname: see above
-		}
-		if _, dup := seen[s]; dup {
-			continue
-		}
-		seen[s] = struct{}{}
-		ips = append(ips, s)
-	}
-	sort.Strings(ips)
+	ips, unresolved := nodeAddresses(servers)
 
 	var b strings.Builder
 	for _, l := range kept {
@@ -70,15 +85,133 @@ func ExcludeNodes(dir string, servers []string) error {
 		b.WriteString("\r\n")
 	}
 	// The bundle's own comment warns against leaving these files empty; a lone
-	// header keeps the file non-empty even with no IP-literal nodes.
+	// header keeps the file non-empty even when no node yielded an address.
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("zapret: не создать каталог списков: %w", err)
+		return unresolved, fmt.Errorf("zapret: не создать каталог списков: %w", err)
 	}
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
-		return fmt.Errorf("zapret: не записать %s: %w", excludeFile, err)
+		return unresolved, fmt.Errorf("zapret: не записать %s: %w", excludeFile, err)
 	}
-	return nil
+	return unresolved, nil
+}
+
+// nodeAddresses turns the configured node endpoints into the address literals an
+// ipset accepts: IP literals pass straight through, hostnames are resolved. The
+// second return is the names that answered with nothing usable, deduplicated and
+// sorted, for the caller to report.
+func nodeAddresses(servers []string) (ips []string, unresolved []string) {
+	seen := make(map[string]struct{})
+	add := func(ip string) {
+		if _, dup := seen[ip]; dup {
+			return
+		}
+		seen[ip] = struct{}{}
+		ips = append(ips, ip)
+	}
+
+	var hosts []string
+	hostSeen := make(map[string]struct{})
+	for _, s := range servers {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		// Bracketed IPv6 ("[2001:db8::1]") arrives from URL-shaped sources.
+		s = strings.TrimSuffix(strings.TrimPrefix(s, "["), "]")
+		if net.ParseIP(s) != nil {
+			add(s)
+			continue
+		}
+		// DNS is case-insensitive, so two spellings of one name are one lookup.
+		host := strings.ToLower(s)
+		if _, dup := hostSeen[host]; dup {
+			continue
+		}
+		hostSeen[host] = struct{}{}
+		hosts = append(hosts, host)
+	}
+
+	resolved := resolveHosts(hosts)
+	for _, h := range hosts {
+		addrs := resolved[h]
+		if len(addrs) == 0 {
+			unresolved = append(unresolved, h)
+			continue
+		}
+		// Every address a name answers with is written: any of them is an endpoint
+		// the tunnel may end up dialling, and excluding one the tunnel does not use
+		// only means the bypass leaves that address alone.
+		for _, a := range addrs {
+			add(a)
+		}
+	}
+
+	sort.Strings(ips)
+	sort.Strings(unresolved)
+	return ips, unresolved
+}
+
+// resolveHosts looks the names up in parallel under one shared deadline and
+// returns the usable addresses each answered with. A name that failed, timed out
+// or answered with nothing usable is simply absent from the map — the caller
+// counts those rather than guessing an address for them.
+func resolveHosts(hosts []string) map[string][]string {
+	if len(hosts) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), resolveBudget)
+	defer cancel()
+
+	out := make(map[string][]string, len(hosts))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, resolveParallel)
+
+	for _, h := range hosts {
+		wg.Add(1)
+		go func(host string) {
+			defer wg.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+
+			// A lookup that starts after the deadline returns immediately with the
+			// context's error, so a long queue drains at the budget instead of
+			// running past it.
+			addrs, err := lookupIP(ctx, host)
+			if err != nil {
+				return
+			}
+			var usable []string
+			for _, ip := range addrs {
+				if !usableNodeIP(ip) {
+					continue
+				}
+				usable = append(usable, ip.String())
+			}
+			if len(usable) == 0 {
+				return
+			}
+			mu.Lock()
+			out[host] = usable
+			mu.Unlock()
+		}(h)
+	}
+	wg.Wait()
+	return out
+}
+
+// usableNodeIP rejects answers no exit node can sit behind. Resolvers that turn
+// a dead name into 0.0.0.0 or the loopback are common enough that taking their
+// word would put a meaningless line in the ipset and count the node as handled,
+// leaving the real one exposed with the warning suppressed.
+func usableNodeIP(ip net.IP) bool {
+	return ip != nil &&
+		!ip.IsUnspecified() &&
+		!ip.IsLoopback() &&
+		!ip.IsLinkLocalUnicast() &&
+		!ip.IsLinkLocalMulticast() &&
+		!ip.IsMulticast()
 }
 
 // userLines returns the file's content above our managed header — the entries

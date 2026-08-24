@@ -11,6 +11,28 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Nodes addressed by name were left in the packet filter's path.** The bypass
+  runs on the physical uplink, which is where our own tunnel's packets to its exit
+  node go, so the exclusion list is the only thing keeping a desync off the
+  handshake to our own node. That list took IP literals and dropped anything else
+  on the floor — no count, no log — and subscriptions that address their nodes by
+  hostname are the ordinary case. The symptom is the one the exclusion exists to
+  prevent: the node's port opens and then goes quiet, which reads as a dead node
+  and sends the user hunting through their subscription for a fault on their own
+  machine. Names are now resolved and their addresses written, which is what the
+  file can carry — winws takes `--ipset-exclude` as one ip/CIDR per line and
+  answers anything else with "bad ip or subnet", so a hostname in there was never
+  a lookup deferred to winws, only a discarded line. The lookups run at the last
+  moment the direct path is known good (the bypass is not up yet, and neither is
+  the tunnel), in parallel and under a two-second budget, so a dead resolver costs
+  a short pause rather than the connect. Answers no node can sit behind —
+  `0.0.0.0`, loopback, link-local — are refused rather than written, since a
+  resolver that hijacks a dead name would otherwise have the node counted as
+  covered. Names that did not resolve are now reported and logged by name, so a
+  node left exposed is a warning in the log instead of silence.
+
 ## [0.5.1] - 2026-08-24
 
 ### Security

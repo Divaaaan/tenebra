@@ -236,7 +236,7 @@ func TestApplyKeepsLocalStateAndStampsVersion(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "lists", "list-general-user.txt"), []byte("my-site.example\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ExcludeNodes(dir, []string{"95.163.176.178"}); err != nil {
+	if _, err := ExcludeNodes(dir, []string{"95.163.176.178"}); err != nil {
 		t.Fatal(err)
 	}
 

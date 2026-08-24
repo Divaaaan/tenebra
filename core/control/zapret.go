@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Divaaaan/tenebra/core/zapret"
@@ -176,9 +177,34 @@ func (d *Daemon) excludeNodesFromZapret(dir string) {
 			servers = append(servers, n.Server)
 		}
 	}
-	if err := zapret.ExcludeNodes(dir, servers); err != nil {
+	unresolved, err := d.zapretExclude(dir, servers)
+	if err != nil {
 		d.emitLog(LogWarn, fmt.Sprintf("zapret: не удалось исключить адреса узлов из фильтра: %v", err))
 	}
+	// A node addressed by name whose address we could not learn stays in the
+	// filter's way, and the symptom is the one this whole function exists to
+	// prevent: a port that opens and goes quiet, read as a dead node. Name the
+	// nodes, so the failure can be traced to DNS instead of to the subscription.
+	if len(unresolved) > 0 {
+		d.emitLog(LogWarn, fmt.Sprintf(
+			"zapret: не удалось определить адреса узлов (%d): %s — фильтр может рвать подключение к ним",
+			len(unresolved), strings.Join(shortNameList(unresolved), ", ")))
+	}
+}
+
+// logNameLimit caps how many node names one warning spells out: a subscription
+// with a hundred dead names would otherwise push the rest of the log out of the
+// buffer with one line.
+const logNameLimit = 5
+
+// shortNameList trims a name list to something a log line can carry, keeping the
+// count of what it dropped.
+func shortNameList(names []string) []string {
+	if len(names) <= logNameLimit {
+		return names
+	}
+	out := append([]string(nil), names[:logNameLimit]...)
+	return append(out, fmt.Sprintf("и ещё %d", len(names)-logNameLimit))
 }
 
 // applyZapretState records that the bypass came up (or went down) and makes the
