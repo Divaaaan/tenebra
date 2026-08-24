@@ -11,22 +11,8 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
-### Changed
+## [0.5.1] - 2026-08-24
 
-- **The DPI-bypass bundle is credited to the projects it comes from.** Since
-  0.5.0 the app installs the bypass itself, which means it downloads the
-  [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube)
-  release onto the user's disk — [zapret](https://github.com/bol-van/zapret) by
-  bol-van (MIT), the [WinDivert](https://github.com/basil00/WinDivert) packet
-  driver, and the Cygwin runtime — and THIRD-PARTY-NOTICES.md mentioned none of
-  them. It now has a section for software fetched at run time, with WinDivert's
-  LGPLv3-or-GPLv2 choice settled on the record in favour of LGPLv3 and the
-  Cygwin linking exception quoted; the generator emits that section, so
-  regenerating cannot quietly drop it again. The README explains what is
-  downloaded, where it lands, and which switch stops it from being downloaded at
-  all. `github.com/sagernet/gomobile`, in `go.mod` since 0.4.5 and never
-  listed, is in the notice too — the generator had been refusing to run over it
-  since July.
 ### Security
 
 - **Any local user could run code as SYSTEM.** `import_zapret` accepted an
@@ -51,6 +37,121 @@ All notable changes to Tenebra are documented here. The format follows
   with a warning rather than refused — which is what made the escalation above
   reachable from an unidentified caller. Both are now refusals, still logged with
   the reason so a genuinely stuck attach is diagnosable instead of mysterious.
+- **The bypass bundle is verified before it is installed, and only pinned
+  versions install automatically.** The updater took the download URL out of the
+  release feed as it stood — no scheme check, no host check — followed its
+  redirects, unpacked the result and put it in place; the size the feed published
+  was parsed and never compared to anything, and no checksum was consulted at all.
+  Since the bundle installs itself on the first connect and re-checks every twelve
+  hours, and a batch file out of it is then run through `cmd.exe` by a service
+  account, anything able to alter that download got code execution as LocalSystem
+  on a schedule. Now the archive may only come from `github.com` or the GitHub
+  release-asset hosts it redirects to (`release-assets.githubusercontent.com`,
+  `objects.githubusercontent.com`) over https — checked on the first URL and on
+  every redirect after it — must arrive at exactly the length the release
+  declares, and must hash to a SHA-256 pinned into the client for that version.
+  A version the client does not pin is not installed at all: the digest GitHub
+  publishes beside the asset travels the same connection as the archive, so it
+  cannot stand in for a pin against a network able to forge that connection —
+  which, on the networks this app is for, is the whole threat. Such a release is
+  reported instead ("a newer bypass bundle is out — update Tenebra"), the working
+  one is kept, and the pin ships with the next client release. The verified bytes
+  are unpacked straight from memory, so nothing re-reads a file that could be
+  swapped between the checksum and the install. A refusal that means tampering is
+  logged as an error and named on screen; "there is a newer bundle you do not pin
+  yet" is a quiet, actionable notice rather than an alarm.
+
+### Added
+
+- **The log now says why a connect went the way it did.** The core had 73 log
+  calls and almost none of them on the live path: which exit a walk leads with
+  and on what grounds, why a connect was refused before it ever started, what a
+  node probe measured stage by stage, whether the DPI bypass came up and under
+  which strategy, and what the tun-conflict guard actually saw in the route table
+  were all decisions taken in silence. They are recorded now — decisions at
+  `info`, the evidence behind them at `debug`.
+- **A diagnostics report, in one action.** `collect_diagnostics` assembles the
+  core's state, its build versions (core, sing-box, bypass bundle), every routing
+  option in force, the stored profiles, the last fallback walk, the machine's
+  interfaces and default routes, and the tail of the log into one file the user
+  can attach to a bug report. Settings → Diagnostics saves it and shows where.
+  It probes nothing and sends nothing, and subscription tokens and node
+  credentials are masked by the same rules the app already applies to the
+  diagnostics it copies from its log console.
+- **A log level that filters.** The level constants existed and nothing consulted
+  them. The core now drops anything below its threshold — `info` by default, so a
+  shipped build never narrates itself — and `TENEBRA_LOG_LEVEL=debug` raises it
+  for a support session. It is an environment variable rather than a stored
+  preference on purpose: debug someone turned on in January and forgot about is
+  the same disease as a log with no ceiling.
+- **Changing the exit no longer drops what you were doing.** Picking another node
+  on a live tunnel used to tear the whole thing down and build it again: the tun
+  went away, every connection went with it, and a download or a call paid for a
+  node change. The node is now switched inside the running sing-box — same
+  process, same tun, same routes — and connections already open finish on the exit
+  they started on while new ones take the new node. The switch is confirmed before
+  it is reported, and anything that cannot be switched this way (a node the running
+  config never had, a two-hop chain, a control API that refuses) falls back to the
+  reconnect it always did. The UI says which of the two happened rather than
+  showing "reconnecting" for both.
+- **A degraded exit is left behind without dropping the tunnel.** The health
+  watchdog no longer reconnects the moment the active node stops carrying traffic:
+  it measures the other exits through the process that is already running — the
+  same several-destinations standard `check_nodes` applies — and moves onto the
+  best one live. It is damped so a bad local network cannot walk you around the
+  node list: one move at most every three minutes, three in any fifteen, a node
+  that just failed passed over for ten, and after that the log says why nothing is
+  moving instead of churning exits.
+- **The screen says something while the connect measures nodes.** That check
+  opens real connections through every node before an exit is picked — several
+  seconds during which no tunnel exists, so the core has no phase to report and
+  the main screen sat on "Disconnected", perfectly still, as though the click had
+  missed. Measuring is now a state of its own: its own status word and sub-line,
+  a scanning indicator distinct from the connecting blink, a running progress
+  rail, and a button that reads as busy rather than offering a hover fill it will
+  not honour. It never speaks over a phase the core is actually reporting.
+
+### Changed
+
+- **The DPI-bypass bundle is credited to the projects it comes from.** Since
+  0.5.0 the app installs the bypass itself, which means it downloads the
+  [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube)
+  release onto the user's disk — [zapret](https://github.com/bol-van/zapret) by
+  bol-van (MIT), the [WinDivert](https://github.com/basil00/WinDivert) packet
+  driver, and the Cygwin runtime — and THIRD-PARTY-NOTICES.md mentioned none of
+  them. It now has a section for software fetched at run time, with WinDivert's
+  LGPLv3-or-GPLv2 choice settled on the record in favour of LGPLv3 and the
+  Cygwin linking exception quoted; the generator emits that section, so
+  regenerating cannot quietly drop it again. The README explains what is
+  downloaded, where it lands, and which switch stops it from being downloaded at
+  all. `github.com/sagernet/gomobile`, in `go.mod` since 0.4.5 and never
+  listed, is in the notice too — the generator had been refusing to run over it
+  since July.
+- **One motion system across the app.** Timings were previously invented per
+  stylesheet — 80/100/160/180/200/220/240/260ms, some `linear`, some bare `ease`
+  — which is why state changes read as a set of unrelated twitches. There are now
+  five durations and three curves in `tokens.css`, picked by what is moving:
+  arrivals ease out, departures ease in, loops move symmetrically. Enters and
+  exits share one set of keyframes instead of eight near-identical local ones.
+- **Overlays, modals and panels animate out, not only in.** Settings, logs, the
+  import dialog, the blocklist panel, the deep-link, tun-conflict and update
+  confirms, and the crash report were all torn down in the same tick they were
+  dismissed — the half of a transition a user reads as "did that crash?". Each is
+  held for its exit, showing what it showed rather than flashing an empty card.
+- **The progress rail no longer shifts the layout.** It used to mount with the
+  work, moving everything under the status word by 4px at the exact moment the
+  status changed; the track is now a permanent hairline and only the runner comes
+  and goes. Both rails (connect and leak check) sweep on `transform` instead of
+  animating `left`, which was relayouting on every frame.
+- **The node list settles faster.** The row cascade is capped, so a sixty-node
+  subscription stops dealing itself out for a second and a half; hover and
+  selection marks scale in on the compositor instead of fading a painted inset
+  shadow. Buttons take a press.
+- **`prefers-reduced-motion` now zeroes animation delays too.** Zeroing only the
+  durations left every stagger intact, so a reduced-motion cascade still dealt
+  itself out one delay at a time — each row flashing into place, which is worse
+  than the animation it was meant to remove.
+
 ### Fixed
 
 - **The "another VPN owns the default route" guard can now see the VPNs it was
@@ -90,8 +191,6 @@ All notable changes to Tenebra are documented here. The format follows
   - Autoconnect never consulted the guard at all — so it was off on exactly the
     path it was written for: a machine starting up with another VPN's service
     already running, with nobody watching to work out why the internet died.
-### Fixed
-
 - **The two presets that route traffic around the tunnel no longer ship on, and
   are finally on screen.** `set_presets` existed only in the core: nothing
   carried the presets to the app, no switch showed them, and the only way to turn
@@ -124,33 +223,6 @@ All notable changes to Tenebra are documented here. The format follows
   those would hand a domain back to the geo split, which in smart mode can send it
   direct), and apps the user listed under split-exclude stay direct, since that is
   a choice made one executable at a time.
-### Security
-
-- **The bypass bundle is verified before it is installed, and only pinned
-  versions install automatically.** The updater took the download URL out of the
-  release feed as it stood — no scheme check, no host check — followed its
-  redirects, unpacked the result and put it in place; the size the feed published
-  was parsed and never compared to anything, and no checksum was consulted at all.
-  Since the bundle installs itself on the first connect and re-checks every twelve
-  hours, and a batch file out of it is then run through `cmd.exe` by a service
-  account, anything able to alter that download got code execution as LocalSystem
-  on a schedule. Now the archive may only come from `github.com` or the GitHub
-  release-asset hosts it redirects to (`release-assets.githubusercontent.com`,
-  `objects.githubusercontent.com`) over https — checked on the first URL and on
-  every redirect after it — must arrive at exactly the length the release
-  declares, and must hash to a SHA-256 pinned into the client for that version.
-  A version the client does not pin is not installed at all: the digest GitHub
-  publishes beside the asset travels the same connection as the archive, so it
-  cannot stand in for a pin against a network able to forge that connection —
-  which, on the networks this app is for, is the whole threat. Such a release is
-  reported instead ("a newer bypass bundle is out — update Tenebra"), the working
-  one is kept, and the pin ships with the next client release. The verified bytes
-  are unpacked straight from memory, so nothing re-reads a file that could be
-  swapped between the checksum and the install. A refusal that means tampering is
-  logged as an error and named on screen; "there is a newer bundle you do not pin
-  yet" is a quiet, actionable notice rather than an alarm.
-### Fixed
-
 - **Simple mode: the connect button no longer dies on the "another VPN owns the
   default route" refusal.** The override prompt was rendered only by the full
   shell, and simple mode returns its own screen well before that point — so on a
@@ -160,32 +232,6 @@ All notable changes to Tenebra are documented here. The format follows
   and the question is released if the tree goes away while it is open, so no
   future screen can strand a connect the same way. Declining also reports the
   refusal once instead of twice: cancelling is an answer, not a second failure.
-### Added
-
-- **The log now says why a connect went the way it did.** The core had 73 log
-  calls and almost none of them on the live path: which exit a walk leads with
-  and on what grounds, why a connect was refused before it ever started, what a
-  node probe measured stage by stage, whether the DPI bypass came up and under
-  which strategy, and what the tun-conflict guard actually saw in the route table
-  were all decisions taken in silence. They are recorded now — decisions at
-  `info`, the evidence behind them at `debug`.
-- **A diagnostics report, in one action.** `collect_diagnostics` assembles the
-  core's state, its build versions (core, sing-box, bypass bundle), every routing
-  option in force, the stored profiles, the last fallback walk, the machine's
-  interfaces and default routes, and the tail of the log into one file the user
-  can attach to a bug report. Settings → Diagnostics saves it and shows where.
-  It probes nothing and sends nothing, and subscription tokens and node
-  credentials are masked by the same rules the app already applies to the
-  diagnostics it copies from its log console.
-- **A log level that filters.** The level constants existed and nothing consulted
-  them. The core now drops anything below its threshold — `info` by default, so a
-  shipped build never narrates itself — and `TENEBRA_LOG_LEVEL=debug` raises it
-  for a support session. It is an environment variable rather than a stored
-  preference on purpose: debug someone turned on in January and forgot about is
-  the same disease as a log with no ceiling.
-
-### Fixed
-
 - **The logs no longer grow without limit.** `service.log` was appended to
   forever, and the desktop shell's `core.log` with it. Both now roll over by
   size and keep a bounded number of generations, so a long-running service costs
@@ -197,74 +243,11 @@ All notable changes to Tenebra are documented here. The format follows
   went only to an attached UI, so a service that failed to autoconnect at boot —
   with nobody logged in and no app running — left no record of it anywhere. Those
   lines now go to the process log as well.
-### Added
-
-- **Changing the exit no longer drops what you were doing.** Picking another node
-  on a live tunnel used to tear the whole thing down and build it again: the tun
-  went away, every connection went with it, and a download or a call paid for a
-  node change. The node is now switched inside the running sing-box — same
-  process, same tun, same routes — and connections already open finish on the exit
-  they started on while new ones take the new node. The switch is confirmed before
-  it is reported, and anything that cannot be switched this way (a node the running
-  config never had, a two-hop chain, a control API that refuses) falls back to the
-  reconnect it always did. The UI says which of the two happened rather than
-  showing "reconnecting" for both.
-- **A degraded exit is left behind without dropping the tunnel.** The health
-  watchdog no longer reconnects the moment the active node stops carrying traffic:
-  it measures the other exits through the process that is already running — the
-  same several-destinations standard `check_nodes` applies — and moves onto the
-  best one live. It is damped so a bad local network cannot walk you around the
-  node list: one move at most every three minutes, three in any fifteen, a node
-  that just failed passed over for ten, and after that the log says why nothing is
-  moving instead of churning exits.
-
-### Fixed
-
 - **A fresh tunnel can no longer come up on a different exit than the one it
   reports.** sing-box restores a selector from its cache file before it applies
   the config's own default, so once anything had moved that selector a later start
   could seat the tunnel somewhere the config did not name. Every start now pins the
   selector to its own default before the connectivity probe is believed.
-### Added
-
-- **The screen says something while the connect measures nodes.** That check
-  opens real connections through every node before an exit is picked — several
-  seconds during which no tunnel exists, so the core has no phase to report and
-  the main screen sat on "Disconnected", perfectly still, as though the click had
-  missed. Measuring is now a state of its own: its own status word and sub-line,
-  a scanning indicator distinct from the connecting blink, a running progress
-  rail, and a button that reads as busy rather than offering a hover fill it will
-  not honour. It never speaks over a phase the core is actually reporting.
-
-### Changed
-
-- **One motion system across the app.** Timings were previously invented per
-  stylesheet — 80/100/160/180/200/220/240/260ms, some `linear`, some bare `ease`
-  — which is why state changes read as a set of unrelated twitches. There are now
-  five durations and three curves in `tokens.css`, picked by what is moving:
-  arrivals ease out, departures ease in, loops move symmetrically. Enters and
-  exits share one set of keyframes instead of eight near-identical local ones.
-- **Overlays, modals and panels animate out, not only in.** Settings, logs, the
-  import dialog, the blocklist panel, the deep-link, tun-conflict and update
-  confirms, and the crash report were all torn down in the same tick they were
-  dismissed — the half of a transition a user reads as "did that crash?". Each is
-  held for its exit, showing what it showed rather than flashing an empty card.
-- **The progress rail no longer shifts the layout.** It used to mount with the
-  work, moving everything under the status word by 4px at the exact moment the
-  status changed; the track is now a permanent hairline and only the runner comes
-  and goes. Both rails (connect and leak check) sweep on `transform` instead of
-  animating `left`, which was relayouting on every frame.
-- **The node list settles faster.** The row cascade is capped, so a sixty-node
-  subscription stops dealing itself out for a second and a half; hover and
-  selection marks scale in on the compositor instead of fading a painted inset
-  shadow. Buttons take a press.
-- **`prefers-reduced-motion` now zeroes animation delays too.** Zeroing only the
-  durations left every stagger intact, so a reduced-motion cascade still dealt
-  itself out one delay at a time — each row flashing into place, which is worse
-  than the animation it was meant to remove.
-
-### Fixed
-
 - **Several animations that had never once run.** The stylesheets composed two
   duration+easing tokens into one shorthand (`var(--t-base) var(--t-enter)`),
   which expands to two easing functions and makes CSS drop the whole declaration.
