@@ -24,14 +24,29 @@ All notable changes to Tenebra are documented here. The format follows
   machine. Names are now resolved and their addresses written, which is what the
   file can carry — winws takes `--ipset-exclude` as one ip/CIDR per line and
   answers anything else with "bad ip or subnet", so a hostname in there was never
-  a lookup deferred to winws, only a discarded line. The lookups run at the last
-  moment the direct path is known good (the bypass is not up yet, and neither is
-  the tunnel), in parallel and under a two-second budget, so a dead resolver costs
-  a short pause rather than the connect. Answers no node can sit behind —
+  a lookup deferred to winws, only a discarded line. The names are asked of the
+  same resolvers the tunnel will use: the machine's own, and the direct resolver
+  from the routing config — the one sing-box resolves outbound server names
+  through (`route.default_domain_resolver` → `dns-direct`). Asking only the
+  machine's resolver leaves the hole open: where the two disagree — a name the ISP
+  poisons, which is often the very reason a node hides behind one, or geo-DNS and
+  round-robin handing each caller a different record — the list covers an address
+  nobody dials while the filter desyncs the one that is, and the symptom returns
+  with no warning at all, because the lookup "succeeded". Every answer from every
+  resolver is written; excluding an address the tunnel does not use costs nothing
+  but one address the filter leaves alone. What each name last answered with is
+  remembered beside the list, carried across bundle updates and capped at 256
+  names, so a DNS outage no longer erases an exclusion that was already working —
+  the list is written from memory instead, and the nodes running on an answer
+  older than an hour are named in the debug log. Only a name with no address at
+  all holds the connect back: on the author's machine the first connect spends
+  133 ms on three names and the ones after it about 1 ms, while a name that is
+  simply dead costs the full two-second budget once and 1 ms on every connect
+  after, instead of two seconds every time. Answers no node can sit behind —
   `0.0.0.0`, loopback, link-local — are refused rather than written, since a
   resolver that hijacks a dead name would otherwise have the node counted as
-  covered. Names that did not resolve are now reported and logged by name, so a
-  node left exposed is a warning in the log instead of silence.
+  covered. Names left with no address are reported and logged by name, so a node
+  still in the filter's way is a warning in the log instead of silence.
 
 ## [0.5.1] - 2026-08-24
 

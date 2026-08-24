@@ -236,7 +236,9 @@ func TestApplyKeepsLocalStateAndStampsVersion(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "lists", "list-general-user.txt"), []byte("my-site.example\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ExcludeNodes(dir, []string{"95.163.176.178"}); err != nil {
+	excluder := &Excluder{}
+	if _, err := excluder.Exclude(dir, []string{"95.163.176.178", "node.example.com"},
+		[]Lookup{table(map[string][]string{"node.example.com": {"198.51.100.10"}})}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -255,6 +257,13 @@ func TestApplyKeepsLocalStateAndStampsVersion(t *testing.T) {
 	excl, err := os.ReadFile(filepath.Join(dir, "lists", "ipset-exclude-user.txt"))
 	if err != nil || !strings.Contains(string(excl), "95.163.176.178") {
 		t.Errorf("node exclusions were lost by the update: %q (%v)", excl, err)
+	}
+	// The addresses the names last answered with come over too: an update
+	// restarts the bypass, and that restart must not be the one connect with
+	// nothing to fall back on if DNS is having a bad minute.
+	remembered, err := os.ReadFile(filepath.Join(dir, "lists", nodeCacheFile))
+	if err != nil || !strings.Contains(string(remembered), "198.51.100.10") {
+		t.Errorf("remembered node addresses were lost by the update: %q (%v)", remembered, err)
 	}
 	if got := Version(dir); got != "1.11.0" {
 		t.Errorf("installed version = %q, want 1.11.0", got)

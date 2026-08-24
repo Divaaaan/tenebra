@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Divaaaan/tenebra/core/dnswire"
 	"github.com/Divaaaan/tenebra/core/zapret"
 )
 
@@ -177,7 +178,7 @@ func (d *Daemon) excludeNodesFromZapret(dir string) {
 			servers = append(servers, n.Server)
 		}
 	}
-	unresolved, err := d.zapretExclude(dir, servers)
+	report, err := d.zapretExclude(dir, servers, d.nodeLookups())
 	if err != nil {
 		d.emitLog(LogWarn, fmt.Sprintf("zapret: не удалось исключить адреса узлов из фильтра: %v", err))
 	}
@@ -185,11 +186,46 @@ func (d *Daemon) excludeNodesFromZapret(dir string) {
 	// filter's way, and the symptom is the one this whole function exists to
 	// prevent: a port that opens and goes quiet, read as a dead node. Name the
 	// nodes, so the failure can be traced to DNS instead of to the subscription.
-	if len(unresolved) > 0 {
+	if len(report.Unresolved) > 0 {
 		d.emitLog(LogWarn, fmt.Sprintf(
 			"zapret: не удалось определить адреса узлов (%d): %s — фильтр может рвать подключение к ним",
-			len(unresolved), strings.Join(shortNameList(unresolved), ", ")))
+			len(report.Unresolved), strings.Join(shortNameList(report.Unresolved), ", ")))
 	}
+	// Covered, but on an address DNS has not agreed with for hours. Not a warning
+	// — the node is protected — but if the node has moved in the meantime, this
+	// line is the only thing that says which ones were running on a memory.
+	if len(report.FromCache) > 0 {
+		d.emitDebug(fmt.Sprintf(
+			"zapret: адреса узлов давно не подтверждались DNS (%d): %s — исключения держатся на прошлом ответе",
+			len(report.FromCache), strings.Join(shortNameList(report.FromCache), ", ")))
+	}
+}
+
+// nodeLookups are the resolvers a node name is asked through: the machine's own,
+// and the direct resolver from the routing config.
+//
+// The second one is the point. sing-box resolves an outbound server name through
+// its direct resolver (route.default_domain_resolver -> dns-direct), so that is
+// the answer the tunnel will dial — and it is not necessarily the answer the
+// system resolver gives. A censor that poisons the name poisons the system
+// resolver, not the encrypted one; geo-DNS and round-robin hand different
+// callers different records. Excluding the addresses of both is what makes the
+// exclusion cover the address actually dialled, and an extra address in the list
+// costs nothing but one address the filter leaves alone.
+//
+// A resolver whose transport this client cannot speak (DoQ) yields no second
+// lookup, and the system one carries the load — the same coverage as before this
+// existed, not less.
+func (d *Daemon) nodeLookups() []zapret.Lookup {
+	d.mu.Lock()
+	direct := d.routing.DNSDirect
+	d.mu.Unlock()
+
+	lookups := []zapret.Lookup{zapret.SystemLookup}
+	if r, ok := dnswire.NewResolver(direct); ok {
+		lookups = append(lookups, r.LookupIP)
+	}
+	return lookups
 }
 
 // logNameLimit caps how many node names one warning spells out: a subscription
