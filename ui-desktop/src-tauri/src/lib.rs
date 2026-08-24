@@ -177,10 +177,16 @@ impl EventSink for TauriSink {
 //  3. Otherwise spawn the `tenebra-core` sidecar and own it — today's default
 //     and the development path.
 //
-// If the sidecar fails to spawn (e.g. the binary is missing), we log and fall
-// back to the mock rather than leaving the UI with no backend at all. Every
-// choice implements the same `Backend` trait and is logged on the UI's own log
-// channel, so nothing else in this file or the front end changes.
+// If the sidecar cannot be located or will not spawn (e.g. the binary is
+// missing), we log and fall back to `backend::unavailable`, which refuses every
+// command with that reason. It used to fall back to the demo mock, and that was
+// a lie the user had no way to see through: the window filled with invented
+// profiles, a connect that "succeeded" on a timer, and a bypass reporting fake
+// strategies — an app telling someone their traffic is protected while nothing
+// at all is running. The refusal surfaces in the UI as "the core cannot be
+// reached, retrying", which is what happened. Every choice implements the same
+// `Backend` trait and is logged on the UI's own log channel, so nothing else in
+// this file or the front end changes.
 //
 // The choice is made once and kept for the life of the process (the front end
 // holds no notion of a transport, and a live sidecar tunnel cannot be handed to
@@ -265,34 +271,27 @@ fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
     // run untrusted code with the app's privileges.
     let program = match backend::sidecar::SidecarBackend::default_program() {
         Ok(p) => p,
-        Err(e) => {
-            sink.log(
-                "error",
-                &format!("could not locate tenebra-core, using demo backend: {e}"),
-            );
-            return Arc::new(backend::mock::MockBackend::new(sink));
-        }
+        Err(e) => return no_core(&sink, format!("could not locate tenebra-core: {e}")),
     };
     let singbox = match singbox_path(app) {
         Ok(p) => p,
-        Err(e) => {
-            sink.log(
-                "error",
-                &format!("could not locate sing-box, using demo backend: {e}"),
-            );
-            return Arc::new(backend::mock::MockBackend::new(sink));
-        }
+        Err(e) => return no_core(&sink, format!("could not locate sing-box: {e}")),
     };
     match backend::sidecar::SidecarBackend::spawn(program, singbox, Arc::clone(&sink)) {
         Ok(backend) => Arc::new(backend),
-        Err(e) => {
-            sink.log(
-                "error",
-                &format!("could not start tenebra-core, using demo backend: {e}"),
-            );
-            Arc::new(backend::mock::MockBackend::new(sink))
-        }
+        Err(e) => no_core(&sink, format!("could not start tenebra-core: {e}")),
     }
+}
+
+/// Report that there is no core to talk to, and hand back the backend that says
+/// so to every command.
+///
+/// The log line is an error rather than a warning because nothing in the app
+/// works from here, and the reason travels into the backend so the refusal the
+/// user reads names the actual failure instead of a generic "unavailable".
+fn no_core(sink: &Arc<dyn EventSink>, reason: String) -> Arc<dyn Backend> {
+    sink.log("error", &reason);
+    Arc::new(backend::unavailable::UnavailableBackend::new(reason))
 }
 
 /// How long the app keeps an eye out for a service that started after it did,
@@ -846,27 +845,6 @@ async fn collect_diagnostics(state: TauriState<'_, AppState>) -> Result<String, 
     .await
 }
 
-/// Install a zapret DPI-bypass bundle.
-///
-/// The UI can hand over either the archive's bytes (a file dropped into the
-/// webview has contents but no path) or a filesystem path (Tauri's drag-drop
-/// gives real paths, which is the only way a dropped FOLDER can be taken at all).
-/// `name` carries the dropped file's name when the UI knows it: the release
-/// archives are named after their version, and reading it here is what keeps the
-/// first update check from re-downloading the bundle the user just installed.
-#[tauri::command]
-async fn import_zapret(
-    state: TauriState<'_, AppState>,
-    data: Option<String>,
-    path: Option<String>,
-    name: Option<String>,
-) -> Result<ZapretBundle, String> {
-    off_thread(Arc::clone(&state.backend), move |b| {
-        b.import_zapret(data, path, name)
-    })
-    .await
-}
-
 #[tauri::command]
 async fn list_zapret(state: TauriState<'_, AppState>) -> Result<ZapretBundle, String> {
     off_thread(Arc::clone(&state.backend), |b| b.list_zapret()).await
@@ -1047,7 +1025,6 @@ pub fn run() {
             run_stun_check,
             run_speed_test,
             collect_diagnostics,
-            import_zapret,
             list_zapret,
             pick_zapret,
             start_zapret,

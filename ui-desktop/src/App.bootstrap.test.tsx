@@ -169,6 +169,23 @@ describe("App bootstrap", () => {
       );
       expect(await screen.findAllByText("EX-TEST-01")).not.toHaveLength(0);
     });
+
+    it("says it on the one-button screen too", async () => {
+      // The stripped screen has no banner strip, and its whole content is a
+      // status word — which with no core behind it reads "Disconnected": calm,
+      // confident and wrong. It used to be worse than nothing said, because an
+      // unreachable core would put the app on the demo backend and that word
+      // would go on to say "Connected".
+      localStorage.setItem("tenebra.simpleMode", "1");
+      mocks.status.mockRejectedValue(DOWN);
+      mocks.listProfiles.mockRejectedValue(DOWN);
+
+      renderWithProviders(<App />);
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        /No connection to the background service/,
+      );
+    });
   });
 
   describe("primary button", () => {

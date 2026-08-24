@@ -41,7 +41,16 @@ function render(state: Partial<State> = {}) {
   const tenebra = makeTenebra({
     state: { state: "idle", routing: "smart", ...state } as State,
   });
-  return renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+  return { ...renderWithProviders(<SettingsScreen tenebra={tenebra} />), tenebra };
+}
+
+/** The row carrying the bypass on/off switch and its status line. */
+function bypassRow(): HTMLElement {
+  const row = screen
+    .getByText(/Packet-level bypass|Обход на уровне пакетов/)
+    .closest(".set-row");
+  if (!row) throw new Error("bypass status row not found");
+  return row as HTMLElement;
 }
 
 describe("SettingsScreen — bypass bundle", () => {
@@ -177,5 +186,124 @@ describe("SettingsScreen — bypass bundle", () => {
     fireEvent.click(toggle as HTMLElement);
 
     await waitFor(() => expect(spy).toHaveBeenCalledWith(false));
+  });
+
+  // Everything below used to live in a panel on the main screen. The panel was
+  // the only way to reach start_zapret / stop_zapret / pick_zapret at all, so it
+  // could not simply be deleted — these pin that the commands are still reachable
+  // and still driven by what the core reports rather than by a local flag.
+  describe("controls", () => {
+    it("reports the running strategy from the snapshot", () => {
+      render({ zapret_active: true, zapret_strategy: "general (FAKE TLS AUTO)" });
+
+      const row = bypassRow();
+      expect(row.textContent).toMatch(/running|работает/);
+      expect(row.textContent).toContain("general (FAKE TLS AUTO)");
+      expect(row.querySelector('[role="switch"]')).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+    });
+
+    it("shows a bundle that is installed and idle as not running", () => {
+      render({
+        zapret_active: false,
+        zapret_strategy: "general (FAKE TLS AUTO)",
+        zapret_version: "1.10.2",
+      });
+
+      const row = bypassRow();
+      expect(row.textContent).toMatch(/not running|не работает/);
+      expect(row.querySelector('[role="switch"]')).toHaveAttribute(
+        "aria-checked",
+        "false",
+      );
+    });
+
+    it("switches the bypass on and re-reads the core's state", async () => {
+      const start = vi
+        .spyOn(api, "startZapret")
+        .mockResolvedValue({ active: "general" });
+      const { tenebra } = render({ zapret_active: false });
+
+      fireEvent.click(bypassRow().querySelector('[role="switch"]')!);
+
+      await waitFor(() => expect(start).toHaveBeenCalledTimes(1));
+      // The switch is drawn from the snapshot, so it only moves once the core has
+      // been asked again — otherwise it would show where it was clicked.
+      await waitFor(() => expect(tenebra.refreshStatus).toHaveBeenCalled());
+    });
+
+    it("switches it off through the core", async () => {
+      const stop = vi.spyOn(api, "stopZapret").mockResolvedValue();
+      const { tenebra } = render({
+        zapret_active: true,
+        zapret_strategy: "general",
+      });
+
+      fireEvent.click(bypassRow().querySelector('[role="switch"]')!);
+
+      await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(tenebra.refreshStatus).toHaveBeenCalled());
+    });
+
+    it("says so when the core refuses to start the bypass", async () => {
+      vi.spyOn(api, "startZapret").mockRejectedValue(
+        new Error("start_zapret: winws requires administrator rights"),
+      );
+      const { tenebra } = render({ zapret_active: false });
+
+      fireEvent.click(bypassRow().querySelector('[role="switch"]')!);
+
+      // A refusal is reported, and the state is re-read rather than assumed: the
+      // switch must end up where the core is, not where the click aimed.
+      await waitFor(() => expect(tenebra.refreshStatus).toHaveBeenCalled());
+      expect(bypassRow().querySelector('[role="switch"]')).toHaveAttribute(
+        "aria-checked",
+        "false",
+      );
+    });
+
+    it("re-measures the strategies on request", async () => {
+      const pick = vi.spyOn(api, "pickZapret").mockResolvedValue({
+        baseline: 1,
+        targets: 5,
+        best: "general (ALT)",
+        improved: true,
+        results: null,
+      });
+      const { tenebra } = render({ zapret_active: true });
+
+      const row = screen
+        .getByText(/Strategy choice|Подбор стратегии/)
+        .closest(".set-row");
+      fireEvent.click(row!.querySelector("button")!);
+
+      await waitFor(() => expect(pick).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(tenebra.refreshStatus).toHaveBeenCalled());
+    });
+
+    it("does not treat 'nothing helped' as a failed probe", async () => {
+      // Every strategy measured, none beat the baseline. That is an answer — the
+      // block is elsewhere — and it must not read as an error, or the user goes
+      // on suspecting the bypass.
+      vi.spyOn(api, "pickZapret").mockResolvedValue({
+        baseline: 5,
+        targets: 5,
+        improved: false,
+        results: null,
+      });
+      const { tenebra } = render({ zapret_active: true });
+
+      const row = screen
+        .getByText(/Strategy choice|Подбор стратегии/)
+        .closest(".set-row");
+      fireEvent.click(row!.querySelector("button")!);
+
+      await waitFor(() => expect(tenebra.refreshStatus).toHaveBeenCalled());
+      expect(
+        screen.queryByText(/refused|didn't apply|не применилась|отказал/i),
+      ).toBeNull();
+    });
   });
 });

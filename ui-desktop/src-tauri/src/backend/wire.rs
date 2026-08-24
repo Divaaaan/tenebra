@@ -344,7 +344,6 @@ const CMD_LEAK_CHECK: &str = "leak_check";
 const CMD_RUN_STUN_CHECK: &str = "run_stun_check";
 const CMD_RUN_SPEED_TEST: &str = "run_speed_test";
 const CMD_COLLECT_DIAGNOSTICS: &str = "collect_diagnostics";
-const CMD_IMPORT_ZAPRET: &str = "import_zapret";
 const CMD_LIST_ZAPRET: &str = "list_zapret";
 const CMD_PICK_ZAPRET: &str = "pick_zapret";
 const CMD_START_ZAPRET: &str = "start_zapret";
@@ -626,24 +625,6 @@ impl<T: WireSession> Backend for T {
         // the core decided was safe to hand out.
         self.session()?
             .request_into(CMD_COLLECT_DIAGNOSTICS, obj([]))
-    }
-
-    fn import_zapret(
-        &self,
-        data: Option<String>,
-        path: Option<String>,
-        name: Option<String>,
-    ) -> Result<ZapretBundle, String> {
-        // `obj` drops the None fields, so the core sees exactly one of data/path
-        // and decides which install route to take from that.
-        self.session()?.request_into(
-            CMD_IMPORT_ZAPRET,
-            obj([
-                ("data", data.map(Value::from).unwrap_or(Value::Null)),
-                ("path", path.map(Value::from).unwrap_or(Value::Null)),
-                ("name", name.map(Value::from).unwrap_or(Value::Null)),
-            ]),
-        )
     }
 
     fn list_zapret(&self) -> Result<ZapretBundle, String> {

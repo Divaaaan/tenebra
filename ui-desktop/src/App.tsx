@@ -5,8 +5,6 @@ import { TopBar } from "./components/TopBar";
 import { ConnectionPanel } from "./components/ConnectionPanel";
 import { ServerList, type ServerRow } from "./components/ServerList";
 import { BottomBar } from "./components/BottomBar";
-import { BlocklistPanel, type BlocklistSource } from "./components/BlocklistPanel";
-import { looksLikeZapretBundle } from "./lib/zapret";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { UpdateConfirm } from "./components/UpdateConfirm";
 import { DaemonSkewBanner } from "./components/DaemonSkewBanner";
@@ -83,108 +81,23 @@ export function App() {
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [busy, setBusy] = useState(false);
 
-  // Bypass import. It lives on the main screen rather than inside Settings
-  // because it is something the user does with a file in hand, not something
-  // they go looking for while configuring — burying it two screens deep is how
-  // an import feature ends up unused.
-  const [blocklistOpen, setBlocklistOpen] = useState(false);
-  const [blocklists, setBlocklists] = useState<BlocklistSource[]>([]);
-
   /**
-   * Shared tail of a bundle import: record it, then find the strategy that
-   * works here.
+   * The bypass, as the core reports it — never as this session remembers it.
    *
-   * The probe is started automatically because the answer is not guessable — a
-   * bundle ships ~20 strategies precisely because which one defeats a given
-   * ISP's DPI cannot be known in advance. Leaving the user to pick from a list
-   * of names would hand them the exact problem the import was meant to solve.
+   * The daemon installs a bundle on the first connect and keeps running the
+   * strategy it settled on across restarts, so the only place this is knowable
+   * is the snapshot: `zapret_version` says a bundle is on disk, `zapret_active`
+   * says the packet filter is carrying traffic, `zapret_strategy` names which
+   * one. A renderer-owned flag (what this used to be) starts empty every launch,
+   * which drew "no bypass installed" over a bypass that was installed and up.
+   *
+   * A running filter counts as installed even with no version stamped: the
+   * version is read from a marker file the bundle carries, and one installed
+   * from a source that named no release leaves it empty.
    */
-  const afterZapretImport = useCallback(async (label: string, strategies: number) => {
-    setBlocklists((prev) => [
-      ...prev.filter((s) => s.label !== label),
-      { id: label, label, rules: strategies },
-    ]);
-    pushToast(`zapret: ${strategies} стратегий, подбираю рабочую…`);
-
-    try {
-      const pick = await api.pickZapret();
-      if (pick.improved && pick.best) {
-        // The core leaves the winner running, so reflect that here rather than
-        // showing the bypass as off while it is actually on.
-        setZapretActive(pick.best);
-        pushToast(`zapret: включена ${pick.best}`);
-      } else {
-        // Saying "nothing helped" is more useful than silently keeping the
-        // least-bad option and letting the user believe the block is handled.
-        pushToast(
-          `zapret: ни одна стратегия не улучшила (уже работает ${pick.baseline}/${pick.targets})`,
-        );
-      }
-    } catch (e) {
-      pushToast(describeCoreError(e, t));
-    }
-  }, [t]);
-
-  /**
-   * Import from dropped or picked FILES.
-   *
-   * A zapret bundle is recognised by content, not by name: it is a zip carrying
-   * bin/winws.exe and a set of strategy .bat files. Sending it to the core is
-   * what makes "drop the archive into the VPN" actually work.
-   *
-   * Nothing else is accepted, and that is deliberate. A domain blocklist used
-   * to be parsed here and listed with its rule count, but no command exists to
-   * hand those rules to the core: the counter was the only trace an import ever
-   * left, and it read as "loaded" for a list that changed no routing and
-   * blocked nothing. Refusing the file says the true thing — and says it where
-   * the user is looking, next to the zone they just dropped onto.
-   */
-  const importBlocklist = useCallback(
-    async (files: File[]) => {
-      if (files.length === 1 && (await looksLikeZapretBundle(files[0]))) {
-        const bytes = new Uint8Array(await files[0].arrayBuffer());
-        const bundle = await api.importZapret(bytes, files[0].name);
-        await afterZapretImport(files[0].name, bundle.strategies?.length ?? 0);
-        return;
-      }
-      throw new Error(t.blocklist.badFile);
-    },
-    [afterZapretImport, t],
-  );
-
-  /**
-   * Import from paths — an archive or an already-unpacked folder.
-   *
-   * The core decides what a path is: it checks for bin/winws.exe and strategy
-   * .bat files rather than trusting the name, so "zapret", "zapret (1)" and a
-   * folder the user renamed all work the same. A path that is not a bundle
-   * comes back as an error the panel shows.
-   */
-  const importFromPaths = useCallback(
-    async (paths: string[]) => {
-      if (paths.length === 0) return;
-      const bundle = await api.importZapretPath(paths[0]);
-      const label = paths[0].split(/[\\/]/).pop() ?? paths[0];
-      await afterZapretImport(label, bundle.strategies?.length ?? 0);
-    },
-    [afterZapretImport],
-  );
-
-  // Which bypass strategy is running, or "" when it is off. Held here so the
-  // panel can name it and the button knows which way it flips.
-  const [zapretActive, setZapretActive] = useState("");
-
-  const enableZapret = useCallback(async () => {
-    const r = await api.startZapret();
-    setZapretActive(r.active);
-    pushToast(`zapret: включён (${r.active})`);
-  }, []);
-
-  const disableZapret = useCallback(async () => {
-    await api.stopZapret();
-    setZapretActive("");
-    pushToast("zapret: выключен");
-  }, []);
+  const bypassOn = state.zapret_active ?? false;
+  const bypassStrategy = state.zapret_strategy ?? "";
+  const bypassInstalled = bypassOn || (state.zapret_version ?? "") !== "";
 
   /**
    * Import a subscription from a link pasted on the simple screen.
@@ -203,11 +116,6 @@ export function App() {
     }
     await api.importSubscription(url, name);
   }, []);
-
-  const removeBlocklist = useCallback(
-    (id: string) => setBlocklists((prev) => prev.filter((s) => s.id !== id)),
-    [],
-  );
 
   // Simple mode: the Settings toggle writes `tenebra.simpleMode`; we mirror it here
   // and swap the whole shell for SimpleView when it's on. A cross-window write
@@ -572,7 +480,6 @@ export function App() {
   // cleared on cancel (the deep-link profile, the crash report) leaves showing
   // what it showed, not an empty card. Under reduced motion it drops instantly.
   const overlayShown = usePresence(overlay);
-  const blocklistShown = usePresence(blocklistOpen || null);
   const connectRequestShown = usePresence(connectRequest);
   const updateConfirmShown = usePresence(update.confirming || null);
   const crashReportShown = usePresence(
@@ -781,11 +688,11 @@ export function App() {
           selectedNodeId={selectedNodeId}
           onSelectNode={handleSelectNode}
           onSelectAuto={handleSelectAuto}
-          hasBypass={blocklists.length > 0}
-          bypassActive={zapretActive}
+          bypassInstalled={bypassInstalled}
+          bypassOn={bypassOn}
+          bypassStrategy={bypassStrategy}
+          coreUnreachable={tenebra.coreError != null}
           onSubscribe={handleSimpleSubscribe}
-          onBypassFiles={importBlocklist}
-          onBypassPaths={importFromPaths}
           serviceChecks={services.checks}
           serviceChecking={services.checking}
         />
@@ -854,16 +761,13 @@ export function App() {
         />
       )}
 
-      {/* The two setup steps live on the main screen, not behind a menu: what a
-          first-run user lacked was never fewer controls, it was these being
-          somewhere else. The strip removes itself the moment both are done, so
-          it costs a returning user nothing. */}
+      {/* The one setup step lives on the main screen, not behind a menu: what a
+          first-run user lacked was never fewer controls, it was this being
+          somewhere else. The strip removes itself the moment it is done, so it
+          costs a returning user nothing. */}
       <SimpleSetup
         hasProfile={profiles.length > 0}
-        hasBypass={blocklists.length > 0}
         onSubscribe={handleSimpleSubscribe}
-        onBypassFiles={importBlocklist}
-        onBypassPaths={importFromPaths}
       />
 
       <div className="app-body">
@@ -919,23 +823,10 @@ export function App() {
         onToggleKillSwitch={handleToggleKill}
         onLeakCheck={() => setOverlay("logs")}
         onSettings={() => setOverlay("settings")}
-        onBlocklist={() => setBlocklistOpen(true)}
-        blocklistCount={blocklists.length}
+        bypassInstalled={bypassInstalled}
+        bypassOn={bypassOn}
+        bypassStrategy={bypassStrategy}
       />
-
-      {blocklistShown.value && (
-        <BlocklistPanel
-          sources={blocklists}
-          onImportFiles={importBlocklist}
-          onImportPaths={importFromPaths}
-          onEnable={enableZapret}
-          onDisable={disableZapret}
-          active={zapretActive}
-          onRemove={removeBlocklist}
-          onClose={() => setBlocklistOpen(false)}
-          leaving={blocklistShown.leaving}
-        />
-      )}
 
       {overlayShown.value && (
         <div

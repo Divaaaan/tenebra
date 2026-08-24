@@ -5,45 +5,32 @@ import { useI18n } from "../i18n/I18nContext";
 interface SimpleSetupProps {
   /** True once a subscription exists. */
   hasProfile: boolean;
-  /** True once a bypass bundle is installed. */
-  hasBypass: boolean;
   /** Import a subscription from a pasted link. */
   onSubscribe: (url: string) => Promise<void>;
-  /** Import a bypass bundle from dropped paths (archive or unpacked folder). */
-  onBypassPaths: (paths: string[]) => Promise<void>;
-  /** Import a bypass bundle from dropped files. */
-  onBypassFiles: (files: File[]) => Promise<void>;
 }
 
 /**
  * The one thing a new user has to supply, on the same screen as the button.
  *
- * It used to be two: the subscription link and the bypass archive. The archive is
- * no longer asked for — the core fetches and installs a bundle on the first
- * connect when there is none, so requiring the user to find a release page, pick
- * the right asset and drag it in was asking them to do work the program can do.
- * The drop target survives as an opt-in for someone who wants a specific bundle,
- * folded away rather than standing in the path.
+ * It used to be two: the subscription link and the bypass archive. The archive
+ * is not asked for at all any more — the core fetches and installs a bundle on
+ * the first connect when there is none, so making the user find a release page,
+ * pick the right asset and drag it in was asking them to do work the program
+ * already does. Keeping it as a folded-away "optional" step was no better: it
+ * still put a decision in front of someone who has none to make.
  *
  * Everything here disappears once it is done. A setup step that stays visible
  * after it is satisfied is clutter, and clutter is what this screen exists to
  * avoid — the finished state is a status word and one control.
  */
-export function SimpleSetup({
-  hasProfile,
-  hasBypass,
-  onSubscribe,
-  onBypassPaths,
-  onBypassFiles,
-}: SimpleSetupProps) {
+export function SimpleSetup({ hasProfile, onSubscribe }: SimpleSetupProps) {
   const { t } = useI18n();
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [dragging, setDragging] = useState(false);
 
-  // Only the link gates the screen. A missing bundle is not a missing step: the
-  // first connect installs one.
+  // The link is the whole of the setup. A missing bundle is not a missing step:
+  // the first connect installs one.
   if (hasProfile) return null;
 
   const run = async (fn: () => Promise<void>) => {
@@ -61,92 +48,37 @@ export function SimpleSetup({
 
   return (
     <div className="setup">
-      {!hasProfile && (
-        <div className="setup-step">
-          <span className="setup-num" aria-hidden="true">
-            1
-          </span>
-          <div className="setup-body">
-            <span className="setup-title">{t.simple.setupLink}</span>
-            <div className="setup-row">
-              <input
-                className="setup-input"
-                type="url"
-                inputMode="url"
-                placeholder={t.simple.setupLinkPlaceholder}
-                aria-label={t.simple.setupLink}
-                value={url}
-                disabled={busy}
-                onChange={(e) => setUrl(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && url.trim()) {
-                    e.preventDefault();
-                    void run(() => onSubscribe(url.trim()));
-                  }
-                }}
-              />
-              <button
-                type="button"
-                className="setup-go"
-                disabled={busy || url.trim() === ""}
-                onClick={() => void run(() => onSubscribe(url.trim()))}
-              >
-                →
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {!hasBypass && (
-        <details className="setup-optional">
-          <summary className="setup-optional-summary">
-            {t.simple.setupBypassOptional}
-          </summary>
-          <div className="setup-body">
-            <span className="setup-title">{t.simple.setupBypass}</span>
-            <label
-              className={`setup-drop${dragging ? " is-dragging" : ""}${busy ? " is-busy" : ""}`}
-              onDragEnter={(e) => {
-                e.preventDefault();
-                setDragging(true);
+      <div className="setup-step">
+        <div className="setup-body">
+          <span className="setup-title">{t.simple.setupLink}</span>
+          <div className="setup-row">
+            <input
+              className="setup-input"
+              type="url"
+              inputMode="url"
+              placeholder={t.simple.setupLinkPlaceholder}
+              aria-label={t.simple.setupLink}
+              value={url}
+              disabled={busy}
+              onChange={(e) => setUrl(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && url.trim()) {
+                  e.preventDefault();
+                  void run(() => onSubscribe(url.trim()));
+                }
               }}
-              onDragOver={(e) => e.preventDefault()}
-              onDragLeave={(e) => {
-                e.preventDefault();
-                setDragging(false);
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDragging(false);
-                const files = Array.from(e.dataTransfer?.files ?? []);
-                if (files.length > 0) void run(() => onBypassFiles(files));
-              }}
-            >
-              <span className="setup-drop-text">{t.simple.setupBypassHint}</span>
-              <input
-                type="file"
-                className="setup-file"
-                onChange={(e) => {
-                  const files = Array.from(e.target.files ?? []);
-                  e.target.value = "";
-                  if (files.length > 0) void run(() => onBypassFiles(files));
-                }}
-              />
-            </label>
-            {/* Folders arrive only through Tauri's own drag-drop, which reports
-                paths; the browser drop above cannot see them. Wiring both means
-                "drop the folder" and "drop the zip" behave the same. */}
+            />
             <button
               type="button"
-              className="setup-skip"
-              disabled={busy}
-              onClick={() => void run(() => onBypassPaths([]))}
-              hidden
-            />
+              className="setup-go"
+              disabled={busy || url.trim() === ""}
+              onClick={() => void run(() => onSubscribe(url.trim()))}
+            >
+              →
+            </button>
           </div>
-        </details>
-      )}
+        </div>
+      </div>
 
       {error && (
         <p className="setup-error" role="alert">

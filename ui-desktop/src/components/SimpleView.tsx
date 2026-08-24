@@ -25,16 +25,20 @@ interface SimpleViewProps {
   selectedNodeId: string;
   onSelectNode: (id: string) => void;
   onSelectAuto: () => void;
-  /** True once a bypass bundle is installed. */
-  hasBypass: boolean;
-  /** Bypass strategy currently running, or "" when it is off. */
-  bypassActive: string;
+  /** True when the core reports a bundle on disk (or a filter already running). */
+  bypassInstalled: boolean;
+  /** True when the core reports the packet filter as carrying traffic. */
+  bypassOn: boolean;
+  /** The strategy the core is running; "" when it does not name one. */
+  bypassStrategy: string;
+  /**
+   * True while the core cannot be reached at all. Nothing else on this screen is
+   * backed by anything then, and saying so beats a calm "disconnected" over an
+   * app that has no core behind it.
+   */
+  coreUnreachable: boolean;
   /** Import a subscription from a pasted link. */
   onSubscribe: (url: string) => Promise<void>;
-  /** Import a bypass bundle from dropped files. */
-  onBypassFiles: (files: File[]) => Promise<void>;
-  /** Import a bypass bundle from dropped paths (folder support). */
-  onBypassPaths: (paths: string[]) => Promise<void>;
   /** What the post-connect checks measured; empty before one has run. */
   serviceChecks: ServiceCheckResult[];
   /** True while those checks are in flight. */
@@ -61,11 +65,11 @@ export function SimpleView({
   selectedNodeId,
   onSelectNode,
   onSelectAuto,
-  hasBypass,
-  bypassActive,
+  bypassInstalled,
+  bypassOn,
+  bypassStrategy,
+  coreUnreachable,
   onSubscribe,
-  onBypassFiles,
-  onBypassPaths,
   serviceChecks,
   serviceChecking,
 }: SimpleViewProps) {
@@ -118,6 +122,15 @@ export function SimpleView({
         <span className="bracket">]</span>
       </div>
 
+      {/* A core that never answered leaves this screen drawn over nothing: no
+          profiles, no real status, every button doomed. The calm one-word status
+          is exactly what must not be shown on its own here. */}
+      {coreUnreachable && (
+        <p className="simple-core-down" role="alert">
+          ⚠ {t.daemon.unreachable}
+        </p>
+      )}
+
       <div className="simple-core">
         <div className={`simple-word ${phase}`}>
           <span className="simple-ind" aria-hidden="true" />
@@ -126,13 +139,19 @@ export function SimpleView({
           </span>
         </div>
         {reassurance && <p className="simple-sub">{reassurance}</p>}
-        {/* The bypass is named, not just flagged: it is what makes YouTube and
-            Discord work at native latency, and the user just watched it be
-            chosen. A bare dot would hide the one fact worth showing. */}
-        {bypassActive && (
-          <p className="simple-bypass">
+        {/* The bypass, read off the core's own snapshot. It is named rather than
+            just flagged: which strategy is up is the one fact worth showing —
+            they behave differently and the app chose this one by measurement.
+            Nothing is drawn before a bundle exists, because until the first
+            connect installs one there is genuinely nothing to report. */}
+        {bypassInstalled && (
+          <p className={`simple-bypass${bypassOn ? "" : " is-off"}`}>
             <span className="simple-bypass-dot" aria-hidden="true" />
-            {t.simple.bypassOn} · {bypassActive}
+            {bypassOn
+              ? bypassStrategy
+                ? `${t.simple.bypassOn} · ${bypassStrategy}`
+                : t.simple.bypassOn
+              : t.simple.bypassOff}
           </p>
         )}
 
@@ -195,13 +214,7 @@ export function SimpleView({
         ) : null}
       </div>
 
-      <SimpleSetup
-        hasProfile={hasProfile}
-        hasBypass={hasBypass}
-        onSubscribe={onSubscribe}
-        onBypassFiles={onBypassFiles}
-        onBypassPaths={onBypassPaths}
-      />
+      <SimpleSetup hasProfile={hasProfile} onSubscribe={onSubscribe} />
 
       <button
         type="button"

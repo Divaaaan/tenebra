@@ -16,8 +16,9 @@ function baseProps(overrides: Partial<Parameters<typeof BottomBar>[0]> = {}) {
     onToggleKillSwitch: vi.fn(),
     onLeakCheck: vi.fn(),
     onSettings: vi.fn(),
-    onBlocklist: vi.fn(),
-    blocklistCount: 0,
+    bypassInstalled: false,
+    bypassOn: false,
+    bypassStrategy: "",
     ...overrides,
   };
 }
@@ -128,6 +129,65 @@ describe("BottomBar", () => {
 
       await user.click(screen.getByRole("button", { name: /settings/ }));
       expect(onSettings).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // The bar used to carry a button opening an import panel, badged with how many
+  // files had been dropped this session. That count said nothing about whether
+  // the packet filter was up — and it read as zero on every launch, over a bypass
+  // the core had installed and started by itself. What stands here now is the
+  // core's own answer, and only that.
+  describe("bypass readout", () => {
+    it("says nothing until the core reports a bundle", () => {
+      const { container } = renderWithProviders(
+        <BottomBar {...baseProps({ bypassInstalled: false })} />,
+      );
+
+      expect(container.querySelector(".bypass-stat")).toBeNull();
+    });
+
+    it("names the running strategy when the core reports the filter up", () => {
+      const { container } = renderWithProviders(
+        <BottomBar
+          {...baseProps({
+            bypassInstalled: true,
+            bypassOn: true,
+            bypassStrategy: "general (FAKE TLS AUTO)",
+          })}
+        />,
+      );
+
+      const stat = container.querySelector(".bypass-stat");
+      expect(stat).toHaveClass("is-on");
+      expect(stat?.textContent).toContain("general (FAKE TLS AUTO)");
+    });
+
+    it("shows an installed-but-idle bundle as off, naming no strategy", () => {
+      const { container } = renderWithProviders(
+        <BottomBar
+          {...baseProps({
+            bypassInstalled: true,
+            bypassOn: false,
+            bypassStrategy: "general (FAKE TLS AUTO)",
+          })}
+        />,
+      );
+
+      const stat = container.querySelector(".bypass-stat");
+      expect(stat).not.toHaveClass("is-on");
+      // The strategy is the one the last probe picked, not one that is running:
+      // naming it here would read as "this is what is carrying your traffic".
+      expect(stat?.textContent).not.toContain("general (FAKE TLS AUTO)");
+    });
+
+    it("is a readout, not a control", () => {
+      // Switching the bypass lives in Settings. A status that answers a click is
+      // how the old panel-opening button got mistaken for the switch itself.
+      const { container } = renderWithProviders(
+        <BottomBar {...baseProps({ bypassInstalled: true, bypassOn: true })} />,
+      );
+
+      expect(container.querySelector(".bypass-stat")?.tagName).toBe("SPAN");
     });
   });
 });

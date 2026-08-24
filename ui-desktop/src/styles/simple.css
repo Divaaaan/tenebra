@@ -226,11 +226,22 @@
   color: var(--text);
 }
 
+/* No core behind the window. It sits above the status word on purpose: the word
+   below it says "disconnected", and read on its own that is a calm lie. */
+.simple-core-down {
+  max-width: min(460px, 100%);
+  margin: 0 0 var(--sp-3);
+  color: var(--signal);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  text-align: center;
+}
+
 /* ── first-run setup ───────────────────────────────────────────────────── */
 
 /*
- * The two things a new user supplies, on the same screen as the button. Each
- * step disappears the moment it is satisfied — a finished step left on screen is
+ * The one thing a new user supplies, on the same screen as the button. It
+ * disappears the moment it is satisfied — a finished step left on screen is
  * clutter, and clutter is exactly what this view exists to avoid.
  */
 
@@ -242,33 +253,14 @@
   animation: ui-rise var(--d-slow) var(--e-out) backwards;
 }
 
-/* Two steps, read in order, so they take the chunk beat rather than the row one. */
 .setup .setup-step {
   animation: ui-rise var(--d-slow) var(--e-out) backwards;
-}
-.setup .setup-step:nth-child(2) {
-  animation-delay: var(--stagger-chunk);
 }
 
 .setup-step {
   display: grid;
-  grid-template-columns: auto 1fr;
   gap: var(--sp-3);
   align-items: start;
-}
-
-/* A number, not an icon: it says how many steps remain, which is the only
-   thing a first-time user wants to know here. */
-.setup-num {
-  display: grid;
-  place-items: center;
-  width: 1.6em;
-  height: 1.6em;
-  color: var(--text-dim);
-  border: var(--bw) solid var(--line-2);
-  border-radius: var(--radius-max);
-  font-family: var(--mono);
-  font-size: var(--fs-meta);
 }
 
 .setup-body {
@@ -378,82 +370,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* The manual bundle import, folded away. It is no longer a step — the core
-   installs a bundle on the first connect — so it reads as a quiet aside rather
-   than something standing between the user and the button. */
-.setup-optional {
-  margin-top: var(--sp-2);
-}
-
-.setup-optional-summary {
-  color: var(--text-dim);
-  font-family: var(--mono);
-  font-size: var(--fs-meta);
-  cursor: pointer;
-  list-style: none;
-  transition: color var(--t-fast);
-}
-
-.setup-optional-summary::-webkit-details-marker {
-  display: none;
-}
-
-.setup-optional-summary::before {
-  content: "+ ";
-}
-
-.setup-optional[open] .setup-optional-summary::before {
-  content: "− ";
-}
-
-.setup-optional-summary:hover {
-  color: var(--text);
-}
-
-.setup-optional .setup-body {
-  margin-top: var(--sp-3);
-}
-
-.setup-drop {
-  display: grid;
-  place-items: center;
-  padding: var(--sp-4);
-  border: var(--bw) dashed var(--line-2);
-  border-radius: var(--radius);
-  color: var(--text-dim);
-  font-family: var(--mono);
-  font-size: var(--fs-meta);
-  text-align: center;
-  cursor: pointer;
-  transition:
-    border-color var(--t-base),
-    color var(--t-base),
-    background-color var(--t-base);
-}
-
-.setup-drop:hover {
-  border-color: var(--signal-soft);
-  color: var(--text);
-}
-
-/* Unmistakable while a file is over it: the pointer is carrying something and
-   the user is not reading labels. */
-.setup-drop.is-dragging {
-  border-color: var(--signal);
-  border-style: solid;
-  color: var(--text);
-  background: var(--signal-faint);
-}
-
-.setup-drop.is-busy {
-  cursor: progress;
-  opacity: 0.6;
-}
-
-.setup-file {
-  display: none;
-}
-
 .setup-error {
   margin: 0;
   color: var(--signal);
@@ -464,7 +380,8 @@
 /* ── bypass status ─────────────────────────────────────────────────────── */
 
 /* Named, not just flagged: which bypass is running is the useful fact, since
-   they behave differently and the app just chose one by measurement. */
+   they behave differently and the app chose one by measurement. Dimmed, and with
+   an unlit dot, when a bundle is installed and nothing is running it. */
 .simple-bypass {
   display: flex;
   align-items: center;
@@ -475,12 +392,25 @@
   font-size: var(--fs-meta);
 }
 
+/* Installed, nothing running it. Muted rather than absent: "there is a bundle
+   and it is switched off" is a different fact from "there is no bundle", and the
+   screen has to be able to say both. */
+.simple-bypass.is-off {
+  color: var(--text-dim);
+}
+
 .simple-bypass-dot {
   width: 0.5em;
   height: 0.5em;
   background: currentColor;
   border-radius: var(--radius-max);
   animation: bypass-pulse 2.4s ease-in-out infinite;
+}
+
+/* Nothing is live, so nothing pulses. */
+.simple-bypass.is-off .simple-bypass-dot {
+  animation: none;
+  opacity: 0.55;
 }
 
 /* Slow and shallow: it says "live" without competing with the status word. */

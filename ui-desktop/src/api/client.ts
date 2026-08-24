@@ -299,34 +299,7 @@ export const api = {
     return invoke<LeakCheck>("leak_check");
   },
 
-  /**
-   * Install a zapret DPI-bypass bundle, given the .zip exactly as downloaded.
-   *
-   * The archive travels as base64 rather than a path: a file dropped into the
-   * webview has contents but no filesystem path, and having the renderer write
-   * a temp file would need filesystem permissions it should not hold. The core
-   * already owns the privileged side, so it unpacks.
-   */
-  importZapret(zip: Uint8Array, name?: string): Promise<ZapretBundle> {
-    // The file name travels with the bytes: release archives carry their version
-    // in it ("zapret-discord-youtube-1.10.1.zip"), and the core reads it to stamp
-    // the install. Without it the first update check sees "unknown version" and
-    // re-downloads the bundle that was just dropped in.
-    return invoke<ZapretBundle>("import_zapret", { data: toBase64(zip), name });
-  },
-
-  /**
-   * Install a bundle from a filesystem path — an archive or an already-unpacked
-   * folder.
-   *
-   * A dropped folder has no bytes to send, so this is the only way to accept
-   * one; Tauri's drag-drop supplies the real path.
-   */
-  importZapretPath(path: string): Promise<ZapretBundle> {
-    return invoke<ZapretBundle>("import_zapret", { path });
-  },
-
-  /** The installed bundle's strategies; empty when nothing is imported yet. */
+  /** The installed bundle's strategies; empty when nothing is installed yet. */
   listZapret(): Promise<ZapretBundle> {
     return invoke<ZapretBundle>("list_zapret");
   },
@@ -572,20 +545,4 @@ export function onDeepLink(
  */
 export function takeLaunchDeepLinks(): Promise<DeepLinkAction[]> {
   return invoke<DeepLinkAction[]>("take_launch_deep_links");
-}
-
-/**
- * Base64-encodes bytes without blowing the call stack.
- *
- * String.fromCharCode(...bytes) is the obvious one-liner and fails on a bundle
- * of any size — the spread turns a multi-megabyte array into that many
- * arguments. Chunking keeps it linear and bounded.
- */
-function toBase64(bytes: Uint8Array): string {
-  const CHUNK = 0x8000;
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
 }

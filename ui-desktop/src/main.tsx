@@ -19,7 +19,6 @@ import "./styles/global.css";
 import "./styles/ping-badge.css";
 import "./styles/ping-scale.css";
 import "./styles/probe.css";
-import "./styles/blocklist.css";
 import "./styles/hint.css";
 import "./styles/shell.css";
 import "./styles/toast.css";

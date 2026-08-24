@@ -1363,6 +1363,10 @@ func (d *Daemon) setState(s State) {
 	// reporting them correctly across connect/disconnect transitions without
 	// every call site restating them.
 	applySettingsToState(&s, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
+	// The bypass fields are daemon-wide in the same way and have to be carried
+	// forward for the same reason; they take a separate call because they are read
+	// off the daemon's own bookkeeping rather than the routing options.
+	d.applyZapretToStateLocked(&s)
 	d.state = s
 	emit := d.emit
 	d.mu.Unlock()

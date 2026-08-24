@@ -24,11 +24,11 @@ function setup(overrides: Partial<Parameters<typeof SimpleView>[0]> = {}) {
     selectedNodeId: "",
     onSelectNode: vi.fn(),
     onSelectAuto: vi.fn(),
-    hasBypass: false,
-    bypassActive: "",
+    bypassInstalled: false,
+    bypassOn: false,
+    bypassStrategy: "",
+    coreUnreachable: false,
     onSubscribe: vi.fn(async () => {}),
-    onBypassFiles: vi.fn(async () => {}),
-    onBypassPaths: vi.fn(async () => {}),
     serviceChecks: [],
     serviceChecking: false,
     ...overrides,
@@ -75,28 +75,67 @@ describe("SimpleView", () => {
     ).toBeInTheDocument();
   });
 
-  it("offers the bypass drop zone until a bundle is installed", () => {
-    setup({ profiles: [], nodes: [], hasBypass: false });
-    expect(screen.getByText("Drop the bypass archive here")).toBeInTheDocument();
+  it("never asks for a bypass archive", () => {
+    // The core downloads and installs a bundle on the first connect. Asking the
+    // user to find a release page and drag the right asset in was work the
+    // program already does — and the drop zone kept being offered over a bundle
+    // that was installed and running, because it read a session flag.
+    setup({ profiles: [], nodes: [] });
+    expect(
+      screen.getByLabelText("Paste your subscription link"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/archive/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/zapret/i)).not.toBeInTheDocument();
   });
 
-  it("drops both setup steps once they are satisfied", () => {
+  it("drops the setup step once it is satisfied", () => {
     // A finished step left on screen is clutter, and this view exists to avoid
     // exactly that: once set up, it is a status word and one control.
-    setup({ hasBypass: true });
+    setup();
     expect(
       screen.queryByLabelText("Paste your subscription link"),
     ).not.toBeInTheDocument();
+  });
+
+  // Part of what this screen exists to say. The bypass state comes from the
+  // core's snapshot, so a bundle installed on a previous run — by the core, with
+  // no import in this session — reads as installed and running.
+  it("names the running bypass from the core's snapshot", () => {
+    setup({
+      bypassInstalled: true,
+      bypassOn: true,
+      bypassStrategy: "general (FAKE TLS AUTO)",
+    });
+    expect(screen.getByText(/bypass on/)).toBeInTheDocument();
+    expect(screen.getByText(/general \(FAKE TLS AUTO\)/)).toBeInTheDocument();
+  });
+
+  it("says a bundle is installed but idle rather than showing nothing", () => {
+    setup({
+      bypassInstalled: true,
+      bypassOn: false,
+      bypassStrategy: "general (FAKE TLS AUTO)",
+    });
+    expect(screen.getByText("bypass off")).toBeInTheDocument();
+    // Not the strategy: nothing is running it.
     expect(
-      screen.queryByText("Drop the bypass archive here"),
+      screen.queryByText(/general \(FAKE TLS AUTO\)/),
     ).not.toBeInTheDocument();
   });
 
-  it("names the running bypass rather than just flagging it on", () => {
-    // Which strategy is running is the useful fact: they behave differently,
-    // and the app picked this one by measurement.
-    setup({ hasBypass: true, bypassActive: "general (FAKE TLS AUTO)" });
-    expect(screen.getByText(/general \(FAKE TLS AUTO\)/)).toBeInTheDocument();
+  it("stays silent about the bypass before a bundle exists", () => {
+    const { container } = setup({ bypassInstalled: false, bypassOn: false });
+    expect(container.querySelector(".simple-bypass")).toBeNull();
+  });
+
+  // A core that never answered leaves this screen drawn over nothing. The calm
+  // status word on its own reads as "everything is fine, you are just not
+  // connected", which is the opposite of what happened.
+  it("says the core is unreachable instead of showing a calm status", () => {
+    setup({ coreUnreachable: true });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /no connection to the background service/i,
+    );
   });
 
   it("disables the button while a primary action is in flight", () => {

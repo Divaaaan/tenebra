@@ -9,7 +9,10 @@
 //! (macOS and Linux) runs it over the unix domain socket of a root daemon that
 //! likewise outlives the GUI — the macOS LaunchDaemon or the Linux systemd
 //! service, both `tenebra-core --socket`; [`mock`] is an in-process fake for UI
-//! work without the core. `make_backend` in `lib.rs` picks one at startup.
+//! work without the core, reachable only on request; [`unavailable`] is what a
+//! machine with no reachable core gets, and it refuses every command rather than
+//! letting the demo fake stand in for a core that is not there.
+//! `make_backend` in `lib.rs` picks one at startup.
 //!
 //! The structs below mirror the protocol's `State`, `Node`, `Profile` and
 //! `PingResult` shapes. They serialize to exactly the JSON the front-end types
@@ -21,6 +24,7 @@ pub mod pipe;
 pub mod sidecar;
 #[cfg(test)]
 pub mod testutil;
+pub mod unavailable;
 // Every platform whose core runs as a socket-serving daemon. Spelled out rather
 // than `cfg(unix)` so a future mobile target of this crate can't silently
 // acquire a transport that has no daemon behind it.
@@ -663,7 +667,15 @@ pub struct ZapretActive {
 }
 
 /// What an update check found: the version installed before, the newest
-/// published one, and whether anything was actually replaced.
+/// published one, whether anything was actually replaced, and whether a newer
+/// one was found and held back.
+///
+/// `blocked` is the third success case: a newer bundle exists, but its checksum
+/// is not pinned into this client, so it is not installed on trust (see
+/// core/zapret/verify.go) and `latest` names the version to update Tenebra for.
+/// It has to survive the trip — a client that drops it reports "already current"
+/// over a bundle the core deliberately refused, which is the one answer that
+/// stops the user looking.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ZapretUpdate {
     #[serde(default)]
@@ -671,6 +683,8 @@ pub struct ZapretUpdate {
     #[serde(default)]
     pub latest: String,
     pub updated: bool,
+    #[serde(default)]
+    pub blocked: bool,
 }
 
 /// Push events back to the UI. Implemented by the Tauri `AppHandle` wrapper in
@@ -844,19 +858,6 @@ pub trait Backend: Send + Sync + 'static {
     /// sends nothing, and is not gated on a connection.
     fn collect_diagnostics(&self) -> Result<SupportBundle, String>;
 
-    /// Install a zapret DPI-bypass bundle. Exactly one of `data` (the archive
-    /// base64-encoded) or `path` (an archive or an already-unpacked folder) is
-    /// given: a file dropped into the webview has bytes and no path, while a
-    /// folder dropped onto the window has a path and no bytes. `name` is the
-    /// dropped file's name when known — the release archives carry their version
-    /// in it, which is what stops the first update check from re-downloading the
-    /// bundle the user just installed.
-    fn import_zapret(
-        &self,
-        data: Option<String>,
-        path: Option<String>,
-        name: Option<String>,
-    ) -> Result<ZapretBundle, String>;
     /// Report the installed bundle. Nothing installed is not an error — it is
     /// the normal state on first run.
     fn list_zapret(&self) -> Result<ZapretBundle, String>;
