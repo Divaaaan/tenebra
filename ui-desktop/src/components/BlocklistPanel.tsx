@@ -10,7 +10,7 @@ export interface BlocklistSource {
   id: string;
   /** What the user sees: the archive's file name. */
   label: string;
-  /** Rules parsed out of it; null while it is still being read. */
+  /** Strategies the installed bundle carries; null while it is still being read. */
   rules: number | null;
 }
 
@@ -24,8 +24,7 @@ interface BlocklistPanelProps {
    * is the only way to accept "here is the folder I already unpacked".
    */
   onImportPaths?: (paths: string[]) => Promise<void>;
-  /** Import a blocklist from dropped or picked files (one archive, or a whole
-   *  unpacked folder at once). */
+  /** Import a bypass bundle from dropped or picked files. */
   onImportFiles: (files: File[]) => Promise<void>;
   /** Turn the bypass on (empty name = the strategy the last probe picked). */
   onEnable?: () => Promise<void>;
@@ -46,19 +45,19 @@ interface BlocklistPanelProps {
 /**
  * Formats named in the zone, as a hint to the user — NOT a filter.
  *
- * The input deliberately carries no `accept`: a release archive names its lists
- * anything at all, and an accept filter would grey them out in the file picker.
- * What is and is not a list is decided by whether it parses.
+ * The input deliberately carries no `accept`: a release archive is named
+ * anything at all, and an accept filter would grey it out in the file picker.
+ * What is and is not a bundle is decided by what the archive holds.
  */
 const HINTED_FORMATS = ["папка", "zip"];
 
 /**
- * The blocklist import surface: drop an archive here, or click to pick one.
+ * The bypass import surface: drop a zapret bundle here, or click to pick one.
  *
  * Deliberately file-only. Server subscriptions arrive as a URL elsewhere in the
- * app; a blocklist is a snapshot the user brings themselves, and keeping the two
- * inputs in separate places is what stops a VPN link being pasted into the
- * blocklist field and silently doing nothing.
+ * app; a bundle is something the user brings themselves, and keeping the two
+ * inputs in separate places is what stops a VPN link being pasted in here and
+ * silently doing nothing.
  *
  * Errors render inside the panel rather than as a toast: the user is looking at
  * the zone they just dropped onto, and a message that appears elsewhere reads as
@@ -87,9 +86,9 @@ export function BlocklistPanel({
   const dragDepth = useRef(0);
 
   // No extension gate here on purpose. The user is told to drop the archive
-  // exactly as downloaded, and a release names its files anything at all; the
-  // reader decides what is a list by whether it parses. Refusing up front on a
-  // name is how a folder full of good lists gets rejected at the door.
+  // exactly as downloaded, and it arrives named anything at all — `zapret.zip`,
+  // `zapret-discord-youtube-1.10.1.zip`, whatever they renamed it to. What the
+  // file is gets decided by looking inside it, not at the door.
   const submitFiles = useCallback(
     async (files: File[]) => {
       if (busy || files.length === 0) return;

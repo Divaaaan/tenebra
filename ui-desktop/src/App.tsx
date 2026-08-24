@@ -6,7 +6,6 @@ import { ConnectionPanel } from "./components/ConnectionPanel";
 import { ServerList, type ServerRow } from "./components/ServerList";
 import { BottomBar } from "./components/BottomBar";
 import { BlocklistPanel, type BlocklistSource } from "./components/BlocklistPanel";
-import { readBlocklistFiles } from "./lib/blocklist";
 import { looksLikeZapretBundle } from "./lib/zapret";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { UpdateConfirm } from "./components/UpdateConfirm";
@@ -84,41 +83,12 @@ export function App() {
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [busy, setBusy] = useState(false);
 
-  // Blocklist import. It lives on the main screen rather than inside Settings
+  // Bypass import. It lives on the main screen rather than inside Settings
   // because it is something the user does with a file in hand, not something
   // they go looking for while configuring — burying it two screens deep is how
   // an import feature ends up unused.
   const [blocklistOpen, setBlocklistOpen] = useState(false);
   const [blocklists, setBlocklists] = useState<BlocklistSource[]>([]);
-
-  const importBlocklist = useCallback(async (files: File[]) => {
-    // A zapret bundle is a different thing from a blocklist and is recognised
-    // by content, not by name: it is a zip carrying bin/winws.exe and a set of
-    // strategy .bat files. Sending it to the core is what makes "drop the
-    // archive into the VPN" actually work, instead of the reader trying to
-    // parse an executable as a list of domains.
-    if (files.length === 1 && (await looksLikeZapretBundle(files[0]))) {
-      const bytes = new Uint8Array(await files[0].arrayBuffer());
-      const bundle = await api.importZapret(bytes, files[0].name);
-      await afterZapretImport(files[0].name, bundle.strategies?.length ?? 0);
-      return;
-    }
-
-    const parsed = await readBlocklistFiles(files);
-    // One drop is one entry, however many files it held: dropping an unpacked
-    // release means dropping a dozen files, and listing each would bury the one
-    // number that matters — how many rules are now loaded.
-    const label =
-      files.length === 1
-        ? files[0].name
-        : `${files[0].name} + ${files.length - 1}`;
-    setBlocklists((prev) => [
-      // Re-importing the same source replaces it instead of stacking duplicates,
-      // which is what happens when a user re-drops an updated list.
-      ...prev.filter((s) => s.label !== label),
-      { id: label, label, rules: parsed.rules.length },
-    ]);
-  }, []);
 
   /**
    * Shared tail of a bundle import: record it, then find the strategy that
@@ -154,6 +124,33 @@ export function App() {
       pushToast(describeCoreError(e, t));
     }
   }, [t]);
+
+  /**
+   * Import from dropped or picked FILES.
+   *
+   * A zapret bundle is recognised by content, not by name: it is a zip carrying
+   * bin/winws.exe and a set of strategy .bat files. Sending it to the core is
+   * what makes "drop the archive into the VPN" actually work.
+   *
+   * Nothing else is accepted, and that is deliberate. A domain blocklist used
+   * to be parsed here and listed with its rule count, but no command exists to
+   * hand those rules to the core: the counter was the only trace an import ever
+   * left, and it read as "loaded" for a list that changed no routing and
+   * blocked nothing. Refusing the file says the true thing — and says it where
+   * the user is looking, next to the zone they just dropped onto.
+   */
+  const importBlocklist = useCallback(
+    async (files: File[]) => {
+      if (files.length === 1 && (await looksLikeZapretBundle(files[0]))) {
+        const bytes = new Uint8Array(await files[0].arrayBuffer());
+        const bundle = await api.importZapret(bytes, files[0].name);
+        await afterZapretImport(files[0].name, bundle.strategies?.length ?? 0);
+        return;
+      }
+      throw new Error(t.blocklist.badFile);
+    },
+    [afterZapretImport, t],
+  );
 
   /**
    * Import from paths — an archive or an already-unpacked folder.

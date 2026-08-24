@@ -696,9 +696,13 @@ export interface Strings {
     /** Text inside the drop zone. */
     dropHint: string;
     loading: string;
-    /** Shown when the dropped file is not an accepted format. */
+    /**
+     * Refusal shown when a dropped file is not a zapret bundle. The panel takes
+     * nothing else: a domain blocklist has nowhere to go, so it is turned away
+     * here rather than counted at the user as if it had been applied.
+     */
     badFile: string;
-    /** Unit after a rule count, e.g. "12 400 rules". */
+    /** Unit after an installed bundle's strategy count, e.g. "20 strategies". */
     rules: string;
     /** Placeholder while a list is still being parsed. */
     counting: string;
@@ -1251,7 +1255,7 @@ const en: Strings = {
     leakDnsResolvers: "Resolvers",
   },
   blocklist: {
-    title: "Blocklist",
+    title: "DPI bypass",
     hint: "Drop a zapret folder or archive — the DPI bypass for YouTube and Discord. The app finds the strategy that works here.",
     dropHint: "Drop the zapret folder or its archive",
     loading: "Reading…",
