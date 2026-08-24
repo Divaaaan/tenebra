@@ -62,8 +62,11 @@ func TestConnectDoesNotRefetchAnInstalledBundle(t *testing.T) {
 }
 
 // TestConnectHonoursTheAutoUpdateChoice: switching automatic bundle updates off
-// is a statement that this app should not fetch things. Treating a first connect
-// as an exception would make that switch a lie.
+// is a statement that this app should not install bundles behind the user's
+// back. Treating a first connect as an exception would make that switch a lie —
+// and that holds for the embedded copy too, which is otherwise free: the switch
+// is about whether this app manages the bundle, not about where the bytes come
+// from.
 func TestConnectHonoursTheAutoUpdateChoice(t *testing.T) {
 	d, _ := newTestDaemon(t)
 	d.zapretAutoUpdate = false
@@ -72,6 +75,10 @@ func TestConnectHonoursTheAutoUpdateChoice(t *testing.T) {
 		t.Error("fetched a bundle with automatic updates turned off")
 		return zapret.Release{}, errors.New("should not be called")
 	}
+	d.zapretEmbed = func(string) ([]zapret.Strategy, error) {
+		t.Error("installed the embedded bundle with automatic updates turned off")
+		return nil, errors.New("should not be called")
+	}
 
 	d.installZapretIfMissing(context.Background())
 }
@@ -79,6 +86,11 @@ func TestConnectHonoursTheAutoUpdateChoice(t *testing.T) {
 // TestConnectSurvivesAFailedInstall: no bypass is a slower session, not a failed
 // one. The connect must go on and the log must say what happened, rather than the
 // user meeting a button that appears to do nothing.
+//
+// This is the one path where there is genuinely no bypass left: the download
+// failed AND the embedded copy would not unpack. Both have to be on the log —
+// the second line is the only thing that separates "the network was down" from
+// "the network was down and the floor under it gave way too".
 func TestConnectSurvivesAFailedInstall(t *testing.T) {
 	d, _ := newTestDaemon(t)
 	var logs []string
@@ -96,13 +108,15 @@ func TestConnectSurvivesAFailedInstall(t *testing.T) {
 
 	d.installZapretIfMissing(context.Background())
 
-	found := false
-	for _, l := range logs {
-		if strings.Contains(l, "не удалось поставить сборку") {
-			found = true
+	for _, want := range []string{"не удалось скачать сборку", "туннель работает без обхода"} {
+		found := false
+		for _, l := range logs {
+			if strings.Contains(l, want) {
+				found = true
+			}
 		}
-	}
-	if !found {
-		t.Errorf("a failed install said nothing on the log channel: %v", logs)
+		if !found {
+			t.Errorf("a failed install never said %q on the log channel: %v", want, logs)
+		}
 	}
 }

@@ -54,10 +54,12 @@ Everything below is implemented in this repo today (the UI features are desktop)
   direct and tunnels the rest; *Global* tunnels everything; *Direct* is the
   proxy off. Geodata is pulled from the official public sing-geoip / sing-geosite
   rule-sets at runtime — the client ships none of its own.
-- **DPI bypass, fetched rather than bundled.** Windows only: the client drives
+- **DPI bypass that works on the first connect.** Windows only: the client drives
   [zapret](https://github.com/bol-van/zapret) so censored services work at their
-  own latency instead of through an exit node. The bundle is downloaded on the
-  first connect and is not part of the installer — see [DPI bypass](#dpi-bypass).
+  own latency instead of through an exit node. One bundle release is compiled
+  into the build so a censored network cannot leave a fresh install with no
+  bypass at all; newer releases are downloaded as they are published — see
+  [DPI bypass](#dpi-bypass).
 - **Protocol fallback.** A pure state machine walks the last known-good node
   first, then by protocol preference (REALITY → Hysteria2 → AmneziaWG), so a
   blocked or throttled protocol is retried as another. The last good node leads
@@ -91,29 +93,36 @@ inside it, so a service the bypass can reach directly stays direct at its own
 latency instead of taking the round trip through an exit node. There is no
 equivalent on macOS or Linux; the tunnel there carries everything.
 
-**It is a download, not a bundled file.** Tenebra ships none of this. Strategies
-are a moving target — a set that worked in March is a set the filter has since
-learned — so rather than freezing a copy into the installer, the core fetches the
-current release of the
+**Shipped as a floor, downloaded to stay current.** What the bypass needs is the
 [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube)
 bundle: zapret's Windows build (`winws.exe`), the
 [WinDivert](https://github.com/basil00/WinDivert) packet-interception driver it
 attaches to, the Cygwin runtime that build needs, and the strategy and host lists
-around them.
+around them. Strategies are a moving target — a set that worked in March is a
+set the filter has since learned — so the current release is fetched from
+upstream. But a client that can only download one is a client with no bypass on
+exactly the networks it exists for, so one release is also compiled into the
+core: the archive upstream published, byte for byte, checked against the
+checksum this build pins for it. It is the floor, never the ceiling — a newer
+release replaces it as soon as one is published and pinned.
 
 **When it happens and where it lands.** On the first connect with no bundle
 present, the core downloads the latest published release and unpacks it into its
 own data directory — `%ProgramData%\Tenebra\data\zapret` under the Windows
 service — then re-checks for a newer one every twelve hours. It is a plain
 download from the upstream release page; nothing about you goes with the request.
+When that download cannot deliver a bundle at all — no network, GitHub blocked,
+a release newer than any checksum this build carries, or an archive that did not
+match the checksum it does — the compiled-in copy is unpacked into the same
+place instead, and the next successful check upgrades past it.
 
 **How to decline it.** *Settings → Censorship bypass → Update the bundle
-automatically* governs both the first-connect install and the re-check. Turned
-off, Tenebra fetches nothing on its own: drag in a bundle yourself, press
-*Update* when you want one, or run with no bypass at all — the tunnel still
-carries every service, it simply carries the censored ones through the exit node
-instead of around the filter. Deleting the `zapret` directory removes what is
-already installed.
+automatically* governs the first-connect install — downloaded or compiled-in —
+and the re-check alike. Turned off, Tenebra installs nothing on its own: drag in
+a bundle yourself, press *Update* when you want one, or run with no bypass at
+all — the tunnel still carries every service, it simply carries the censored
+ones through the exit node instead of around the filter. Deleting the `zapret`
+directory removes what is already installed.
 
 Everything in the bundle, with its license and copyright holder, is listed in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md#2-components-downloaded-at-runtime).
@@ -239,7 +248,7 @@ tenebra/
 │   ├── routing/          smart/global/direct + per-app split -> sing-box route/dns.
 │   ├── singbox/          Build a full sing-box config as plain JSON (no sing-box dep).
 │   ├── fallback/         Pure REALITY->Hysteria2->AmneziaWG fallback state machine.
-│   ├── zapret/           Drive the downloaded DPI-bypass bundle (Windows). See above.
+│   ├── zapret/           Drive the DPI-bypass bundle, embedded + downloaded (Windows).
 │   └── control/          The line-delimited JSON protocol + the daemon.
 ├── adapters/
 │   └── windows/          Spawn & supervise sing-box; traffic via its clash API.

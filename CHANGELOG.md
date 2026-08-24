@@ -11,6 +11,28 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **The bypass bundle ships inside the build, so a first connect no longer
+  depends on reaching GitHub.** The bypass used to exist only after a download,
+  and there were four ways for that download to end with nothing installed: no
+  network, GitHub blocked outright — which is precisely the network this
+  product is for — a published release newer than any checksum the build
+  carries, or an archive that did not match the checksum it does. The third of
+  those emptied every fresh install the day upstream published 1.10.2 ahead of
+  its pin (see 0.5.3), and pinning faster does not fix it: the pin has to ship
+  before the version it names is needed. Bundle 1.10.2 is now compiled into the
+  core — the release archive byte for byte — and installed straight from those
+  bytes whenever the download cannot deliver one. It is a floor, not a ceiling:
+  a newer release this build pins still replaces it on the next check, a bundle
+  already installed is never overwritten, and a newer one is never rolled back.
+  A build whose embedded archive and pinned checksum have drifted apart fails
+  its tests, which is the class of mistake the whole change exists to end. The
+  cost is size: the core binary grows from 11.9 MB to 13.4 MB. Because the
+  bundle is now redistributed rather than only fetched,
+  [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md#2-components-downloaded-at-runtime)
+  records it as shipped, with the licenses and copyright holders it carries.
+
 ## [0.5.3] - 2026-08-24
 
 ### Fixed

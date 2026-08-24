@@ -381,7 +381,15 @@ const zapretInstallBudget = 60 * time.Second
 // Bounded and best-effort by construction. A failure here is not a failed
 // connect: the tunnel alone still carries everything, just slower, and the log
 // says why. Held to the user's auto-update choice as well — someone who turned
-// updates off did not ask this app to fetch anything.
+// updates off did not ask this app to manage the bundle, and that covers the
+// embedded copy too: it costs no network, but installing it is still this app
+// putting a packet filter on the machine unasked.
+//
+// Upstream is tried first and the bundle compiled into this binary is the floor
+// under it (see installEmbeddedZapretIfMissing): every way the download can end
+// without a bundle — no network, GitHub blocked, a version no pin covers, an
+// archive whose checksum did not match — lands on the same fallback, and a first
+// connect stops depending on GitHub being reachable at all.
 func (d *Daemon) installZapretIfMissing(ctx context.Context) {
 	dir := filepath.Join(d.store.Dir(), zapretDirName)
 	if len(zapret.Discover(dir, dirFileNames(dir))) > 0 {
@@ -398,6 +406,10 @@ func (d *Daemon) installZapretIfMissing(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, zapretInstallBudget)
 	defer cancel()
 	if _, to, ok, err := d.updateZapret(ctx); err != nil {
+		// Each branch reports what upstream did and stops there. What the machine
+		// is left running is not decided here any more: the embedded floor below
+		// answers that, and a line claiming the tunnel is on its own would be a
+		// guess made one statement too early.
 		switch {
 		case errors.Is(err, zapret.ErrIntegrity):
 			// A bundle that failed verification is not "could not download": the
@@ -406,18 +418,57 @@ func (d *Daemon) installZapretIfMissing(ctx context.Context) {
 			d.reportZapretUpdateFailure(err)
 		case errors.Is(err, zapret.ErrUntrustedVersion):
 			// Upstream has moved past every pin this build carries, so there is no
-			// bundle it can install on trust. Nothing is fetched; the tunnel carries
-			// the censored services on its own until a Tenebra update brings the pin.
+			// bundle it can install on trust. This is the case that emptied fresh
+			// installs when 1.10.2 was published ahead of its pin, and the one the
+			// embedded copy exists for.
 			d.emitLog(LogInfo, fmt.Sprintf(
 				"zapret: доступна сборка обхода %s, но она новее вшитых в Tenebra проверок — "+
-					"обнови Tenebra; туннель пока работает без обхода", versionLabel(to)))
+					"обнови Tenebra, чтобы получить её", versionLabel(to)))
 		default:
-			d.emitLog(LogWarn, fmt.Sprintf(
-				"zapret: не удалось поставить сборку (%v) — туннель работает без обхода", err))
+			d.emitLog(LogWarn, fmt.Sprintf("zapret: не удалось скачать сборку (%v)", err))
 		}
 	} else if ok {
 		d.emitLog(LogInfo, fmt.Sprintf("zapret: поставлена сборка %s", to))
 	}
+
+	d.installEmbeddedZapretIfMissing(dir)
+}
+
+// installEmbeddedZapretIfMissing installs the bundle compiled into this binary
+// when the upstream attempt left the machine without one.
+//
+// It is the floor and only the floor. The check is re-run against the directory
+// rather than inferred from what updateZapret returned, so a bundle that did get
+// installed — by the download just now, or sitting there all along — is never
+// written over: the embedded copy is older than upstream by construction, and
+// laying it on top of a working install would be a downgrade dressed as a repair.
+//
+// Nothing is fetched and nothing is verified here. These bytes came in the same
+// signed binary as this code, their checksum is matched against the pin table on
+// every build, and they are unpacked by the same install path a verified download
+// uses.
+func (d *Daemon) installEmbeddedZapretIfMissing(dir string) {
+	if len(zapret.Discover(dir, dirFileNames(dir))) > 0 {
+		return
+	}
+
+	strategies, err := d.zapretEmbed(dir)
+	if err != nil {
+		d.emitLog(LogWarn, fmt.Sprintf(
+			"zapret: не встала и вшитая сборка (%v) — туннель работает без обхода", err))
+		return
+	}
+
+	// The installed version is part of the reported status, and a screen still
+	// showing none leaves the user unable to tell a bypass that installed itself
+	// from one that never arrived.
+	d.mu.Lock()
+	d.refreshZapretStateLocked()
+	d.mu.Unlock()
+
+	d.emitLog(LogInfo, fmt.Sprintf(
+		"zapret: поставлена вшитая сборка %s (%d стратегий) — обход поднимется без GitHub; "+
+			"как выйдет более свежая с вшитой суммой, обновлю", zapret.EmbeddedVersion, len(strategies)))
 }
 
 // dirFileNames lists the file names in dir, or nothing when it cannot be read —
