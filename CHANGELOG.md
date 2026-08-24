@@ -11,6 +11,8 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-08-24
+
 ### Fixed
 
 - **The bypass panel no longer answers a domain blocklist with a rule count
