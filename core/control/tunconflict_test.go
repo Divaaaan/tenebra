@@ -42,8 +42,8 @@ func daemonForConflictTest(t *testing.T) (*Daemon, string) {
 // tun joins it.
 func foreignTunnel() []tunguard.Iface {
 	return []tunguard.Iface{
-		{Name: "Ethernet", HasDefaultRoute: true, RouteMetric: 25},
-		{Name: "tun0", IsTunnel: true, HasDefaultRoute: true, RouteMetric: 0},
+		{Name: "Ethernet", HasDefault4: true, Metric4: 25},
+		{Name: "tun0", IsTunnel: true, HasDefault4: true, Metric4: 0},
 	}
 }
 
@@ -126,13 +126,122 @@ func TestConnectIgnoresOurOwnTun(t *testing.T) {
 	}
 	d.SetInterfaceProbe(func() ([]tunguard.Iface, error) {
 		return []tunguard.Iface{
-			{Name: "Ethernet", HasDefaultRoute: true, RouteMetric: 25},
-			{Name: own, IsTunnel: true, HasDefaultRoute: true, RouteMetric: 0},
+			{Name: "Ethernet", HasDefault4: true, Metric4: 25},
+			{Name: own, IsTunnel: true, HasDefault4: true, Metric4: 0},
 		}, nil
 	})
 
 	resp := d.handleConnect(context.Background(), Request{ID: 1, Cmd: CmdConnect, Profile: pid})
 	if !resp.Ok {
 		t.Fatalf("our own tun blocked the reconnect: %q", resp.Error)
+	}
+}
+
+// TestAutoconnectRefusesWhenAnotherTunnelOwnsTheRoute is the case the guard was
+// written for and the one it was not wired into: a machine starting up with
+// another VPN's service already running. The hand-pressed connect was guarded
+// from the first day; autoconnect — how the app starts on most days, and the
+// only path that runs before anyone is watching — raised its tun regardless.
+func TestAutoconnectRefusesWhenAnotherTunnelOwnsTheRoute(t *testing.T) {
+	dir := t.TempDir()
+	if err := settingsAt(t, dir).Save(persistedSettings{Autoconnect: true, LastProfile: "multi"}); err != nil {
+		t.Fatalf("seed settings: %v", err)
+	}
+
+	h := newHarness(t)
+	seedMultiProto(t, h)
+	h.daemon.SetSettings(settingsAt(t, dir))
+	h.daemon.SetInterfaceProbe(func() ([]tunguard.Iface, error) { return foreignTunnel(), nil })
+
+	if h.daemon.AutoconnectOnStart() {
+		t.Fatal("autoconnect launched an attempt while another VPN owned the default route")
+	}
+	// The refusal has to name the offender in the log: nobody is looking at the
+	// screen when the daemon starts, so the log is the only account of why the
+	// tunnel is not up.
+	h.awaitLogContains("tun0")
+	if h.runner.starts() != 0 {
+		t.Errorf("starts = %d, want 0 — no tun may be raised over another VPN's route", h.runner.starts())
+	}
+	if got := h.daemon.snapshotState().State; got != StateIdle {
+		t.Errorf("state = %q, want idle", got)
+	}
+}
+
+// TestAutoconnectProceedsWhenTheRouteIsFree keeps the guard from turning into a
+// blanket block on the start path: with only the machine's own uplink holding a
+// default route there is nothing to collide with.
+func TestAutoconnectProceedsWhenTheRouteIsFree(t *testing.T) {
+	dir := t.TempDir()
+	if err := settingsAt(t, dir).Save(persistedSettings{Autoconnect: true, LastProfile: "multi"}); err != nil {
+		t.Fatalf("seed settings: %v", err)
+	}
+
+	h := newHarness(t)
+	seedMultiProto(t, h)
+	h.daemon.SetSettings(settingsAt(t, dir))
+	h.daemon.SetInterfaceProbe(func() ([]tunguard.Iface, error) {
+		return []tunguard.Iface{{Name: "Ethernet", HasDefault4: true, Metric4: 25}}, nil
+	})
+
+	if !h.daemon.AutoconnectOnStart() {
+		t.Fatal("autoconnect did not launch with the default route free")
+	}
+	h.awaitState(StateConnected)
+}
+
+// TestConnectHonoursACustomInterfaceName is the ownNames path through the control
+// layer (issue 5): a user-set TunOptions.InterfaceName must be what the guard
+// treats as ours. Our own tun holds the default route at metric 0 by
+// construction, so if the guard does not recognise it as ours it counts as a
+// metric-0 uplink, zeroes the bar every foreign tunnel is compared against, and
+// masks the real conflict. A hardcoded brand name would get this wrong the moment
+// the interface is named anything else.
+func TestConnectHonoursACustomInterfaceName(t *testing.T) {
+	d, pid := daemonForConflictTest(t)
+	d.mu.Lock()
+	d.tun.InterfaceName = "corp-gw"
+	d.mu.Unlock()
+	d.SetInterfaceProbe(func() ([]tunguard.Iface, error) {
+		return []tunguard.Iface{
+			{Name: "Ethernet", HasDefault4: true, Metric4: 25},
+			// Our own tun under the custom name, holding the route at metric 0.
+			{Name: "corp-gw", HasDefault4: true, Metric4: 0},
+			// A foreign tunnel that beats the uplink and must still be caught.
+			{Name: "tun0", IsTunnel: true, HasDefault4: true, Metric4: 5},
+		}, nil
+	})
+
+	resp := d.handleConnect(context.Background(), Request{ID: 1, Cmd: CmdConnect, Profile: pid})
+	if resp.Ok {
+		t.Fatal("connect succeeded while another tunnel owns the default route")
+	}
+	if !strings.Contains(resp.Error, "tun0") {
+		t.Errorf("error does not name the offender: %q", resp.Error)
+	}
+	// Our own custom-named tun must not be what it complains about.
+	if strings.Contains(resp.Error, "corp-gw") {
+		t.Errorf("guard flagged our own tun under its custom name: %q", resp.Error)
+	}
+}
+
+// TestConnectWithCustomNameIgnoresOnlyOurOwnTun: with nothing but our own
+// custom-named tun holding the route (a plain reconnect), the guard must let the
+// connect through — the interface it is about to replace is not a conflict.
+func TestConnectWithCustomNameIgnoresOnlyOurOwnTun(t *testing.T) {
+	d, pid := daemonForConflictTest(t)
+	d.mu.Lock()
+	d.tun.InterfaceName = "corp-gw"
+	d.mu.Unlock()
+	d.SetInterfaceProbe(func() ([]tunguard.Iface, error) {
+		return []tunguard.Iface{
+			{Name: "Ethernet", HasDefault4: true, Metric4: 25},
+			{Name: "corp-gw 2", IsTunnel: true, HasDefault4: true, Metric4: 0},
+		}, nil
+	})
+
+	resp := d.handleConnect(context.Background(), Request{ID: 1, Cmd: CmdConnect, Profile: pid})
+	if !resp.Ok {
+		t.Fatalf("our own custom-named tun blocked the reconnect: %q", resp.Error)
 	}
 }

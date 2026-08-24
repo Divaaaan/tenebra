@@ -3,122 +3,218 @@ package windows
 import (
 	"fmt"
 	"net"
-	"syscall"
 	"unsafe"
 
 	"github.com/Divaaaan/tenebra/core/tunguard"
+	winsys "golang.org/x/sys/windows"
 )
 
-// Route enumeration for the tun-conflict guard.
+// Route and adapter enumeration for the tun-conflict guard.
 //
-// It reads the IPv4 forwarding table straight from iphlpapi rather than parsing
-// `route print` or `netsh`: their output is localised, so on a Russian or German
-// Windows a text parser silently finds nothing — and a guard that silently finds
-// nothing is worse than no guard, because it reports "all clear" for the exact
-// machine it was meant to protect.
+// It reads the forwarding table and the adapter list straight from iphlpapi
+// rather than parsing `route print` or `netsh`: their output is localised, so on
+// a Russian or German Windows a text parser silently finds nothing — and a guard
+// that silently finds nothing is worse than no guard, because it reports "all
+// clear" for the exact machine it was meant to protect.
 //
-// GetIpForwardTable (the original, IPv4-only call) is used deliberately over
-// GetIpForwardTable2: MIB_IPFORWARDROW is a flat block of 14 DWORDs whose layout
-// has been stable since Windows 2000, while MIB_IPFORWARD_ROW2 carries nested
-// SOCKADDR_INET unions whose padding is easy to get subtly wrong. The guard only
-// needs "which interface owns a default route, and at what metric", and the old
-// call answers exactly that.
-var (
-	modiphlpapi           = syscall.NewLazyDLL("iphlpapi.dll")
-	procGetIpForwardTable = modiphlpapi.NewProc("GetIpForwardTable")
+// GetIpForwardTable2 is used over the older IPv4-only GetIpForwardTable for two
+// reasons. It answers for IPv6 as well, and a tunnel that owns ::/0 captures
+// every AAAA-resolved destination on a dual-stack machine, which is most of
+// them; and its MIB_IPFORWARD_ROW2 comes with a vetted struct definition in
+// golang.org/x/sys/windows, so the nested SOCKADDR_INET unions that made the
+// call unattractive are not this package's to get right.
+//
+// The metric reported is the effective one — the route's own metric plus the
+// owning interface's metric, which is what `route print` shows and what Windows
+// actually compares when it picks a path. The route metric alone is not usable:
+// every tunnel writes its route at 0, and so does the physical uplink on a
+// machine behind a Hyper-V switch (measured 2026-08-24: route metric 0,
+// interface metric 25). Reading it raw made the machine's own uplink look like a
+// metric-0 path and, through the guard's "parked at a losing metric" test, waved
+// every genuine conflict through.
+
+// Interface types that mean "tunnel" in Windows' own metadata. IF_TYPE_TUNNEL is
+// the honest one; IF_TYPE_PROP_VIRTUAL is what wintun-based clients actually
+// report — measured 2026-08-24, sing-box's tun and Tailscale both come back as
+// 53, while Hyper-V's vEthernet, which is the real uplink on that machine, comes
+// back as 6 (ethernet). IF_TYPE_PPP is deliberately absent: a mobile-broadband
+// or dial-up uplink is PPP, and classifying a machine's only exit as a tunnel
+// would turn the guard into a refusal to ever connect.
+const (
+	ifTypePropVirtual = 53
+	ifTypeTunnel      = 131
 )
 
-// mibIPForwardRow mirrors MIB_IPFORWARDROW. Every field is a DWORD, so the
-// struct is 56 bytes with no padding surprises on either 32- or 64-bit.
-type mibIPForwardRow struct {
-	ForwardDest      uint32
-	ForwardMask      uint32
-	ForwardPolicy    uint32
-	ForwardNextHop   uint32
-	ForwardIfIndex   uint32
-	ForwardType      uint32
-	ForwardProto     uint32
-	ForwardAge       uint32
-	ForwardNextHopAS uint32
-	ForwardMetric1   uint32
-	ForwardMetric2   uint32
-	ForwardMetric3   uint32
-	ForwardMetric4   uint32
-	ForwardMetric5   uint32
+// adapter is what GetAdaptersAddresses knows about one interface beyond what
+// net.Interfaces exposes: the driver's description, whether Windows itself calls
+// the thing a tunnel, and the per-family interface metric.
+type adapter struct {
+	description string
+	tunnel      bool
+	metric4     uint32
+	metric6     uint32
 }
 
-const errInsufficientBuffer = 122 // ERROR_INSUFFICIENT_BUFFER
+// metric returns the interface metric for one address family.
+func (a adapter) metric(family uint16) uint32 {
+	if family == winsys.AF_INET6 {
+		return a.metric6
+	}
+	return a.metric4
+}
 
-// defaultRoutes returns, per interface index, the lowest metric of any default
-// route (0.0.0.0/0) that interface owns. An interface absent from the map has no
-// default route and therefore cannot capture arbitrary traffic.
-func defaultRoutes() (map[uint32]uint32, error) {
-	// Two-call idiom: ask with a zero-sized buffer to learn the required size,
-	// then allocate. The table can grow between the calls, so the size is read
-	// back from the second call's own error rather than assumed.
+// adapters returns the adapter metadata by interface index.
+//
+// It is best-effort: on failure it yields an empty map rather than an error, so
+// the guard falls back to name heuristics and raw route metrics instead of going
+// off altogether. A probe error disables the guard entirely (see
+// control.checkTunConflict), and half the information is worth more than none.
+func adapters() map[uint32]adapter {
+	const flags = winsys.GAA_FLAG_SKIP_ANYCAST |
+		winsys.GAA_FLAG_SKIP_MULTICAST |
+		winsys.GAA_FLAG_SKIP_DNS_SERVER
+
+	out := map[uint32]adapter{}
+	// Two-call idiom, retried: the adapter list can grow between learning the
+	// size and filling the buffer. A handful of attempts is plenty; giving up
+	// lands on the empty map above.
 	var size uint32
-	ret, _, _ := procGetIpForwardTable.Call(0, uintptr(unsafe.Pointer(&size)), 0)
-	if ret != errInsufficientBuffer && ret != 0 {
-		return nil, fmt.Errorf("GetIpForwardTable(size): error %d", ret)
-	}
-	if size == 0 {
-		return map[uint32]uint32{}, nil
-	}
-
-	buf := make([]byte, size)
-	ret, _, _ = procGetIpForwardTable.Call(
-		uintptr(unsafe.Pointer(&buf[0])),
-		uintptr(unsafe.Pointer(&size)),
-		0,
-	)
-	if ret != 0 {
-		return nil, fmt.Errorf("GetIpForwardTable: error %d", ret)
-	}
-
-	// Layout: DWORD dwNumEntries, then dwNumEntries × MIB_IPFORWARDROW.
-	const (
-		headerSize = 4
-		rowSize    = int(unsafe.Sizeof(mibIPForwardRow{}))
-	)
-	if len(buf) < headerSize {
-		return nil, fmt.Errorf("GetIpForwardTable: short buffer (%d bytes)", len(buf))
-	}
-	n := int(*(*uint32)(unsafe.Pointer(&buf[0])))
-
-	out := make(map[uint32]uint32, 4)
-	for i := 0; i < n; i++ {
-		off := headerSize + i*rowSize
-		// Guard the arithmetic: a truncated buffer must not be read past.
-		if off+rowSize > len(buf) {
-			break
+	var buf []byte
+	for attempt := 0; attempt < 4; attempt++ {
+		var first *winsys.IpAdapterAddresses
+		if size > 0 {
+			buf = make([]byte, size)
+			first = (*winsys.IpAdapterAddresses)(unsafe.Pointer(&buf[0]))
 		}
-		row := (*mibIPForwardRow)(unsafe.Pointer(&buf[off]))
-		// A default route is destination 0.0.0.0 with mask 0.0.0.0. Checking the
-		// mask too matters: 0.0.0.0 with a non-zero mask is not a default route.
-		if row.ForwardDest != 0 || row.ForwardMask != 0 {
+		err := winsys.GetAdaptersAddresses(winsys.AF_UNSPEC, flags, 0, first, &size)
+		if err == winsys.ERROR_BUFFER_OVERFLOW || (first == nil && err == nil) {
+			// Nothing was written; go round with the size the call reported. A
+			// zero size with no error means there is nothing to read at all.
+			if size == 0 {
+				return out
+			}
 			continue
 		}
-		if cur, ok := out[row.ForwardIfIndex]; !ok || row.ForwardMetric1 < cur {
-			out[row.ForwardIfIndex] = row.ForwardMetric1
+		if err != nil {
+			return out
 		}
+		for a := first; a != nil; a = a.Next {
+			info := adapter{
+				description: winsys.UTF16PtrToString(a.Description),
+				tunnel:      a.IfType == ifTypeTunnel || a.IfType == ifTypePropVirtual,
+				metric4:     a.Ipv4Metric,
+				metric6:     a.Ipv6Metric,
+			}
+			// Keyed under both indices: an adapter can carry a different index per
+			// family, and net.Interfaces reports whichever is non-zero.
+			if a.IfIndex != 0 {
+				out[a.IfIndex] = info
+			}
+			if a.Ipv6IfIndex != 0 {
+				out[a.Ipv6IfIndex] = info
+			}
+		}
+		return out
+	}
+	return out
+}
+
+// readRoutes folds one address family's forwarding table into the coverage
+// accumulator.
+func readRoutes(family uint16, info map[uint32]adapter, into coverTable) error {
+	var table *winsys.MibIpForwardTable2
+	if err := winsys.GetIpForwardTable2(family, &table); err != nil {
+		return fmt.Errorf("GetIpForwardTable2(family %d): %w", family, err)
+	}
+	if table == nil {
+		return nil
+	}
+	defer winsys.FreeMibTable(unsafe.Pointer(table))
+
+	for _, row := range table.Rows() {
+		prefix := row.DestinationPrefix
+		var dest []byte
+		switch prefix.Prefix.Family {
+		case winsys.AF_INET:
+			sa := (*winsys.RawSockaddrInet4)(unsafe.Pointer(&prefix.Prefix))
+			dest = sa.Addr[:]
+		case winsys.AF_INET6:
+			sa := (*winsys.RawSockaddrInet6)(unsafe.Pointer(&prefix.Prefix))
+			dest = sa.Addr[:]
+		default:
+			continue
+		}
+		metric := addMetric(row.Metric, info[row.InterfaceIndex].metric(prefix.Prefix.Family))
+		into.add(row.InterfaceIndex, prefix.Prefix.Family, dest, int(prefix.PrefixLength), metric)
+	}
+	return nil
+}
+
+// addMetric sums a route metric and an interface metric without wrapping. A
+// metric that saturates is a route nothing will ever choose, which is the same
+// answer the arithmetic would have given had it not overflowed.
+func addMetric(route, iface uint32) uint32 {
+	sum := uint64(route) + uint64(iface)
+	if sum > uint64(^uint32(0)) {
+		return ^uint32(0)
+	}
+	return uint32(sum)
+}
+
+// ifaceDefaults is one interface's default-route coverage, split by address
+// family so the guard compares v4 against v4 and v6 against v6. A tunnel can hold
+// one family and leave the other; collapsing them lost that distinction and, with
+// it, the tunnel that owns only ::/0.
+type ifaceDefaults struct {
+	has4, has6       bool
+	metric4, metric6 uint32
+}
+
+// defaultRoutes returns, per interface index, the effective metric at which that
+// interface can capture each address family in full — by a literal default route,
+// the split pair, or any partition that tiles the space. Both families are read:
+// a tunnel that owns only ::/0 captures every AAAA-resolved destination on a
+// dual-stack machine, and reading IPv4 alone left it invisible. An interface
+// absent from the map has no such route in either family and cannot swallow ours.
+func defaultRoutes(info map[uint32]adapter) (map[uint32]ifaceDefaults, error) {
+	table := coverTable{}
+	for _, family := range []uint16{winsys.AF_INET, winsys.AF_INET6} {
+		if err := readRoutes(family, info, table); err != nil {
+			return nil, err
+		}
+	}
+	out := make(map[uint32]ifaceDefaults, 4)
+	for key, metric := range table.defaults() {
+		d := out[key.index]
+		switch key.family {
+		case winsys.AF_INET:
+			d.has4, d.metric4 = true, metric
+		case winsys.AF_INET6:
+			d.has6, d.metric6 = true, metric
+		}
+		out[key.index] = d
 	}
 	return out, nil
 }
 
 // Interfaces reports the machine's up interfaces annotated with whether they own
-// a default route, in the shape the tun-conflict guard consumes.
+// a default route and what the driver says they are, in the shape the
+// tun-conflict guard consumes.
 //
 // Interfaces that are down are skipped: a disabled adapter's stale route cannot
 // capture anything, and refusing to connect because of one would be a false
 // alarm the user cannot act on.
 //
-// IsTunnel is deliberately left false here. Classifying an adapter as a tunnel
-// from Windows' own metadata needs GetAdaptersAddresses and its IfType, and
-// getting that wrong in the permissive direction silently disables the guard;
-// the core's name heuristic is conservative, covered by tests, and shared with
-// every other platform, so the decision stays in one place.
+// IsTunnel used to be left false here, on the grounds that classifying an
+// adapter wrong in the permissive direction silently disables the guard. That
+// deferred the whole job to the core's name heuristic, which cannot do it:
+// OpenVPN's TAP adapter is called "Ethernet 2" and no list of names will ever
+// catch it. Windows does know — in IfType, and in the description the vendor
+// wrote — so both are passed on, and the core still gets to apply its own
+// heuristic on top.
 func Interfaces() ([]tunguard.Iface, error) {
-	routes, err := defaultRoutes()
+	info := adapters()
+	routes, err := defaultRoutes(info)
 	if err != nil {
 		return nil, err
 	}
@@ -132,11 +228,16 @@ func Interfaces() ([]tunguard.Iface, error) {
 		if ifc.Flags&net.FlagUp == 0 {
 			continue
 		}
-		metric, hasDefault := routes[uint32(ifc.Index)]
+		a := info[uint32(ifc.Index)]
+		d := routes[uint32(ifc.Index)]
 		out = append(out, tunguard.Iface{
-			Name:            ifc.Name,
-			HasDefaultRoute: hasDefault,
-			RouteMetric:     int(metric),
+			Name:        ifc.Name,
+			Description: a.description,
+			IsTunnel:    a.tunnel,
+			HasDefault4: d.has4,
+			Metric4:     int(d.metric4),
+			HasDefault6: d.has6,
+			Metric6:     int(d.metric6),
 		})
 	}
 	return out, nil
