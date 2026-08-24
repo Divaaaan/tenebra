@@ -83,11 +83,12 @@ func (d *Daemon) checkTunConflict(override bool) error {
 	// whether a clean pass merely means the adapter enumerated nothing.
 	d.emitDebug(fmt.Sprintf("tun guard: %d interface(s) enumerated, ours is %q", len(ifaces), name))
 	for _, ifc := range ifaces {
-		if !ifc.HasDefaultRoute {
+		m, hasDef := ifc.BestMetric()
+		if !hasDef {
 			continue
 		}
 		d.emitDebug(fmt.Sprintf("tun guard: default route on %q (tunnel=%t, metric=%d)",
-			ifc.Name, tunguard.IsTunnelIface(ifc), ifc.RouteMetric))
+			ifc.Name, tunguard.IsTunnelIface(ifc), m))
 	}
 
 	err = tunguard.Check(ifaces, false, name)

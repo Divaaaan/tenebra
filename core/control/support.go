@@ -226,21 +226,24 @@ func interfaceTable(ifaces []tunguard.Iface) string {
 	// Default-route holders first, best metric first: the order in which the
 	// stack would prefer them, which is the order that explains a conflict.
 	sort.SliceStable(sorted, func(a, b int) bool {
-		if sorted[a].HasDefaultRoute != sorted[b].HasDefaultRoute {
-			return sorted[a].HasDefaultRoute
+		ma, da := sorted[a].BestMetric()
+		mb, db := sorted[b].BestMetric()
+		if da != db {
+			return da
 		}
-		return sorted[a].RouteMetric < sorted[b].RouteMetric
+		return ma < mb
 	})
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "%-32s %-8s %-9s %s\n", "interface", "tunnel", "default", "metric")
 	for _, ifc := range sorted {
+		m, hasDef := ifc.BestMetric()
 		metric := "-"
-		if ifc.HasDefaultRoute {
-			metric = fmt.Sprint(ifc.RouteMetric)
+		if hasDef {
+			metric = fmt.Sprint(m)
 		}
 		fmt.Fprintf(&b, "%-32s %-8s %-9s %s\n",
-			truncate(ifc.Name, 32), yesNo(tunguard.IsTunnelIface(ifc)), yesNo(ifc.HasDefaultRoute), metric)
+			truncate(ifc.Name, 32), yesNo(tunguard.IsTunnelIface(ifc)), yesNo(hasDef), metric)
 	}
 	return b.String()
 }

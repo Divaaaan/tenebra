@@ -193,9 +193,9 @@ func TestDiagnosticsRendersTheRouteTable(t *testing.T) {
 	d, _ := bundleDaemon(t)
 	d.SetInterfaceProbe(func() ([]tunguard.Iface, error) {
 		return []tunguard.Iface{
-			{Name: "Ethernet", HasDefaultRoute: true, RouteMetric: 25},
-			{Name: "Hiddify Tunnel", HasDefaultRoute: true, RouteMetric: 5},
-			{Name: "Loopback", HasDefaultRoute: false},
+			{Name: "Ethernet", HasDefault4: true, Metric4: 25},
+			{Name: "Hiddify Tunnel", HasDefault4: true, Metric4: 5},
+			{Name: "Loopback"},
 		}, nil
 	})
 	text := d.CollectDiagnostics().Text
