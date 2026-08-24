@@ -213,12 +213,15 @@ func Apply(ctx context.Context, client *http.Client, dir string, rel Release) er
 }
 
 // userFiles are the bundle files that carry local state rather than upstream
-// content: the user's own domain additions and exclusions, and the node
-// addresses ExcludeNodes writes.
+// content: the user's own domain additions and exclusions, the node addresses
+// Excluder.Exclude writes, and the memory it writes them from — an update is a
+// restart of the bypass, and losing that memory there would mean the first
+// connect after an update is the one that has to resolve everything again.
 var userFiles = []string{
 	filepath.Join("lists", "list-general-user.txt"),
 	filepath.Join("lists", "list-exclude-user.txt"),
-	filepath.Join("lists", "ipset-exclude-user.txt"),
+	filepath.Join("lists", excludeFile),
+	filepath.Join("lists", nodeCacheFile),
 }
 
 // carryUserFiles copies local state from the installed bundle into the staged

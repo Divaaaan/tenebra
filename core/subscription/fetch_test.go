@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/Divaaaan/tenebra/core/dnswire"
 )
 
 // newDoHServerCounting starts a TLS DoH resolver that answers every A query with
@@ -37,7 +39,7 @@ func newDoHServerCounting(t *testing.T, ip net.IP) (DoHEndpoint, *x509.CertPool,
 			return
 		}
 		var rrs []testRR
-		if qtype == dnsTypeA {
+		if qtype == dnswire.TypeA {
 			rrs = []testRR{{name: host, a: ip}}
 		}
 		w.Header().Set("Content-Type", dohContentType)

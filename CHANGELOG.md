@@ -55,6 +55,54 @@ All notable changes to Tenebra are documented here. The format follows
   latency. Tunnel-looking adapters are now excluded by the same recognition the
   tun-conflict guard uses, and our own tun by name prefix rather than an exact
   match.
+- **Nodes addressed by name were left in the packet filter's path.** The bypass
+  runs on the physical uplink, which is where our own tunnel's packets to its exit
+  node go, so the exclusion list is the only thing keeping a desync off the
+  handshake to our own node. That list took IP literals and dropped anything else
+  on the floor — no count, no log — and subscriptions that address their nodes by
+  hostname are the ordinary case. The symptom is the one the exclusion exists to
+  prevent: the node's port opens and then goes quiet, which reads as a dead node
+  and sends the user hunting through their subscription for a fault on their own
+  machine. Names are now resolved and their addresses written, which is what the
+  file can carry — winws takes `--ipset-exclude` as one ip/CIDR per line and
+  answers anything else with "bad ip or subnet", so a hostname in there was never
+  a lookup deferred to winws, only a discarded line. The names are asked of the
+  same resolvers the tunnel will use: the machine's own, and the direct resolver
+  from the routing config — the one sing-box resolves outbound server names
+  through (`route.default_domain_resolver` → `dns-direct`). Asking only the
+  machine's resolver leaves the hole open: where the two disagree — a name the ISP
+  poisons, which is often the very reason a node hides behind one, or geo-DNS and
+  round-robin handing each caller a different record — the list covers an address
+  nobody dials while the filter desyncs the one that is, and the symptom returns
+  with no warning at all, because the lookup "succeeded". Every answer from every
+  resolver is written; excluding an address the tunnel does not use costs nothing
+  but one address the filter leaves alone. What each name last answered with is
+  remembered beside the list, carried across bundle updates and capped at 256
+  names, so a DNS outage no longer erases an exclusion that was already working —
+  the list is written from memory instead, and the nodes running on an answer
+  older than an hour are named in the debug log. That memory is insurance against
+  a resolver that cannot be reached, not a stand-in for one that can: an address
+  confirmed within the last two minutes is written straight out, and anything
+  older waits for the resolver first, so a node that has changed address is
+  protected on the address it moved to rather than on the one it left. Through
+  autoconnect that is the first connect of every launch, where the address
+  written could otherwise be weeks old and never once confirmed — winws reads its
+  lists once, at startup, so an answer that lands a moment later does nothing
+  until the next start. The waiting ends per name on the first resolver that
+  answers it, plus a short grace for a second resolver that is merely slower, so
+  one blocked resolver no longer costs a name the whole budget — which on a line
+  that swallows DoH, and the shipped default direct resolver is DoH, was every
+  new name on every first connect. Measured with one resolver answering at once
+  and one blocked: three names cost 2.0 s before and 0.40 s now, while a
+  reconnect a moment later stays at about 0.5 ms, and a name that is simply dead
+  still costs the budget once rather than every time. A resolver whose transport
+  this client cannot speak (`quic://`) leaves the machine's own resolver doing
+  the work as before, and now says so in the debug log instead of falling back in
+  silence. Answers no node can sit behind —
+  `0.0.0.0`, loopback, link-local — are refused rather than written, since a
+  resolver that hijacks a dead name would otherwise have the node counted as
+  covered. Names left with no address are reported and logged by name, so a node
+  still in the filter's way is a warning in the log instead of silence.
 
 ## [0.5.1] - 2026-08-24
 
