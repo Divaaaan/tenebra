@@ -32,8 +32,7 @@ func TestFailedBypassCheckLeavesTheTunnelAlone(t *testing.T) {
 	h.daemon.routing.ZapretActive = true
 	h.daemon.routing.ZapretCovered = []string{"youtube.com", "discord.com"}
 	h.daemon.mu.Unlock()
-	h.daemon.bypassVerifyDelay = time.Millisecond
-	h.daemon.bypassProbe = func(context.Context) bool { return false }
+	h.daemon.setBypassCheck(time.Millisecond, func(context.Context) bool { return false })
 
 	h.daemon.verifyBypass(context.Background(), h.daemon.currentGeneration())
 

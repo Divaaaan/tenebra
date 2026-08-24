@@ -43,9 +43,47 @@ const bypassVerifyAttempts = 2
 // It runs once per connection rather than on a ticker. A bypass that works at
 // connect time and dies later is the health watchdog's kind of problem, and
 // re-testing forever would mean re-testing during the game the user is playing.
+// bypassCheckSettings reads the delay and the probe together under the lock.
+//
+// Production writes both once, before anything serves, so a plain field read was
+// safe in the shipped binary. Tests are the honest case: they set them on a
+// daemon that is already connected, while the goroutine this check runs on is
+// live — which is a real data race, and -race is right to call it. Reading a
+// consistent pair here also means a test cannot see a new delay next to the old
+// probe.
+func (d *Daemon) bypassCheckSettings() (time.Duration, func(context.Context) bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.bypassVerifyDelay, d.bypassProbe
+}
+
+// setBypassCheck installs the delay and probe used by verifyBypass. Tests reach
+// for it instead of assigning the fields, so the write is ordered against the
+// read above.
+func (d *Daemon) setBypassCheck(delay time.Duration, probe func(context.Context) bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.bypassVerifyDelay = delay
+	d.bypassProbe = probe
+}
+
+// setBypassDelay and setBypassProbe set one half each, for tests that change
+// only one of the two.
+func (d *Daemon) setBypassDelay(delay time.Duration) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.bypassVerifyDelay = delay
+}
+
+func (d *Daemon) setBypassProbe(probe func(context.Context) bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.bypassProbe = probe
+}
+
 func (d *Daemon) verifyBypass(ctx context.Context, gen uint64) {
-	delay := d.bypassVerifyDelay
-	if delay <= 0 {
+	delay, probe := d.bypassCheckSettings()
+	if delay <= 0 || probe == nil {
 		return // disabled (tests that do not exercise this path)
 	}
 	// Nothing was handed to the bypass, so there is nothing to verify. Checked
@@ -74,7 +112,7 @@ func (d *Daemon) verifyBypass(ctx context.Context, gen uint64) {
 		if ctx.Err() != nil || !d.isCurrent(gen) {
 			return
 		}
-		if d.bypassProbe(ctx) {
+		if probe(ctx) {
 			return
 		}
 	}

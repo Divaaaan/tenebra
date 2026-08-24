@@ -31,11 +31,11 @@ func armBypass(d *Daemon) {
 // is broken".
 func TestBypassFallsBackToTunnelWhenVideoDoesNotSurvive(t *testing.T) {
 	d, _ := newTestDaemon(t)
-	d.bypassVerifyDelay = time.Millisecond
+	d.setBypassDelay(time.Millisecond)
 	armBypass(d)
 
 	var asked int32
-	d.bypassProbe = func(context.Context) bool { atomic.AddInt32(&asked, 1); return false }
+	d.setBypassProbe(func(context.Context) bool { atomic.AddInt32(&asked, 1); return false })
 
 	d.verifyBypass(context.Background(), d.currentGeneration())
 
@@ -55,9 +55,9 @@ func TestBypassFallsBackToTunnelWhenVideoDoesNotSurvive(t *testing.T) {
 // the whole reason the bypass runs — so a working check must change nothing.
 func TestBypassLeftAloneWhenVideoWorks(t *testing.T) {
 	d, _ := newTestDaemon(t)
-	d.bypassVerifyDelay = time.Millisecond
+	d.setBypassDelay(time.Millisecond)
 	armBypass(d)
-	d.bypassProbe = func(context.Context) bool { return true }
+	d.setBypassProbe(func(context.Context) bool { return true })
 
 	d.verifyBypass(context.Background(), d.currentGeneration())
 
@@ -75,11 +75,11 @@ func TestBypassLeftAloneWhenVideoWorks(t *testing.T) {
 // the tunnel, costing the user the latency the bypass exists to save.
 func TestBypassRecoversAfterOneBlip(t *testing.T) {
 	d, _ := newTestDaemon(t)
-	d.bypassVerifyDelay = time.Millisecond
+	d.setBypassDelay(time.Millisecond)
 	armBypass(d)
 
 	var n int32
-	d.bypassProbe = func(context.Context) bool { return atomic.AddInt32(&n, 1) != 1 }
+	d.setBypassProbe(func(context.Context) bool { return atomic.AddInt32(&n, 1) != 1 })
 
 	d.verifyBypass(context.Background(), d.currentGeneration())
 
@@ -93,10 +93,10 @@ func TestBypassRecoversAfterOneBlip(t *testing.T) {
 // park a timer on every connect for a machine that never uses the feature.
 func TestBypassNotVerifiedWhenItIsNotRunning(t *testing.T) {
 	d, _ := newTestDaemon(t)
-	d.bypassVerifyDelay = time.Millisecond
+	d.setBypassDelay(time.Millisecond)
 
 	var asked int32
-	d.bypassProbe = func(context.Context) bool { atomic.AddInt32(&asked, 1); return false }
+	d.setBypassProbe(func(context.Context) bool { atomic.AddInt32(&asked, 1); return false })
 
 	d.verifyBypass(context.Background(), d.currentGeneration())
 
@@ -110,9 +110,9 @@ func TestBypassNotVerifiedWhenItIsNotRunning(t *testing.T) {
 // lands on another connect's session.
 func TestBypassVerifyStopsWhenSuperseded(t *testing.T) {
 	d, _ := newTestDaemon(t)
-	d.bypassVerifyDelay = time.Millisecond
+	d.setBypassDelay(time.Millisecond)
 	armBypass(d)
-	d.bypassProbe = func(context.Context) bool { return false }
+	d.setBypassProbe(func(context.Context) bool { return false })
 
 	stale := d.currentGeneration()
 	d.mu.Lock()
