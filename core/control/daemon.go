@@ -282,6 +282,13 @@ type Daemon struct {
 	now  func() time.Time
 	dial func(ctx context.Context, network, address string) (net.Conn, error)
 
+	// probeIfaces snapshots the machine's adapters for the bypass pick's socket
+	// bind. It is a seam rather than a direct call to hostInterfaces so the one
+	// thing that matters about that bind — that it lands on the same interface the
+	// packet filter is pinned to — is testable without the host's live adapter
+	// list. Production is hostInterfaces; see pinAndProbeBind.
+	probeIfaces func() ([]ifaceInfo, error)
+
 	// classify decides why a failed connect attempt failed, so the fallback loop
 	// can escalate a transport strategy on a node whose handshake looks interfered
 	// with but keep advancing past a dead one. Injectable so the escalation is
@@ -556,6 +563,14 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 	// local tun rather than the real server. Binding the socket to the physical NIC
 	// steers each probe past the tun so the RTT readout stays meaningful mid-session.
 	d.dial = newPingDialer().DialContext
+	// The bypass pick is pinned too, and for a sharper reason: measured through
+	// the tun, its baseline and every strategy score full marks, so the run can
+	// never report an improvement and the automatic re-pick after a bypass failure
+	// always concludes that nothing works. It does not get its own selector — it
+	// binds to the interface the packet filter is already confined to, and reads
+	// the adapter list only to turn that index into a socket option (see
+	// pinAndProbeBind).
+	d.probeIfaces = hostInterfaces
 	// The peer check needs the daemon (it logs its refusals), so it is bound
 	// after construction like the other self-referential seams below.
 	d.authorizeConn = d.authorizePeer

@@ -24,6 +24,37 @@ All notable changes to Tenebra are documented here. The format follows
   than by its name — and turns everything else away in the words it already had
   for a file that is not one. Its English title says what the panel is, the DPI
   bypass, instead of promising blocklists.
+- **The bypass strategy pick was measuring the tunnel, so under a live
+  connection it could never find a strategy.** The probe that scores each
+  strategy built its HTTP client with no proxy — which refuses an HTTP proxy and
+  says nothing about anything else — and left the socket to ordinary routing.
+  With a tunnel up the tun owns the default route, so every request went through
+  it: the baseline taken with the bypass off answered 5/5 for destinations the
+  ISP blocks, each strategy answered 5/5 as well, and since a strategy is
+  reported only when it beats the baseline, the run concluded that nothing
+  helps. The automatic re-pick depends on that verdict — when the bypass check
+  finds video is not coming through, re-measuring the bundle is what is supposed
+  to find a strategy that works — so the repair was dead exactly when it was
+  needed, and a hand-run pick under a connection always answered "no strategy
+  pierced the block". The probe is now bound to the very interface the packet
+  filter is confined to — one lookup answers both, so the measurement cannot end
+  up on a different link from the filter — and the baseline and every strategy
+  are measured there. A machine where that bind cannot be made falls back to a
+  routed dial rather than failing every probe, and says so in the log: the pick
+  reports which interface it measured on, and the "no strategy pierced the
+  block" verdict now carries the baseline that produced it, so a run that
+  measured the wrong path can be told apart from a network no strategy helps.
+- **A probe could leave through another VPN's adapter.** The interface picker
+  behind the node ping — and behind the bypass pick when nothing is pinned —
+  took the lowest-numbered routable adapter and excluded only our own tun, by
+  exact name. Anything else tunnel-shaped passed: another client's adapter,
+  whenever it held the lower index — the ordering says nothing about what an
+  adapter is — and our own tun after Windows renamed it "tenebra 2" (which it
+  does when the previous one has not finished going away). A node ping through
+  either reports the tunnel's fabricated ~1ms instead of the server's real
+  latency. Tunnel-looking adapters are now excluded by the same recognition the
+  tun-conflict guard uses, and our own tun by name prefix rather than an exact
+  match.
 
 ## [0.5.1] - 2026-08-24
 
