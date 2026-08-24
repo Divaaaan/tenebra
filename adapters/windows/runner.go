@@ -11,6 +11,7 @@ package windows
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -41,6 +42,12 @@ const logRingSize = 200
 // statsTimeout keeps a clash API poll from blocking the traffic loop if the API
 // is slow or not yet listening.
 const statsTimeout = 2 * time.Second
+
+// selectTimeout bounds the PUT that moves the selector. It is short on purpose:
+// the call goes to loopback, so anything slower than this means the API is not
+// answering, and a live exit switch that hangs is worse than one that fails fast
+// and falls back to a reconnect.
+const selectTimeout = 2 * time.Second
 
 // probeURL is the target the clash API delay test fetches through the outbound.
 // A 204 means real traffic reached the internet through that proxy; it is the
@@ -262,11 +269,23 @@ func (r *Runner) Stats() (up, down int64, err error) {
 // connection is superseded; the clash API is also told its own timeout so it
 // stops testing rather than holding the request open.
 func (r *Runner) Probe(ctx context.Context, tag string) (delayMs int, err error) {
+	return r.ProbeVia(ctx, tag, probeURL)
+}
+
+// ProbeVia is Probe against a caller-chosen destination: the same clash API
+// delay test, but measuring whether THAT target survives the outbound named tag.
+// It exists because "is this node alive" is not one question — a node can serve
+// one control URL normally while black-holing everything the user cares about
+// (see core/nodecheck), so the degradation watchdog measures several destinations
+// through a candidate before moving the tunnel onto it. tag names any outbound in
+// the running config, not just the selector, so a candidate exit can be measured
+// without disturbing the one currently carrying traffic.
+func (r *Runner) ProbeVia(ctx context.Context, tag, target string) (delayMs int, err error) {
 	port := r.ClashPort
 	if port == 0 {
 		port = defaultClashPort
 	}
-	endpoint := delayURL(port, tag)
+	endpoint := delayURLFor(port, tag, target)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -287,13 +306,71 @@ func (r *Runner) Probe(ctx context.Context, tag string) (delayMs int, err error)
 	return parseDelay(body)
 }
 
-// delayURL builds the clash API delay-test endpoint for the outbound named tag.
-// The tag is path-escaped and the probe target query-escaped so a name or URL
-// with reserved characters can't corrupt the request. It is split out from Probe
-// so the URL shape can be asserted without a live API.
+// Select points the running sing-box's selector group at the outbound named tag,
+// over the same loopback clash API Stats and Probe already use. This is what
+// makes an exit change seamless: the tun device, its routes and the sing-box
+// process all stay exactly as they are, and only the selector's choice of
+// downstream outbound moves, so nothing the OS knows about the tunnel is
+// disturbed. The selector is built with interrupt_exist_connections off (see
+// core/singbox), so connections already open keep the exit they were dialled
+// through and only new ones take the new node.
+//
+// An error means the switch did NOT take — an unknown tag, an API not listening
+// yet, a refused secret — and the caller is expected to fall back to a full
+// reconnect rather than report a move that did not happen.
+func (r *Runner) Select(ctx context.Context, group, tag string) error {
+	port := r.ClashPort
+	if port == 0 {
+		port = defaultClashPort
+	}
+	body, err := json.Marshal(struct {
+		Name string `json:"name"`
+	}{tag})
+	if err != nil {
+		return fmt.Errorf("windows: clash select body: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, selectURL(port, group), bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("windows: clash select request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	setClashAuth(req, r.clashAuth())
+
+	client := &http.Client{Timeout: selectTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("windows: clash select: %w", err)
+	}
+	defer resp.Body.Close()
+	rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("windows: clash select: status %s: %s", resp.Status, trimBody(rb))
+	}
+	return nil
+}
+
+// delayURL builds the clash API delay-test endpoint for the outbound named tag,
+// measured against the default probe target. The tag is path-escaped and the
+// probe target query-escaped so a name or URL with reserved characters can't
+// corrupt the request. It is split out from Probe so the URL shape can be
+// asserted without a live API.
 func delayURL(port int, tag string) string {
+	return delayURLFor(port, tag, probeURL)
+}
+
+// delayURLFor is delayURL against an explicit target, which is what lets one
+// candidate outbound be judged on several destinations rather than on one.
+func delayURLFor(port int, tag, target string) string {
 	return fmt.Sprintf("http://127.0.0.1:%d/proxies/%s/delay?timeout=%d&url=%s",
-		port, url.PathEscape(tag), probeTimeoutMs, url.QueryEscape(probeURL))
+		port, url.PathEscape(tag), probeTimeoutMs, url.QueryEscape(target))
+}
+
+// selectURL builds the clash API endpoint that points a selector group at one of
+// its members. Split out like delayURL so the request shape is assertable
+// offline, and path-escaped for the same reason: a node name carrying reserved
+// characters must not be able to reshape the request.
+func selectURL(port int, group string) string {
+	return fmt.Sprintf("http://127.0.0.1:%d/proxies/%s", port, url.PathEscape(group))
 }
 
 // parseDelay reads the {"delay":N} body the clash API returns from a successful

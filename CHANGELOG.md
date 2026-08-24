@@ -197,6 +197,34 @@ All notable changes to Tenebra are documented here. The format follows
   went only to an attached UI, so a service that failed to autoconnect at boot —
   with nobody logged in and no app running — left no record of it anywhere. Those
   lines now go to the process log as well.
+### Added
+
+- **Changing the exit no longer drops what you were doing.** Picking another node
+  on a live tunnel used to tear the whole thing down and build it again: the tun
+  went away, every connection went with it, and a download or a call paid for a
+  node change. The node is now switched inside the running sing-box — same
+  process, same tun, same routes — and connections already open finish on the exit
+  they started on while new ones take the new node. The switch is confirmed before
+  it is reported, and anything that cannot be switched this way (a node the running
+  config never had, a two-hop chain, a control API that refuses) falls back to the
+  reconnect it always did. The UI says which of the two happened rather than
+  showing "reconnecting" for both.
+- **A degraded exit is left behind without dropping the tunnel.** The health
+  watchdog no longer reconnects the moment the active node stops carrying traffic:
+  it measures the other exits through the process that is already running — the
+  same several-destinations standard `check_nodes` applies — and moves onto the
+  best one live. It is damped so a bad local network cannot walk you around the
+  node list: one move at most every three minutes, three in any fifteen, a node
+  that just failed passed over for ten, and after that the log says why nothing is
+  moving instead of churning exits.
+
+### Fixed
+
+- **A fresh tunnel can no longer come up on a different exit than the one it
+  reports.** sing-box restores a selector from its cache file before it applies
+  the config's own default, so once anything had moved that selector a later start
+  could seat the tunnel somewhere the config did not name. Every start now pins the
+  selector to its own default before the connectivity probe is believed.
 
 ## [0.5.0] - 2026-08-21
 

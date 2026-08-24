@@ -509,12 +509,29 @@ export function App() {
   const handleSelectNode = useCallback(
     (id: string) => {
       setSelectedNodeId(id);
-      // Re-handshake onto the chosen node when already connected.
-      if (connected && selectedProfileId) {
-        void tenebra.connect(selectedProfileId, id).catch(() => {});
-      }
+      if (!connected || !selectedProfileId) return;
+      // Change the exit on a live tunnel. The core steers the running sing-box
+      // when it can — the process, the tun and its routes stay up, and whatever
+      // was already open finishes on the old exit — and only rebuilds the tunnel
+      // when it cannot. The reply says which happened: still `connected` means
+      // nothing was reconnected, `connecting` means it is coming back up. Say so,
+      // rather than showing the same "reconnecting" for both and teaching the user
+      // that changing exits costs them their session.
+      void tenebra
+        .connect(selectedProfileId, id)
+        .then((st) => {
+          const name =
+            selectedProfile?.nodes.find((n) => n.id === id)?.name ?? id;
+          pushToast(
+            (st.state === "connected"
+              ? t.toast.nodeSwitched
+              : t.toast.nodeReconnecting
+            ).replace("{node}", name),
+          );
+        })
+        .catch(() => {});
     },
-    [connected, selectedProfileId, tenebra],
+    [connected, selectedProfileId, selectedProfile, tenebra, t],
   );
 
   const handleSelectProfile = useCallback((id: string) => {

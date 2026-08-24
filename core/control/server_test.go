@@ -48,6 +48,11 @@ func newHarness(t *testing.T) *harness {
 	d.probeRetry = time.Millisecond
 	d.probeTimeout = 200 * time.Millisecond
 	d.probeBudget = 60 * time.Millisecond
+	// Same for the live-switch confirmation: the fake answers instantly, so a
+	// switch that is scripted to fail must burn only a tiny budget before it falls
+	// back to a reconnect.
+	d.switchProbeTimeout = 200 * time.Millisecond
+	d.switchVerifyBudget = 60 * time.Millisecond
 	// Adaptive escalation is off by default in the harness: the fake runner's
 	// nodes aren't real, so a live classify would dial the network on every
 	// blocked candidate. Tests that exercise escalation override d.classify.

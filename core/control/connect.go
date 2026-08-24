@@ -53,6 +53,28 @@ func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 			fmt.Sprintf("connect refused: profile %q (%s) carries no servers", p.Name, p.ID))
 	}
 
+	// Changing the exit on a tunnel that is already up does not need a new tunnel.
+	// The running sing-box carries every node of this profile as an outbound behind
+	// one selector, so pointing that selector at the requested node moves the exit
+	// while the process, the tun device and its routes stay exactly where they are —
+	// and, because the selector is built with interrupt_exist_connections off, the
+	// downloads and calls already in flight finish on the old exit instead of being
+	// cut. Confirmed before it is believed, and reverted if it cannot be: a switch
+	// that fails falls through to the reconnect below, which is what every node
+	// change used to do.
+	if req.Node != "" {
+		d.connMu.Lock()
+		switched := d.switchNode(ctx, p.ID, req.Node, "you picked it", true)
+		d.connMu.Unlock()
+		if switched {
+			resp, err := newResult(req.ID, d.snapshotState())
+			if err != nil {
+				return newError(req.ID, err.Error())
+			}
+			return resp
+		}
+	}
+
 	// Refuse to raise a second tun over another VPN's default route. Checked here
 	// — on the user-driven connect only — rather than inside startConnect, whose
 	// other callers (kill-switch relaunch, reconcile) fire while our own tunnel is
@@ -407,6 +429,9 @@ func (d *Daemon) teardown(newState ConnState, profileID, nodeID string) {
 	// client attaching after this teardown must not be handed it. A new connect's
 	// loop repopulates it from its own first snapshot.
 	d.attempts = nil
+	// The process this described is going away, so nothing may be steered any more;
+	// a stale selector map would let a live switch fire against a dead controller.
+	d.live = nil
 	d.mu.Unlock()
 
 	if cancel != nil {
@@ -693,7 +718,7 @@ func (d *Daemon) attemptNode(ctx context.Context, loop fallbackLoop, attempt fal
 		// folded into the selected node. The default (first) strategy reshapes
 		// nothing, so its config is byte-for-byte the pre-adaptation one.
 		nodes := applyStrategyToNodes(loop.nodes, loop.nodeIDs, attempt.NodeID, strat)
-		cfgJSON, err := buildConfigJSON(nodes, tag, loop.ro, loop.tun)
+		cfgJSON, sel, err := buildConfigJSON(nodes, tag, loop.ro, loop.tun)
 		if err != nil {
 			// A node we can't even render is not worth a process, and no handshake
 			// reshaping fixes a render error — abandon the node outright.
@@ -713,11 +738,13 @@ func (d *Daemon) attemptNode(ctx context.Context, loop fallbackLoop, attempt fal
 		// Probe through the selector ("proxy"). up=true means traffic really flows;
 		// stalled reports whether a failure was a silent stall (the through-tunnel
 		// half of the interference signal) rather than a fast, hard error.
-		up, stalled := d.probeUntilUp(ctx, loop.gen)
+		// The selector is pinned to this config's own default on the way in — see
+		// probeUntilUp — so what the probe measures is the exit this attempt means.
+		up, stalled := d.probeUntilUp(ctx, loop.gen, sel.Default)
 		if up {
 			// Superseded mid-probe returns up=false, so reaching here is a genuine
 			// success on the current generation.
-			d.recordSuccess(ctx, loop, attempt, tracker, strat)
+			d.recordSuccess(ctx, loop, attempt, tracker, strat, sel)
 			return nodeConnected, ""
 		}
 		if !d.isCurrent(loop.gen) {
@@ -768,8 +795,12 @@ func (d *Daemon) attemptNode(ctx context.Context, loop fallbackLoop, attempt fal
 // connection to the watcher/poller, and reconciles any option toggled during the
 // connecting window. strat is the strategy the node came up under, so a
 // non-default one is surfaced in the snapshot.
-func (d *Daemon) recordSuccess(ctx context.Context, loop fallbackLoop, attempt fallback.Attempt, tracker *attemptTracker, strat fallback.Strategy) {
+func (d *Daemon) recordSuccess(ctx context.Context, loop fallbackLoop, attempt fallback.Attempt, tracker *attemptTracker, strat fallback.Strategy, sel selectorShape) {
 	loop.machine.Success(attempt)
+	// Record what the process that just came up can be steered to, so a later exit
+	// change can be decided against the config actually running rather than against
+	// a profile that may have been refreshed since (see hotswitch.go).
+	d.setLiveConfig(loop.gen, loop.profileID, loop.tags, sel)
 	if d.lastGood != nil {
 		d.lastGood.Set(loop.profileID, attempt.NodeID)
 	}
@@ -823,7 +854,7 @@ func (d *Daemon) recordSuccess(ctx context.Context, loop fallbackLoop, attempt f
 // failing fast; it is meaningless when up is true. up is false on budget
 // exhaustion, an early process exit, ctx cancellation, or supersession — the
 // caller distinguishes these via isCurrent and runner state.
-func (d *Daemon) probeUntilUp(ctx context.Context, gen uint64) (up bool, stalled bool) {
+func (d *Daemon) probeUntilUp(ctx context.Context, gen uint64, wantTag string) (up bool, stalled bool) {
 	done := d.runner.Done()
 
 	budget, cancelBudget := context.WithTimeout(ctx, d.probeBudget)
@@ -833,6 +864,16 @@ func (d *Daemon) probeUntilUp(ctx context.Context, gen uint64) (up bool, stalled
 	if !sleepCtx(budget, d.probeWarmup) {
 		return false, false
 	}
+
+	// sing-box restores a selector from its cache file BEFORE applying the config's
+	// own default, so once anything has moved the selector (which a live exit change
+	// does, by design) a fresh process can come up seated on a node the config does
+	// not name — and then the probe measures one exit while the state reports
+	// another. Pinning the selector to this config's default closes that, at the
+	// cost of one loopback call. It is retried alongside the probe because the API
+	// may not be listening yet, and it is best-effort: a runner that cannot select
+	// is the runner whose probe is about to fail anyway.
+	pinned := wantTag == ""
 
 	for {
 		if !d.isCurrent(gen) {
@@ -844,6 +885,13 @@ func (d *Daemon) probeUntilUp(ctx context.Context, gen uint64) (up bool, stalled
 		case <-done:
 			return false, stalled
 		default:
+		}
+
+		if !pinned {
+			pinCtx, cancelPin := context.WithTimeout(budget, d.probeTimeout)
+			pinErr := d.runner.Select(pinCtx, proxySelectorTag, wantTag)
+			cancelPin()
+			pinned = pinErr == nil
 		}
 
 		probeCtx, cancelProbe := context.WithTimeout(budget, d.probeTimeout)
@@ -955,6 +1003,10 @@ func (d *Daemon) watchProcess(ctx context.Context, gen uint64, profileID, nodeID
 			if !d.isCurrent(gen) {
 				return // superseded; teardown already set the state
 			}
+			// A live exit change moves the tunnel without a new generation, so the
+			// node this goroutine was handed at connect time may no longer be the one
+			// running. Report — and relaunch — the exit the user is actually on.
+			nodeID = d.liveNode(nodeID)
 			msg := "sing-box exited"
 			if err != nil {
 				msg = err.Error()
@@ -1452,17 +1504,41 @@ func (d *Daemon) Close() error {
 	return nil
 }
 
-// buildConfigJSON builds and marshals a sing-box config with selTag selected.
-func buildConfigJSON(nodes []model.Node, selTag string, ro routing.Options, tun singbox.TunOptions) ([]byte, error) {
+// selectorShape is what the built config's proxy selector looks like: the tag it
+// starts on and the tags it can be switched between. It is read back out of the
+// config rather than assumed from the requested tag, because the two differ — an
+// unrenderable pick falls back to the first node and multihop collapses the group
+// onto the exit — and the live-switch path is only safe while it names the exact
+// group membership the running process has.
+type selectorShape struct {
+	Default string
+	Members []string
+}
+
+// has reports whether tag is a member of the selector, i.e. whether the running
+// process can be pointed at it without a rebuild.
+func (s selectorShape) has(tag string) bool {
+	for _, m := range s.Members {
+		if m == tag {
+			return true
+		}
+	}
+	return false
+}
+
+// buildConfigJSON builds and marshals a sing-box config with selTag selected,
+// and reports the selector it emitted.
+func buildConfigJSON(nodes []model.Node, selTag string, ro routing.Options, tun singbox.TunOptions) ([]byte, selectorShape, error) {
 	cfg, err := singbox.Build(nodes, selTag, ro, tun)
 	if err != nil {
-		return nil, fmt.Errorf("build config: %w", err)
+		return nil, selectorShape{}, fmt.Errorf("build config: %w", err)
 	}
 	cfgJSON, err := json.Marshal(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("encode config: %w", err)
+		return nil, selectorShape{}, fmt.Errorf("encode config: %w", err)
 	}
-	return cfgJSON, nil
+	def, _ := singbox.SelectorDefault(cfg)
+	return cfgJSON, selectorShape{Default: def, Members: singbox.SelectorMembers(cfg)}, nil
 }
 
 // protoLabel is a short human label for a node, used in fallback log lines so the
