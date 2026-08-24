@@ -149,6 +149,17 @@ All notable changes to Tenebra are documented here. The format follows
   swapped between the checksum and the install. A refusal that means tampering is
   logged as an error and named on screen; "there is a newer bundle you do not pin
   yet" is a quiet, actionable notice rather than an alarm.
+### Fixed
+
+- **Simple mode: the connect button no longer dies on the "another VPN owns the
+  default route" refusal.** The override prompt was rendered only by the full
+  shell, and simple mode returns its own screen well before that point — so on a
+  machine with a second VPN up the connect asked a question nothing drew, waited
+  on an answer that could never arrive, and left the one button on the screen
+  disabled until the app was restarted. Both views now render the same prompt,
+  and the question is released if the tree goes away while it is open, so no
+  future screen can strand a connect the same way. Declining also reports the
+  refusal once instead of twice: cancelling is an answer, not a second failure.
 
 ## [0.5.0] - 2026-08-21
 

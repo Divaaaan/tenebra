@@ -42,6 +42,7 @@ import { useNodePings } from "./lib/useNodePings";
 import { useServiceChecks } from "./lib/useServiceChecks";
 import { useSessionClock, formatUptime } from "./lib/useSessionClock";
 import { useTrafficHistory } from "./lib/useTrafficHistory";
+import { useTunOverrideAsk } from "./lib/useTunOverrideAsk";
 import { useUpdateCheck } from "./lib/useUpdateCheck";
 import { useDaemonSkew } from "./lib/useDaemonSkew";
 import { useCrashReport } from "./lib/useCrashReport";
@@ -250,21 +251,11 @@ export function App() {
   // The tun-conflict override asks its question in-app. `window.confirm` is
   // brokered by the Tauri dialog plugin, which this app grants only for the file
   // picker, so the call threw "plugin:dialog|confirm not allowed by ACL" and the
-  // connect died on the guard instead of asking. Holding the promise's resolve
-  // here turns the modal back into an awaitable question.
-  const [tunOverrideAsk, setTunOverrideAsk] = useState<{
-    resolve: (ok: boolean) => void;
-  } | null>(null);
-  const askTunOverride = useCallback(
-    () => new Promise<boolean>((resolve) => setTunOverrideAsk({ resolve })),
-    [],
-  );
-  const answerTunOverride = useCallback((ok: boolean) => {
-    setTunOverrideAsk((ask) => {
-      ask?.resolve(ok);
-      return null;
-    });
-  }, []);
+  // connect died on the guard instead of asking. The hook turns the modal back
+  // into an awaitable question — and guarantees the awaiting connect is released
+  // even if this tree goes away while the question is up.
+  const tunOverride = useTunOverrideAsk();
+  const askTunOverride = tunOverride.ask;
 
   // A connect deep link never fires on arrival: it can be handed to the app by
   // any visited web page. `connectRequest` holds the profile a link asked to
@@ -485,8 +476,13 @@ export function App() {
             // tunnel overlaps, so ask, and honour the answer for this connect
             // only.
             if (!isTunConflict(e)) throw e;
+            // Name the refusal before asking: the prompt is a yes/no, this line
+            // is the reason and the fix (turn the other tunnel off).
             pushToast(describeCoreError(e, t));
-            if (!(await askTunOverride())) throw e;
+            // Declining is an answer, not a second failure. Rethrowing here sent
+            // the same error to the outer catch, which said the very same line
+            // again — one refusal, two identical toasts.
+            if (!(await askTunOverride())) return;
             await tenebra.connect(selectedProfileId, node, auto, true);
           }
         }
@@ -725,6 +721,18 @@ export function App() {
     };
   }, []);
 
+  // The override question, built once and rendered by BOTH views below. It is a
+  // single element rather than two copies of the same JSX on purpose: it is a
+  // modal a running action is waiting on, and simple mode returning its own tree
+  // is exactly how it went missing there — the connect asked, nothing drew the
+  // question, and the button stayed disabled until the app was restarted.
+  const tunConflictPrompt = tunOverride.pending ? (
+    <TunConflictConfirm
+      onConfirm={() => tunOverride.answer(true)}
+      onCancel={() => tunOverride.answer(false)}
+    />
+  ) : null;
+
   // Simple mode: one calm screen instead of the full shell. It reads the same
   // connection state and shares the same actions, so the two never disagree. The
   // eclipse easter egg still rides along; the console/toast layers do too.
@@ -751,6 +759,7 @@ export function App() {
           serviceChecks={services.checks}
           serviceChecking={services.checking}
         />
+        {tunConflictPrompt}
         <EclipseOverlay active={eclipse} onDone={endEclipse} />
         <ToastHost />
       </div>
@@ -942,12 +951,7 @@ export function App() {
         />
       )}
 
-      {tunOverrideAsk && (
-        <TunConflictConfirm
-          onConfirm={() => answerTunOverride(true)}
-          onCancel={() => answerTunOverride(false)}
-        />
-      )}
+      {tunConflictPrompt}
 
       {update.confirming && (
         <UpdateConfirm
