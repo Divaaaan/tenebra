@@ -49,8 +49,8 @@ func (d *Daemon) RunZapretAutoUpdate(ctx context.Context) {
 		enabled := d.zapretAutoUpdate
 		d.mu.Unlock()
 		if enabled {
-			if _, to, updated, err := d.updateZapret(ctx); err != nil {
-				d.reportZapretUpdateOutcome(to, err)
+			if from, to, updated, err := d.updateZapret(ctx); err != nil {
+				d.reportZapretUpdateOutcome(from, to, err)
 			} else if updated {
 				d.emitLog(LogInfo, "zapret: сборка обновлена")
 			}
@@ -70,14 +70,18 @@ func (d *Daemon) RunZapretAutoUpdate(ctx context.Context) {
 // working bundle and tell the user to update Tenebra, which carries the next pin.
 // It is logged quietly at info level and names the version, so the line is
 // actionable rather than noise.
-func (d *Daemon) reportZapretUpdateOutcome(version string, err error) {
+//
+// installed is the version already on disk, empty when there is none. It decides
+// nothing here and is passed straight through, because what a refused download
+// leaves the machine running is the one thing the failure line has to get right.
+func (d *Daemon) reportZapretUpdateOutcome(installed, latest string, err error) {
 	if errors.Is(err, zapret.ErrUntrustedVersion) {
 		d.emitLog(LogInfo, fmt.Sprintf(
 			"zapret: доступна новая сборка обхода %s, но она новее вшитых в Tenebra проверок — "+
-				"обнови Tenebra, чтобы получить её (обход пока работает на текущей сборке).", versionLabel(version)))
+				"обнови Tenebra, чтобы получить её (обход пока работает на текущей сборке).", versionLabel(latest)))
 		return
 	}
-	d.reportZapretUpdateFailure(err)
+	d.reportZapretUpdateFailure(err, installed)
 }
 
 // reportZapretUpdateFailure puts a failed bundle update on the log channel at the
@@ -91,11 +95,22 @@ func (d *Daemon) reportZapretUpdateOutcome(version string, err error) {
 // were about to be unpacked into the daemon's directory, where a .bat out of them
 // gets handed to cmd.exe by a service running as LocalSystem. Nothing else this
 // updater can report comes close, so nothing else gets this level.
-func (d *Daemon) reportZapretUpdateFailure(err error) {
+//
+// installed is the bundle version on disk, empty when there is none, and it
+// picks which half of the alarm is true. A refused update leaves the working
+// bundle exactly where it was; a refused first install leaves nothing behind it
+// — telling that user a previous bundle was kept describes a machine other than
+// theirs, and it is followed by the embedded floor going in, which would make the
+// two lines contradict each other.
+func (d *Daemon) reportZapretUpdateFailure(err error, installed string) {
 	if errors.Is(err, zapret.ErrIntegrity) {
+		kept := "сборка обхода НЕ установлена, осталась прежняя"
+		if installed == "" {
+			kept = "скачанная сборка обхода НЕ установлена"
+		}
 		d.emitLog(LogError, fmt.Sprintf(
-			"%v. Скачанный архив не совпал с опубликованным — сборка обхода НЕ установлена, "+
-				"осталась прежняя. Если это повторяется, сеть между тобой и GitHub подменяет файлы.", err))
+			"%v. Скачанный архив не совпал с опубликованным — %s. "+
+				"Если это повторяется, сеть между тобой и GitHub подменяет файлы.", err, kept))
 		return
 	}
 	d.emitLog(LogInfo, fmt.Sprintf("zapret: проверка обновления не удалась: %v", err))

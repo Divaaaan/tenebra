@@ -28,10 +28,27 @@ All notable changes to Tenebra are documented here. The format follows
   already installed is never overwritten, and a newer one is never rolled back.
   A build whose embedded archive and pinned checksum have drifted apart fails
   its tests, which is the class of mistake the whole change exists to end. The
-  cost is size: the core binary grows from 11.9 MB to 13.4 MB. Because the
-  bundle is now redistributed rather than only fetched,
+  cost is size, and only where the bypass runs: the Windows core binary grows
+  from 11.9 MB to 13.4 MB, while the macOS and Linux ones — where the bundle is
+  a Windows packet filter nothing there could start — carry neither the archive
+  nor the code to unpack it, and stay the size they were. Because the bundle is
+  now redistributed rather than only fetched,
   [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md#2-components-downloaded-at-runtime)
   records it as shipped, with the licenses and copyright holders it carries.
+
+### Changed
+
+- **"Update the bundle automatically" now governs downloads only, not whether
+  the bypass exists.** Unticking it used to suppress the first-connect install
+  outright, which — once a bundle ships inside the build — reads the switch as
+  something it never said. Fetching a release is this application reaching the
+  network on its own and is exactly what the switch is for; the compiled-in copy
+  costs no request, needs no update, and is the release the client was built and
+  tested against. So with updates off Tenebra still asks the release page for
+  nothing, and a first connect with no bundle present still unpacks the copy it
+  shipped with. Someone who unticked that box turned off updates, not their
+  bypass — and a fresh install with the box unticked no longer connects with
+  YouTube and Discord quietly taking the round trip through an exit node.
 
 ## [0.5.3] - 2026-08-24
 

@@ -102,9 +102,11 @@ around them. Strategies are a moving target — a set that worked in March is a
 set the filter has since learned — so the current release is fetched from
 upstream. But a client that can only download one is a client with no bypass on
 exactly the networks it exists for, so one release is also compiled into the
-core: the archive upstream published, byte for byte, checked against the
+Windows core: the archive upstream published, byte for byte, checked against the
 checksum this build pins for it. It is the floor, never the ceiling — a newer
-release replaces it as soon as one is published and pinned.
+release replaces it as soon as one is published and pinned. The macOS and Linux
+binaries carry none of it; there is nothing there that could run a Windows
+packet filter.
 
 **When it happens and where it lands.** On the first connect with no bundle
 present, the core downloads the latest published release and unpacks it into its
@@ -116,13 +118,18 @@ a release newer than any checksum this build carries, or an archive that did not
 match the checksum it does — the compiled-in copy is unpacked into the same
 place instead, and the next successful check upgrades past it.
 
-**How to decline it.** *Settings → Censorship bypass → Update the bundle
-automatically* governs the first-connect install — downloaded or compiled-in —
-and the re-check alike. Turned off, Tenebra installs nothing on its own: drag in
-a bundle yourself, press *Update* when you want one, or run with no bypass at
-all — the tunnel still carries every service, it simply carries the censored
-ones through the exit node instead of around the filter. Deleting the `zapret`
-directory removes what is already installed.
+**How to decline the download.** *Settings → Censorship bypass → Update the
+bundle automatically* governs what Tenebra fetches: the first-connect download
+and the twelve-hour re-check alike. Turned off, it asks the release page for
+nothing — press *Update* when you want a newer one, or unpack one into the
+`zapret` directory above yourself. It does not govern the copy compiled into the
+build: those bytes need no
+network and no update, so a first connect with no bundle present still unpacks
+them and a fresh install is never left with the bypass missing. Deleting the
+`zapret` directory removes what is installed; a later connect lays the
+compiled-in copy back down. Running with no bypass at all means the tunnel
+carries every service, censored ones included, through the exit node instead of
+around the filter.
 
 Everything in the bundle, with its license and copyright holder, is listed in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md#2-components-downloaded-at-runtime).

@@ -168,9 +168,9 @@ Prebuilt Binaries License
 ## 2. Components downloaded at runtime
 
 The DPI-bypass bundle reaches the user's disk two ways, and both are listed
-here. One release of it is compiled into the core binary and installed when a
-download cannot deliver one, so this project does redistribute that copy —
-unmodified, under the licenses recorded below. Anything newer is fetched from
+here. One release of it is compiled into the Windows core binary and installed
+when a download cannot deliver one, so this project does redistribute that copy
+— unmodified, under the licenses recorded below. Anything newer is fetched from
 the upstream release page at runtime and is in neither the repository nor the
 installer.
 
@@ -180,7 +180,9 @@ against the pin this client carries for that version on every build. It is
 compiled into the Go core (`//go:embed`) and unpacked only when no bundle is
 installed and upstream cannot supply one: no network, an unreachable release
 page, a published version this build carries no checksum for, or an archive
-that did not match the checksum it does carry.
+that did not match the checksum it does carry. Windows builds only — the
+bundle is a Windows packet filter, so the macOS and Linux binaries carry
+neither the archive nor anything that could run it.
 
 **What is downloaded.** On a connect with no bundle installed, the core asks the
 release feed for the latest published version and installs it when this build
@@ -191,13 +193,16 @@ way it lands in the core's own data directory —
 `%ProgramData%\Tenebra\data\zapret` under the Windows service,
 `<user config dir>\tenebra\zapret` for a console run.
 
-**How to decline it.** The first-connect install — downloaded or compiled-in —
-and the periodic check are all bound to *Update the bundle automatically* in
-Settings. With that off the application installs none of this on its own: only
-an explicit press of *Update*, or a bundle dragged in by hand, puts anything
-there, and deleting the `zapret` directory removes what is already installed.
-Without a bundle the tunnel still carries everything; it carries it through the
-tunnel rather than around the censor.
+**How to decline the download.** *Update the bundle automatically* in Settings
+governs what this application fetches: the first-connect download and the
+twelve-hour re-check alike. With that off it asks the release page for nothing
+— only an explicit press of *Update*, or a bundle unpacked into that directory
+by hand, brings a newer one in. It does not govern the compiled-in copy, which
+costs no request and is unpacked on a first connect that finds no bundle
+installed. Deleting the `zapret` directory removes what is there; a later
+connect lays the compiled-in copy back down. Without a bundle the tunnel still
+carries everything; it carries it through the tunnel rather than around the
+censor.
 
 Versions below are those of the binaries inside bundle 1.10.2, the
 release compiled into this build. A newer bundle installed from upstream may

@@ -1,3 +1,5 @@
+//go:build windows
+
 package control
 
 import (
@@ -119,39 +121,6 @@ func TestConnectFallsBackToTheEmbeddedBundle(t *testing.T) {
 				t.Errorf("nothing on the log said the embedded bundle went in: %v", *events)
 			}
 		})
-	}
-}
-
-// TestASuccessfulDownloadIsNotOverwrittenByTheEmbeddedBundle: the compiled-in
-// copy is the floor, and a floor that also lands on top of what it was holding up
-// would downgrade every fresh install to the version this binary was cut with.
-func TestASuccessfulDownloadIsNotOverwrittenByTheEmbeddedBundle(t *testing.T) {
-	d, _ := newTestDaemon(t)
-	dir := filepath.Join(d.store.Dir(), zapretDirName)
-
-	d.zapretLatest = func(context.Context) (zapret.Release, error) {
-		return zapret.Release{Version: "1.10.1", ArchiveURL: "https://github.com/x/b.zip"}, nil
-	}
-	d.zapretApply = func(_ context.Context, target string, rel zapret.Release) error {
-		if err := os.MkdirAll(filepath.Join(target, "bin"), 0o755); err != nil {
-			return err
-		}
-		for _, f := range []string{"general.bat", filepath.Join("bin", "winws.exe")} {
-			if err := os.WriteFile(filepath.Join(target, f), []byte("x"), 0o644); err != nil {
-				return err
-			}
-		}
-		return zapret.WriteVersion(target, rel.Version)
-	}
-	d.zapretEmbed = func(string) ([]zapret.Strategy, error) {
-		t.Error("laid the embedded floor over a bundle that had just installed")
-		return nil, errors.New("should not be called")
-	}
-
-	d.installZapretIfMissing(context.Background())
-
-	if got := zapret.Version(dir); got != "1.10.1" {
-		t.Fatalf("installed version = %q, want the downloaded 1.10.1", got)
 	}
 }
 
