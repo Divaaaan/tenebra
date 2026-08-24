@@ -151,19 +151,6 @@ func TestDoHResolverAllEndpointsDown(t *testing.T) {
 
 // --- small wire helpers ---
 
-func header12(flags, qd, an uint16) []byte {
-	var b []byte
-	b = binary.BigEndian.AppendUint16(b, 0)     // ID
-	b = binary.BigEndian.AppendUint16(b, flags) // flags
-	b = binary.BigEndian.AppendUint16(b, qd)    // QDCOUNT
-	b = binary.BigEndian.AppendUint16(b, an)    // ANCOUNT
-	b = binary.BigEndian.AppendUint16(b, 0)     // NSCOUNT
-	b = binary.BigEndian.AppendUint16(b, 0)     // ARCOUNT
-	return b
-}
-
-func bytes12(flags, qd, an uint16) []byte { return header12(flags, qd, an) }
-
 func serverAddr(srv *httptest.Server) string {
 	return srv.Listener.Addr().String()
 }
