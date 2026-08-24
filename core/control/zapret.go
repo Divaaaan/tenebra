@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/Divaaaan/tenebra/core/zapret"
@@ -151,17 +152,41 @@ func (d *Daemon) newZapretRunner(dir string) *zapret.Runner {
 func (d *Daemon) newZapretRunnerFor(dir string, tunnelUp bool) *zapret.Runner {
 	r := zapret.NewRunner(dir)
 	r.KeepVoiceInTunnel = tunnelUp
-	// Keep the filter off our own tunnel's adapter. Pinned always, not only while
-	// connected: a strategy started before the tunnel is still running after it
-	// comes up, and by then the damage is done invisibly.
-	r.PinIfaceIndex = d.physicalIfaceIndex()
-	// And measure where the filter acts. The runner probes to decide which
-	// strategy to keep; with a tunnel up, an unbound probe is captured by the tun
-	// and reports every destination reachable — baseline included — so the pick
-	// can never find an improvement over doing nothing. Handing it the
-	// interface-bound dialer is what makes the measurement about the direct path,
-	// the same fix the bypass check already had (see newZapretProbeDialer).
-	r.Dial = d.zapretDial
+	// Keep the filter off our own tunnel's adapter, and measure on the very
+	// interface it is kept to. Both come out of one lookup (see pinAndProbeBind):
+	// a filter confined to one link and a measurement taken on another is the same
+	// broken pick as no pin at all — every strategy is scored on a path the filter
+	// never touches, so none of them beats the baseline.
+	//
+	// Pinned always, not only while connected: a strategy started before the
+	// tunnel is still running after it comes up, and by then the damage is done
+	// invisibly. The bind follows the pin, deliberately not tunnelUp, though that
+	// answer is right here: a pick runs for minutes and a tunnel can come up
+	// inside one, and with no tunnel at all a correct pin makes the bind a no-op
+	// — the routed dial leaves by that interface anyway — so it costs nothing in
+	// the case it is not needed and saves the run in the case it is.
+	pin, bind := d.pinAndProbeBind()
+	r.PinIfaceIndex = pin
+	var reported sync.Once
+	r.Dial = zapretProbeDialer(bind, func(err error) {
+		// Once per runner: a pick dials five targets for every strategy in the
+		// bundle, and twenty copies of one message is not a better log.
+		reported.Do(func() {
+			d.emitLog(LogWarn, fmt.Sprintf(
+				"zapret: замер не привязался к интерфейсу (%v) — идёт по обычной маршрутизации", err))
+		})
+	}).DialContext
+	d.emitDebug(fmt.Sprintf("zapret: фильтр на интерфейсе index=%d, замер %s", pin, bind.note))
+	if pin > 0 && !bind.bound {
+		// The filter IS confined to an interface and the measurement could not be
+		// put on it, so a pick made in this state scores every strategy on a link
+		// the filter never touches. Loud, because that is precisely the shape of
+		// the original bug and this line is the only thing telling them apart in a
+		// user's log.
+		d.emitLog(LogWarn, fmt.Sprintf(
+			"zapret: фильтр закреплён за интерфейсом index=%d, а замер к нему привязать не вышло — "+
+				"подбор стратегии сейчас мерил бы другой канал", pin))
+	}
 	return r
 }
 
@@ -390,6 +415,14 @@ func (d *Daemon) handlePickZapret(ctx context.Context, req Request) Response {
 
 	best, found := zapret.Best(results, baseline)
 	ranked := zapret.Rank(results)
+
+	// The baseline is what every strategy is scored against, so it is the first
+	// number to look at when a run reports nothing: full marks with the bypass off
+	// means the measurement never went anywhere the censor is, and the verdict
+	// says nothing about the strategies. Paired with the interface it was measured
+	// on, because that is the thing that goes wrong.
+	d.emitDebug(fmt.Sprintf("zapret: без обхода %d/%d, замер на интерфейсе index=%d",
+		baseline, len(zapret.DefaultTargets()), runner.PinIfaceIndex))
 
 	// Leave the winner RUNNING. Probing ends with everything stopped so the
 	// machine is not left on whichever strategy happened to be last — but

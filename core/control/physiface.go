@@ -63,6 +63,29 @@ func (d *Daemon) physicalIfaceIndex() int {
 	return ifaceIndexByName(best.Name)
 }
 
+// pinAndProbeBind answers, from one lookup, the two questions a bypass pick must
+// never answer differently: which interface the packet filter is confined to,
+// and which interface the probes that score the strategies leave by.
+//
+// They used to be answered by two unrelated selectors with nothing comparing the
+// results — this one, off the route table, and the socket-level list in
+// selectDefaultInterface. Nothing made them agree: this one skips a foreign
+// tunnel, while the other ranked interfaces by index, which says nothing about
+// what an adapter is, so on a machine running another VPN it could take that
+// tunnel. The filter would then sit on the uplink while the measurement went
+// down somebody else's tunnel, where every target answers — baseline full marks,
+// no strategy able to beat it, "nothing pierced the block". That is the symptom
+// the pin was added to remove, arriving by a second route.
+//
+// Returning both from one place is the fix: there is one number, and the probe
+// is bound to it or explicitly not bound at all. A zero pin means the filter is
+// not confined either, so there is nothing to agree with and the bind falls back
+// — see resolveZapretProbeBind.
+func (d *Daemon) pinAndProbeBind() (int, zapretProbeBind) {
+	pin := d.physicalIfaceIndex()
+	return pin, resolveZapretProbeBind(pin, d.probeIfaces)
+}
+
 // ifaceIndexByName maps an interface name to its OS index, or 0 when no
 // interface answers to that name. Matching is case-insensitive: the route table
 // and the interface list do not always agree on capitalisation.

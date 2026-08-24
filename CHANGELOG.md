@@ -25,12 +25,25 @@ All notable changes to Tenebra are documented here. The format follows
   finds video is not coming through, re-measuring the bundle is what is supposed
   to find a strategy that works — so the repair was dead exactly when it was
   needed, and a hand-run pick under a connection always answered "no strategy
-  pierced the block". The probe now dials through the same interface-bound
-  dialer the ping and the bypass check already used, so the baseline and every
-  strategy are measured on the physical uplink the packet filter actually acts
-  on. A machine with no interface to bind to — an uplink the selector does not
-  recognise, such as a point-to-point modem — falls back to a routed dial rather
-  than failing every probe.
+  pierced the block". The probe is now bound to the very interface the packet
+  filter is confined to — one lookup answers both, so the measurement cannot end
+  up on a different link from the filter — and the baseline and every strategy
+  are measured there. A machine where that bind cannot be made falls back to a
+  routed dial rather than failing every probe, and says so in the log: the pick
+  reports which interface it measured on, and the "no strategy pierced the
+  block" verdict now carries the baseline that produced it, so a run that
+  measured the wrong path can be told apart from a network no strategy helps.
+- **A probe could leave through another VPN's adapter.** The interface picker
+  behind the node ping — and behind the bypass pick when nothing is pinned —
+  took the lowest-numbered routable adapter and excluded only our own tun, by
+  exact name. Anything else tunnel-shaped passed: another client's adapter,
+  whenever it held the lower index — the ordering says nothing about what an
+  adapter is — and our own tun after Windows renamed it "tenebra 2" (which it
+  does when the previous one has not finished going away). A node ping through
+  either reports the tunnel's fabricated ~1ms instead of the server's real
+  latency. Tunnel-looking adapters are now excluded by the same recognition the
+  tun-conflict guard uses, and our own tun by name prefix rather than an exact
+  match.
 
 ## [0.5.1] - 2026-08-24
 

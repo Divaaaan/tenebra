@@ -39,12 +39,14 @@ type Runner struct {
 	// or may appear; zero leaves the filter on every interface, which is only
 	// right on a machine with no tunnel at all.
 	PinIfaceIndex int
-	// Dial opens the probe's connections. Set it to a dialer bound to the
-	// physical uplink (core/control hands over the one the ping and the bypass
-	// check already use) so Probe measures the path the filter acts on instead of
-	// whichever path the routing table currently prefers — with a tunnel up those
-	// are not the same path, and the second one answers everything. Nil dials by
-	// ordinary routing.
+	// Dial opens the probe's connections. Set it to a dialer bound to the same
+	// interface as PinIfaceIndex — core/control resolves the two from one lookup
+	// precisely so they cannot differ — and Probe then measures the path the
+	// filter acts on instead of whichever path the routing table currently
+	// prefers. With a tunnel up those are not the same path and the second one
+	// answers everything; with the filter confined to one interface and the probe
+	// leaving by another they are not the same path either, and every strategy
+	// scores whatever the baseline scored. Nil dials by ordinary routing.
 	Dial DialFunc
 }
 

@@ -103,6 +103,79 @@ func TestSelectDefaultInterfaceNoneEligible(t *testing.T) {
 	}
 }
 
+// TestSelectDefaultInterfaceSkipsOurRenamedTun is the collision Windows creates
+// for us. When an adapter name is already taken — our own tun raised beside one
+// that has not finished going away — the new adapter comes up as "tenebra 2".
+// Compared for equality against the name we asked for, that reads as somebody
+// else's NIC, and since it sits at the lower index the selector hands the probe
+// straight back to the tunnel it exists to avoid. The prefix match is what makes
+// it ours. tunguard.isOwn matches the same way, having learnt it the same way.
+func TestSelectDefaultInterfaceSkipsOurRenamedTun(t *testing.T) {
+	ifaces := []ifaceInfo{
+		{Index: 1, Name: "tenebra 2", Flags: net.FlagUp, Addrs: []net.Addr{globalV4("10.8.0.2/24")}},
+		{Index: 2, Name: "Ethernet", Flags: net.FlagUp, Addrs: []net.Addr{globalV4("192.168.1.20/24")}},
+	}
+	got, err := selectDefaultInterface(ifaces, "tenebra")
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if got.Name != "Ethernet" {
+		t.Errorf("selected %q (index %d) — a probe would be measuring our own tunnel", got.Name, got.Index)
+	}
+}
+
+// TestSelectDefaultInterfaceSkipsAnotherVPNsAdapter: a foreign tunnel is as
+// wrong an answer as our own. It typically sits at a lower interface index than
+// the NIC underneath it, so the index ordering alone walks straight into it, and
+// a probe that leaves through somebody else's tunnel reports every destination
+// reachable — which for the bypass pick means no strategy can beat the baseline
+// and the run concludes that nothing helps.
+//
+// Only the name is available at this level, so this covers the adapters that say
+// what they are. The ones that do not — OpenVPN's TAP arrives as "Ethernet 2" —
+// are why the pick binds to the route table's answer instead of this one.
+func TestSelectDefaultInterfaceSkipsAnotherVPNsAdapter(t *testing.T) {
+	for _, name := range []string{"Hiddify Tunnel", "wg0", "NordLynx", "TAP-Windows Adapter V9"} {
+		t.Run(name, func(t *testing.T) {
+			ifaces := []ifaceInfo{
+				{Index: 1, Name: name, Flags: net.FlagUp, Addrs: []net.Addr{globalV4("10.7.0.2/24")}},
+				{Index: 2, Name: "Ethernet", Flags: net.FlagUp, Addrs: []net.Addr{globalV4("192.168.1.20/24")}},
+			}
+			got, err := selectDefaultInterface(ifaces, tunIfaceName)
+			if err != nil {
+				t.Fatalf("select: %v", err)
+			}
+			if got.Name != "Ethernet" {
+				t.Errorf("selected %q (index %d) — the probe would leave through another VPN",
+					got.Name, got.Index)
+			}
+		})
+	}
+}
+
+// TestSelectDefaultInterfaceKeepsOrdinaryAdapters is the other side of that
+// exclusion, and the reason no broader rule is used. "vEthernet (TenebraExt)" is
+// a Hyper-V external switch and the machine this ships to reaches the internet
+// through it; a name rule that swept up virtual-looking adapters would leave the
+// selector with nothing to choose and fail every ping on a machine with no VPN
+// on it at all.
+func TestSelectDefaultInterfaceKeepsOrdinaryAdapters(t *testing.T) {
+	for _, name := range []string{"vEthernet (TenebraExt)", "Ethernet 2", "Wi-Fi", "enp5s0", "eth0"} {
+		t.Run(name, func(t *testing.T) {
+			ifaces := []ifaceInfo{
+				{Index: 7, Name: name, Flags: net.FlagUp, Addrs: []net.Addr{globalV4("192.168.1.20/24")}},
+			}
+			got, err := selectDefaultInterface(ifaces, tunIfaceName)
+			if err != nil {
+				t.Fatalf("%q was excluded as a tunnel: %v", name, err)
+			}
+			if got.Name != name {
+				t.Errorf("selected %q, want %q", got.Name, name)
+			}
+		})
+	}
+}
+
 // TestHasGlobalUnicast spot-checks the address classifier the selector leans on.
 func TestHasGlobalUnicast(t *testing.T) {
 	if !hasGlobalUnicast([]net.Addr{globalV4("192.168.1.20/24")}) {

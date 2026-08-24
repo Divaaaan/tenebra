@@ -129,7 +129,14 @@ func (d *Daemon) repickStrategy(ctx context.Context, gen uint64) {
 
 	best, found := zapret.Best(results, baseline)
 	if !found {
-		d.emitLog(LogWarn, "ни одна стратегия не пробила блокировку — остаёмся в туннеле")
+		// The baseline goes in the message because this line is the one users
+		// report, and on its own it cannot be told from the failure it replaced: a
+		// baseline of full marks means the run measured a path where nothing is
+		// blocked — the tunnel, most likely — and no strategy could have beaten it
+		// whatever the bundle contains.
+		d.emitLog(LogWarn, fmt.Sprintf(
+			"ни одна стратегия не пробила блокировку (без обхода уже %d/%d) — остаёмся в туннеле",
+			baseline, len(zapret.DefaultTargets())))
 		return
 	}
 

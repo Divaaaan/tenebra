@@ -32,21 +32,27 @@ func (r *Runner) requestTimeout() time.Duration {
 //
 // It lives outside the platform files because it is plain HTTP with nothing
 // Windows-specific in it, and because the one rule it has to keep — measure the
-// direct path, never the tunnel — is worth checking wherever the test suite
-// runs rather than only where someone runs the Windows-tagged tests.
+// direct path, never the tunnel — is not Windows-specific either. Behind a
+// //go:build windows tag its tests would still run in CI, which has a Windows
+// job, but only there: not in the Linux and macOS jobs, and not for anyone
+// developing on those. Shared, every `go test ./...` checks it.
 //
 // Two things keep the measurement off the tunnel, and both are needed:
 //
 //   - No proxy on the transport. A probe through the proxy completes whatever
 //     the strategy does and scores every one of them perfect.
-//   - Dial, when set, pins the socket to the physical uplink. Proxy: nil only
-//     refuses an HTTP proxy; it says nothing about a tun that owns the default
-//     route, so with a tunnel up every request — the baseline first of all —
-//     leaves through it. Every target then answers, the baseline reads full
-//     marks, each strategy reads full marks, and Best (which reports a strategy
-//     only when it BEATS the baseline) concludes that nothing helps. That is the
-//     self-repair path, repickStrategy, giving up on a measurement of the very
-//     tunnel it was trying to get traffic off.
+//   - Dial, when set, pins the socket to the interface the packet filter is
+//     confined to (Runner.PinIfaceIndex; core/control resolves the two from one
+//     lookup so they cannot differ). Proxy: nil only refuses an HTTP proxy; it
+//     says nothing about a tun that owns the default route, so with a tunnel up
+//     every request — the baseline first of all — leaves through it. Every
+//     target then answers, the baseline reads full marks, each strategy reads
+//     full marks, and Best (which reports a strategy only when it BEATS the
+//     baseline) concludes that nothing helps. That is the self-repair path,
+//     repickStrategy, giving up on a measurement of the very tunnel it was
+//     trying to get traffic off. A probe that leaves by an interface the filter
+//     is not on lands in the same place by a shorter road: the strategy cannot
+//     change what it never touched.
 //
 // A nil Dial leaves the transport on its own dialer, which is what this always
 // did: on a machine with no physical interface to bind to, an ordinary routed
