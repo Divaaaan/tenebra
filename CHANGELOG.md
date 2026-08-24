@@ -11,6 +11,27 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **The bypass strategy pick was measuring the tunnel, so under a live
+  connection it could never find a strategy.** The probe that scores each
+  strategy built its HTTP client with no proxy — which refuses an HTTP proxy and
+  says nothing about anything else — and left the socket to ordinary routing.
+  With a tunnel up the tun owns the default route, so every request went through
+  it: the baseline taken with the bypass off answered 5/5 for destinations the
+  ISP blocks, each strategy answered 5/5 as well, and since a strategy is
+  reported only when it beats the baseline, the run concluded that nothing
+  helps. The automatic re-pick depends on that verdict — when the bypass check
+  finds video is not coming through, re-measuring the bundle is what is supposed
+  to find a strategy that works — so the repair was dead exactly when it was
+  needed, and a hand-run pick under a connection always answered "no strategy
+  pierced the block". The probe now dials through the same interface-bound
+  dialer the ping and the bypass check already used, so the baseline and every
+  strategy are measured on the physical uplink the packet filter actually acts
+  on. A machine with no interface to bind to — an uplink the selector does not
+  recognise, such as a point-to-point modem — falls back to a routed dial rather
+  than failing every probe.
+
 ## [0.5.1] - 2026-08-24
 
 ### Security

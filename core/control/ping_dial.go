@@ -115,27 +115,76 @@ func selectDefaultInterface(ifaces []ifaceInfo, tunName string) (ifaceInfo, erro
 	return best, nil
 }
 
+// resolvePhysical picks the interface an off-tunnel dial has to leave through.
+// list is the interface source: hostInterfaces in production, a synthetic list
+// in tests. Resolution happens per dial rather than once at construction so a
+// mid-session NIC change (Wi-Fi <-> Ethernet, a VPN reroute) is picked up by the
+// next probe.
+func resolvePhysical(list func() ([]ifaceInfo, error)) (ifaceInfo, error) {
+	ifaces, err := list()
+	if err != nil {
+		return ifaceInfo{}, err
+	}
+	return selectDefaultInterface(ifaces, tunIfaceName)
+}
+
 // newPingDialer builds the dialer the ping path uses. Its Control hook runs
 // after the socket is created but before connect: it resolves the physical
 // default interface and binds the socket to it (bindSocketToInterface, per
 // platform), forcing the probe out the real NIC even when the tunnel owns the
-// default route. Resolution happens per dial rather than once at construction so
-// a mid-session NIC change (Wi-Fi <-> Ethernet, a VPN reroute) is picked up on
-// the next ping. A resolution or bind failure fails that dial, which pingOne
+// default route. A resolution or bind failure fails that dial, which pingOne
 // reports as an unreachable node — see errNoPhysicalInterface for why that beats
 // a routed fallback.
-func newPingDialer() *net.Dialer {
+func newPingDialer() *net.Dialer { return pingDialer(hostInterfaces) }
+
+// pingDialer is newPingDialer with the interface source injected, so the strict
+// failure the ping path wants is testable without the host's live adapter list.
+func pingDialer(list func() ([]ifaceInfo, error)) *net.Dialer {
 	return &net.Dialer{
 		Control: func(network, address string, c syscall.RawConn) error {
-			ifaces, err := hostInterfaces()
-			if err != nil {
-				return err
-			}
-			iface, err := selectDefaultInterface(ifaces, tunIfaceName)
+			iface, err := resolvePhysical(list)
 			if err != nil {
 				return err
 			}
 			return bindSocketToInterface(c, iface, network)
+		},
+	}
+}
+
+// newZapretProbeDialer builds the dialer the DPI-bypass strategy PICK measures
+// on. Same bind as the ping path, for the reason the pick exists at all: it asks
+// whether a strategy gets traffic past the censor on the DIRECT path, and an
+// unbound socket asks that of the tunnel instead whenever one is up. Every
+// target then answers, the baseline scores full marks, no strategy can beat it,
+// and the run reports that nothing pierced the block (see zapret.Best) — which
+// is what the automatic re-pick after a bypass failure did for as long as the
+// user was connected, i.e. every time it was needed.
+//
+// It differs from the ping dialer in one place: failing to resolve or bind the
+// physical interface degrades to an ordinary routed dial rather than failing the
+// dial. The two paths want opposite things from that case. A ping that falls
+// back onto the tun reports a fabricated ~1ms RTT, so refusing is the honest
+// answer; a pick that fails every probe reports "no strategy pierced the block"
+// on a machine whose uplink the selector merely does not recognise (a PPP/WWAN
+// modem is point-to-point and skipped), where the routed dial was the correct
+// measurement all along. Degrading leaves such a machine exactly where it is
+// today instead of regressing it.
+func newZapretProbeDialer() *net.Dialer { return zapretProbeDialer(hostInterfaces) }
+
+// zapretProbeDialer is newZapretProbeDialer with the interface source injected,
+// so the degradation above is testable without the host's live adapter list.
+func zapretProbeDialer(list func() ([]ifaceInfo, error)) *net.Dialer {
+	return &net.Dialer{
+		Control: func(network, address string, c syscall.RawConn) error {
+			iface, err := resolvePhysical(list)
+			if err != nil {
+				return nil // nothing to pin to; dial by routing, as this always did
+			}
+			// A bind that fails is swallowed for the same reason a missing
+			// interface is: the routed dial is the behaviour this path had before
+			// it was pinned, and it beats refusing to measure anything.
+			_ = bindSocketToInterface(c, iface, network)
+			return nil
 		},
 	}
 }

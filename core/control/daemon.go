@@ -282,6 +282,12 @@ type Daemon struct {
 	now  func() time.Time
 	dial func(ctx context.Context, network, address string) (net.Conn, error)
 
+	// zapretDial is what the DPI-bypass strategy pick probes on. It is a second
+	// dialer rather than dial itself because the two answer an unbindable machine
+	// differently — dial refuses, this one falls back to routing. See
+	// newZapretProbeDialer.
+	zapretDial func(ctx context.Context, network, address string) (net.Conn, error)
+
 	// classify decides why a failed connect attempt failed, so the fallback loop
 	// can escalate a transport strategy on a node whose handshake looks interfered
 	// with but keep advancing past a dead one. Injectable so the escalation is
@@ -556,6 +562,11 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 	// local tun rather than the real server. Binding the socket to the physical NIC
 	// steers each probe past the tun so the RTT readout stays meaningful mid-session.
 	d.dial = newPingDialer().DialContext
+	// The bypass pick is pinned the same way and for a sharper reason: measured
+	// through the tun, its baseline and every strategy score full marks, so the
+	// run can never report an improvement and the automatic re-pick after a bypass
+	// failure always concludes that nothing works (see newZapretProbeDialer).
+	d.zapretDial = newZapretProbeDialer().DialContext
 	// The peer check needs the daemon (it logs its refusals), so it is bound
 	// after construction like the other self-referential seams below.
 	d.authorizeConn = d.authorizePeer

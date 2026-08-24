@@ -155,6 +155,13 @@ func (d *Daemon) newZapretRunnerFor(dir string, tunnelUp bool) *zapret.Runner {
 	// connected: a strategy started before the tunnel is still running after it
 	// comes up, and by then the damage is done invisibly.
 	r.PinIfaceIndex = d.physicalIfaceIndex()
+	// And measure where the filter acts. The runner probes to decide which
+	// strategy to keep; with a tunnel up, an unbound probe is captured by the tun
+	// and reports every destination reachable — baseline included — so the pick
+	// can never find an improvement over doing nothing. Handing it the
+	// interface-bound dialer is what makes the measurement about the direct path,
+	// the same fix the bypass check already had (see newZapretProbeDialer).
+	r.Dial = d.zapretDial
 	return r
 }
 
