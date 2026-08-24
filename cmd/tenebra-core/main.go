@@ -168,13 +168,16 @@ func buildDaemon() (*control.Daemon, error) {
 	// tunnel alone still carries the censored services. The search stays available
 	// as the deliberate operation it is (pick_zapret, the app's bypass screen).
 	daemon.SetBypassRepick(false)
-	// The live bypass-bundle updater. It lives here, not in the daemon's
-	// constructor, so only a real core reaches the release feed.
+	// The live bypass-bundle updater, and the bundle compiled into this binary
+	// that stands in when it cannot deliver one. They live here, not in the
+	// daemon's constructor, so only a real core reaches the release feed or
+	// unpacks a packet filter into someone's profile directory.
 	daemon.SetZapretUpdater(
 		func(ctx context.Context) (zapret.Release, error) { return zapret.LatestRelease(ctx, nil) },
 		func(ctx context.Context, dir string, rel zapret.Release) error {
 			return zapret.Apply(ctx, nil, dir, rel)
 		},
+		zapret.InstallEmbedded,
 	)
 	// Persist last-good per profile next to the store so the node that last
 	// connected leads the fallback walk on the next launch. A failure to open it

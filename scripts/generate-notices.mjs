@@ -104,6 +104,11 @@ const META = {
 // ---------------------------------------------------------------------------
 const bundleRepo = "Flowseal/zapret-discord-youtube";
 
+// The bundle release compiled into the core (core/zapret/embedded.go). Named here
+// so the notice states what actually ships rather than a version that has moved.
+const EMBEDDED_VERSION = "1.10.2";
+const EMBEDDED_ARCHIVE = `zapret-discord-youtube-${EMBEDDED_VERSION}.zip`;
+
 const RUNTIME = [
   {
     name: "zapret",
@@ -131,9 +136,10 @@ const RUNTIME = [
       "- License: MIT (full text in section 7)",
       "- Copyright: Copyright (c) 2016-2026 bol-van; Copyright (c) 2024-2026 Flowseal",
       `- Source: <https://github.com/${bundleRepo}>`,
-      "- Attribution: This is the archive the updater downloads, unmodified and",
-      "  whole. It is a packaging project: the strategies and lists are its own work,",
-      "  the binaries in `bin/` are redistributed from the projects above and below.",
+      "- Attribution: This is the archive the updater downloads and the one compiled",
+      "  into the core, unmodified and whole either way. It is a packaging project:",
+      "  the strategies and lists are its own work, the binaries in `bin/` are",
+      "  redistributed from the projects above and below.",
     ],
   },
   {
@@ -436,29 +442,46 @@ export function renderNotices(inputs = loadInputs()) {
   // --- 2. Components downloaded at runtime ---
   p("## 2. Components downloaded at runtime");
   p();
-  p("None of this is in the repository or in the installer, and none of it is");
-  p("redistributed by this project. It is listed because the application puts it on");
-  p("the user's disk all the same: the DPI-bypass bundle is not shipped, it is");
-  p("fetched from its upstream release page and unpacked by the core.");
+  p("The DPI-bypass bundle reaches the user's disk two ways, and both are listed");
+  p("here. One release of it is compiled into the Windows core binary and installed");
+  p("when a download cannot deliver one, so this project does redistribute that copy");
+  p("— unmodified, under the licenses recorded below. Anything newer is fetched from");
+  p("the upstream release page at runtime and is in neither the repository nor the");
+  p("installer.");
   p();
-  p("**What happens.** On a connect with no bundle installed, the core downloads the");
-  p("latest published release of the bundle and unpacks it into its own data");
-  p("directory — `%ProgramData%\\Tenebra\\data\\zapret` under the Windows service,");
-  p("`<user config dir>\\tenebra\\zapret` for a console run — then re-checks for a");
-  p("newer one every twelve hours. The archive is taken whole and unmodified; only");
-  p("the wrapper directory the release ships is stripped.");
+  p(`**What ships.** \`core/zapret/bundled/${EMBEDDED_ARCHIVE}\` — the`);
+  p("release archive exactly as upstream publishes it, whose checksum is checked");
+  p("against the pin this client carries for that version on every build. It is");
+  p("compiled into the Go core (`//go:embed`) and unpacked only when no bundle is");
+  p("installed and upstream cannot supply one: no network, an unreachable release");
+  p("page, a published version this build carries no checksum for, or an archive");
+  p("that did not match the checksum it does carry. Windows builds only — the");
+  p("bundle is a Windows packet filter, so the macOS and Linux binaries carry");
+  p("neither the archive nor anything that could run it.");
   p();
-  p("**How to decline it.** Both the first-connect install and the periodic check are");
-  p("bound to *Update the bundle automatically* in Settings. With that off the");
-  p("application downloads none of this on its own — only an explicit press of");
-  p("*Update*, or a bundle dragged in by hand, installs anything — and deleting the");
-  p("`zapret` directory removes what is already there. Without a bundle the tunnel");
-  p("still carries everything; it carries it through the tunnel rather than around");
-  p("the censor.");
+  p("**What is downloaded.** On a connect with no bundle installed, the core asks the");
+  p("release feed for the latest published version and installs it when this build");
+  p("pins that version's checksum, then re-checks every twelve hours — so a release");
+  p("newer than the compiled-in copy replaces it. The archive is taken whole and");
+  p("unmodified; only the wrapper directory the release ships is stripped. Either");
+  p("way it lands in the core's own data directory —");
+  p("`%ProgramData%\\Tenebra\\data\\zapret` under the Windows service,");
+  p("`<user config dir>\\tenebra\\zapret` for a console run.");
   p();
-  p("Versions below are those of the binaries inside bundle 1.10.1. The bundle is");
-  p("always fetched as the latest release rather than pinned, so upstream may move");
-  p("them.");
+  p("**How to decline the download.** *Update the bundle automatically* in Settings");
+  p("governs what this application fetches: the first-connect download and the");
+  p("twelve-hour re-check alike. With that off it asks the release page for nothing");
+  p("— only an explicit press of *Update*, or a bundle unpacked into that directory");
+  p("by hand, brings a newer one in. It does not govern the compiled-in copy, which");
+  p("costs no request and is unpacked on a first connect that finds no bundle");
+  p("installed. Deleting the `zapret` directory removes what is there; a later");
+  p("connect lays the compiled-in copy back down. Without a bundle the tunnel still");
+  p("carries everything; it carries it through the tunnel rather than around the");
+  p("censor.");
+  p();
+  p(`Versions below are those of the binaries inside bundle ${EMBEDDED_VERSION}, the`);
+  p("release compiled into this build. A newer bundle installed from upstream may");
+  p("move them.");
   p();
 
   for (const c of RUNTIME) {

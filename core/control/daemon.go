@@ -136,6 +136,17 @@ type Daemon struct {
 	zapretLatest func(context.Context) (zapret.Release, error)
 	zapretApply  func(context.Context, string, zapret.Release) error
 
+	// zapretEmbed installs the bundle compiled into this binary — the floor under
+	// every way an install from upstream can fail (see
+	// installEmbeddedZapretIfMissing).
+	//
+	// Injected alongside the pair above, and for the second half of the same
+	// reason. It reaches nothing, but it still unpacks four megabytes into the
+	// store and leaves a real winws.exe there for the runner to start, which is
+	// the half of "quietly downloads a bundle into a temp directory and starts a
+	// packet filter from it" that a unit test cannot afford either.
+	zapretEmbed func(dir string) ([]zapret.Strategy, error)
+
 	// zapretExclude writes the node addresses the packet filter must leave alone
 	// and reports which nodes it could not cover. Injected for the same reason as
 	// the pair above: the real one performs DNS lookups, and a test of what the
@@ -487,6 +498,9 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 		zapretApply: func(context.Context, string, zapret.Release) error {
 			return errors.New("zapret: updater not configured")
 		},
+		zapretEmbed: func(string) ([]zapret.Strategy, error) {
+			return nil, errors.New("zapret: embedded bundle not wired")
+		},
 		zapretExclude: (&zapret.Excluder{}).Exclude,
 		// CacheDir pins sing-box's cache file to the writable store directory so
 		// the root launchd daemon (cwd "/", read-only) doesn't abort at startup;
@@ -708,22 +722,30 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	d.mu.Unlock()
 }
 
-// SetZapretUpdater installs the pair that fetches and applies bypass bundles.
+// SetZapretUpdater installs everything this daemon may use to put a bypass
+// bundle on the machine: the release check, the download-and-apply, and the copy
+// compiled into the binary that goes in when the first two cannot.
 //
-// It is wired by main rather than defaulted in the constructor so that reaching
-// the internet is something a daemon is given, not something it is born with: a
-// unit test builds a daemon and gets an updater that declines, instead of one
-// that quietly downloads a bundle into a temp directory and starts a packet
-// filter from it.
+// It is wired by main rather than defaulted in the constructor so that installing
+// a bundle is something a daemon is given, not something it is born with: a unit
+// test builds a daemon and gets a set that declines, instead of one that quietly
+// downloads a bundle into a temp directory and starts a packet filter from it.
+// The embedded installer comes through the same call rather than its own for the
+// same reason it exists at all — a fallback that a caller can wire half of is a
+// fallback that is missing exactly when it is needed.
 func (d *Daemon) SetZapretUpdater(
 	latest func(ctx context.Context) (zapret.Release, error),
 	apply func(ctx context.Context, dir string, rel zapret.Release) error,
+	embed func(dir string) ([]zapret.Strategy, error),
 ) {
 	if latest != nil {
 		d.zapretLatest = latest
 	}
 	if apply != nil {
 		d.zapretApply = apply
+	}
+	if embed != nil {
+		d.zapretEmbed = embed
 	}
 }
 

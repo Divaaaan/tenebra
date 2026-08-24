@@ -167,29 +167,46 @@ Prebuilt Binaries License
 
 ## 2. Components downloaded at runtime
 
-None of this is in the repository or in the installer, and none of it is
-redistributed by this project. It is listed because the application puts it on
-the user's disk all the same: the DPI-bypass bundle is not shipped, it is
-fetched from its upstream release page and unpacked by the core.
+The DPI-bypass bundle reaches the user's disk two ways, and both are listed
+here. One release of it is compiled into the Windows core binary and installed
+when a download cannot deliver one, so this project does redistribute that copy
+— unmodified, under the licenses recorded below. Anything newer is fetched from
+the upstream release page at runtime and is in neither the repository nor the
+installer.
 
-**What happens.** On a connect with no bundle installed, the core downloads the
-latest published release of the bundle and unpacks it into its own data
-directory — `%ProgramData%\Tenebra\data\zapret` under the Windows service,
-`<user config dir>\tenebra\zapret` for a console run — then re-checks for a
-newer one every twelve hours. The archive is taken whole and unmodified; only
-the wrapper directory the release ships is stripped.
+**What ships.** `core/zapret/bundled/zapret-discord-youtube-1.10.2.zip` — the
+release archive exactly as upstream publishes it, whose checksum is checked
+against the pin this client carries for that version on every build. It is
+compiled into the Go core (`//go:embed`) and unpacked only when no bundle is
+installed and upstream cannot supply one: no network, an unreachable release
+page, a published version this build carries no checksum for, or an archive
+that did not match the checksum it does carry. Windows builds only — the
+bundle is a Windows packet filter, so the macOS and Linux binaries carry
+neither the archive nor anything that could run it.
 
-**How to decline it.** Both the first-connect install and the periodic check are
-bound to *Update the bundle automatically* in Settings. With that off the
-application downloads none of this on its own — only an explicit press of
-*Update*, or a bundle dragged in by hand, installs anything — and deleting the
-`zapret` directory removes what is already there. Without a bundle the tunnel
-still carries everything; it carries it through the tunnel rather than around
-the censor.
+**What is downloaded.** On a connect with no bundle installed, the core asks the
+release feed for the latest published version and installs it when this build
+pins that version's checksum, then re-checks every twelve hours — so a release
+newer than the compiled-in copy replaces it. The archive is taken whole and
+unmodified; only the wrapper directory the release ships is stripped. Either
+way it lands in the core's own data directory —
+`%ProgramData%\Tenebra\data\zapret` under the Windows service,
+`<user config dir>\tenebra\zapret` for a console run.
 
-Versions below are those of the binaries inside bundle 1.10.1. The bundle is
-always fetched as the latest release rather than pinned, so upstream may move
-them.
+**How to decline the download.** *Update the bundle automatically* in Settings
+governs what this application fetches: the first-connect download and the
+twelve-hour re-check alike. With that off it asks the release page for nothing
+— only an explicit press of *Update*, or a bundle unpacked into that directory
+by hand, brings a newer one in. It does not govern the compiled-in copy, which
+costs no request and is unpacked on a first connect that finds no bundle
+installed. Deleting the `zapret` directory removes what is there; a later
+connect lays the compiled-in copy back down. Without a bundle the tunnel still
+carries everything; it carries it through the tunnel rather than around the
+censor.
+
+Versions below are those of the binaries inside bundle 1.10.2, the
+release compiled into this build. A newer bundle installed from upstream may
+move them.
 
 ### zapret
 
@@ -210,9 +227,10 @@ them.
 - License: MIT (full text in section 7)
 - Copyright: Copyright (c) 2016-2026 bol-van; Copyright (c) 2024-2026 Flowseal
 - Source: <https://github.com/Flowseal/zapret-discord-youtube>
-- Attribution: This is the archive the updater downloads, unmodified and
-  whole. It is a packaging project: the strategies and lists are its own work,
-  the binaries in `bin/` are redistributed from the projects above and below.
+- Attribution: This is the archive the updater downloads and the one compiled
+  into the core, unmodified and whole either way. It is a packaging project:
+  the strategies and lists are its own work, the binaries in `bin/` are
+  redistributed from the projects above and below.
 
 ### WinDivert
 

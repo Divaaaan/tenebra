@@ -19,6 +19,17 @@ import (
 func seedBundle(t *testing.T, d *Daemon, version string) string {
 	t.Helper()
 	dir := filepath.Join(d.store.Dir(), zapretDirName)
+	seedBundleAt(t, dir, version)
+	return dir
+}
+
+// seedBundleAt lays the same bundle out in an arbitrary directory and reports
+// the strategies it left there, which is what a stubbed installer has to return.
+// The daemon judges an install by what is on disk afterwards, never by where the
+// bytes came from, so a stub that writes the files is indistinguishable from the
+// real unpack — and four megabytes cheaper.
+func seedBundleAt(t *testing.T, dir, version string) []zapret.Strategy {
+	t.Helper()
 	if err := os.MkdirAll(filepath.Join(dir, "bin"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +43,7 @@ func seedBundle(t *testing.T, d *Daemon, version string) string {
 			t.Fatal(err)
 		}
 	}
-	return dir
+	return zapret.Discover(dir, dirFileNames(dir))
 }
 
 // A newer PINNED bundle is installed and reported. The version has to reach the
@@ -158,7 +169,7 @@ func TestAnUnpinnedVersionIsReportedQuietly(t *testing.T) {
 	d, _ := newTestDaemon(t)
 	events := captureLogs(t, d)
 
-	d.reportZapretUpdateOutcome("1.99.0", zapret.ErrUntrustedVersion)
+	d.reportZapretUpdateOutcome("1.10.1", "1.99.0", zapret.ErrUntrustedVersion)
 
 	ev, ok := loudest(*events, "1.99.0")
 	if !ok {
@@ -301,19 +312,24 @@ func TestAFailedVerificationIsLouderThanAFailedCheck(t *testing.T) {
 	d, _ := newTestDaemon(t)
 	events := captureLogs(t, d)
 
-	d.reportZapretUpdateFailure(errors.New("dial tcp: no route to host"))
+	d.reportZapretUpdateFailure(errors.New("dial tcp: no route to host"), "1.10.1")
 	if ev, ok := loudest(*events, "no route to host"); !ok || ev.Level != LogInfo {
 		t.Errorf("an unreachable feed logged as %+v, want an info line", ev)
 	}
 
 	*events = nil
-	d.reportZapretUpdateFailure(fmt.Errorf("%w: контрольная сумма не совпала", zapret.ErrIntegrity))
+	d.reportZapretUpdateFailure(fmt.Errorf("%w: контрольная сумма не совпала", zapret.ErrIntegrity), "1.10.1")
 	ev, ok := loudest(*events, "целостност")
 	if !ok {
 		t.Fatalf("a failed integrity check said nothing about integrity: %v", *events)
 	}
 	if ev.Level != LogError {
 		t.Errorf("a failed integrity check logged at %q, want %q", ev.Level, LogError)
+	}
+	// An update that was refused genuinely does leave the working bundle running,
+	// and that is the reassurance the line carries.
+	if !strings.Contains(ev.Msg, "осталась прежняя") {
+		t.Errorf("a refused update did not say the old bundle is still there: %q", ev.Msg)
 	}
 }
 
@@ -341,5 +357,11 @@ func TestAFailedVerificationOnFirstConnectIsSaidOutLoud(t *testing.T) {
 	}
 	if ev.Level != LogError {
 		t.Errorf("a refused bundle logged at %q, want %q", ev.Level, LogError)
+	}
+	// There was no bundle here to keep. Borrowing the update wording would tell a
+	// fresh install that a previous bypass is still running, and the very next
+	// line — the embedded floor going in — contradicts it.
+	if strings.Contains(ev.Msg, "осталась прежняя") {
+		t.Errorf("a first install claimed a previous bundle was kept: %q", ev.Msg)
 	}
 }

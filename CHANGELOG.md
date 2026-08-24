@@ -81,6 +81,44 @@ All notable changes to Tenebra are documented here. The format follows
   Settings.** They were only ever reachable from the panel that has been removed,
   next to the version and the updater switch they belong beside. The status line
   there is the core's: which strategy is running, or that none is.
+### Added
+
+- **The bypass bundle ships inside the build, so a first connect no longer
+  depends on reaching GitHub.** The bypass used to exist only after a download,
+  and there were four ways for that download to end with nothing installed: no
+  network, GitHub blocked outright — which is precisely the network this
+  product is for — a published release newer than any checksum the build
+  carries, or an archive that did not match the checksum it does. The third of
+  those emptied every fresh install the day upstream published 1.10.2 ahead of
+  its pin (see 0.5.3), and pinning faster does not fix it: the pin has to ship
+  before the version it names is needed. Bundle 1.10.2 is now compiled into the
+  core — the release archive byte for byte — and installed straight from those
+  bytes whenever the download cannot deliver one. It is a floor, not a ceiling:
+  a newer release this build pins still replaces it on the next check, a bundle
+  already installed is never overwritten, and a newer one is never rolled back.
+  A build whose embedded archive and pinned checksum have drifted apart fails
+  its tests, which is the class of mistake the whole change exists to end. The
+  cost is size, and only where the bypass runs: the Windows core binary grows
+  from 11.9 MB to 13.4 MB, while the macOS and Linux ones — where the bundle is
+  a Windows packet filter nothing there could start — carry neither the archive
+  nor the code to unpack it, and stay the size they were. Because the bundle is
+  now redistributed rather than only fetched,
+  [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md#2-components-downloaded-at-runtime)
+  records it as shipped, with the licenses and copyright holders it carries.
+
+### Changed
+
+- **"Update the bundle automatically" now governs downloads only, not whether
+  the bypass exists.** Unticking it used to suppress the first-connect install
+  outright, which — once a bundle ships inside the build — reads the switch as
+  something it never said. Fetching a release is this application reaching the
+  network on its own and is exactly what the switch is for; the compiled-in copy
+  costs no request, needs no update, and is the release the client was built and
+  tested against. So with updates off Tenebra still asks the release page for
+  nothing, and a first connect with no bundle present still unpacks the copy it
+  shipped with. Someone who unticked that box turned off updates, not their
+  bypass — and a fresh install with the box unticked no longer connects with
+  YouTube and Discord quietly taking the round trip through an exit node.
 
 ## [0.5.3] - 2026-08-24
 
