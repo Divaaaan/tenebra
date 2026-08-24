@@ -415,13 +415,17 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     void api
       .updateZapret()
       .then((r: ZapretUpdate) => {
-        // "Already current" and "updated" are both successes, and the user should
-        // be able to tell them apart — the first means the bypass is not the
-        // problem, which is the whole reason to look here.
+        // Three successes to tell apart: an install happened; a newer bundle is
+        // out but its checksum is not pinned into this client, so it is held back
+        // until Tenebra itself is updated; or the installed one is already current
+        // — the last means the bypass is not the problem, which is the whole reason
+        // to look here.
         setBypassUpdateNote(
-          r.updated
-            ? `${r.installed || "—"} → ${r.latest}`
-            : `${t.settings.bypassUpToDate} ${r.latest || r.installed}`,
+          r.blocked
+            ? `${t.settings.bypassNeedsClientUpdate} ${r.latest}`
+            : r.updated
+              ? `${r.installed || "—"} → ${r.latest}`
+              : `${t.settings.bypassUpToDate} ${r.latest || r.installed}`,
         );
       })
       .catch((e: unknown) => {

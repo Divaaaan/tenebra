@@ -221,6 +221,15 @@ export interface Strings {
     /** Any other refused command: the setting simply did not take effect. */
     commandFailed: string;
     /**
+     * The core refused to install a bypass bundle that did not match the
+     * checksum published with it. Named separately because it is not a setting
+     * that failed to apply: the archive arrived and was not what upstream
+     * published, and the bundle is code the service runs with its own
+     * privileges. The user needs to read this one as "someone is altering my
+     * downloads", not as "this app is buggy".
+     */
+    bypassIntegrity: string;
+    /**
      * The connect the tun guard refused: another VPN already owns the machine's
      * default route. Named specifically because the fix is specific — turn the
      * other tunnel off — and because the generic "refused" wording sends the user
@@ -536,6 +545,13 @@ export interface Strings {
     bypassUpdate: string;
     bypassUpdating: string;
     bypassUpToDate: string;
+    /**
+     * A newer bundle exists but its checksum is not pinned into this Tenebra
+     * build, so it is not auto-installed — the version to update Tenebra for is
+     * appended after this text. Distinct from "already current": there IS a newer
+     * one, this client just will not run it on trust (see core/zapret/verify.go).
+     */
+    bypassNeedsClientUpdate: string;
     bypassAutoUpdate: string;
     bypassAutoUpdateHint: string;
     tlsFragmentHint: string;
@@ -857,6 +873,8 @@ const en: Strings = {
       "The background service is older than this app and doesn't know this setting — update or reinstall the service.",
     commandFailed:
       "The setting didn't apply — the background service refused it. See the log for details.",
+    bypassIntegrity:
+      "The downloaded bypass bundle didn't match the checksum published with it, so nothing was installed and the previous bundle is still in place. If this keeps happening, something on the network between you and GitHub is altering downloads.",
     tunConflict:
       "Another VPN already owns the default route, so the tunnel was not raised — two tunnels routing everything take the machine offline rather than sharing. Turn the other one off and try again.",
     tunConflictOverride:
@@ -952,7 +970,8 @@ const en: Strings = {
       urlPlaceholder: "https://…",
       link: "Server link",
       linkPlaceholder: "vless://…  ·  hysteria2://…  ·  ss://…",
-      linkHint: "Paste one link, or several — one per line — to import them as a single profile.",
+      linkHint:
+        "Paste one link, or several — one per line — to import them as a single profile.",
       pickFile: "Choose file…",
       fileHint: "A text file with one server link per line.",
       paste: "Paste",
@@ -971,19 +990,23 @@ const en: Strings = {
     title: "Settings",
     routing: "Routing",
     routingSmart: "Smart",
-    routingSmartHint: "Russian destinations go direct, everything else tunnels.",
+    routingSmartHint:
+      "Russian destinations go direct, everything else tunnels.",
     routingGlobal: "Global",
     routingGlobalHint: "Send all traffic through the tunnel.",
     routingDirect: "Direct",
     routingDirectHint: "No tunnel; traffic goes out untouched.",
     split: "Split tunneling",
-    splitHint: "Route specific apps differently from the rest, by executable name.",
+    splitHint:
+      "Route specific apps differently from the rest, by executable name.",
     splitOff: "Off",
     splitOffHint: "Every app follows the routing above.",
     splitExclude: "Exclude apps",
-    splitExcludeHint: "Listed apps bypass the tunnel; everything else stays routed.",
+    splitExcludeHint:
+      "Listed apps bypass the tunnel; everything else stays routed.",
     splitInclude: "Only these apps",
-    splitIncludeHint: "Only the listed apps use the tunnel; everything else goes direct.",
+    splitIncludeHint:
+      "Only the listed apps use the tunnel; everything else goes direct.",
     splitApps: "Apps",
     splitAppsEmpty: "No apps yet. Add an executable like chrome.exe.",
     splitAddPlaceholder: "chrome.exe",
@@ -1004,7 +1027,8 @@ const en: Strings = {
     stackSystem: "System",
     stackSystemHint: "The kernel's own TCP/IP. Fastest; the default.",
     stackGvisor: "gVisor",
-    stackGvisorHint: "Userspace stack. Slower, but immune to TUN driver quirks.",
+    stackGvisorHint:
+      "Userspace stack. Slower, but immune to TUN driver quirks.",
     stackMixed: "Mixed",
     stackMixedHint: "TCP on the system stack, UDP on gVisor.",
     appearance: "Appearance",
@@ -1088,7 +1112,8 @@ const en: Strings = {
     rulesAddPlaceholder: "example.com",
     rulesRemove: "Remove",
     rulesEmpty: "No domains yet.",
-    rulesInvalid: "Enter a domain like example.com — no scheme, port, or slash.",
+    rulesInvalid:
+      "Enter a domain like example.com — no scheme, port, or slash.",
     updateChannel: "Update channel",
     updateChannelStable: "Stable",
     updateChannelStableHint: "Tested releases only.",
@@ -1105,6 +1130,8 @@ const en: Strings = {
     bypassUpdate: "Update",
     bypassUpdating: "Updating…",
     bypassUpToDate: "already current:",
+    bypassNeedsClientUpdate:
+      "a newer bundle is out — update Tenebra to get it:",
     bypassAutoUpdate: "Update the bundle automatically",
     bypassAutoUpdateHint:
       "A bundle a few releases behind does not get slower — it stops working, and looks exactly like a dead node.",
@@ -1168,7 +1195,8 @@ const en: Strings = {
     leakIpHeading: "Public IP",
     leakDnsHeading: "DNS",
     leakIpOk: "Traffic is leaving through the tunnel exit.",
-    leakIpWarn: "Your public IP is not the tunnel exit — traffic may be leaking.",
+    leakIpWarn:
+      "Your public IP is not the tunnel exit — traffic may be leaking.",
     leakIpNeutral: "Public IP reported. Not connected, so no exit was checked.",
     leakIpError: "Couldn't determine your public IP from any echo service.",
     egressIp: "Public IP",
@@ -1176,7 +1204,8 @@ const en: Strings = {
     leakSource: "via {source}",
     leakDnsOk: "Resolvers look consistent with the tunnel.",
     leakDnsLeak: "Resolvers appear to bypass the tunnel.",
-    leakDnsInconclusive: "Inconclusive — not enough signal for a verdict. This is not a pass.",
+    leakDnsInconclusive:
+      "Inconclusive — not enough signal for a verdict. This is not a pass.",
     leakDnsUnavailable: "Couldn't run the DNS probe. This is not a pass.",
     leakDnsResolvers: "Resolvers",
   },
@@ -1185,7 +1214,8 @@ const en: Strings = {
     hint: "Drop a zapret folder or archive — the DPI bypass for YouTube and Discord. The app finds the strategy that works here.",
     dropHint: "Drop the zapret folder or its archive",
     loading: "Reading…",
-    badFile: "This does not look like a zapret bundle: no bin\\winws.exe and no .bat strategies inside",
+    badFile:
+      "This does not look like a zapret bundle: no bin\\winws.exe and no .bat strategies inside",
     rules: "strategies",
     counting: "reading…",
     remove: "Remove",
@@ -1234,14 +1264,16 @@ const en: Strings = {
     urlRequired: "Enter a subscription URL.",
     linkRequired: "Paste a server link.",
     clipboardEmpty: "The clipboard is empty.",
-    clipboardDenied: "Couldn't read the clipboard. Grant access or paste manually.",
+    clipboardDenied:
+      "Couldn't read the clipboard. Grant access or paste manually.",
     qrNotFound: "No QR code found in that image.",
     qrUnsupported: "QR scanning isn't available here. Paste the link instead.",
     qrDecodeFailed: "Couldn't read that image.",
     batchEmpty: "No valid server links found.",
     importUnreachable:
       "Couldn't download the subscription — the server is unreachable. Check your connection or turn on a VPN.",
-    importBadStatus: "The subscription server returned an error. Check the link.",
+    importBadStatus:
+      "The subscription server returned an error. Check the link.",
     importBadContent:
       "Couldn't read the subscription — no servers found, or the format isn't supported.",
   },
@@ -1352,7 +1384,8 @@ const ru: Strings = {
     deferred: "Обновление готово — установится после отключения",
     installNow: "Установить сейчас",
     confirmTitle: "Установить обновление сейчас?",
-    confirmBody: "Это разорвёт VPN-соединение и перезапустит Tenebra. Продолжить?",
+    confirmBody:
+      "Это разорвёт VPN-соединение и перезапустит Tenebra. Продолжить?",
   },
   daemon: {
     stale:
@@ -1362,8 +1395,7 @@ const ru: Strings = {
     copyCommand: "Скопировать команду обновления",
     copied: "Скопировано",
     reinstallHint: "Переустановите приложение, чтобы обновить её",
-    restartServiceHint:
-      "Обновите пакет Tenebra и перезапустите службу tenebra",
+    restartServiceHint: "Обновите пакет Tenebra и перезапустите службу tenebra",
     dismiss: "Скрыть",
     unreachable:
       "Нет связи с фоновой службой — повторяем попытки. Пока она не ответит, подключение и настройки не работают.",
@@ -1371,6 +1403,8 @@ const ru: Strings = {
       "Фоновая служба старее приложения и не знает эту настройку — обновите или переустановите службу.",
     commandFailed:
       "Настройка не применилась — фоновая служба отклонила команду. Подробности в журнале.",
+    bypassIntegrity:
+      "Скачанная сборка обхода не совпала с опубликованной контрольной суммой — ничего не установлено, осталась прежняя сборка. Если это повторяется, файлы подменяет что-то в сети между тобой и GitHub.",
     tunConflict:
       "Маршрут по умолчанию уже держит другой VPN, туннель не поднят — два туннеля не делят машину, а оставляют её без сети. Выключи второй и попробуй снова.",
     tunConflictOverride:
@@ -1434,7 +1468,8 @@ const ru: Strings = {
   profiles: {
     title: "Профили",
     empty: "Нет профилей",
-    emptyHint: "Импортируйте ссылку подписки, вставьте ссылку или загрузите файл.",
+    emptyHint:
+      "Импортируйте ссылку подписки, вставьте ссылку или загрузите файл.",
     nodes: "серв.",
     active: "Активен",
     setActive: "Сделать активным",
@@ -1467,7 +1502,8 @@ const ru: Strings = {
       urlPlaceholder: "https://…",
       link: "Ссылка на сервер",
       linkPlaceholder: "vless://…  ·  hysteria2://…  ·  ss://…",
-      linkHint: "Вставьте одну ссылку или сразу несколько — по одной в строке — они станут одним профилем.",
+      linkHint:
+        "Вставьте одну ссылку или сразу несколько — по одной в строке — они станут одним профилем.",
       pickFile: "Выбрать файл…",
       fileHint: "Текстовый файл: по одной ссылке на сервер в строке.",
       paste: "Вставить",
@@ -1492,15 +1528,19 @@ const ru: Strings = {
     routingDirect: "Прямая",
     routingDirectHint: "Без туннеля; трафик идёт напрямую.",
     split: "Раздельный туннель",
-    splitHint: "Направлять отдельные приложения иначе, по имени исполняемого файла.",
+    splitHint:
+      "Направлять отдельные приложения иначе, по имени исполняемого файла.",
     splitOff: "Выкл.",
     splitOffHint: "Все приложения следуют маршрутизации выше.",
     splitExclude: "Исключить приложения",
-    splitExcludeHint: "Указанные приложения идут мимо туннеля; остальное — как обычно.",
+    splitExcludeHint:
+      "Указанные приложения идут мимо туннеля; остальное — как обычно.",
     splitInclude: "Только эти приложения",
-    splitIncludeHint: "Через туннель идут только указанные приложения; остальное — напрямую.",
+    splitIncludeHint:
+      "Через туннель идут только указанные приложения; остальное — напрямую.",
     splitApps: "Приложения",
-    splitAppsEmpty: "Пока нет приложений. Добавьте исполняемый файл, например chrome.exe.",
+    splitAppsEmpty:
+      "Пока нет приложений. Добавьте исполняемый файл, например chrome.exe.",
     splitAddPlaceholder: "chrome.exe",
     splitAdd: "Добавить",
     splitRemove: "Удалить",
@@ -1519,7 +1559,8 @@ const ru: Strings = {
     stackSystem: "Системный",
     stackSystemHint: "TCP/IP ядра ОС. Самый быстрый; по умолчанию.",
     stackGvisor: "gVisor",
-    stackGvisorHint: "Стек в user space. Медленнее, но не зависит от капризов TUN-драйвера.",
+    stackGvisorHint:
+      "Стек в user space. Медленнее, но не зависит от капризов TUN-драйвера.",
     stackMixed: "Смешанный",
     stackMixedHint: "TCP через системный стек, UDP через gVisor.",
     appearance: "Оформление",
@@ -1594,8 +1635,7 @@ const ru: Strings = {
     presetRuGovHint:
       "Госсервисы часто отклоняют зарубежный адрес — держим их мимо туннеля.",
     rulesDirect: "Всегда напрямую",
-    rulesDirectHint:
-      "Домены мимо туннеля, по суффиксу (включая поддомены).",
+    rulesDirectHint: "Домены мимо туннеля, по суффиксу (включая поддомены).",
     rulesProxy: "Всегда через туннель",
     rulesProxyHint:
       "Домены принудительно через туннель, по суффиксу (включая поддомены).",
@@ -1620,6 +1660,8 @@ const ru: Strings = {
     bypassUpdate: "Обновить",
     bypassUpdating: "Обновляю…",
     bypassUpToDate: "уже свежая:",
+    bypassNeedsClientUpdate:
+      "вышла новее сборка — обнови Tenebra, чтобы получить её:",
     bypassAutoUpdate: "Обновлять сборку самому",
     bypassAutoUpdateHint:
       "Устаревшая сборка не тормозит, а перестаёт работать — и выглядит это ровно как мёртвый узел.",
@@ -1652,7 +1694,8 @@ const ru: Strings = {
     stunUdpBlocked: "заблокирован",
     stunNat: "Тип NAT",
     stunIp: "Внешний IP",
-    stunError: "Не удалось связаться ни с одним STUN-сервером. Проверьте соединение.",
+    stunError:
+      "Не удалось связаться ни с одним STUN-сервером. Проверьте соединение.",
     natOpen: "открытый — без NAT",
     natEndpointIndependent: "endpoint-independent (годен для P2P)",
     natEndpointDependent: "endpoint-dependent (симметричный)",
@@ -1663,7 +1706,8 @@ const ru: Strings = {
     speedResult: "Загрузка",
     speedSample: "{mb} МБ за {s} с",
     speedError: "Тест скорости не удался. Попробуйте ещё раз.",
-    speedGateHint: "Подключитесь к узлу, чтобы измерить скорость через туннель.",
+    speedGateHint:
+      "Подключитесь к узлу, чтобы измерить скорость через туннель.",
     simpleMode: "Простой режим",
     simpleModeHint:
       "Упрощённый интерфейс: только подключение и выбор узла, продвинутые панели скрыты.",
@@ -1683,7 +1727,8 @@ const ru: Strings = {
     leakIpHeading: "Внешний IP",
     leakDnsHeading: "DNS",
     leakIpOk: "Трафик выходит через узел туннеля.",
-    leakIpWarn: "Ваш внешний IP не совпадает с узлом туннеля — возможна утечка.",
+    leakIpWarn:
+      "Ваш внешний IP не совпадает с узлом туннеля — возможна утечка.",
     leakIpNeutral: "Внешний IP получен. Подключения нет, узел не проверялся.",
     leakIpError: "Не удалось определить внешний IP ни через один сервис.",
     egressIp: "Внешний IP",
@@ -1691,7 +1736,8 @@ const ru: Strings = {
     leakSource: "через {source}",
     leakDnsOk: "Резолверы выглядят согласованными с туннелем.",
     leakDnsLeak: "Похоже, резолверы идут мимо туннеля.",
-    leakDnsInconclusive: "Неопределённо — данных для вердикта недостаточно. Это не гарантия.",
+    leakDnsInconclusive:
+      "Неопределённо — данных для вердикта недостаточно. Это не гарантия.",
     leakDnsUnavailable: "Не удалось выполнить проверку DNS. Это не гарантия.",
     leakDnsResolvers: "Резолверы",
   },
@@ -1700,7 +1746,8 @@ const ru: Strings = {
     hint: "Перетащи папку или архив zapret — обходчик блокировок РКН для YouTube и Discord. Приложение само подберёт рабочую стратегию.",
     dropHint: "Перетащи сюда папку zapret или её архив",
     loading: "Читаю…",
-    badFile: "Это не похоже на сборку zapret: внутри нет bin\\winws.exe и стратегий .bat",
+    badFile:
+      "Это не похоже на сборку zapret: внутри нет bin\\winws.exe и стратегий .bat",
     rules: "стратегий",
     counting: "разбираю…",
     remove: "Убрать",
@@ -1749,7 +1796,8 @@ const ru: Strings = {
     urlRequired: "Введите ссылку подписки.",
     linkRequired: "Вставьте ссылку на сервер.",
     clipboardEmpty: "Буфер обмена пуст.",
-    clipboardDenied: "Не удалось прочитать буфер обмена. Дайте доступ или вставьте вручную.",
+    clipboardDenied:
+      "Не удалось прочитать буфер обмена. Дайте доступ или вставьте вручную.",
     qrNotFound: "В этом изображении нет QR-кода.",
     qrUnsupported: "Сканирование QR здесь недоступно. Вставьте ссылку вручную.",
     qrDecodeFailed: "Не удалось прочитать изображение.",
@@ -1783,6 +1831,12 @@ export function describeCoreError(e: unknown, t: Strings): string {
   const lower = raw.toLowerCase();
   if (lower.includes("unknown command")) {
     return t.daemon.commandUnknown;
+  }
+  // The core's integrity refusal (core/zapret/verify.go). Matched on its wording
+  // because the protocol carries no error codes, and kept narrow — the phrase
+  // names that one guard — so no ordinary failure borrows an alarm this loud.
+  if (lower.includes("проверку целостности")) {
+    return t.daemon.bypassIntegrity;
   }
   // The tun-conflict refusal has a fix the user can act on, and it is not in
   // this app — say which situation they are in rather than "the command was

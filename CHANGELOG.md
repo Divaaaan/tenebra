@@ -124,6 +124,31 @@ All notable changes to Tenebra are documented here. The format follows
   those would hand a domain back to the geo split, which in smart mode can send it
   direct), and apps the user listed under split-exclude stay direct, since that is
   a choice made one executable at a time.
+### Security
+
+- **The bypass bundle is verified before it is installed, and only pinned
+  versions install automatically.** The updater took the download URL out of the
+  release feed as it stood — no scheme check, no host check — followed its
+  redirects, unpacked the result and put it in place; the size the feed published
+  was parsed and never compared to anything, and no checksum was consulted at all.
+  Since the bundle installs itself on the first connect and re-checks every twelve
+  hours, and a batch file out of it is then run through `cmd.exe` by a service
+  account, anything able to alter that download got code execution as LocalSystem
+  on a schedule. Now the archive may only come from `github.com` or the GitHub
+  release-asset hosts it redirects to (`release-assets.githubusercontent.com`,
+  `objects.githubusercontent.com`) over https — checked on the first URL and on
+  every redirect after it — must arrive at exactly the length the release
+  declares, and must hash to a SHA-256 pinned into the client for that version.
+  A version the client does not pin is not installed at all: the digest GitHub
+  publishes beside the asset travels the same connection as the archive, so it
+  cannot stand in for a pin against a network able to forge that connection —
+  which, on the networks this app is for, is the whole threat. Such a release is
+  reported instead ("a newer bypass bundle is out — update Tenebra"), the working
+  one is kept, and the pin ships with the next client release. The verified bytes
+  are unpacked straight from memory, so nothing re-reads a file that could be
+  swapped between the checksum and the install. A refusal that means tampering is
+  logged as an error and named on screen; "there is a newer bundle you do not pin
+  yet" is a quiet, actionable notice rather than an alarm.
 
 ## [0.5.0] - 2026-08-21
 

@@ -2,6 +2,7 @@ package zapret
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,8 +10,10 @@ import (
 )
 
 // TestLiveUpdateAgainstUpstream exercises the whole update path against the real
-// release feed: query, download, unpack, verify, stamp. It is skipped unless
-// TENEBRA_LIVE is set, so the ordinary test run stays offline and deterministic.
+// release feed: query, then either the full download/verify/unpack/stamp (when
+// the newest release is pinned) or the Variant A refusal (when it is not). It is
+// skipped unless TENEBRA_LIVE is set, so the ordinary test run stays offline and
+// deterministic.
 //
 //	TENEBRA_LIVE=1 go test ./core/zapret -run TestLiveUpdate -v
 //
@@ -28,9 +31,31 @@ func TestLiveUpdateAgainstUpstream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LatestRelease: %v", err)
 	}
-	t.Logf("latest = %s, asset = %s (%d bytes)", rel.Version, rel.ArchiveURL, rel.Size)
+	// The API digest is logged as the number a maintainer STARTS from when adding
+	// this release to pinnedArchives — but it rides the same connection as the
+	// archive, so it must be confirmed out of band (download from another vantage
+	// point, sha256sum) before it is trusted as a pin.
+	t.Logf("latest = %s, asset = %s (%d bytes, api digest %s — verify out of band before pinning)",
+		rel.Version, rel.ArchiveURL, rel.Size, rel.SHA256)
 
 	dir := filepath.Join(t.TempDir(), "zapret")
+
+	if PinnedSum(rel.Version) == "" {
+		// Variant A against real upstream: the newest release is newer than any pin
+		// this build carries, so it must be refused rather than installed on the
+		// strength of the same-connection digest. This is exactly the state a
+		// maintainer resolves by pinning the version — the run still confirms the
+		// query, the URL policy and the refusal all work end to end.
+		err := Apply(ctx, nil, dir, rel)
+		if !errors.Is(err, ErrUntrustedVersion) {
+			t.Fatalf("an unpinned upstream release was not refused with ErrUntrustedVersion: %v", err)
+		}
+		t.Logf("latest upstream %s is not pinned — refused as designed; add it to pinnedArchives to ship it", rel.Version)
+		return
+	}
+
+	// A pinned latest: exercise the whole path for real — download, verify against
+	// the pin, unpack, stamp.
 	if err := Apply(ctx, nil, dir, rel); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}

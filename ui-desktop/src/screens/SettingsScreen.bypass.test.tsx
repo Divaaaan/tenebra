@@ -81,6 +81,7 @@ describe("SettingsScreen — bypass bundle", () => {
       installed: "1.9.9",
       latest: "1.10.1",
       updated: true,
+      blocked: false,
     });
     render({ zapret_version: "1.9.9" });
 
@@ -96,6 +97,7 @@ describe("SettingsScreen — bypass bundle", () => {
       installed: "1.10.1",
       latest: "1.10.1",
       updated: false,
+      blocked: false,
     });
     render({ zapret_version: "1.10.1" });
 
@@ -106,6 +108,34 @@ describe("SettingsScreen — bypass bundle", () => {
         screen.getByText(/уже свежая|already current/),
       ).toBeInTheDocument(),
     );
+  });
+
+  // A newer bundle exists but its checksum is not pinned into this client, so the
+  // core reports it without installing it. This must read as "update Tenebra",
+  // naming the version — not as "already current" (there IS a newer one) and not
+  // as a red failure (nothing is wrong, and retrying will not change it).
+  it("says to update Tenebra when a newer bundle is not trusted yet", async () => {
+    vi.spyOn(api, "updateZapret").mockResolvedValue({
+      installed: "1.10.1",
+      latest: "1.11.0",
+      updated: false,
+      blocked: true,
+    });
+    render({ zapret_version: "1.10.1" });
+
+    clickBypassUpdate();
+
+    await waitFor(() => {
+      const row = screen
+        .getByText(/Сборка обхода|Bypass bundle/)
+        .closest(".set-row");
+      const text = row?.textContent ?? "";
+      // Names the available version and points at updating Tenebra...
+      expect(text).toMatch(/1\.11\.0/);
+      expect(text).toMatch(/обнови Tenebra|update Tenebra/i);
+      // ...and does not mislead as "already current".
+      expect(text).not.toMatch(/уже свежая|already current/);
+    });
   });
 
   // A failed check must not read as success. The user is here because something

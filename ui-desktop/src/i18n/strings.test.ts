@@ -42,6 +42,19 @@ describe("describeCoreError", () => {
     expect(describeCoreError(raw, en)).not.toContain(raw);
   });
 
+  // The bypass bundle is downloaded and then run as a service account, so a
+  // refusal to install one that did not match its published checksum is the one
+  // refusal in this app the user must not read as "the setting didn't apply".
+  it("names a bundle that failed its integrity check", () => {
+    const refusal =
+      "zapret: сборка не прошла проверку целостности: контрольная сумма не совпала — ждали a, скачали b";
+    expect(describeCoreError(refusal, en)).toBe(en.daemon.bypassIntegrity);
+    expect(describeCoreError(new Error(refusal), ru)).toBe(
+      ru.daemon.bypassIntegrity,
+    );
+    expect(describeCoreError(refusal, en)).not.toBe(en.daemon.commandFailed);
+  });
+
   it("survives a rejection with no message at all", () => {
     expect(describeCoreError(undefined, en)).toBe(en.daemon.commandFailed);
     expect(describeCoreError(null, en)).toBe(en.daemon.commandFailed);

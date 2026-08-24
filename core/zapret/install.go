@@ -2,6 +2,7 @@ package zapret
 
 import (
 	"archive/zip"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -40,7 +41,30 @@ func Install(archivePath, dir string) ([]Strategy, error) {
 	}
 	defer zr.Close()
 
-	prefix := commonPrefix(zr.File)
+	return installZipFiles(zr.File, dir)
+}
+
+// InstallFromArchive unpacks an in-memory bundle archive into dir.
+//
+// The updater uses this rather than the path-based Install so the bytes that were
+// hash-verified are the exact bytes unpacked: there is no file on disk to reopen
+// between the checksum and the install, and therefore no window in which a local
+// process could swap the archive's contents (a TOCTOU) before it becomes a .bat
+// run by cmd.exe under LocalSystem. See Apply.
+func InstallFromArchive(data []byte, dir string) ([]Strategy, error) {
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, fmt.Errorf("zapret: не читается архив: %w", err)
+	}
+	return installZipFiles(zr.File, dir)
+}
+
+// installZipFiles unpacks the members of an opened zip into dir and reports the
+// strategies it found. It is shared by Install (from a file) and
+// InstallFromArchive (from memory) so the two cannot drift in how they strip the
+// wrapper directory, reject traversal, or decide what counts as a bundle.
+func installZipFiles(files []*zip.File, dir string) ([]Strategy, error) {
+	prefix := commonPrefix(files)
 
 	// Unpack into a fresh directory, so a re-import cannot leave stale strategy
 	// files from a previous version lying beside the new ones — the user would
@@ -53,7 +77,7 @@ func Install(archivePath, dir string) ([]Strategy, error) {
 	}
 
 	var names []string
-	for _, f := range zr.File {
+	for _, f := range files {
 		rel := strings.TrimPrefix(f.Name, prefix)
 		rel = strings.TrimPrefix(rel, "/")
 		if rel == "" {
