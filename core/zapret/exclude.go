@@ -156,12 +156,22 @@ func nodeAddresses(servers []string) (ips []string, unresolved []string) {
 // returns the usable addresses each answered with. A name that failed, timed out
 // or answered with nothing usable is simply absent from the map — the caller
 // counts those rather than guessing an address for them.
+//
+// The deadline bounds the call itself, not only the lookups: the wait gives up
+// when the budget runs out and reports what arrived, so a resolver that ignores
+// its context (a swapped-in implementation, a platform stub) costs the budget
+// rather than the connect. Stragglers finish into a map nobody reads.
 func resolveHosts(hosts []string) map[string][]string {
 	if len(hosts) == 0 {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), resolveBudget)
 	defer cancel()
+
+	// Read once, up front: a straggler can outlive this call, and reaching for the
+	// package variable from inside it would mean reading a value that may have been
+	// replaced in the meantime. One batch, one resolver.
+	lookup := lookupIP
 
 	out := make(map[string][]string, len(hosts))
 	var mu sync.Mutex
@@ -178,7 +188,7 @@ func resolveHosts(hosts []string) map[string][]string {
 			// A lookup that starts after the deadline returns immediately with the
 			// context's error, so a long queue drains at the budget instead of
 			// running past it.
-			addrs, err := lookupIP(ctx, host)
+			addrs, err := lookup(ctx, host)
 			if err != nil {
 				return
 			}
@@ -197,8 +207,26 @@ func resolveHosts(hosts []string) map[string][]string {
 			mu.Unlock()
 		}(h)
 	}
-	wg.Wait()
-	return out
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+
+	// Copied under the lock because a straggler may still be writing: what the
+	// caller gets is a snapshot taken when the budget ran out.
+	mu.Lock()
+	defer mu.Unlock()
+	snapshot := make(map[string][]string, len(out))
+	for host, addrs := range out {
+		snapshot[host] = addrs
+	}
+	return snapshot
 }
 
 // usableNodeIP rejects answers no exit node can sit behind. Resolvers that turn

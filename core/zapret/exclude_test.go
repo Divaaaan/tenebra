@@ -190,6 +190,37 @@ func TestExcludeNodesDoesNotStallTheConnect(t *testing.T) {
 	}
 }
 
+// The budget has to hold for a resolver that ignores its context too — the
+// lookup is a package variable, and the guarantee this function makes to the
+// connect path cannot rest on what is plugged into it.
+func TestExcludeNodesGivesUpOnAResolverThatIgnoresTheDeadline(t *testing.T) {
+	dir := t.TempDir()
+
+	prevBudget := resolveBudget
+	resolveBudget = 50 * time.Millisecond
+	t.Cleanup(func() { resolveBudget = prevBudget })
+
+	prev := lookupIP
+	t.Cleanup(func() { lookupIP = prev })
+	lookupIP = func(context.Context, string) ([]net.IP, error) {
+		time.Sleep(500 * time.Millisecond) // deaf to cancellation
+		return []net.IP{net.ParseIP("198.51.100.10")}, nil
+	}
+
+	start := time.Now()
+	unresolved, err := ExcludeNodes(dir, []string{"deaf.example.com"})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("ExcludeNodes: %v", err)
+	}
+	if elapsed > 300*time.Millisecond {
+		t.Errorf("the write waited %v on a resolver deaf to its context, budget is %v", elapsed, resolveBudget)
+	}
+	if len(unresolved) != 1 || unresolved[0] != "deaf.example.com" {
+		t.Fatalf("unresolved = %v, want [deaf.example.com]", unresolved)
+	}
+}
+
 // The file is user-editable and the bundle ships it for exactly that purpose, so
 // rewriting it must not eat what the user put there.
 func TestExcludeNodesKeepsUserEntries(t *testing.T) {
