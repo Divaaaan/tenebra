@@ -1,6 +1,6 @@
 [package]
 name = "tenebra-desktop"
-version = "0.6.0"
+version = "0.5.4"
 description = "Tenebra desktop client"
 authors = ["Tenebra contributors"]
 license = "GPL-3.0-only"

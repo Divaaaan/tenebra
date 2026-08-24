@@ -11,7 +11,7 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.6.0] - 2026-08-25
+## [0.5.4] - 2026-08-25
 
 ### Fixed
 - **The screen showed no bypass on a machine where the bypass was installed and
