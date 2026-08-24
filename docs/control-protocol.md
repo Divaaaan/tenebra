@@ -262,6 +262,7 @@ bypass without ever handing the daemon a file.
 | `set_auto_failover`    | `on` (boolean)                     | `State`                     |
 | `set_dns`              | `ad_block` (boolean), `dns_remote`, `dns_direct`, `ipv4_only` (boolean) | `State` |
 | `set_rules`            | `rules_direct` (string[]), `rules_proxy` (string[]), `preset_ru_banking` (boolean), `preset_ru_gov` (boolean) | `State` |
+| `set_presets`          | `games?` (boolean), `voice?` (boolean), `services?` (boolean) | `State` |
 | `set_crash_reports`    | `on` (boolean)                     | `State`                     |
 | `leak_check`           | —                                  | `LeakCheck`                 |
 | `run_stun_check`       | —                                  | `StunCheck`                 |
@@ -362,6 +363,19 @@ before a relaunch lands, or after the budget is spent — the OS routes normally
 and traffic is not blocked.** A guarantee across that window would need an
 OS-level firewall hold owned by something that outlives sing-box; the protocol
 does not promise it.
+
+While the kill switch is armed the core also emits **no rule that pins traffic to
+the direct outbound**: the games and voice presets, the domains handed to a
+running DPI bypass, the RU banking / government presets and any `rules_direct`
+suffixes, plus the LAN bypass. The same applies on the DNS side, so none of those
+names is resolved by the direct resolver either. Proxy-direction rules are
+untouched — dropping those would leave the domain to the geo split, which in
+`smart` mode can send it direct, i.e. the kill switch causing the leak it exists
+to prevent. Apps the user listed under `set_split` in `exclude` mode do stay
+direct: that is a per-application choice they made one name at a time, unlike a
+preset. Note the consequence of the LAN rule: with the kill switch armed, private
+destinations (a router's admin page, a NAS, a printer) go into the tunnel and stop
+answering.
 
 ### TLS fragmentation (`set_tls_fragment`)
 
@@ -612,6 +626,37 @@ request:  {"id":13,"cmd":"set_rules","rules_direct":["bank.example"],"rules_prox
 response: {"id":13,"ok":true,"data":{"state":"idle","tun_stack":"system","dns_remote":"tls://1.1.1.1","dns_direct":"https://77.88.8.8/dns-query","rules_direct":["bank.example"],"rules_proxy":["work.example"],"preset_ru_banking":true}}
 ```
 
+### Routing presets (`set_presets`)
+
+Toggles the three bundled routing presets. Each field is **optional**, and an
+omitted one leaves that preset alone — the three are independent switches on the
+same screen, so a command that had to restate all of them to change one would
+eventually restate one wrong.
+
+| field      | preset | default | what it does |
+| ---------- | ------ | ------- | ------------ |
+| `services` | unblock services | **on** | Pins the commonly-censored domains (YouTube, Discord, Meta, X, the AI APIs) to the tunnel ahead of the geo split, so `googlevideo.com` resolving to an ISP cache node does not get the video sent direct. While a DPI bypass runs, the domains the bundle actually covers move to the direct path instead. |
+| `games`    | games direct | off | Pins known game clients and launchers (`process_name`) to the direct outbound: no tunnel latency on a match, and no exit-address change for anti-cheat to flag. Every name is specific to one game or launcher — a generic one like `java.exe` would take unrelated programs out of the tunnel. |
+| `voice`    | real-time UDP direct | off | Sends UDP ports 50000-65535 direct. Voice and game traffic stop paying the round trip (239ms tunnelled against 9ms direct, measured), **and the peer on the other end sees the ISP address rather than the exit node's** — the same range carries browser WebRTC and torrents. |
+
+`games` and `voice` default **off** because each takes a whole class of traffic
+out of the tunnel, which is a trade the user makes rather than one the daemon
+makes for them; `services` defaults on because it only ever moves traffic *into*
+the tunnel. All three are persisted in `settings.json` and reported in `State`
+(`preset_games_direct`, `preset_voice_direct`, `preset_unblock_services`). All
+three are inert in `direct` routing mode, and the two direct-pinning ones yield to
+the kill switch.
+
+Like the kill switch, `set_presets` re-applies to a **live** tunnel in place (a
+brief `connecting → connected` dip on the same node); a resend that changes
+nothing does not restart the tunnel. A command naming none of the three is a
+caller bug and is refused.
+
+```
+request:  {"id":14,"cmd":"set_presets","voice":true}
+response: {"id":14,"ok":true,"data":{"state":"idle","tun_stack":"system","preset_voice_direct":true,"preset_unblock_services":true}}
+```
+
 ### Per-app split tunnelling (`set_split`)
 
 `apps` is a list of executable file names matched case-insensitively against the
@@ -802,6 +847,9 @@ type State = {
   rules_proxy?: string[];         // custom domain suffixes pinned through the tunnel; omitted when empty
   preset_ru_banking?: boolean;    // RU banking direct-rule preset; omitted when off
   preset_ru_gov?: boolean;        // RU government direct-rule preset; omitted when off
+  preset_games_direct?: boolean;  // game clients kept off the tunnel; off by default, omitted when off
+  preset_voice_direct?: boolean;  // real-time UDP kept off the tunnel; off by default, omitted when off
+  preset_unblock_services?: boolean; // censored services pinned to the tunnel; on by default, omitted when off
   crash_reports?: boolean;        // crash-report consent; omitted until asked, then the choice
   crash_reports_asked?: boolean;  // whether consent has been answered; omitted while false
   error?: string;

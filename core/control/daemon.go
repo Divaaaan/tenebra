@@ -376,21 +376,24 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 		store:  store,
 		runner: runner,
 		proxy:  realSystemProxy{},
-		// The presets are ON by default, which is the product: the user buys a
-		// subscription, pastes a link, drops the bypass archive and presses one
-		// button. Shipping them off would mean that button leaves games tunnelled
-		// (adding the full round trip to every input), voice at 239ms instead of
-		// 9ms, and YouTube pinned direct by the geo rule because googlevideo
-		// resolves to an ISP cache — i.e. the three problems the app exists to
-		// solve, each waiting behind a checkbox the user has to find.
+		// Only UnblockServices ships on, and the split is by direction rather than
+		// by convenience. It pins censored domains *to* the tunnel ahead of the geo
+		// rule, which is what stops YouTube from being sent direct because
+		// googlevideo resolves to an ISP cache node — it adds nothing to what
+		// leaves the tunnel, so a default-on carries no cost the user did not ask
+		// for.
 		//
-		// Each remains switchable, and each still yields to the kill switch, whose
-		// guarantee outranks any convenience default.
+		// GamesDirect and VoiceDirect go the other way: each takes a whole class of
+		// traffic out of the tunnel. VoiceDirect is all UDP above port 50000, which
+		// on a normal desktop is browser WebRTC calls and torrents, so on by default
+		// means a fresh install shows "connected" while handing the real address to
+		// whoever is on the other end of the call. They are worth having — the
+		// latency measured here was 239ms tunnelled against 9ms direct — but that is
+		// a trade with a privacy side, and a trade belongs to the user. Both are one
+		// switch away in Settings.
 		routing: routing.Options{
 			Mode:            routing.ModeSmart,
 			UnblockServices: true,
-			GamesDirect:     true,
-			VoiceDirect:     true,
 		}.Normalize(),
 		// Bundle updates default on for the same reason the presets do: a bypass
 		// that is a few releases behind is not slower, it stops working, and the
@@ -553,10 +556,18 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	if m := routing.Mode(ps.RoutingMode); m == routing.ModeSmart || m == routing.ModeGlobal || m == routing.ModeDirect {
 		d.routing.Mode = m
 	}
-	// The three presets default on: absent means on, only an explicit false is a
-	// user turning one off.
-	d.routing.GamesDirect = ps.PresetGamesDirect == nil || *ps.PresetGamesDirect
-	d.routing.VoiceDirect = ps.PresetVoiceDirect == nil || *ps.PresetVoiceDirect
+	// Absent has to read as each preset's own default (see NewDaemon), not one
+	// blanket answer: the two that route traffic out of the tunnel are off unless
+	// the file says otherwise, the one that routes censored domains into it is on
+	// unless the file says otherwise. A stored value either way is the user's
+	// choice and is honoured as written. The `true` that 0.5.0 wrote for the two
+	// outward presets is the exception, and it is handled before it reaches here:
+	// the v1->v2 migration (see migrateV1toV2) clears preset_games_direct and
+	// preset_voice_direct, because 0.5.0 had no way to see or change them, so that
+	// true was never a choice. What survives to this point is a genuine v2 choice
+	// or the migrated default.
+	d.routing.GamesDirect = ps.PresetGamesDirect != nil && *ps.PresetGamesDirect
+	d.routing.VoiceDirect = ps.PresetVoiceDirect != nil && *ps.PresetVoiceDirect
 	d.routing.UnblockServices = ps.PresetUnblockServices == nil || *ps.PresetUnblockServices
 	// The picked bypass strategy is restored, not the fact that it was running:
 	// nothing is launched here (loading never starts anything), but the next
@@ -1339,13 +1350,16 @@ func (d *Daemon) handleSetRouting(req Request) Response {
 // real-time UDP direct, and the censored-services list routed by whether the
 // bypass covers them.
 //
-// An omitted field leaves that preset alone. All three ship on, and a UI that had
-// to restate every one to change any one would eventually restate them wrong —
-// the failure mode being a user who turns off "unblock services" and silently
-// loses the two presets that keep games and voice off the tunnel.
+// An omitted field leaves that preset alone. The three have different defaults
+// and are toggled from different rows of the same screen, so a UI that had to
+// restate every one to change any one would eventually restate them wrong — and
+// two of the three decide whether a class of traffic leaves the tunnel, which is
+// not something to get wrong by accident.
 //
-// Each preset still yields to the kill switch and to direct mode, which the
-// routing layer enforces; this only records intent.
+// This only records intent; the routing layer decides what a recorded intent
+// actually emits. All three are inert in direct mode, and the two that pin
+// traffic to the direct outbound also yield to the kill switch — unblock-services
+// does not, because it only ever pins domains to the tunnel.
 func (d *Daemon) handleSetPresets(req Request) Response {
 	if req.Games == nil && req.Voice == nil && req.Services == nil {
 		return newError(req.ID, "set_presets: nothing to change")
@@ -1880,6 +1894,9 @@ func applySettingsToState(s *State, ro routing.Options, tun singbox.TunOptions, 
 	s.RulesProxy = append([]string(nil), ro.RulesProxy...)
 	s.PresetRuBanking = ro.PresetRuBanking
 	s.PresetRuGov = ro.PresetRuGov
+	s.PresetGamesDirect = ro.GamesDirect
+	s.PresetVoiceDirect = ro.VoiceDirect
+	s.PresetUnblockServices = ro.UnblockServices
 	// Copy the multihop selection by value into a fresh pointer so the State never
 	// aliases the daemon's live field: nil while nothing has been selected (so the
 	// wire form omits it), else the current enabled/entry/exit, carried even when

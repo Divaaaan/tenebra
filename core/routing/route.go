@@ -172,7 +172,7 @@ func (o Options) RouteRules() []map[string]any {
 		}
 	}
 
-	if o.BypassLAN {
+	if o.lanBypassActive() {
 		// Private/LAN destinations should never traverse the tunnel. Match the
 		// well-known private ranges directly instead of relying on a rule-set so
 		// this works offline before any download completes.
@@ -182,6 +182,21 @@ func (o Options) RouteRules() []map[string]any {
 	}
 
 	return rules
+}
+
+// lanBypassActive reports whether private/LAN destinations get their own direct
+// rule. It is a direct pin like the presets, so it yields to the kill switch and
+// is inert in direct mode (see directPinAllowed).
+//
+// The trade is deliberate: with the kill switch armed, the router's admin page, a
+// NAS and a local printer stop answering, because the rule that excused them is
+// exactly the rule that lets traffic out of the tunnel. `ip_is_private` is also
+// wider than a home LAN — it covers the carrier-grade NAT range real ISPs hand
+// out and the range a mesh VPN assigns — so "private" is not a synonym for "never
+// leaves this building". Somebody who arms the kill switch is asking for the
+// strict reading; the switch is the control they turn off to get their LAN back.
+func (o Options) lanBypassActive() bool {
+	return o.BypassLAN && o.directPinAllowed()
 }
 
 // route builds a single "action":"route" rule with the given match fields and
@@ -212,6 +227,18 @@ func (o Options) DefaultDomainResolver() map[string]any {
 // Include split tunnelling forces the final to direct: only the explicitly
 // listed apps are routed to the proxy (by an early process_name rule), so
 // everything that falls through must go direct to honour "only these apps".
+//
+// This is deliberately not gated by the kill switch, and does not ask
+// directPinAllowed. Include mode is the explicit per-application tunnelling
+// choice — the user picked "include" and typed the list one executable at a time
+// — which is exactly the category directPinAllowed already exempts for the
+// split-exclude list, and "everything else goes direct" is the whole meaning of
+// the mode. Forcing the final to the proxy under the kill switch would silently
+// turn include into global and tunnel the very apps the user chose to keep out,
+// a different violation of intent. The traffic the user did choose to tunnel —
+// the listed apps — is pinned to the proxy outbound with no direct fallback, so
+// it fails closed if the tunnel drops; the kill switch protects that, which is
+// the traffic its promise is about.
 func (o Options) FinalOutbound() string {
 	if o.SplitMode == SplitInclude && len(o.SplitApps) > 0 {
 		return tagDirect

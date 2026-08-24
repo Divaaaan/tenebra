@@ -124,13 +124,17 @@ func ValidDomainSuffix(s string) bool {
 	return hasLetter
 }
 
-// rulesActive reports whether the custom/preset domain rules should be emitted.
-// They only make sense when the tunnel is in play: in direct mode nothing is
-// tunnelled, so a "keep direct" rule is a no-op and a "force through the tunnel"
-// rule would re-tunnel traffic the user asked to send straight out. Gating on the
-// mode keeps the rules honest and matches the split layer, which likewise adds no
-// proxy split in direct mode. Smart and global both keep the proxy as the base
-// target, so the rules apply there.
+// rulesActive reports whether the proxy-direction domain rules should be
+// emitted. They only make sense when the tunnel is in play: in direct mode
+// nothing is tunnelled, so a "force through the tunnel" rule would re-tunnel
+// traffic the user asked to send straight out. Gating on the mode matches the
+// split layer, which likewise adds no proxy split in direct mode. Smart and
+// global both keep the proxy as the base target, so the rules apply there.
+//
+// It deliberately does not ask directPinAllowed: the kill switch must not drop a
+// proxy pin. Dropping one would leave the domain to the geo split, and in smart
+// mode an RU-resolving domain the user forced through the tunnel would then go
+// direct — the kill switch causing the leak it exists to prevent.
 func (o Options) rulesActive() bool {
 	return o.Mode != ModeDirect
 }
@@ -139,9 +143,14 @@ func (o Options) rulesActive() bool {
 // direct outbound: the user's RulesDirect plus the suffixes of any enabled preset.
 // They are merged into one list (and re-normalized) so overlapping user/preset
 // entries collapse and a single domain_suffix rule covers them all. Empty (and nil
-// in direct mode, where the rules are inert).
+// where a direct pin is not allowed at all).
+//
+// This is a direct pin like the presets, so it asks directPinAllowed rather than
+// rulesActive: PresetRuBanking and PresetRuGov carry the domains of Russian banks
+// and public services, and under the kill switch they were both connecting and
+// resolving outside the tunnel.
 func (o Options) directRuleSuffixes() []string {
-	if !o.rulesActive() {
+	if !o.directPinAllowed() {
 		return nil
 	}
 	merged := make([]string, 0, len(o.RulesDirect)+len(presetRuBankingSuffixes)+len(presetRuGovSuffixes))

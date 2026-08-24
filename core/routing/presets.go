@@ -16,27 +16,36 @@ import (
 // are exactly the entries a hand-built list forgets, and forgetting them breaks
 // the game more confusingly than forgetting the game itself. `steamwebhelper.exe`
 // renders the in-game overlay and the store, so tunnelling it stalls the overlay
-// while the match itself is fine; `javaw.exe` is what actually talks to a
-// Minecraft server; the Riot and Epic clients hold the session the game needs to
-// even start.
+// while the match itself is fine; the Riot and Epic clients hold the session the
+// game needs to even start.
 //
 // Names are matched case-insensitively on the executable file name by sing-box's
-// process_name, so paths and casing do not matter.
+// process_name, so paths and casing do not matter — and that is also the reason
+// every entry has to be specific to one game or one launcher. A generic name
+// takes every program that happens to be called that out of the tunnel: this list
+// used to carry `java.exe`, `javaw.exe` and `launcher.exe`, which between them
+// meant every JVM program on the machine (an IDE, a corporate client, a build
+// tool) and any of the many unrelated binaries shipped as launcher.exe were
+// routed around the VPN by a switch the user read as "keep games direct".
+// Minecraft is the cost of that rule: it runs as javaw.exe, so only its launcher
+// is covered here and the game itself needs a hand-added entry.
 var gameProcesses = []string{
 	// Valve
 	"steam.exe", "steamwebhelper.exe", "steamservice.exe", "steamerrorreporter.exe",
 	"dota2.exe", "cs2.exe", "csgo.exe", "hl2.exe", "gmod.exe", "tf_win64.exe",
 	// Facepunch / Unity-based survival
 	"rustclient.exe",
-	// Minecraft: the launcher spawns javaw, which is the process that connects
-	"javaw.exe", "java.exe", "minecraftlauncher.exe", "minecraft.windows.exe",
+	// Minecraft: the official launcher and the Bedrock client. The Java edition
+	// itself runs as javaw.exe, too generic to claim from here.
+	"minecraftlauncher.exe", "minecraft.windows.exe",
 	// Riot
 	"riotclientservices.exe", "leagueoflegends.exe", "valorant.exe", "valorant-win64-shipping.exe",
 	// Epic / Battle.net / EA / Ubisoft launchers
 	"epicgameslauncher.exe", "battle.net.exe", "eadesktop.exe", "ealauncher.exe",
 	"upc.exe", "ubisoftconnect.exe",
-	// GOG / Rockstar
-	"galaxyclient.exe", "launcher.exe", "rockstarservice.exe", "socialclubhelper.exe",
+	// GOG / Rockstar. Rockstar's own binary is launcher.exe, a name far too common
+	// to claim, so the service and the Social Club helper carry this one.
+	"galaxyclient.exe", "rockstarservice.exe", "socialclubhelper.exe",
 }
 
 // GameProcesses returns a copy of the preset's executable names, normalized the
@@ -156,8 +165,14 @@ func coveredByZapret(covered []string, domain string) bool {
 // "the bypass is on" does not make them slow, it makes them fail — on this ISP
 // api.anthropic.com answers a forged 403 on the direct path, so every tool
 // talking to it reports an authentication error that does not exist.
+//
+// It yields to the kill switch like the other direct pins (see
+// directPinAllowed). Without that gate, arming the kill switch and connecting
+// left YouTube, googlevideo, ytimg and the whole of Discord going out on the
+// ISP's own address — resolved by the ISP's resolver — while the interface
+// showed the kill switch armed.
 func (o Options) zapretDirectSuffixes() []string {
-	if !o.ZapretActive || o.Mode == ModeDirect {
+	if !o.ZapretActive || !o.directPinAllowed() {
 		return nil
 	}
 	covered := o.coverage()
@@ -227,18 +242,14 @@ func (o Options) splitAppsWithPresets() []string {
 	return normalizeApps(merged)
 }
 
-// gamesDirectActive reports whether the games preset should emit a rule.
-//
-// Off in direct mode (nothing is tunnelled, so pinning apps to direct is a
-// no-op) and off under the kill switch, whose guarantee is that no traffic
-// leaves outside the tunnel — a preset that silently exempted every game would
-// make that guarantee false without the user ever choosing it.
+// gamesDirectActive reports whether the games preset should emit a rule. Off in
+// direct mode and under the kill switch, both by directPinAllowed.
 func (o Options) gamesDirectActive() bool {
-	return o.GamesDirect && o.Mode != ModeDirect && !o.KillSwitch
+	return o.GamesDirect && o.directPinAllowed()
 }
 
 // voiceDirectActive reports whether the real-time UDP rule should be emitted.
 // Same reasoning as gamesDirectActive.
 func (o Options) voiceDirectActive() bool {
-	return o.VoiceDirect && o.Mode != ModeDirect && !o.KillSwitch
+	return o.VoiceDirect && o.directPinAllowed()
 }

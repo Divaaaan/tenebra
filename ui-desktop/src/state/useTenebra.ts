@@ -117,6 +117,15 @@ export interface Tenebra {
     presetRuBanking: boolean,
     presetRuGov: boolean,
   ) => Promise<void>;
+  /**
+   * Toggle the bundled routing presets. Each field is optional and an omitted
+   * one leaves that preset alone — see {@link api.setPresets}.
+   */
+  setPresets: (presets: {
+    games?: boolean;
+    voice?: boolean;
+    services?: boolean;
+  }) => Promise<void>;
   refreshProfiles: () => Promise<void>;
   clearLogs: () => void;
 }
@@ -395,6 +404,18 @@ export function useTenebra(): Tenebra {
     [],
   );
 
+  const setPresets = useCallback(
+    async (presets: {
+      games?: boolean;
+      voice?: boolean;
+      services?: boolean;
+    }) => {
+      const next = await api.setPresets(presets);
+      setState(next);
+    },
+    [],
+  );
+
   const clearLogs = useCallback(() => setLogs([]), []);
 
   return {
@@ -419,6 +440,7 @@ export function useTenebra(): Tenebra {
     setCrashReports,
     setDns,
     setRules,
+    setPresets,
     refreshProfiles,
     clearLogs,
   };

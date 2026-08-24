@@ -49,6 +49,7 @@ interface SettingsScreenProps {
 const NAV_SECTIONS = [
   "routing",
   "split",
+  "presets",
   "rules",
   "mode",
   "tunnel",
@@ -944,6 +945,23 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     pushRules(rulesDirect, rulesProxy, presetRuBanking, !presetRuGov);
   }
 
+  // Routing presets. Two of the three take a class of traffic out of the tunnel,
+  // so the state has to be visible: for three releases the command existed only
+  // in the core, nothing carried the presets to the UI, and the only way to turn
+  // one off was to hand-edit settings.json. Unlike set_rules, each command names
+  // only the preset it changes — the core leaves the unnamed ones alone.
+  const presetGamesDirect = tenebra.state.preset_games_direct ?? false;
+  const presetVoiceDirect = tenebra.state.preset_voice_direct ?? false;
+  const presetUnblockServices = tenebra.state.preset_unblock_services ?? false;
+
+  function pushPresets(presets: {
+    games?: boolean;
+    voice?: boolean;
+    services?: boolean;
+  }) {
+    void tenebra.setPresets(presets).catch(reportRefusal);
+  }
+
   const themeOptions: { value: "dark" | "light"; label: string }[] = [
     { value: "dark", label: t.settings.themeDark },
     { value: "light", label: t.settings.themeLight },
@@ -1132,6 +1150,86 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
               )}
             </div>
           )}
+        </section>
+
+        <section
+          className="set-section"
+          id="set-sec-presets"
+          ref={setSectionRef("presets")}
+        >
+          <div className="set-section-head">
+            <h2 className="set-eyebrow">{t.settings.presets}</h2>
+            <p className="set-sub">{t.settings.presetsHint}</p>
+          </div>
+
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">
+                {t.settings.presetUnblockServices}
+              </span>
+              <span className="set-row-hint">
+                {t.settings.presetUnblockServicesHint}
+              </span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={presetUnblockServices}
+              className={`set-switch${presetUnblockServices ? " is-on" : ""}`}
+              onClick={() => pushPresets({ services: !presetUnblockServices })}
+            >
+              <span className="set-switch-box" aria-hidden="true">
+                {presetUnblockServices ? "▣" : "▢"}
+              </span>
+              {presetUnblockServices ? "ON" : "OFF"}
+            </button>
+          </div>
+
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">
+                {t.settings.presetGamesDirect}
+              </span>
+              <span className="set-row-hint">
+                {t.settings.presetGamesDirectHint}
+              </span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={presetGamesDirect}
+              className={`set-switch${presetGamesDirect ? " is-on" : ""}`}
+              onClick={() => pushPresets({ games: !presetGamesDirect })}
+            >
+              <span className="set-switch-box" aria-hidden="true">
+                {presetGamesDirect ? "▣" : "▢"}
+              </span>
+              {presetGamesDirect ? "ON" : "OFF"}
+            </button>
+          </div>
+
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">
+                {t.settings.presetVoiceDirect}
+              </span>
+              <span className="set-row-hint">
+                {t.settings.presetVoiceDirectHint}
+              </span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={presetVoiceDirect}
+              className={`set-switch${presetVoiceDirect ? " is-on" : ""}`}
+              onClick={() => pushPresets({ voice: !presetVoiceDirect })}
+            >
+              <span className="set-switch-box" aria-hidden="true">
+                {presetVoiceDirect ? "▣" : "▢"}
+              </span>
+              {presetVoiceDirect ? "ON" : "OFF"}
+            </button>
+          </div>
         </section>
 
         <section

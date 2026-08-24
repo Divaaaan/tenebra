@@ -23,8 +23,12 @@ const settingsFile = "settings.json"
 // value when reading an old file, which the loading path then turns into the
 // sane default.
 type persistedSettings struct {
-	// Version guards the format. Bump it only on an incompatible change; readers
-	// of an unknown future version fall back to defaults rather than guessing.
+	// Version guards the format. A new *additive* field needs no bump: it reads
+	// back as its zero value from an older file, which the loading path turns into
+	// the field's default. Bump it only for a change the reader must act on — a
+	// renamed field, or a stored value whose meaning has changed — and give that
+	// version a case in migrate(). A file whose version is newer than this reader
+	// understands falls back to defaults rather than guessing.
 	Version int `json:"version"`
 
 	SplitMode string   `json:"split_mode,omitempty"`
@@ -36,12 +40,11 @@ type persistedSettings struct {
 	RoutingMode string `json:"routing_mode,omitempty"`
 
 	// PresetGamesDirect, PresetVoiceDirect and PresetUnblockServices remember the
-	// three routing presets. They are *bool for the same reason AutoFailover is:
-	// all three default ON, so absent (an old file, or one written before the
-	// fields existed) has to read back as on, and only an explicit false is the
-	// user's choice to turn one off. Stored as plain bools these would have read
-	// as "off" on the first launch after an upgrade and quietly moved games and
-	// voice back into the tunnel.
+	// three routing presets. They are *bool because absent and false are different
+	// answers here: the defaults are per-preset (unblock-services on, the two that
+	// take traffic out of the tunnel off), so "the file does not say" has to reach
+	// SetSettings as nil and pick up that preset's default, while a stored value —
+	// either value — is the user's choice and is honoured as written.
 	PresetGamesDirect     *bool `json:"preset_games_direct,omitempty"`
 	PresetVoiceDirect     *bool `json:"preset_voice_direct,omitempty"`
 	PresetUnblockServices *bool `json:"preset_unblock_services,omitempty"`
@@ -147,7 +150,56 @@ type persistedSettings struct {
 }
 
 // settingsVersion is the current persisted-settings format version.
-const settingsVersion = 1
+//
+// v1 -> v2 clears the two outward-routing presets once. 0.5.0 (the only released
+// v1 writer) shipped preset_games_direct and preset_voice_direct on and persisted
+// them through settingsLocked, yet gave no way to see or change them: no UI, no
+// wire command, no field in the reported state. A stored true is therefore a
+// default the user was never shown, not a choice, and v2 treats it as such — see
+// migrateV1toV2. Every other field a v1 file carries is a genuine user choice and
+// is preserved untouched.
+const settingsVersion = 2
+
+// migrate upgrades a freshly-decoded persistedSettings to the current version. It
+// returns the zero value — read everywhere as "no preferences yet" — for a
+// version this reader does not know how to read, so a downgrade never misreads a
+// newer layout and a pre-versioning (version 0) file is not guessed at. Known old
+// versions are walked forward to the current one; the returned struct always
+// carries Version == settingsVersion.
+func migrate(ps persistedSettings) persistedSettings {
+	switch ps.Version {
+	case settingsVersion:
+		return ps
+	case 1:
+		return migrateV1toV2(ps)
+	default:
+		// version 0 (pre-versioning) or a future/unrecognised layout.
+		return persistedSettings{}
+	}
+}
+
+// migrateV1toV2 forces the two outward-routing presets off in a v1 file.
+//
+// In 0.5.0 both preset_games_direct and preset_voice_direct shipped on with no
+// UI, wire command or reported state to see or change them, so a stored true is a
+// default the user was never offered rather than a decision. Clearing both here
+// closes the leak an upgraded install would otherwise keep — real-time UDP and
+// game traffic escaping the tunnel — exactly as the new constructor defaults close
+// it for a fresh install. They are set to an explicit false (not left absent) so
+// the choice is recorded as made once the file is next saved at v2, and so a user
+// who wants either back turns it on through the switch 0.5.0 never had.
+//
+// preset_unblock_services is deliberately left as written: it only ever pins
+// domains *into* the tunnel, so its 0.5.0 default carries no leak to undo. Every
+// other field is a real user choice (split, kill switch, DNS, rules, ...) and is
+// preserved.
+func migrateV1toV2(ps persistedSettings) persistedSettings {
+	gamesOff, voiceOff := false, false
+	ps.PresetGamesDirect = &gamesOff
+	ps.PresetVoiceDirect = &voiceOff
+	ps.Version = settingsVersion
+	return ps
+}
 
 // settingsStore is the interface the daemon uses to persist and load user
 // preferences. It is small so tests can substitute an in-memory fake and the
@@ -184,8 +236,12 @@ func OpenFileSettings(dir string) (*fileSettings, error) {
 }
 
 // Load reads the backing file, tolerating a missing or corrupt file by returning
-// the zero value. An unknown version is treated as no settings so a downgrade
-// can't misinterpret a newer layout.
+// the zero value. The decoded settings are run through migrate, which walks a
+// known older version forward and treats an unknown (future or pre-versioning)
+// one as no settings, so a downgrade can't misinterpret a newer layout. A
+// migration is applied in memory on every load until the next Save rewrites the
+// file at the current version; it is idempotent, so re-migrating an as-yet-unsaved
+// file is harmless.
 func (s *fileSettings) Load() persistedSettings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -198,10 +254,7 @@ func (s *fileSettings) Load() persistedSettings {
 	if err := json.Unmarshal(data, &ps); err != nil {
 		return persistedSettings{} // corrupt: start fresh
 	}
-	if ps.Version != settingsVersion {
-		return persistedSettings{}
-	}
-	return ps
+	return migrate(ps)
 }
 
 // Save writes s to disk atomically: serialise to a temp file in the same

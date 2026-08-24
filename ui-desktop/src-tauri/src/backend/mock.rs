@@ -99,6 +99,13 @@ impl MockBackend {
                 rules_proxy: None,
                 preset_ru_banking: None,
                 preset_ru_gov: None,
+                // The two presets that route traffic out of the tunnel are off by
+                // default in the core; the one that pins censored services to the
+                // tunnel is on. Mirror that so the Settings switches come up
+                // showing what a fresh core would report.
+                preset_games_direct: None,
+                preset_voice_direct: None,
+                preset_unblock_services: Some(true),
                 // Not asked yet: the mock starts fresh, so the GUI shows its
                 // first-run consent prompt just as it would against a new core.
                 crash_reports: None,
@@ -703,6 +710,29 @@ impl Backend for MockBackend {
         };
         inner.state.preset_ru_banking = if preset_ru_banking { Some(true) } else { None };
         inner.state.preset_ru_gov = if preset_ru_gov { Some(true) } else { None };
+        let snapshot = inner.state.clone();
+        drop(inner);
+        self.shared.emit_state(&snapshot);
+        Ok(snapshot)
+    }
+
+    fn set_presets(
+        &self,
+        games: Option<bool>,
+        voice: Option<bool>,
+        services: Option<bool>,
+    ) -> Result<State, String> {
+        // Mirror the core: a None leaves that preset alone, and an off preset is
+        // absent from the state rather than `Some(false)`.
+        let mut inner = self.shared.inner.lock().unwrap();
+        let set = |slot: &mut Option<bool>, wanted: Option<bool>| {
+            if let Some(on) = wanted {
+                *slot = if on { Some(true) } else { None };
+            }
+        };
+        set(&mut inner.state.preset_games_direct, games);
+        set(&mut inner.state.preset_voice_direct, voice);
+        set(&mut inner.state.preset_unblock_services, services);
         let snapshot = inner.state.clone();
         drop(inner);
         self.shared.emit_state(&snapshot);
@@ -1583,6 +1613,34 @@ mod tests {
         assert_eq!(s.ad_block, None);
         assert_eq!(s.ipv4_only, None);
         assert_eq!(s.dns_remote.as_deref(), Some("tls://1.1.1.1"));
+    }
+
+    #[test]
+    fn set_presets_leaves_unnamed_presets_alone_and_emits() {
+        let (b, sink) = backend();
+        // Fresh state mirrors the core: only unblock-services is on.
+        let before = b.status().unwrap();
+        assert_eq!(before.preset_unblock_services, Some(true));
+        assert_eq!(before.preset_games_direct, None);
+
+        let s = b.set_presets(Some(true), None, None).unwrap();
+        assert_eq!(s.preset_games_direct, Some(true));
+        assert_eq!(s.preset_voice_direct, None);
+        assert_eq!(
+            s.preset_unblock_services,
+            Some(true),
+            "an unnamed preset was changed"
+        );
+        assert_eq!(
+            sink.last_state().unwrap().preset_games_direct,
+            Some(true),
+            "no state event carried the change"
+        );
+
+        // An explicit off clears the field, like the core omitting it.
+        let s = b.set_presets(None, None, Some(false)).unwrap();
+        assert_eq!(s.preset_unblock_services, None);
+        assert_eq!(s.preset_games_direct, Some(true));
     }
 
     #[test]

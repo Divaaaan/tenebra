@@ -483,6 +483,19 @@ export interface Strings {
     /** Localized hint shown when a typed resolver is malformed. */
     dnsInvalid: string;
     /**
+     * Routing presets section: the three bundled presets. Two of them take a
+     * class of traffic out of the tunnel, so their hints have to name the cost
+     * rather than only the benefit.
+     */
+    presets: string;
+    presetsHint: string;
+    presetUnblockServices: string;
+    presetUnblockServicesHint: string;
+    presetGamesDirect: string;
+    presetGamesDirectHint: string;
+    presetVoiceDirect: string;
+    presetVoiceDirectHint: string;
+    /**
      * Custom rules section: the two RU direct-rule preset toggles and the two
      * per-domain rule lists (always direct / always through the tunnel).
      */
@@ -1044,6 +1057,18 @@ const en: Strings = {
     dnsPlaceholder: "tls://1.1.1.1",
     dnsInvalid:
       "Enter a resolver like tls://1.1.1.1 or https://dns.example/dns-query.",
+    presets: "Routing presets",
+    presetsHint:
+      "Ready-made splits. The two that skip the tunnel trade your real IP address for latency.",
+    presetUnblockServices: "Unblock censored services",
+    presetUnblockServicesHint:
+      "Keeps YouTube, Discord, Meta and X in the tunnel even when they resolve to a local cache.",
+    presetGamesDirect: "Games skip the tunnel",
+    presetGamesDirectHint:
+      "Game clients and launchers connect directly: no tunnel latency on a match, and no exit-address change for anti-cheat to flag. Game servers see your real IP address.",
+    presetVoiceDirect: "Real-time UDP skips the tunnel",
+    presetVoiceDirectHint:
+      "UDP ports 50000-65535 connect directly — measured here at 9ms against 239ms through the tunnel. This range carries voice chat, browser calls and torrents, so whoever is on the other end sees your real IP address.",
     rules: "Custom rules",
     rulesHint:
       "Send specific domains direct or through the tunnel, on top of the routing above.",
@@ -1547,6 +1572,18 @@ const ru: Strings = {
     dnsPlaceholder: "tls://1.1.1.1",
     dnsInvalid:
       "Введите резолвер вида tls://1.1.1.1 или https://dns.example/dns-query.",
+    presets: "Готовые пресеты",
+    presetsHint:
+      "Готовые схемы разделения. Два пресета, идущие мимо туннеля, меняют ваш реальный IP на скорость.",
+    presetUnblockServices: "Разблокировать сервисы",
+    presetUnblockServicesHint:
+      "Держит YouTube, Discord, Meta и X в туннеле, даже когда они резолвятся в локальный кеш.",
+    presetGamesDirect: "Игры мимо туннеля",
+    presetGamesDirectHint:
+      "Игровые клиенты и лаунчеры подключаются напрямую: нет задержки туннеля в матче и нет смены адреса, на которую реагирует анти-чит. Игровые серверы видят ваш реальный IP.",
+    presetVoiceDirect: "Realtime-UDP мимо туннеля",
+    presetVoiceDirectHint:
+      "UDP-порты 50000-65535 идут напрямую — здесь это 9 мс против 239 мс через туннель. В этом диапазоне живут голосовые чаты, звонки в браузере и торренты, так что собеседник видит ваш реальный IP.",
     rules: "Свои правила",
     rulesHint:
       "Направляйте отдельные домены напрямую или через туннель, поверх маршрутизации выше.",

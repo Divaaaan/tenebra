@@ -119,9 +119,23 @@ func TestGamesPresetPinsLaunchersAndHelpers(t *testing.T) {
 	apps, _ := r["process_name"].([]string)
 	// The helpers are the entries a hand-built list forgets, and forgetting them
 	// breaks the game more confusingly than forgetting the game itself.
-	for _, want := range []string{"dota2.exe", "cs2.exe", "steamwebhelper.exe", "javaw.exe"} {
+	for _, want := range []string{"dota2.exe", "cs2.exe", "steamwebhelper.exe", "minecraftlauncher.exe"} {
 		if !contains(apps, want) {
 			t.Errorf("preset does not cover %q", want)
+		}
+	}
+}
+
+// process_name matches a bare file name, so a generic one in the preset takes
+// every program that happens to be called that out of the tunnel. `java.exe` and
+// `javaw.exe` are every JVM program on the machine — an IDE, a corporate client,
+// a build tool — and `launcher.exe` is a name half the industry ships. A user who
+// switched on "keep games direct" chose games, not "un-tunnel anything written in
+// Java".
+func TestGamesPresetClaimsNoGenericExecutableNames(t *testing.T) {
+	for _, name := range []string{"java.exe", "javaw.exe", "launcher.exe"} {
+		if contains(GameProcesses(), name) {
+			t.Errorf("games preset claims the generic name %q", name)
 		}
 	}
 }
@@ -165,12 +179,25 @@ func TestGamesPresetMergesWithUserApps(t *testing.T) {
 // The kill switch promises nothing leaves outside the tunnel. A preset that
 // quietly exempted every game (or all voice UDP) would make that promise false
 // without the user ever choosing it.
+//
+// Every path that pins traffic to the direct outbound has to honour it, not only
+// the two presets that happened to check: the bypass hand-off, the bundled RU
+// banking/government rule presets and the LAN bypass all send traffic out of the
+// tunnel by exactly the same mechanism. The earlier version of this test armed
+// only GamesDirect and VoiceDirect, so it passed while proving the guarantee for
+// the two cases that already worked.
 func TestPresetsYieldToTheKillSwitch(t *testing.T) {
 	o := Options{
-		Mode:        ModeSmart,
-		KillSwitch:  true,
-		GamesDirect: true,
-		VoiceDirect: true,
+		Mode:            ModeSmart,
+		KillSwitch:      true,
+		GamesDirect:     true,
+		VoiceDirect:     true,
+		UnblockServices: true,
+		ZapretActive:    true,
+		ZapretCovered:   bundleCoverage,
+		PresetRuBanking: true,
+		PresetRuGov:     true,
+		BypassLAN:       true,
 	}.Normalize()
 	rules := o.RouteRules()
 
@@ -179,6 +206,126 @@ func TestPresetsYieldToTheKillSwitch(t *testing.T) {
 	}
 	if r := ruleFor(rules, "port_range"); r != nil {
 		t.Errorf("voice preset emitted a direct rule under the kill switch: %v", r)
+	}
+	if r := ruleFor(rules, "ip_is_private"); r != nil {
+		t.Errorf("LAN bypass emitted a direct rule under the kill switch: %v", r)
+	}
+	if got := suffixesTo(rules, tagDirect); len(got) > 0 {
+		t.Errorf("domains pinned direct under the kill switch: %v", got)
+	}
+}
+
+// The DNS half leaks the same thing one step earlier: a name resolved by the
+// ISP's resolver tells it who is being visited even when the connection itself
+// never happens. Banking, government and bypass-covered names all mirror onto
+// dns-direct, so the kill switch has to cut them there too.
+func TestKillSwitchKeepsDomainLookupsOffTheDirectResolver(t *testing.T) {
+	o := Options{
+		Mode:            ModeSmart,
+		KillSwitch:      true,
+		UnblockServices: true,
+		ZapretActive:    true,
+		ZapretCovered:   bundleCoverage,
+		PresetRuBanking: true,
+		PresetRuGov:     true,
+		RulesDirect:     []string{"example.com"},
+	}.Normalize()
+
+	rules, _ := o.DNS()["rules"].([]map[string]any)
+	for _, r := range rules {
+		if r["server"] != dnsDirectTag {
+			continue
+		}
+		// The smart-mode geosite rule is the geo split, not a direct pin, and is
+		// governed by the mode rather than by this guarantee.
+		if _, isSuffix := r["domain_suffix"]; isSuffix {
+			t.Errorf("names pinned to the direct resolver under the kill switch: %v", r)
+		}
+	}
+}
+
+// Direct mode tunnels nothing, so a "keep this direct" rule there is a no-op
+// rather than a leak — the whole config is already direct. Collapsing the two
+// gates into one helper must not start emitting rules in a mode that never had
+// them.
+func TestDirectModeStillEmitsNoDirectPins(t *testing.T) {
+	o := Options{
+		Mode:            ModeDirect,
+		GamesDirect:     true,
+		VoiceDirect:     true,
+		UnblockServices: true,
+		ZapretActive:    true,
+		PresetRuBanking: true,
+		PresetRuGov:     true,
+		RulesDirect:     []string{"example.com"},
+	}.Normalize()
+	rules := o.RouteRules()
+
+	if r := ruleFor(rules, "process_name"); r != nil {
+		t.Errorf("games preset emitted a rule in direct mode: %v", r)
+	}
+	if r := ruleFor(rules, "port_range"); r != nil {
+		t.Errorf("voice preset emitted a rule in direct mode: %v", r)
+	}
+	if got := suffixesTo(rules, tagDirect); len(got) > 0 {
+		t.Errorf("domains pinned direct in direct mode: %v", got)
+	}
+}
+
+// The kill switch cutting the direct pins must not take the proxy pins with it:
+// a domain the user forced through the tunnel still has to be forced through the
+// tunnel, and in smart mode an RU-resolving one would otherwise fall through to
+// the geo rule and go direct — turning the kill switch into the leak it exists
+// to prevent.
+func TestKillSwitchKeepsProxyPinnedDomains(t *testing.T) {
+	o := Options{
+		Mode:            ModeSmart,
+		KillSwitch:      true,
+		UnblockServices: true,
+		RulesProxy:      []string{"mail.example"},
+	}.Normalize()
+
+	proxied := suffixesTo(o.RouteRules(), tagProxy)
+	for _, want := range []string{"mail.example", "youtube.com"} {
+		if !contains(proxied, want) {
+			t.Errorf("%q lost its proxy pin under the kill switch; got %v", want, proxied)
+		}
+	}
+
+	rules, _ := o.DNS()["rules"].([]map[string]any)
+	var remote []string
+	for _, r := range rules {
+		if r["server"] != dnsRemoteTag {
+			continue
+		}
+		s, _ := r["domain_suffix"].([]string)
+		remote = append(remote, s...)
+	}
+	if !contains(remote, "mail.example") {
+		t.Errorf("proxy-pinned name lost its remote resolver under the kill switch; got %v", remote)
+	}
+}
+
+// Apps the user typed into the exclude list themselves are an explicit,
+// per-application choice — the distinction the presets' own comment draws when it
+// says a preset must not exempt traffic "without the user ever choosing it". They
+// stay direct under the kill switch; only the preset half of the merged list
+// drops out.
+func TestKillSwitchKeepsUserChosenExcludedApps(t *testing.T) {
+	o := Options{
+		Mode:        ModeSmart,
+		KillSwitch:  true,
+		SplitMode:   SplitExclude,
+		SplitApps:   []string{"myapp.exe"},
+		GamesDirect: true,
+	}.Normalize()
+
+	apps, _ := ruleFor(o.RouteRules(), "process_name")["process_name"].([]string)
+	if !contains(apps, "myapp.exe") {
+		t.Errorf("the user's own excluded app was dropped: %v", apps)
+	}
+	if contains(apps, "dota2.exe") {
+		t.Errorf("the games preset rode into the exclude list under the kill switch: %v", apps)
 	}
 }
 
@@ -209,6 +356,40 @@ func TestVoiceDirectDoesNotCoverQUICOrDNS(t *testing.T) {
 		if strings.HasPrefix(p, "1:") || p == "0:65535" || strings.Contains(p, ":443") {
 			t.Fatalf("range %q is too broad", p)
 		}
+	}
+}
+
+// Include split tunnelling is an explicit per-application choice — the user picks
+// "include" and lists the apps one at a time — so it is governed by the mode, not
+// cut by the kill switch, exactly like the split-exclude list directPinAllowed
+// already exempts. Under the kill switch, and even with the base mode set to
+// global, the listed apps still go to the proxy (fail-closed: nothing falls them
+// back to direct if the tunnel drops) while everything unlisted still falls
+// through to a direct final. Forcing the final to the proxy here would silently
+// turn "only these apps" into "everything", tunnelling the very traffic the user
+// chose to keep out — a different violation of intent than the one the kill
+// switch guards against.
+func TestKillSwitchLeavesIncludeSplitToTheUser(t *testing.T) {
+	o := Options{
+		Mode:       ModeGlobal,
+		KillSwitch: true,
+		SplitMode:  SplitInclude,
+		SplitApps:  []string{"work.exe"},
+	}.Normalize()
+
+	if got := o.FinalOutbound(); got != tagDirect {
+		t.Errorf("include-mode final = %q under the kill switch, want direct", got)
+	}
+	r := ruleFor(o.RouteRules(), "process_name")
+	if r == nil {
+		t.Fatal("include split emitted no process rule under the kill switch")
+	}
+	if r["outbound"] != tagProxy {
+		t.Errorf("the listed app is pinned to %v under the kill switch, want the proxy", r["outbound"])
+	}
+	apps, _ := r["process_name"].([]string)
+	if !contains(apps, "work.exe") {
+		t.Errorf("the user's listed app was dropped: %v", apps)
 	}
 }
 
