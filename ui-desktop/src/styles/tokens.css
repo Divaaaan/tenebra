@@ -2,7 +2,9 @@
 
    "Spec-sheet" identity: the UI reads like a network status panel or a man page,
    not a consumer app. Near-black canvas, exactly one orange accent, mono type
-   everywhere, sharp corners, no shadows, near-zero motion. Dark is the canonical
+   everywhere, sharp corners, no shadows. Motion is rationed the same way colour
+   is: nothing moves for decoration, but what does move moves on one scale and
+   one set of curves, so the panel reads as a single instrument. Dark is the canonical
    theme and lives on :root, so a missing data-theme still renders the intent.
    Light is an inverted spec-sheet on paper — the only thing that flips is colour;
    space, geometry, type and motion are shared.
@@ -56,18 +58,60 @@
   --bw: 1px; /* default border weight */
   --bw-emphasis: 2px; /* connect button / warning border */
 
-  /* ---- MOTION (near-zero budget) ----
-     The ONLY animations allowed: live-dot blink 2.2s, pending blink 1s steps,
-     caret 1s steps. State colour/border changes are instant or <=100ms linear. */
-  --t-fast: 80ms linear; /* chip colour / border */
-  --t-base: 100ms linear; /* button fill / row background */
+  /* ---- MOTION · durations ----------------------------------------------
+     Five steps, and nothing between them. The old sheet mixed 80/100/160/180/
+     200/220/240/260ms with `linear` and bare `ease`, which is why state changes
+     read as a set of unrelated twitches rather than one machine moving. Pick the
+     step by what is moving, never by taste:
 
-  /* The premium pass deliberately widens the motion budget for a few considered
-     moments — overlay entrances, list cascades, the toast. These two carry that
-     wider timing; the near-zero pair above still governs everyday hover / state
-     changes. Both are neutralised by the reduced-motion rule in global.css. */
-  --t-panel: 220ms cubic-bezier(0.2, 0.8, 0.2, 1); /* overlay panel entrance */
-  --t-enter: 240ms ease-out; /* element / list-row entrance */
+       micro  a press, a 2px nudge — felt, not watched
+       fast   colour / border on hover, chips, quiet labels
+       base   a control changing state: fill, row background, a toggle
+       slow   something arriving or leaving: panels, list rows, cards
+       hero   the 52px status word and its indicator — the one thing on screen
+              the user is actually waiting on
+
+     Every duration is neutralised by the reduced-motion rule in global.css. */
+  --d-micro: 90ms;
+  --d-fast: 130ms;
+  --d-base: 190ms;
+  --d-slow: 260ms;
+  --d-hero: 420ms;
+
+  /* ---- MOTION · curves ----
+     Three, with a job each. Nothing in this UI uses `linear` (which reads as a
+     machine dragging something) or bare `ease` (the browser default, which reads
+     as nothing at all) — except the two infinite sweeps, where a constant rate is
+     the honest one: a runner that eases would claim progress it has not made.
+
+       out   things arriving and settling — fast off the mark, long tail
+       in    things leaving — slow off the mark, gone quickly; the eye is
+             already moving to what replaces them
+       move  something travelling between two states it owns (loops, pulses) */
+  --e-out: cubic-bezier(0.2, 0, 0, 1);
+  --e-in: cubic-bezier(0.4, 0, 1, 1);
+  --e-move: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* Two composite duration+curve pairs, for the common single-property
+     transition: `transition: color var(--t-fast)`. Each is exactly one <time>
+     and one <easing-function>, and that is the whole contract — NEVER pair two
+     of them in one shorthand. The sheet used to write
+     `animation: x var(--t-base) var(--t-enter)`, which expands to two easing
+     functions; CSS then drops the entire declaration, and a dozen animations
+     across this app had simply never run. There are deliberately no composite
+     tokens for the longer steps: those are all used in `animation`, where the
+     duration and the curve sit in different slots anyway, so spelling them
+     `var(--d-slow) var(--e-out)` removes the temptation to nest. */
+  --t-fast: var(--d-fast) var(--e-out); /* chip colour / border */
+  --t-base: var(--d-base) var(--e-out); /* button fill / row background */
+
+  /* Two stagger steps, because the two cases are not the same thing. Rows of a
+     list want a grain, not a queue — the cascade should read as one gesture that
+     happens to have a direction. A handful of semantic blocks (the steps of a
+     hint, the sections of a settings pane) can afford a longer beat, because the
+     eye is meant to land on each in turn. */
+  --stagger: 24ms; /* list rows, chips, imported items */
+  --stagger-chunk: 60ms; /* a few semantic blocks, read in order */
 
   /* Status-word tints. The 52px hero word in pure --good/--text reads harsh, so
      it's softened (desaturated toward the text colour). Defined in terms of the

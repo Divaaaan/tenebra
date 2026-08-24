@@ -45,6 +45,15 @@ interface ConnectionPanelProps {
   attempts?: AttemptsEvent | null;
   /** Resolve a fallback candidate's node id to a display name. */
   resolveNodeName?: (nodeId: string) => string;
+  /**
+   * True while the connect is measuring which nodes actually carry traffic,
+   * before any tunnel exists. That check opens real connections through every
+   * node and takes seconds — during which the core has nothing to report, so the
+   * phase stays `idle` and the screen used to sit on "DISCONNECTED", perfectly
+   * still, as though the click had missed. It is the longest wait in the product
+   * and the only one the backend cannot narrate, so the panel narrates it.
+   */
+  checking?: boolean;
   /** Connect / disconnect / abort, depending on phase. */
   onPrimary: () => void;
   /**
@@ -120,6 +129,7 @@ export function ConnectionPanel({
   auto,
   attempts,
   resolveNodeName,
+  checking = false,
   onPrimary,
   disabled = false,
   onChange,
@@ -134,14 +144,26 @@ export function ConnectionPanel({
   // switch never looks like something the user started.
   const reconnecting = phase === "health_reconnecting";
   const inFlight = pending || reconnecting;
+  // The measurement only speaks while the core has nothing to say. Once a real
+  // phase arrives (or a tunnel is already up) that phase wins — a stale "still
+  // measuring" over a live handshake would be the same lie in the other
+  // direction.
+  const measuring = checking && !connected && !inFlight;
+  // A pseudo-phase: it drives the status-word class and the rail exactly the way
+  // a real phase does, so measuring is one more stop on the same road rather
+  // than a separate widget bolted beside it.
+  const displayPhase = measuring ? "checking" : phase;
+  const working = measuring || inFlight;
 
-  const word = t.state[phase];
+  const word = measuring ? t.conn.wordChecking : t.state[phase];
   const displayWord = useScrambledText(word);
   const buttonLabel = connected
     ? `▢ ${t.home.disconnect}`
     : inFlight
       ? `· · · ${t.conn.abort}`
-      : `▶ ${t.home.connect}`;
+      : measuring
+        ? `· · · ${t.conn.measuring}`
+        : `▶ ${t.home.connect}`;
 
   const routeName =
     routing === "global"
@@ -165,7 +187,12 @@ export function ConnectionPanel({
     onChange();
   };
 
-  const subLine = connected ? (
+  const subLine = measuring ? (
+    // Say what the seconds are being spent on. "Connecting…" would be a lie —
+    // nothing is being connected yet — and silence was what made the wait read
+    // as a hang.
+    <span className="sig">{t.conn.subChecking}</span>
+  ) : connected ? (
     <span>
       {exitServer && <span className="b selectable">{exitServer}</span>}
       {exitServer && " · "}
@@ -200,29 +227,37 @@ export function ConnectionPanel({
               </span>
             )}
           </div>
-          <div className={`conn-word ${phase}`}>
+          <div className={`conn-word ${displayPhase}`}>
             <span className="ind" aria-hidden="true" />
             <span className="conn-word-text" aria-live="polite">
               {displayWord}
             </span>
           </div>
-          {inFlight && (
-            <div
-              className={`conn-rail${reconnecting ? " reconnecting" : ""}`}
-              aria-hidden="true"
-            >
-              <span className="conn-rail-run" />
-            </div>
-          )}
-          <div className="conn-sub">{subLine}</div>
+          {/* Always mounted: the track is a hairline rule, and only the runner
+              comes and goes. Mounting the rail with the work shifted everything
+              under it by 4px at the exact moment the status changed. */}
+          <div
+            className={`conn-rail${working ? " is-live" : ""}${reconnecting ? " reconnecting" : ""}${measuring ? " checking" : ""}`}
+            aria-hidden="true"
+          >
+            <span className="conn-rail-run" />
+          </div>
+          <div className="conn-sub">
+            {/* Keyed on the phase so a new explanation rises in rather than
+                swapping character-for-character under a reading eye. */}
+            <span className="conn-sub-line" key={displayPhase}>
+              {subLine}
+            </span>
+          </div>
         </div>
 
         <div className="connect-row">
           <button
             type="button"
-            className={`connect-btn${connected ? " on" : ""}${pending ? " pending" : ""}${reconnecting ? " reconnecting" : ""}`}
+            className={`connect-btn${connected ? " on" : ""}${pending ? " pending" : ""}${reconnecting ? " reconnecting" : ""}${measuring ? " checking" : ""}`}
             onClick={onPrimary}
             disabled={disabled}
+            aria-busy={working || undefined}
           >
             {buttonLabel}
           </button>

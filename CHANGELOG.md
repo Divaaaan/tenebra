@@ -225,6 +225,53 @@ All notable changes to Tenebra are documented here. The format follows
   the config's own default, so once anything had moved that selector a later start
   could seat the tunnel somewhere the config did not name. Every start now pins the
   selector to its own default before the connectivity probe is believed.
+### Added
+
+- **The screen says something while the connect measures nodes.** That check
+  opens real connections through every node before an exit is picked — several
+  seconds during which no tunnel exists, so the core has no phase to report and
+  the main screen sat on "Disconnected", perfectly still, as though the click had
+  missed. Measuring is now a state of its own: its own status word and sub-line,
+  a scanning indicator distinct from the connecting blink, a running progress
+  rail, and a button that reads as busy rather than offering a hover fill it will
+  not honour. It never speaks over a phase the core is actually reporting.
+
+### Changed
+
+- **One motion system across the app.** Timings were previously invented per
+  stylesheet — 80/100/160/180/200/220/240/260ms, some `linear`, some bare `ease`
+  — which is why state changes read as a set of unrelated twitches. There are now
+  five durations and three curves in `tokens.css`, picked by what is moving:
+  arrivals ease out, departures ease in, loops move symmetrically. Enters and
+  exits share one set of keyframes instead of eight near-identical local ones.
+- **Overlays, modals and panels animate out, not only in.** Settings, logs, the
+  import dialog, the blocklist panel, the deep-link, tun-conflict and update
+  confirms, and the crash report were all torn down in the same tick they were
+  dismissed — the half of a transition a user reads as "did that crash?". Each is
+  held for its exit, showing what it showed rather than flashing an empty card.
+- **The progress rail no longer shifts the layout.** It used to mount with the
+  work, moving everything under the status word by 4px at the exact moment the
+  status changed; the track is now a permanent hairline and only the runner comes
+  and goes. Both rails (connect and leak check) sweep on `transform` instead of
+  animating `left`, which was relayouting on every frame.
+- **The node list settles faster.** The row cascade is capped, so a sixty-node
+  subscription stops dealing itself out for a second and a half; hover and
+  selection marks scale in on the compositor instead of fading a painted inset
+  shadow. Buttons take a press.
+- **`prefers-reduced-motion` now zeroes animation delays too.** Zeroing only the
+  durations left every stagger intact, so a reduced-motion cascade still dealt
+  itself out one delay at a time — each row flashing into place, which is worse
+  than the animation it was meant to remove.
+
+### Fixed
+
+- **Several animations that had never once run.** The stylesheets composed two
+  duration+easing tokens into one shorthand (`var(--t-base) var(--t-enter)`),
+  which expands to two easing functions and makes CSS drop the whole declaration.
+  The blocklist scrim and panel, its imported-list rows and error line, the hint
+  popover and its lines, the first-run setup strip, the node-check verdict badge
+  and the blocklist-count badge were all dead on arrival, along with four hover
+  transitions written the same way.
 
 ## [0.5.0] - 2026-08-21
 

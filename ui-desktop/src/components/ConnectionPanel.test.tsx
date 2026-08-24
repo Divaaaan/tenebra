@@ -176,6 +176,58 @@ describe("ConnectionPanel", () => {
     });
   });
 
+  // The node check runs before any tunnel exists, so the core has no phase to
+  // report and the screen sat on "Disconnected", motionless, for the several
+  // seconds it takes — the longest wait in the product, and the one place the UI
+  // said nothing at all.
+  describe("measuring nodes", () => {
+    it("says work is under way instead of leaving the idle screen still", () => {
+      const { container } = renderWithProviders(
+        <ConnectionPanel {...baseProps({ phase: "idle", checking: true })} />,
+      );
+
+      expect(screen.getByText("Measuring…")).toBeInTheDocument();
+      expect(screen.queryByText("Disconnected")).not.toBeInTheDocument();
+      expect(
+        screen.getByText("probing every node · finding one that carries traffic"),
+      ).toBeInTheDocument();
+
+      // The hooks the stylesheet drives the scanning indicator and the rail off.
+      expect(container.querySelector(".conn-word.checking")).toBeInTheDocument();
+      expect(container.querySelector(".conn-rail.is-live")).toBeInTheDocument();
+      expect(container.querySelector(".connect-btn.checking")).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /MEASURING/ }),
+      ).toHaveAttribute("aria-busy", "true");
+    });
+
+    it("never speaks over a phase the core is actually reporting", () => {
+      // A check left running as the connect proceeds must not keep claiming the
+      // screen: a stale "measuring" over a live handshake is the same lie in the
+      // other direction.
+      const { container } = renderWithProviders(
+        <ConnectionPanel
+          {...baseProps({ phase: "connecting", checking: true })}
+        />,
+      );
+
+      expect(screen.getByText("Connecting…")).toBeInTheDocument();
+      expect(screen.queryByText("Measuring…")).not.toBeInTheDocument();
+      expect(container.querySelector(".conn-word.checking")).toBeNull();
+      expect(container.querySelector(".connect-btn.pending")).toBeInTheDocument();
+    });
+
+    it("keeps the rail in the layout at rest, so nothing jumps when it starts", () => {
+      // The rail used to mount with the work, shifting everything under it by 4px
+      // at the exact moment the status changed.
+      const { container } = renderWithProviders(
+        <ConnectionPanel {...baseProps({ phase: "idle" })} />,
+      );
+      expect(container.querySelector(".conn-rail")).toBeInTheDocument();
+      expect(container.querySelector(".conn-rail.is-live")).toBeNull();
+    });
+  });
+
   describe("interactions", () => {
     it("calls onPrimary when the primary button is clicked", async () => {
       const onPrimary = vi.fn();

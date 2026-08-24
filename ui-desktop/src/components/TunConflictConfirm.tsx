@@ -21,11 +21,17 @@ interface TunConflictConfirmProps {
   onConfirm: () => void;
   /** Decline: leave the guard's refusal standing. */
   onCancel: () => void;
+  /**
+   * True while the surface is playing its exit. The owner keeps it mounted for
+   * that beat (see lib/usePresence); this only paints it.
+   */
+  leaving?: boolean;
 }
 
 export function TunConflictConfirm({
   onConfirm,
   onCancel,
+  leaving = false,
 }: TunConflictConfirmProps) {
   const { t } = useI18n();
   // Focus the *declining* button on mount: overriding the guard can take the
@@ -44,7 +50,7 @@ export function TunConflictConfirm({
 
   return (
     <div
-      className="prof-modal-scrim"
+      className={`prof-modal-scrim${leaving ? " is-leaving" : ""}`}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onCancel();
       }}

@@ -6,17 +6,9 @@
   border: var(--bw) solid var(--line);
   display: flex;
   flex-direction: column;
-  animation: fallback-in 200ms ease-out both;
-}
-@keyframes fallback-in {
-  0% {
-    opacity: 0;
-    transform: translateY(12px) scale(0.985);
-  }
-  100% {
-    opacity: 1;
-    transform: none;
-  }
+  /* The same entrance the node card it replaces uses, so the swap reads as one
+     surface turning over. */
+  animation: ui-panel-in var(--d-slow) var(--e-out) backwards;
 }
 
 .fallback-head {
@@ -61,8 +53,8 @@
   border-bottom: var(--bw) solid var(--line);
   border-left: var(--bw-emphasis) solid transparent;
   transition:
-    border-color var(--t-fast),
-    background var(--t-fast);
+    border-color var(--t-base),
+    background-color var(--t-base);
 }
 .fallback-row:last-child {
   border-bottom: none;

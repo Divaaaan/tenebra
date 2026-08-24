@@ -24,9 +24,11 @@
   letter-spacing: 0.06em;
   color: var(--text);
   white-space: nowrap;
-  /* in (0→180ms) → hold → fade; `both` holds the final (invisible) frame until
-     the host unmounts the node ~100ms later, so there is no flash. */
-  animation: toast-life 2600ms ease-out both;
+  /* in → hold → out, as one timeline; `both` holds the final (invisible) frame
+     until the host unmounts the node ~100ms later, so there is no flash. A
+     single keyframe rather than an enter plus a JS-timed exit, because the
+     lifetime is fixed and known — nothing can interrupt it. */
+  animation: toast-life 2600ms var(--e-out) both;
 }
 
 .toast-mark {
@@ -36,17 +38,22 @@
 @keyframes toast-life {
   0% {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(8px);
   }
-  7% {
+  9% {
     opacity: 1;
     transform: none;
   }
-  88% {
+  90% {
     opacity: 1;
+    transform: none;
   }
+  /* It leaves the way the rest of the app leaves: up and out, a shorter travel
+     than the entrance. Before, it only faded — the one surface in the app that
+     announced itself with movement and then dissolved on the spot. */
   100% {
     opacity: 0;
+    transform: translateY(-4px);
   }
 }
 
@@ -58,5 +65,6 @@
   .toast {
     animation: none;
     opacity: 1;
+    transform: none;
   }
 }

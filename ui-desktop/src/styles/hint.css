@@ -30,8 +30,8 @@
   line-height: 1;
   cursor: help;
   transition:
-    color var(--t-fast) var(--t-base),
-    border-color var(--t-fast) var(--t-base);
+    color var(--t-fast),
+    border-color var(--t-fast);
 }
 
 .hint__trigger:hover,
@@ -60,13 +60,16 @@
   letter-spacing: normal;
   text-transform: none;
   white-space: normal;
-  animation: hint-in var(--t-fast) var(--t-enter) both;
+  /* Drops down from the trigger it belongs to, so the movement points back at
+     what was hovered. The shared ui-rise comes up from below, which would read
+     as unrelated to the "?" above it. */
+  animation: hint-in var(--d-base) var(--e-out) backwards;
 }
 
 @keyframes hint-in {
   from {
     opacity: 0;
-    transform: translateY(-4px);
+    transform: translateY(-6px);
   }
   to {
     opacity: 1;
@@ -83,13 +86,13 @@
 /* Each line cascades so the eye follows the steps in order instead of being
    handed a block of text at once. */
 .hint__line {
-  animation: hint-line-in var(--t-base) var(--t-enter) both;
+  animation: hint-line-in var(--d-slow) var(--e-out) backwards;
 }
 
 @keyframes hint-line-in {
   from {
     opacity: 0;
-    transform: translateX(-3px);
+    transform: translateX(-4px);
   }
   to {
     opacity: 1;

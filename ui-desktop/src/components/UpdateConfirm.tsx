@@ -18,9 +18,18 @@ interface UpdateConfirmProps {
   onConfirm: () => void;
   /** Decline: keep the connection and leave the update pending. */
   onCancel: () => void;
+  /**
+   * True while the surface is playing its exit. The owner keeps it mounted for
+   * that beat (see lib/usePresence); this only paints it.
+   */
+  leaving?: boolean;
 }
 
-export function UpdateConfirm({ onConfirm, onCancel }: UpdateConfirmProps) {
+export function UpdateConfirm({
+  onConfirm,
+  onCancel,
+  leaving = false,
+}: UpdateConfirmProps) {
   const { t } = useI18n();
   // Focus the cancel action on mount: the safe default is to keep the tunnel, so
   // a stray Enter/Space shouldn't tear it down. Escape cancels too.
@@ -38,7 +47,7 @@ export function UpdateConfirm({ onConfirm, onCancel }: UpdateConfirmProps) {
 
   return (
     <div
-      className="prof-modal-scrim"
+      className={`prof-modal-scrim${leaving ? " is-leaving" : ""}`}
       onMouseDown={(e) => {
         // A click on the scrim (not the card) cancels — the safe default.
         if (e.target === e.currentTarget) onCancel();

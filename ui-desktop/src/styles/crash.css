@@ -67,7 +67,11 @@
   color: var(--signal);
   transition:
     color var(--t-fast),
-    background var(--t-fast);
+    background-color var(--t-fast),
+    transform var(--d-micro) var(--e-out);
+}
+.crash-fallback-reload:active {
+  transform: scale(0.96);
 }
 .crash-fallback-reload:hover {
   background: var(--signal);

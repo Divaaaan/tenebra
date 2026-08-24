@@ -110,13 +110,15 @@
   font-weight: 600;
   text-align: center;
   /* Drops in from under the top bar when armed. Neutralised by reduced-motion. */
-  animation: kill-banner-in 180ms ease-out;
+  animation: kill-banner-in var(--d-slow) var(--e-out) backwards;
 }
 @keyframes kill-banner-in {
   from {
+    opacity: 0;
     transform: translateY(-100%);
   }
   to {
+    opacity: 1;
     transform: translateY(0);
   }
 }
@@ -150,7 +152,12 @@
   display: inline-flex;
   gap: 6px;
   color: var(--text-dim);
-  transition: color var(--t-fast);
+  transition:
+    color var(--t-fast),
+    transform var(--d-micro) var(--e-out);
+}
+.update-banner-actions button:active:not(:disabled) {
+  transform: scale(0.96);
 }
 .update-banner-actions .update-banner-install {
   color: var(--signal);
@@ -216,7 +223,11 @@
   transition:
     color var(--t-fast),
     border-color var(--t-fast),
-    background-color var(--t-fast);
+    background-color var(--t-fast),
+    transform var(--d-micro) var(--e-out);
+}
+.seg button:active {
+  transform: scale(0.96);
 }
 .seg button.on {
   color: var(--signal);
@@ -242,7 +253,11 @@
   transition:
     color var(--t-fast),
     border-color var(--t-fast),
-    background-color var(--t-fast);
+    background-color var(--t-fast),
+    transform var(--d-micro) var(--e-out);
+}
+.toggle:active:not(:disabled) {
+  transform: scale(0.96);
 }
 .toggle:hover {
   color: var(--text);
@@ -277,7 +292,12 @@
   color: var(--text-dim);
   display: inline-flex;
   gap: 6px;
-  transition: color var(--t-fast);
+  transition:
+    color var(--t-fast),
+    transform var(--d-micro) var(--e-out);
+}
+.app-bottom .act:active {
+  transform: scale(0.96);
 }
 .app-bottom .act:hover {
   color: var(--signal);
@@ -294,34 +314,28 @@
   justify-content: center;
   padding: 36px 22px;
   overflow-y: auto;
-  /* Scrim fades up; the panel below rises on its own, slower curve. Both are
-     neutralised by the reduced-motion rule in global.css. */
-  animation: overlay-scrim-in 160ms ease-out;
+  /* Scrim fades up; the panel below rises on its own, slower curve. Both use the
+     shared enter/exit vocabulary from global.css, and both are neutralised by the
+     reduced-motion rule there. */
+  animation: ui-fade-in var(--d-base) var(--e-out) backwards;
 }
 .overlay-panel {
   position: relative;
   width: min(820px, 100%);
   background: var(--bg);
   border: var(--bw) solid var(--line-2);
-  animation: overlay-panel-in var(--t-panel);
+  animation: ui-panel-in var(--d-slow) var(--e-out) backwards;
 }
-@keyframes overlay-scrim-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+
+/* Dismissed: App holds the overlay mounted for the exit (lib/usePresence). The
+   scrim goes out slower than the panel so the app behind it is uncovered *after*
+   the panel has cleared, instead of the panel appearing to fall through a hole. */
+.overlay.is-leaving {
+  animation: ui-fade-out var(--d-base) var(--e-in) both;
+  pointer-events: none;
 }
-@keyframes overlay-panel-in {
-  from {
-    opacity: 0;
-    transform: translateY(12px) scale(0.985);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
+.overlay.is-leaving .overlay-panel {
+  animation: ui-panel-out var(--d-fast) var(--e-in) both;
 }
 .overlay-close {
   position: absolute;
@@ -332,10 +346,15 @@
   font-size: var(--fs-data);
   color: var(--text-dim);
   padding: 4px 8px;
-  transition: color var(--t-fast);
+  transition:
+    color var(--t-fast),
+    transform var(--d-micro) var(--e-out);
 }
 .overlay-close:hover {
   color: var(--signal);
+}
+.overlay-close:active {
+  transform: scale(0.96);
 }
 .overlay-body {
   padding: var(--sp-2);
@@ -355,7 +374,7 @@
   border-radius: var(--radius-max);
   font-size: var(--fs-meta);
   font-variant-numeric: tabular-nums;
-  animation: act-count-in var(--t-base) var(--t-enter) both;
+  animation: act-count-in var(--d-slow) var(--e-out) backwards;
 }
 
 @keyframes act-count-in {

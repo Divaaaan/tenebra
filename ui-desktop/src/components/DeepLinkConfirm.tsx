@@ -20,12 +20,18 @@ interface DeepLinkConfirmProps {
   onConfirm: () => void;
   /** Decline: drop the request without connecting. */
   onCancel: () => void;
+  /**
+   * True while the surface is playing its exit. The owner keeps it mounted for
+   * that beat (see lib/usePresence); this only paints it.
+   */
+  leaving?: boolean;
 }
 
 export function DeepLinkConfirm({
   profile,
   onConfirm,
   onCancel,
+  leaving = false,
 }: DeepLinkConfirmProps) {
   const { t } = useI18n();
   // Focus the primary action on mount so the prompt is keyboard-operable and
@@ -44,7 +50,7 @@ export function DeepLinkConfirm({
 
   return (
     <div
-      className="prof-modal-scrim"
+      className={`prof-modal-scrim${leaving ? " is-leaving" : ""}`}
       onMouseDown={(e) => {
         // A click on the scrim (not the card) declines — the safe default.
         if (e.target === e.currentTarget) onCancel();

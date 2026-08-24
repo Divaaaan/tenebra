@@ -55,8 +55,12 @@
   border: var(--bw-emphasis) solid var(--signal);
   color: var(--signal);
   transition:
-    background var(--t-base),
-    color var(--t-base);
+    background-color var(--t-base),
+    color var(--t-base),
+    transform var(--d-micro) var(--e-out);
+}
+.prof-btn-primary:active:not(:disabled) {
+  transform: scale(0.96);
 }
 .prof-btn-primary:hover {
   background: var(--signal);
@@ -83,7 +87,11 @@
   color: var(--text-dim);
   transition:
     color var(--t-fast),
-    border-color var(--t-fast);
+    border-color var(--t-fast),
+    transform var(--d-micro) var(--e-out);
+}
+.prof-ghost:active:not(:disabled) {
+  transform: scale(0.96);
 }
 .prof-ghost:hover {
   color: var(--text);
@@ -235,7 +243,11 @@
   color: var(--text-dim);
   transition:
     color var(--t-fast),
-    border-color var(--t-fast);
+    border-color var(--t-fast),
+    transform var(--d-micro) var(--e-out);
+}
+.prof-count:active {
+  transform: scale(0.96);
 }
 .prof-count:hover {
   color: var(--text);
@@ -378,6 +390,12 @@
   align-items: center;
   justify-content: center;
   padding: var(--sp-5);
+  /* Every gate in the app lands on this card: the import dialog, the deep-link
+     and tun-conflict confirms, the update confirm, the crash report. They used
+     to appear and disappear with no motion at all — the harshest thing a modal
+     can do, since it gives the eye no clue whether the surface arrived or the
+     one beneath it went away. Shared vocabulary from global.css. */
+  animation: ui-fade-in var(--d-base) var(--e-out) backwards;
 }
 .prof-modal {
   width: min(520px, 100%);
@@ -387,6 +405,18 @@
   display: flex;
   flex-direction: column;
   gap: var(--sp-5);
+  animation: ui-panel-in var(--d-slow) var(--e-out) backwards;
+}
+
+/* Dismissed. The owner keeps the modal mounted for the exit (lib/usePresence);
+   the card leaves first and faster than the scrim, so the app is uncovered only
+   once the card is out of the way. */
+.prof-modal-scrim.is-leaving {
+  animation: ui-fade-out var(--d-base) var(--e-in) both;
+  pointer-events: none;
+}
+.prof-modal-scrim.is-leaving .prof-modal {
+  animation: ui-panel-out var(--d-fast) var(--e-in) both;
 }
 .prof-modal-title {
   margin: 0;
@@ -412,7 +442,11 @@
   color: var(--text-dim);
   transition:
     color var(--t-fast),
-    border-color var(--t-fast);
+    border-color var(--t-fast),
+    transform var(--d-micro) var(--e-out);
+}
+.prof-tab:active {
+  transform: scale(0.96);
 }
 .prof-tab:hover {
   color: var(--text);

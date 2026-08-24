@@ -77,6 +77,18 @@ const REGION_LABELS: Record<string, keyof Strings["servers"]> = {
 // live meter is the shared PingScale; this only mirrors its slot, never its logic.
 const BLANK_BARS = [0, 1, 2, 3, 4];
 
+// Row-entrance cascade. One step per row, but only for the first dozen: a
+// subscription with sixty nodes was dealing itself out for a second and a half,
+// and the rows past the fold — the ones nobody was looking at — were the ones
+// paying for it. Past the cap every remaining row shares the last delay, so the
+// tail arrives as one block and the whole list is settled in ~0.5s.
+const STAGGER_MS = 24;
+const STAGGER_CAP = 12;
+
+function staggerDelay(index: number): string {
+  return `${Math.min(index, STAGGER_CAP) * STAGGER_MS}ms`;
+}
+
 export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
   function ServerList(
     {
@@ -338,7 +350,7 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
                 <div
                   key={s.id}
                   className={`srv-row${active ? " active" : ""}${s.dead ? " is-dead" : ""}`}
-                  style={{ animationDelay: `${i * 26}ms` }}
+                  style={{ animationDelay: staggerDelay(i) }}
                   role="button"
                   tabIndex={s.dead ? -1 : 0}
                   aria-disabled={s.dead}

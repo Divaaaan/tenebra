@@ -5,6 +5,11 @@ import { useI18n } from "../i18n/I18nContext";
 interface CrashReportModalProps {
   report: string;
   onClose: () => void;
+  /**
+   * True while the surface is playing its exit. The owner keeps it mounted for
+   * that beat (see lib/usePresence); this only paints it.
+   */
+  leaving?: boolean;
 }
 
 /**
@@ -13,7 +18,11 @@ interface CrashReportModalProps {
  * or a scrim click closes it, matching the app's other overlays. The report is
  * read from the local file; opening this sends nothing.
  */
-export function CrashReportModal({ report, onClose }: CrashReportModalProps) {
+export function CrashReportModal({
+  report,
+  onClose,
+  leaving = false,
+}: CrashReportModalProps) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -41,7 +50,7 @@ export function CrashReportModal({ report, onClose }: CrashReportModalProps) {
 
   return (
     <div
-      className="prof-modal-scrim"
+      className={`prof-modal-scrim${leaving ? " is-leaving" : ""}`}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}

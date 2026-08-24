@@ -51,12 +51,17 @@
   align-items: center;
   gap: 14px;
   color: var(--word-off);
+  /* Same hero step as the shell's status word: one product, one pace. */
+  transition: color var(--d-hero) var(--e-move);
 }
 .simple-word .simple-ind {
   width: 16px;
   height: 16px;
   flex: none;
   display: inline-block;
+  transition:
+    background-color var(--d-hero) var(--e-move),
+    border-color var(--d-hero) var(--e-move);
 }
 
 .simple-word.idle {
@@ -115,18 +120,19 @@
   justify-content: center;
   gap: var(--sp-2);
   transition:
-    background 160ms ease,
-    color 160ms ease,
-    border-color 160ms ease,
-    transform 80ms ease;
+    background-color var(--d-base) var(--e-out),
+    color var(--d-base) var(--e-out),
+    border-color var(--d-base) var(--e-out),
+    opacity var(--d-base) var(--e-out),
+    transform var(--d-micro) var(--e-out);
 }
 /* Idle / error: fill on hover. Scoped away from the on/pending variants. */
 .simple-btn:not(.on):not(.pending):hover {
   background: var(--signal);
   color: var(--on-signal);
 }
-.simple-btn:active {
-  transform: scale(0.99);
+.simple-btn:active:not(:disabled) {
+  transform: scale(0.96);
 }
 .simple-btn:disabled {
   opacity: 0.5;
@@ -179,7 +185,9 @@
   text-align: center;
   text-align-last: center;
   cursor: pointer;
-  transition: border-color var(--t-fast);
+  transition:
+    border-color var(--t-fast),
+    color var(--t-fast);
 }
 .simple-select:hover {
   border-color: var(--text-dim);
@@ -207,7 +215,12 @@
   text-transform: uppercase;
   color: var(--text-dim-2);
   padding: var(--sp-2) var(--sp-3);
-  transition: color var(--t-fast);
+  transition:
+    color var(--t-fast),
+    transform var(--d-micro) var(--e-out);
+}
+.simple-advanced:active {
+  transform: scale(0.96);
 }
 .simple-advanced:hover {
   color: var(--text);
@@ -226,18 +239,15 @@
   gap: var(--sp-4);
   width: min(460px, 100%);
   margin-top: var(--sp-5);
-  animation: setup-in var(--t-base) var(--t-enter) both;
+  animation: ui-rise var(--d-slow) var(--e-out) backwards;
 }
 
-@keyframes setup-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
+/* Two steps, read in order, so they take the chunk beat rather than the row one. */
+.setup .setup-step {
+  animation: ui-rise var(--d-slow) var(--e-out) backwards;
+}
+.setup .setup-step:nth-child(2) {
+  animation-delay: var(--stagger-chunk);
 }
 
 .setup-step {
@@ -289,7 +299,7 @@
   border-radius: var(--radius);
   font-family: var(--mono);
   font-size: var(--fs-meta);
-  transition: border-color var(--t-fast) var(--t-base);
+  transition: border-color var(--t-base);
 }
 
 .setup-input:focus {
@@ -305,7 +315,13 @@
   border-radius: var(--radius);
   font-family: var(--mono);
   cursor: pointer;
-  transition: opacity var(--t-fast) var(--t-base);
+  transition:
+    opacity var(--t-base),
+    transform var(--d-micro) var(--e-out);
+}
+
+.setup-go:active:not(:disabled) {
+  transform: scale(0.96);
 }
 
 .setup-go:disabled {
@@ -333,6 +349,16 @@
   gap: var(--sp-2);
   align-items: baseline;
   color: var(--text-dim);
+  /* Three answers to the question the user actually pressed connect for. They
+     arrive together, so they cascade — on the chunk beat, because each is meant
+     to be read, not skimmed as a row of a table. */
+  animation: ui-rise var(--d-slow) var(--e-out) backwards;
+}
+.svc-check:nth-child(2) {
+  animation-delay: var(--stagger-chunk);
+}
+.svc-check:nth-child(3) {
+  animation-delay: calc(var(--stagger-chunk) * 2);
 }
 
 .svc-check.is-ok .svc-mark {
@@ -365,7 +391,7 @@
   font-size: var(--fs-meta);
   cursor: pointer;
   list-style: none;
-  transition: color var(--t-fast) var(--t-base);
+  transition: color var(--t-fast);
 }
 
 .setup-optional-summary::-webkit-details-marker {
@@ -400,9 +426,9 @@
   text-align: center;
   cursor: pointer;
   transition:
-    border-color var(--t-fast) var(--t-base),
-    color var(--t-fast) var(--t-base),
-    background var(--t-fast) var(--t-base);
+    border-color var(--t-base),
+    color var(--t-base),
+    background-color var(--t-base);
 }
 
 .setup-drop:hover {
@@ -470,6 +496,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .setup,
+  .setup .setup-step,
+  .svc-check,
   .simple-bypass-dot {
     animation: none;
   }

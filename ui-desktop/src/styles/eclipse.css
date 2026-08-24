@@ -25,7 +25,7 @@
     rgba(14, 14, 14, 0.72) 0%,
     rgba(14, 14, 14, 0.95) 62%
   );
-  animation: eclipse-veil var(--eclipse-dur) ease-in-out both;
+  animation: eclipse-veil var(--eclipse-dur) var(--e-move) both;
 }
 
 .eclipse-corona {
@@ -39,7 +39,7 @@
     0 0 0 2px #ff3d00,
     0 0 34px 6px rgba(255, 61, 0, 0.72),
     0 0 130px 34px rgba(255, 61, 0, 0.3);
-  animation: eclipse-corona var(--eclipse-dur) ease-in-out both;
+  animation: eclipse-corona var(--eclipse-dur) var(--e-move) both;
 }
 
 @keyframes eclipse-veil {
@@ -87,7 +87,7 @@
   letter-spacing: 0.2em;
   color: #ff3d00;
   opacity: 0;
-  animation: eclipse-motto var(--eclipse-dur) ease-in-out both;
+  animation: eclipse-motto var(--eclipse-dur) var(--e-move) both;
 }
 
 @keyframes eclipse-motto {

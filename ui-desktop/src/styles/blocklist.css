@@ -18,16 +18,7 @@
   place-items: center;
   padding: var(--sp-5);
   background: var(--scrim);
-  animation: bl-scrim-in var(--t-fast) var(--t-enter) both;
-}
-
-@keyframes bl-scrim-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+  animation: ui-fade-in var(--d-base) var(--e-out) backwards;
 }
 
 .bl-panel {
@@ -38,18 +29,17 @@
   background: var(--surface);
   border: var(--bw) solid var(--line);
   border-radius: var(--radius);
-  animation: bl-panel-in var(--t-base) var(--t-panel) both;
+  animation: ui-panel-in var(--d-slow) var(--e-out) backwards;
 }
 
-@keyframes bl-panel-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.99);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
+/* Dismissed: App holds the panel mounted for the exit (lib/usePresence). */
+.bl-scrim.is-leaving {
+  animation: ui-fade-out var(--d-base) var(--e-in) both;
+  pointer-events: none;
+}
+
+.bl-scrim.is-leaving .bl-panel {
+  animation: ui-panel-out var(--d-fast) var(--e-in) both;
 }
 
 .bl-panel__head {
@@ -101,9 +91,9 @@
   text-align: center;
   cursor: pointer;
   transition:
-    border-color var(--t-fast) var(--t-base),
-    color var(--t-fast) var(--t-base),
-    background var(--t-fast) var(--t-base);
+    border-color var(--t-base),
+    color var(--t-base),
+    background-color var(--t-base);
 }
 
 .bl-drop:hover,
@@ -133,7 +123,7 @@
 
 .bl-drop.is-dragging .bl-drop__ring {
   opacity: 1;
-  animation: bl-ring-pulse 900ms var(--t-base) infinite;
+  animation: bl-ring-pulse 1.2s var(--e-move) infinite;
 }
 
 @keyframes bl-ring-pulse {
@@ -196,18 +186,7 @@
   color: var(--signal);
   font-family: var(--mono);
   font-size: var(--fs-meta);
-  animation: bl-error-in var(--t-fast) var(--t-enter) both;
-}
-
-@keyframes bl-error-in {
-  from {
-    opacity: 0;
-    transform: translateY(-2px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
+  animation: ui-rise var(--d-base) var(--e-out) backwards;
 }
 
 /* ── imported lists ────────────────────────────────────────────────────── */
@@ -227,13 +206,16 @@
   border-top: var(--bw) solid var(--line);
   font-family: var(--mono);
   font-size: var(--fs-meta);
-  animation: bl-item-in var(--t-base) var(--t-enter) both;
+  animation: bl-item-in var(--d-slow) var(--e-out) backwards;
 }
 
+/* Imported lists come in from the left rather than from below: they are being
+   added to a column, and the sideways entrance says "one more row here" where a
+   rise would say "a new surface". */
 @keyframes bl-item-in {
   from {
     opacity: 0;
-    transform: translateX(-4px);
+    transform: translateX(-6px);
   }
   to {
     opacity: 1;
@@ -259,7 +241,13 @@
   background: none;
   border: 0;
   cursor: pointer;
-  transition: color var(--t-fast) var(--t-base);
+  transition:
+    color var(--t-fast),
+    transform var(--d-micro) var(--e-out);
+}
+
+.bl-item__remove:active {
+  transform: scale(0.96);
 }
 
 .bl-item__remove:hover {
@@ -275,8 +263,13 @@
     animation: none;
   }
 
+  /* Enters and exits alike. The exit never renders under reduced motion (the
+     presence hook drops the surface straight away), but a rule that only covers
+     half the transition is the kind that stops being true later. */
   .bl-scrim,
+  .bl-scrim.is-leaving,
   .bl-panel,
+  .bl-scrim.is-leaving .bl-panel,
   .bl-item,
   .bl-error {
     animation: none;
@@ -323,8 +316,13 @@
   text-transform: uppercase;
   cursor: pointer;
   transition:
-    border-color var(--t-fast) var(--t-base),
-    color var(--t-fast) var(--t-base);
+    border-color var(--t-base),
+    color var(--t-base),
+    transform var(--d-micro) var(--e-out);
+}
+
+.bl-toggle:active:not(:disabled) {
+  transform: scale(0.96);
 }
 
 .bl-toggle:hover:not(:disabled) {

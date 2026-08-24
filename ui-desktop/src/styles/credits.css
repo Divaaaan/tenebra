@@ -25,7 +25,7 @@
   background: var(--bg);
   border: var(--bw) solid var(--line-2);
   text-align: center;
-  animation: credits-in 260ms ease-out both;
+  animation: ui-panel-in var(--d-slow) var(--e-out) backwards;
 }
 
 /* A <span> rather than a <pre> so it stays valid phrasing content inside the
@@ -55,13 +55,3 @@
   color: var(--text-dim);
 }
 
-@keyframes credits-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
