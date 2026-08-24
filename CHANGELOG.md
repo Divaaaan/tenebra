@@ -11,6 +11,20 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-08-24
+
+### Fixed
+
+- **The bypass installs again on a fresh machine.** Upstream published bundle
+  1.10.2 while 0.5.2 was building, and the client only auto-installs a version
+  whose checksum it carries — so anyone installing Tenebra after that release got
+  no bypass at all, with the tunnel working but YouTube and Discord left to the
+  ISP's DPI. The checksum for 1.10.2 is pinned, verified byte-for-byte against
+  the archive upstream publishes. The underlying problem is that a pin has to be
+  shipped before the bundle it names is useful; a bundle carried inside the build
+  removes the race entirely, and that is the next change.
+
+
 ## [0.5.2] - 2026-08-24
 
 ### Fixed

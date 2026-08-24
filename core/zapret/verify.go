@@ -145,6 +145,7 @@ func archiveHostAllowed(host string) bool {
 // anchor to verify a new version against automatically. A human pinning it is the
 // anchor.
 var pinnedArchives = map[string]string{
+	"1.10.2": "5eaac9fb2e4b1abd693487452a3ff3f4dfe9578a45f9ddddfa4bc1f5a6bb62d5",
 	"1.10.1": "f748d61fec75e4edc992cb5b09d554e914197c68c690384aceb61f143d8f76c9",
 	"1.10.0": "6b7c5a66cfd055b8e361f8b5fb00f00b167260f21b1c03d589f6008417fb94a2",
 }
