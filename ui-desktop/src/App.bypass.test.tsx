@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 
 import type { State } from "./api";
 import { App } from "./App";
@@ -190,6 +190,69 @@ describe("bypass state comes from the core's snapshot", () => {
 
     expect(screen.getByText(/bypass on/)).toBeInTheDocument();
     expect(screen.getByText(/general \(FAKE TLS AUTO\)/)).toBeInTheDocument();
+  });
+
+  /**
+   * Connecting must not take the bypass off the screen.
+   *
+   * The app files away whatever snapshot a command answers with, and connect is
+   * answered after the bypass has already been raised for that same connect.
+   * Cores through 0.5.2 blanked the bypass fields on every state change, so that
+   * answer described a machine with no filter on it — and nothing corrected it
+   * afterwards: status re-reads the same snapshot, and the state event carries a
+   * phase, not a reading. The readout went dark at the press of the button and
+   * stayed dark until the app was restarted.
+   */
+  it("keeps the bypass on screen when the connect answer carries no reading", async () => {
+    mocks.status.mockResolvedValue({
+      state: "idle",
+      zapret_active: true,
+      zapret_strategy: "general (FAKE TLS AUTO)",
+      zapret_version: "1.10.2",
+    } as State);
+    // A core that blanks them answers exactly this: a phase and nothing else.
+    mocks.connect.mockResolvedValue({ state: "connecting" } as State);
+
+    const { container } = await mountReady();
+    expect(container.querySelector(".bypass-stat")).toHaveClass("is-on");
+
+    fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Disconnect|ABORT/ })).toBeInTheDocument(),
+    );
+    const stat = container.querySelector(".bypass-stat");
+    expect(stat).toHaveClass("is-on");
+    expect(stat?.textContent).toContain("general (FAKE TLS AUTO)");
+  });
+
+  // The other half of the same rule: an answer that does carry a reading is the
+  // truth, and a stop has to be able to turn the readout off. The strategy the
+  // core settled on outlives the stop, so a real stop still names one — which is
+  // what marks the answer as a reading rather than a silence.
+  it("turns the readout off when the core reports the filter stopped", async () => {
+    mocks.status.mockResolvedValue({
+      state: "idle",
+      zapret_active: true,
+      zapret_strategy: "general (FAKE TLS AUTO)",
+      zapret_version: "1.10.2",
+    } as State);
+    mocks.connect.mockResolvedValue({
+      state: "connecting",
+      zapret_strategy: "general (FAKE TLS AUTO)",
+      zapret_version: "1.10.2",
+    } as State);
+
+    const { container } = await mountReady();
+    expect(container.querySelector(".bypass-stat")).toHaveClass("is-on");
+
+    fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
+
+    await waitFor(() =>
+      expect(container.querySelector(".bypass-stat")).not.toHaveClass("is-on"),
+    );
   });
 
   // The screen no longer has anywhere to drop an archive, in either view: the

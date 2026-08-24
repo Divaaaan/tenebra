@@ -122,10 +122,27 @@ func zapretBundleResponse(id int64, dir string, strategies []zapret.Strategy) Re
 // copy would keep reporting a version that is no longer installed. Status is not
 // hot enough for one small file read to matter.
 func (d *Daemon) refreshZapretStateLocked() {
-	d.state.ZapretActive = d.routing.ZapretActive
-	d.state.ZapretStrategy = d.zapretActive
-	d.state.ZapretAutoUpdate = d.zapretAutoUpdate
-	d.state.ZapretVersion = zapret.Version(filepath.Join(d.store.Dir(), zapretDirName))
+	d.applyZapretToStateLocked(&d.state)
+}
+
+// applyZapretToStateLocked stamps the bypass's state onto any State value.
+// Callers must hold d.mu.
+//
+// It exists apart from refreshZapretStateLocked because setState replaces the
+// whole State rather than editing the live one, and these four fields are
+// daemon-wide in exactly the way the split and DNS preferences are: they belong
+// on every snapshot, not only on the ones written by a bypass command. Without
+// this stamp a connect blanked them — the answer to the connect command is a
+// snapshot taken after setState, so the bypass raised moments earlier on the
+// same connect reported itself as absent, and nothing put it back for the rest
+// of the session. applySettingsToState cannot do it: three of the four live in
+// the daemon's own bookkeeping (the picked strategy, the updater bit, the
+// version on disk), not in the routing options it is handed.
+func (d *Daemon) applyZapretToStateLocked(s *State) {
+	s.ZapretActive = d.routing.ZapretActive
+	s.ZapretStrategy = d.zapretActive
+	s.ZapretAutoUpdate = d.zapretAutoUpdate
+	s.ZapretVersion = zapret.Version(filepath.Join(d.store.Dir(), zapretDirName))
 }
 
 // newZapretRunner builds a bypass runner that knows whether a tunnel is up.

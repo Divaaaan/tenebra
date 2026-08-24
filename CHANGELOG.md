@@ -45,6 +45,15 @@ All notable changes to Tenebra are documented here. The format follows
   the core's reply.** Nothing in the response reaches the stored snapshot, so a
   refused toggle stayed where it was clicked. Every bypass control now re-reads
   the core's state after acting.
+- **The bypass readout went dark the moment you pressed Connect.** The core
+  replaced its whole status on every state change and rebuilt only part of it,
+  dropping the four bypass fields — so the answer to `connect`, taken *after*
+  that same connect had raised the packet filter, described a machine with no
+  bypass on it, and nothing put it back: status re-reads that answer, and the
+  state event carries a phase, not a reading. The fields now survive a state
+  change like the split and DNS settings do. The clients hold their last reading
+  across an answer that carries none, so an older core (the hand-installed macOS
+  daemon skews behind the app) no longer blanks the readout either.
 
 ### Removed
 

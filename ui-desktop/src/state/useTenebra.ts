@@ -36,6 +36,42 @@ export interface Traffic {
 
 const ZERO_TRAFFIC: Traffic = { up: 0, down: 0, upRate: 0, downRate: 0 };
 
+/**
+ * Fold a snapshot the core answered with into the one on screen, keeping the
+ * bypass readout when the answer says nothing about the bypass.
+ *
+ * Every bypass field is omitted from the wire when it is empty, so per field
+ * "the filter is off" and "this answer carries no reading" are the same bytes.
+ * The group tells them apart: a core that has a bypass at all — a bundle on
+ * disk, or a strategy it settled on, which outlives every stop — puts at least
+ * one of the three on every snapshot it takes a reading for. An answer carrying
+ * none of them is not a reading, and reading it as one is how a running filter
+ * went dark: cores through 0.5.2 blanked these fields on every state change, so
+ * the answer to `connect` — taken after that same connect had raised the
+ * bypass — said no filter existed, and nothing corrected it for the rest of the
+ * session. Current cores carry them across the change; the macOS daemon is
+ * hand-installed and stays behind the app until someone reinstalls it, which is
+ * the whole reason this is not left to the core alone.
+ *
+ * The updater bit is deliberately not carried: it is a stored preference, not a
+ * reading of the filter, and a core with nothing installed reports it alone.
+ */
+function foldSnapshot(prev: State, next: State): State {
+  const reportsBypass =
+    next.zapret_active !== undefined ||
+    next.zapret_strategy !== undefined ||
+    next.zapret_version !== undefined;
+  if (reportsBypass) {
+    return next;
+  }
+  return {
+    ...next,
+    zapret_active: prev.zapret_active,
+    zapret_strategy: prev.zapret_strategy,
+    zapret_version: prev.zapret_version,
+  };
+}
+
 // Keep the log panel bounded; a long-running session would otherwise grow it
 // without limit.
 const MAX_LOG_LINES = 500;
@@ -181,13 +217,21 @@ export function useTenebra(): Tenebra {
     });
   }, []);
 
+  // Every snapshot a command answers with lands here rather than in setState
+  // directly, so folding it (see foldSnapshot) is not something a call site can
+  // forget. The event stream is the exception: its payload is a phase, not a
+  // snapshot, and it merges on its own terms.
+  const applySnapshot = useCallback((next: State) => {
+    setState((prev) => foldSnapshot(prev, next));
+  }, []);
+
   const refreshProfiles = useCallback(async () => {
     setProfiles(await api.listProfiles());
   }, []);
 
   const refreshStatus = useCallback(async () => {
-    setState(await api.status());
-  }, []);
+    applySnapshot(await api.status());
+  }, [applySnapshot]);
 
   // Initial load and event wiring. Unlisten handles are resolved
   // asynchronously, so we guard against tearing down before they arrive.
@@ -284,7 +328,7 @@ export function useTenebra(): Tenebra {
           return;
         }
         if (!sawStateEvent) {
-          setState(initialState);
+          applySnapshot(initialState);
         }
         setProfiles(initialProfiles);
         setCoreError(null);
@@ -323,7 +367,7 @@ export function useTenebra(): Tenebra {
       }
       unlisteners.forEach((u) => u());
     };
-  }, [appendLog]);
+  }, [appendLog, applySnapshot]);
 
   const connect = useCallback(
     async (
@@ -333,69 +377,69 @@ export function useTenebra(): Tenebra {
       allowTunConflict?: boolean,
     ) => {
       const next = await api.connect(profile, node, auto, allowTunConflict);
-      setState(next);
+      applySnapshot(next);
       return next;
     },
-    [],
+    [applySnapshot],
   );
 
   const disconnect = useCallback(async () => {
     const next = await api.disconnect();
-    setState(next);
-  }, []);
+    applySnapshot(next);
+  }, [applySnapshot]);
 
   const setRouting = useCallback(async (mode: RoutingMode) => {
     const next = await api.setRouting(mode);
-    setState(next);
-  }, []);
+    applySnapshot(next);
+  }, [applySnapshot]);
 
   const setSplit = useCallback(async (mode: SplitMode, apps: string[]) => {
     const next = await api.setSplit(mode, apps);
-    setState(next);
-  }, []);
+    applySnapshot(next);
+  }, [applySnapshot]);
 
   const setKillSwitch = useCallback(async (on: boolean) => {
     const next = await api.setKillSwitch(on);
-    setState(next);
-  }, []);
+    applySnapshot(next);
+  }, [applySnapshot]);
 
   const setTlsFragment = useCallback(async (on: boolean) => {
     const next = await api.setTlsFragment(on);
-    setState(next);
-  }, []);
+    applySnapshot(next);
+  }, [applySnapshot]);
 
   const setMultihop = useCallback(
     async (profile: string, enabled: boolean, entryId: string, exitId: string) => {
       const next = await api.setMultihop(profile, enabled, entryId, exitId);
-      setState(next);
+      applySnapshot(next);
     },
-    [],
+    [applySnapshot],
   );
 
   const setTun = useCallback(async (stack: TunStack) => {
     const next = await api.setTun(stack);
-    setState(next);
-  }, []);
+    applySnapshot(next);
+  }, [applySnapshot]);
 
   const setProxyMode = useCallback(async (mode: ConnectionMode) => {
     const next = await api.setProxyMode(mode);
-    setState(next);
-  }, []);
+    applySnapshot(next);
+  }, [applySnapshot]);
 
   const setAutoconnect = useCallback(async (on: boolean) => {
     const next = await api.setAutoconnect(on);
-    setState(next);
-  }, []);
+    applySnapshot(next);
+  }, [applySnapshot]);
 
   const setAutoFailover = useCallback(async (on: boolean) => {
     const next = await api.setAutoFailover(on);
-    setState(next);
-  }, []);
+    applySnapshot(next);
+  }, [applySnapshot]);
 
   const setCrashReports = useCallback(async (on: boolean) => {
     const next = await api.setCrashReports(on);
-    setState(next);
-  }, []);
+    applySnapshot(next);
+  }, [applySnapshot]);
 
   const setDns = useCallback(
     async (
@@ -405,9 +449,9 @@ export function useTenebra(): Tenebra {
       ipv4Only: boolean,
     ) => {
       const next = await api.setDns(adBlock, dnsRemote, dnsDirect, ipv4Only);
-      setState(next);
+      applySnapshot(next);
     },
-    [],
+    [applySnapshot],
   );
 
   const setRules = useCallback(
@@ -423,9 +467,9 @@ export function useTenebra(): Tenebra {
         presetRuBanking,
         presetRuGov,
       );
-      setState(next);
+      applySnapshot(next);
     },
-    [],
+    [applySnapshot],
   );
 
   const setPresets = useCallback(
@@ -435,9 +479,9 @@ export function useTenebra(): Tenebra {
       services?: boolean;
     }) => {
       const next = await api.setPresets(presets);
-      setState(next);
+      applySnapshot(next);
     },
-    [],
+    [applySnapshot],
   );
 
   const clearLogs = useCallback(() => setLogs([]), []);
