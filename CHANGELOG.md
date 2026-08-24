@@ -11,8 +11,9 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
-### Fixed
+## [0.6.0] - 2026-08-25
 
+### Fixed
 - **The screen showed no bypass on a machine where the bypass was installed and
   running.** Whether one existed was a renderer-side flag, set only by a manual
   import made in the current session and reset by every restart — so on the very
@@ -58,9 +59,7 @@ All notable changes to Tenebra are documented here. The format follows
   the wire — every flag in the status is omitted when empty, and this is the one
   whose default is on, so an omitted "off" read back as "on" while the core had
   stored the choice correctly. It is now always reported, false included.
-
 ### Removed
-
 - **The manual bypass import, and user blocklists with it.** The first screen
   asked for a zapret archive: find the release page, pick the right asset, drag
   it in. The core has downloaded and installed one by itself since 0.5.0, so this
@@ -74,15 +73,12 @@ All notable changes to Tenebra are documented here. The format follows
   sniffer written to feed it, and the `import_zapret` command in the desktop
   bridge. The core's own archive install is untouched — it is what the updater
   uses, and unpacking a bundle into the data directory by hand still works.
-
 ### Changed
-
 - **Switching the bypass on and off, and re-measuring its strategies, live in
   Settings.** They were only ever reachable from the panel that has been removed,
   next to the version and the updater switch they belong beside. The status line
   there is the core's: which strategy is running, or that none is.
 ### Added
-
 - **The bypass bundle ships inside the build, so a first connect no longer
   depends on reaching GitHub.** The bypass used to exist only after a download,
   and there were four ways for that download to end with nothing installed: no
@@ -105,9 +101,7 @@ All notable changes to Tenebra are documented here. The format follows
   now redistributed rather than only fetched,
   [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md#2-components-downloaded-at-runtime)
   records it as shipped, with the licenses and copyright holders it carries.
-
 ### Changed
-
 - **"Update the bundle automatically" now governs downloads only, not whether
   the bypass exists.** Unticking it used to suppress the first-connect install
   outright, which — once a bundle ships inside the build — reads the switch as
