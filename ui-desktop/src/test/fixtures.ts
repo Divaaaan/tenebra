@@ -60,6 +60,7 @@ export function makeTenebra(overrides: Partial<Tenebra> = {}): Tenebra {
     setRules: vi.fn().mockResolvedValue(undefined),
     setPresets: vi.fn().mockResolvedValue(undefined),
     refreshProfiles: vi.fn().mockResolvedValue(undefined),
+    refreshStatus: vi.fn().mockResolvedValue(undefined),
     clearLogs: vi.fn(),
     ...overrides,
   };

@@ -8,10 +8,12 @@ interface BottomBarProps {
   onToggleKillSwitch: () => void;
   onLeakCheck: () => void;
   onSettings: () => void;
-  /** Opens the blocklist import panel. */
-  onBlocklist: () => void;
-  /** Number of imported blocklists, shown as a count beside the action. */
-  blocklistCount: number;
+  /** True when the core reports a bundle on disk (or a filter already running). */
+  bypassInstalled: boolean;
+  /** True when the core reports the packet filter as carrying traffic. */
+  bypassOn: boolean;
+  /** The strategy the core is running; "" when it does not name one. */
+  bypassStrategy: string;
 }
 
 // The spec's protocol toggle (wireguard/openvpn) doesn't map to sing-box, where
@@ -35,8 +37,9 @@ export function BottomBar({
   onToggleKillSwitch,
   onLeakCheck,
   onSettings,
-  onBlocklist,
-  blocklistCount,
+  bypassInstalled,
+  bypassOn,
+  bypassStrategy,
 }: BottomBarProps) {
   const { t } = useI18n();
 
@@ -72,18 +75,25 @@ export function BottomBar({
         </button>
       </div>
       <div className="right">
-        <button
-          type="button"
-          className={`act${blocklistCount > 0 ? " has-count" : ""}`}
-          onClick={onBlocklist}
-          title={t.blocklist.hint}
-        >
-          ▶ {t.blocklist.title}
-          {/* The count is the only feedback that an imported bundle is
-              actually installed — without it the panel looks the same whether
-              or not the drop took. */}
-          {blocklistCount > 0 && <span className="act-count">{blocklistCount}</span>}
-        </button>
+        {/* The bypass, read off the core's snapshot — a readout, not a control:
+            it used to be a button opening an import panel with a count of
+            imported files beside it, which said nothing about whether the filter
+            was actually up. Switching it on and off lives in Settings; what
+            belongs here is the answer to "is it running right now". Silent until
+            a bundle exists, since before the first connect there is nothing to
+            report. */}
+        {bypassInstalled && (
+          <span
+            className={`bypass-stat${bypassOn ? " is-on" : ""}`}
+            title={t.settings.bypassStatusHint}
+          >
+            <span className="box" aria-hidden="true">
+              {bypassOn ? "▣" : "▢"}
+            </span>
+            {t.settings.bypassStatus}
+            {bypassOn && bypassStrategy ? ` · ${bypassStrategy}` : ""}
+          </span>
+        )}
         <button type="button" className="act" onClick={onLeakCheck}>
           ▶ {t.bottom.leakCheck}
         </button>

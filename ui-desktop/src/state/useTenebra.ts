@@ -135,6 +135,17 @@ export interface Tenebra {
     services?: boolean;
   }) => Promise<void>;
   refreshProfiles: () => Promise<void>;
+  /**
+   * Re-read the core's snapshot.
+   *
+   * Every action above resolves to the new state, so nothing that goes through
+   * them needs this. The bypass commands do: `start_zapret` answers with the
+   * strategy it started and `pick_zapret` with its measurements, neither of them
+   * a `State`, and the core pushes no state event for either — the state event
+   * carries only phase/node/error. Without a re-read the screen keeps drawing
+   * the bypass exactly as it was before the user switched it.
+   */
+  refreshStatus: () => Promise<void>;
   clearLogs: () => void;
 }
 
@@ -172,6 +183,10 @@ export function useTenebra(): Tenebra {
 
   const refreshProfiles = useCallback(async () => {
     setProfiles(await api.listProfiles());
+  }, []);
+
+  const refreshStatus = useCallback(async () => {
+    setState(await api.status());
   }, []);
 
   // Initial load and event wiring. Unlisten handles are resolved
@@ -451,6 +466,7 @@ export function useTenebra(): Tenebra {
     setRules,
     setPresets,
     refreshProfiles,
+    refreshStatus,
     clearLogs,
   };
 }

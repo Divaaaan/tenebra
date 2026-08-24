@@ -25,8 +25,9 @@ struct Inner {
     state: State,
     profiles: Vec<Profile>,
     /// The bundle the mock pretends is installed, and which strategy is running.
-    /// Empty until something is imported, so the UI's "nothing installed yet"
-    /// path is the first thing a mock run exercises.
+    /// Empty until the first connect installs one (or the update command does),
+    /// so the UI's "nothing installed yet" path is the first thing a mock run
+    /// exercises — exactly as against a fresh core.
     zapret_strategies: Vec<String>,
     zapret_active: Option<String>,
     /// Bumped on every connect/disconnect so a stale timer or ticker from a
@@ -148,6 +149,21 @@ fn spawn_connect(shared: &Arc<Shared>, generation: u64, node_name: String) {
             inner.state.error = None;
             inner.up_total = 0;
             inner.down_total = 0;
+            // The core installs a bundle on the first connect when there is none
+            // and brings the filter up with the tunnel; mirror that, so the demo
+            // exercises the same snapshot the UI reads the bypass out of instead
+            // of leaving that half of the screen permanently blank.
+            if inner.zapret_strategies.is_empty() {
+                inner.zapret_strategies = demo_strategies();
+            }
+            let running = inner
+                .zapret_active
+                .clone()
+                .unwrap_or_else(|| inner.zapret_strategies[0].clone());
+            inner.zapret_active = Some(running.clone());
+            inner.state.zapret_active = Some(true);
+            inner.state.zapret_strategy = Some(running);
+            inner.state.zapret_version = Some(MOCK_ZAPRET_VERSION.into());
             let snapshot = inner.state.clone();
             drop(inner);
             shared.emit_state(&snapshot);
@@ -843,25 +859,6 @@ impl Backend for MockBackend {
         })
     }
 
-    fn import_zapret(
-        &self,
-        data: Option<String>,
-        path: Option<String>,
-        _name: Option<String>,
-    ) -> Result<ZapretBundle, String> {
-        // Refuse an empty drop the way the core does, so the UI's error path is
-        // exercised in mock runs instead of only in front of a real core.
-        if data.as_deref().unwrap_or("").is_empty() && path.as_deref().unwrap_or("").is_empty() {
-            return Err("import_zapret: пустой архив".into());
-        }
-        let mut inner = self.shared.inner.lock().unwrap();
-        inner.zapret_strategies = demo_strategies();
-        Ok(ZapretBundle {
-            dir: MOCK_ZAPRET_DIR.into(),
-            strategies: Some(inner.zapret_strategies.clone()),
-        })
-    }
-
     fn list_zapret(&self) -> Result<ZapretBundle, String> {
         let inner = self.shared.inner.lock().unwrap();
         let strategies = if inner.zapret_strategies.is_empty() {
@@ -878,12 +875,18 @@ impl Backend for MockBackend {
     fn pick_zapret(&self) -> Result<ZapretPick, String> {
         let mut inner = self.shared.inner.lock().unwrap();
         if inner.zapret_strategies.is_empty() {
-            return Err("pick_zapret: сначала загрузи сборку zapret".into());
+            return Err("pick_zapret: сначала установи сборку zapret".into());
         }
         // A believable measurement: the baseline already carries some targets, and
-        // the winner carries more. The winner is left running, as the core does.
+        // the winner carries more. The winner is left running, as the core does —
+        // and the snapshot says so, because that is where the UI reads it.
         let best = "general (FAKE TLS AUTO)".to_string();
         inner.zapret_active = Some(best.clone());
+        inner.state.zapret_active = Some(true);
+        inner.state.zapret_strategy = Some(best.clone());
+        let state = inner.state.clone();
+        drop(inner);
+        self.shared.emit_state(&state);
         Ok(ZapretPick {
             baseline: 3,
             targets: 5,
@@ -904,7 +907,7 @@ impl Backend for MockBackend {
     fn start_zapret(&self, name: Option<String>) -> Result<ZapretActive, String> {
         let mut inner = self.shared.inner.lock().unwrap();
         if inner.zapret_strategies.is_empty() {
-            return Err("start_zapret: сначала загрузи сборку zapret".into());
+            return Err("start_zapret: сначала установи сборку zapret".into());
         }
         let chosen = name
             .or_else(|| inner.zapret_active.clone())
@@ -913,11 +916,22 @@ impl Backend for MockBackend {
             return Err(format!("start_zapret: стратегии {chosen:?} нет в сборке"));
         }
         inner.zapret_active = Some(chosen.clone());
+        inner.state.zapret_active = Some(true);
+        inner.state.zapret_strategy = Some(chosen.clone());
+        let state = inner.state.clone();
+        drop(inner);
+        self.shared.emit_state(&state);
         Ok(ZapretActive { active: chosen })
     }
 
     fn stop_zapret(&self) -> Result<(), String> {
-        // The pick survives a stop, as in the core: stopping is not un-picking.
+        let mut inner = self.shared.inner.lock().unwrap();
+        // The pick survives a stop, as in the core: stopping is not un-picking,
+        // so the strategy stays named while the filter goes down.
+        inner.state.zapret_active = Some(false);
+        let state = inner.state.clone();
+        drop(inner);
+        self.shared.emit_state(&state);
         Ok(())
     }
 
@@ -925,10 +939,15 @@ impl Backend for MockBackend {
         let mut inner = self.shared.inner.lock().unwrap();
         let had = !inner.zapret_strategies.is_empty();
         inner.zapret_strategies = demo_strategies();
+        inner.state.zapret_version = Some(MOCK_ZAPRET_VERSION.into());
+        let state = inner.state.clone();
+        drop(inner);
+        self.shared.emit_state(&state);
         Ok(ZapretUpdate {
             installed: if had { "1.10.0".into() } else { String::new() },
-            latest: "1.10.1".into(),
+            latest: MOCK_ZAPRET_VERSION.into(),
             updated: true,
+            blocked: false,
         })
     }
 
@@ -944,6 +963,9 @@ impl Backend for MockBackend {
 
 /// Where the mock pretends the bundle lives.
 const MOCK_ZAPRET_DIR: &str = r"C:\ProgramData\Tenebra\data\zapret";
+
+/// The release the mock pretends is installed.
+const MOCK_ZAPRET_VERSION: &str = "1.10.1";
 
 /// The strategy names a real 1.10.x bundle ships, trimmed to a handful — enough
 /// for the UI to render a list and a pick without pretending to be exhaustive.

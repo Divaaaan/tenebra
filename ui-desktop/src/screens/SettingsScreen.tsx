@@ -400,13 +400,71 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     void tenebra.setTlsFragment(!tlsFragment).catch(reportRefusal);
   }
 
-  // The bypass bundle's version and its updater. Both are core-owned; the version
-  // is shown because a stale bundle fails exactly like a dead node or an expired
-  // subscription, and knowing which of the three you have is otherwise guesswork.
+  // The bypass, entirely as the core reports it: whether the packet filter is
+  // carrying traffic, which strategy it settled on, which bundle is installed and
+  // whether that bundle updates itself. The version is shown because a stale
+  // bundle fails exactly like a dead node or an expired subscription, and knowing
+  // which of the three you have is otherwise guesswork.
+  const bypassOn = tenebra.state.zapret_active ?? false;
+  const bypassStrategy = tenebra.state.zapret_strategy ?? "";
   const bypassVersion = tenebra.state.zapret_version ?? "";
   const bypassAutoUpdate = tenebra.state.zapret_auto_update ?? true;
   const [bypassUpdating, setBypassUpdating] = useState(false);
   const [bypassUpdateNote, setBypassUpdateNote] = useState("");
+  const [bypassBusy, setBypassBusy] = useState(false);
+  const [bypassPicking, setBypassPicking] = useState(false);
+
+  /**
+   * Switch the packet filter on or off.
+   *
+   * Neither command answers with a `State` and the core pushes no state event for
+   * them, so the snapshot is re-read afterwards — otherwise the switch would
+   * report the position the user clicked rather than the one the core reached,
+   * which is the whole class of lie this screen is being cleared of.
+   */
+  function toggleBypass() {
+    if (bypassBusy || bypassPicking) return;
+    setBypassBusy(true);
+    const sent: Promise<unknown> = bypassOn
+      ? api.stopZapret()
+      : api.startZapret();
+    void sent
+      .catch(reportRefusal)
+      // Re-read after a refusal too: the switch has to end up where the core is,
+      // and a refused start is exactly when a guessed position would mislead.
+      .then(() => tenebra.refreshStatus())
+      .catch(() => {})
+      .finally(() => setBypassBusy(false));
+  }
+
+  /**
+   * Measure every strategy in the bundle and keep the winner.
+   *
+   * Minutes long by nature — each strategy is attached, probed and detached — and
+   * worth a control of its own because the answer expires: a strategy that beat
+   * one ISP's DPI last month can stop working without anything else changing, and
+   * from the outside that is indistinguishable from a dead node.
+   */
+  function repickBypass() {
+    if (bypassPicking || bypassBusy) return;
+    setBypassPicking(true);
+    void api
+      .pickZapret()
+      .then((r) => {
+        // "Nothing helped" is a real answer and has to read as one: it means the
+        // block is elsewhere, not that the probe failed. The core leaves the
+        // winner running, so the refresh below shows it.
+        pushToast(
+          r.improved && r.best
+            ? `${t.settings.bypassPicked} ${r.best}`
+            : t.settings.bypassPickedNothing,
+        );
+      })
+      .catch(reportRefusal)
+      .then(() => tenebra.refreshStatus())
+      .catch(() => {})
+      .finally(() => setBypassPicking(false));
+  }
 
   function updateBypass() {
     if (bypassUpdating) return;
@@ -435,7 +493,14 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   }
 
   function toggleBypassAutoUpdate() {
-    void api.setZapretAutoUpdate(!bypassAutoUpdate).catch(reportRefusal);
+    // Re-read afterwards for the same reason the switch above does: the command
+    // answers with nothing the client keeps, so without this the switch shows
+    // where it was clicked rather than where the core ended up.
+    void api
+      .setZapretAutoUpdate(!bypassAutoUpdate)
+      .catch(reportRefusal)
+      .then(() => tenebra.refreshStatus())
+      .catch(() => {});
   }
 
   // Multihop two-hop chain. Core-owned like the other toggles: off with no
@@ -1542,6 +1607,59 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
           <div className="set-section-head">
             <h2 className="set-eyebrow">{t.settings.bypass}</h2>
             <p className="set-sub">{t.settings.bypassHint}</p>
+          </div>
+
+          {/* Whether the packet filter is up, and the switch for it. The state
+              is the core's, not this screen's: a bundle installed on the first
+              connect is already running by the time anyone opens Settings, and a
+              switch drawn from a local flag would offer to "enable" what is
+              enabled. */}
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.bypassStatus}</span>
+              <span className="set-row-hint">
+                {bypassOn
+                  ? bypassStrategy
+                    ? `${t.settings.bypassStatusOn} · ${bypassStrategy}`
+                    : t.settings.bypassStatusOn
+                  : t.settings.bypassStatusOff}
+              </span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={bypassOn}
+              aria-label={t.settings.bypassStatus}
+              disabled={bypassBusy || bypassPicking}
+              className={`set-switch${bypassOn ? " is-on" : ""}`}
+              onClick={toggleBypass}
+            >
+              <span className="set-switch-box" aria-hidden="true">
+                {bypassOn ? "▣" : "▢"}
+              </span>
+              {bypassOn ? "ON" : "OFF"}
+            </button>
+          </div>
+
+          {/* Which strategy defeats a given ISP's DPI cannot be known in advance
+              — that is why a bundle ships twenty of them — and the answer expires.
+              This is the re-measure, kept here because it is minutes long and
+              belongs nowhere near a connect button. */}
+          <div className="set-row">
+            <span className="set-row-text">
+              <span className="set-row-label">{t.settings.bypassPick}</span>
+              <span className="set-row-hint">{t.settings.bypassPickHint}</span>
+            </span>
+            <button
+              type="button"
+              className="set-btn"
+              disabled={bypassPicking || bypassBusy}
+              onClick={repickBypass}
+            >
+              {bypassPicking
+                ? t.settings.bypassPicking
+                : t.settings.bypassPickRun}
+            </button>
           </div>
 
           <div className="set-row">

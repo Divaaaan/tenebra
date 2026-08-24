@@ -109,11 +109,11 @@ download from the upstream release page; nothing about you goes with the request
 
 **How to decline it.** *Settings → Censorship bypass → Update the bundle
 automatically* governs both the first-connect install and the re-check. Turned
-off, Tenebra fetches nothing on its own: drag in a bundle yourself, press
-*Update* when you want one, or run with no bypass at all — the tunnel still
-carries every service, it simply carries the censored ones through the exit node
-instead of around the filter. Deleting the `zapret` directory removes what is
-already installed.
+off, Tenebra fetches nothing on its own: press *Update* when you want a bundle,
+unpack one into the `zapret` directory above yourself, or run with no bypass at
+all — the tunnel still carries every service, it simply carries the censored ones
+through the exit node instead of around the filter. Deleting the `zapret`
+directory removes what is already installed.
 
 Everything in the bundle, with its license and copyright holder, is listed in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md#2-components-downloaded-at-runtime).

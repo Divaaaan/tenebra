@@ -312,20 +312,17 @@ export interface Strings {
    * words are reused from `home`/`state`.
    */
   simple: {
-    /** Step 1 label: paste the subscription link. */
+    /** The only setup step: paste the subscription link. */
     setupLink: string;
     setupLinkPlaceholder: string;
-    /** Step 2 label: drop the bypass bundle. */
-    setupBypass: string;
-    setupBypassHint: string;
-    /**
-     * Summary of the folded-away manual bundle import. It has to say the thing
-     * happens by itself, otherwise a user who remembers the old flow goes looking
-     * for the step that is no longer there.
-     */
-    setupBypassOptional: string;
-    /** Sub-line under the status when the bypass is running. */
+    /** Sub-line under the status when the core reports the bypass running. */
     bypassOn: string;
+    /**
+     * Same line when a bundle is installed and the filter is not running. Drawn
+     * only once there is a bundle: before the first connect there is nothing to
+     * report either way.
+     */
+    bypassOff: string;
     /** Reassurance line under the status word while connected. */
     statusOn: string;
     /** Calm line under the status word while idle or errored. */
@@ -558,6 +555,33 @@ export interface Strings {
     bypass: string;
     bypassHint: string;
     tlsFragment: string;
+    /**
+     * The packet filter's own row: whether it is carrying traffic, and the switch
+     * for it. Also labels the read-only status the bottom bar carries, so the two
+     * surfaces cannot name the same fact differently.
+     */
+    bypassStatus: string;
+    bypassStatusHint: string;
+    /** Running — the strategy name is appended after this when the core names one. */
+    bypassStatusOn: string;
+    bypassStatusOff: string;
+    /**
+     * Re-measure every strategy in the bundle and keep the winner. Which one
+     * defeats a given ISP's DPI cannot be known in advance and stops being true
+     * over time, so this is a control rather than a one-off at install.
+     */
+    bypassPick: string;
+    bypassPickHint: string;
+    /** The button itself — a verb, kept distinct from the row's label. */
+    bypassPickRun: string;
+    bypassPicking: string;
+    /** Toast after a successful probe; the winning strategy is appended. */
+    bypassPicked: string;
+    /**
+     * Toast when nothing beat the baseline. It means the block is elsewhere —
+     * or there is none — which is a real answer, not a failed probe.
+     */
+    bypassPickedNothing: string;
     /** Installed bypass-bundle version, and the control that moves it. */
     bypassVersion: string;
     bypassVersionInstalled: string;
@@ -687,41 +711,6 @@ export interface Strings {
     leakDnsUnavailable: string;
     /** Label preceding the observed resolver list. */
     leakDnsResolvers: string;
-  };
-
-  blocklist: {
-    title: string;
-    /** One line explaining what the panel takes and where server links go. */
-    hint: string;
-    /** Text inside the drop zone. */
-    dropHint: string;
-    loading: string;
-    /**
-     * Refusal shown when a dropped file is not a zapret bundle. The panel takes
-     * nothing else: a domain blocklist has nowhere to go, so it is turned away
-     * here rather than counted at the user as if it had been applied.
-     */
-    badFile: string;
-    /** Unit after an installed bundle's strategy count, e.g. "20 strategies". */
-    rules: string;
-    /** Placeholder while a list is still being parsed. */
-    counting: string;
-    remove: string;
-    close: string;
-    /** Label of the settings row that opens the panel. */
-    open: string;
-    /** Button that switches the bypass on. */
-    enable: string;
-    /** Button that switches it off. */
-    disable: string;
-    /** Shown while the strategy probe runs. */
-    picking: string;
-    /** Accessible label of the "?" trigger. */
-    helpLabel: string;
-    /** Title inside the hint popover. */
-    helpTitle: string;
-    /** Step lines shown in the hint, in order. */
-    helpLines: string[];
   };
 
   check: {
@@ -955,10 +944,8 @@ const en: Strings = {
   simple: {
     setupLink: "Paste your subscription link",
     setupLinkPlaceholder: "https://…",
-    setupBypass: "Drop the bypass archive here",
-    setupBypassHint: "zapret archive or folder — drag it in, or click",
-    setupBypassOptional: "The bypass installs itself — or add your own bundle",
     bypassOn: "bypass on",
+    bypassOff: "bypass off",
     statusOn: "You're protected",
     statusOff: "You're not connected",
     server: "Server",
@@ -1163,6 +1150,19 @@ const en: Strings = {
     bypassHint:
       "Defeat deep-packet inspection that fingerprints and blocks the tunnel handshake.",
     tlsFragment: "DPI bypass — TLS fragmentation",
+    bypassStatus: "Packet-level bypass",
+    bypassStatusHint:
+      "The packet filter that makes YouTube and Discord work directly, with no tunnel and no added latency.",
+    bypassStatusOn: "running",
+    bypassStatusOff: "not running",
+    bypassPick: "Strategy choice",
+    bypassPickHint:
+      "Try every strategy in the bundle against real destinations and keep the one that wins. Takes minutes; the answer stops being true as filtering changes.",
+    bypassPickRun: "Re-measure",
+    bypassPicking: "Measuring…",
+    bypassPicked: "bypass: switched to",
+    bypassPickedNothing:
+      "bypass: nothing beat the baseline — the block is elsewhere",
     bypassVersion: "Bypass bundle",
     bypassVersionInstalled: "installed",
     bypassVersionUnknown: "not installed yet",
@@ -1253,32 +1253,6 @@ const en: Strings = {
       "Inconclusive — not enough signal for a verdict. This is not a pass.",
     leakDnsUnavailable: "Couldn't run the DNS probe. This is not a pass.",
     leakDnsResolvers: "Resolvers",
-  },
-  blocklist: {
-    title: "DPI bypass",
-    hint: "Drop a zapret folder or archive — the DPI bypass for YouTube and Discord. The app finds the strategy that works here.",
-    dropHint: "Drop the zapret folder or its archive",
-    loading: "Reading…",
-    badFile:
-      "This does not look like a zapret bundle: no bin\\winws.exe and no .bat strategies inside",
-    rules: "strategies",
-    counting: "reading…",
-    remove: "Remove",
-    close: "Close",
-    open: "Open",
-    enable: "Turn on",
-    disable: "Turn off",
-    picking: "Finding a working strategy…",
-    helpLabel: "How this works",
-    helpTitle: "What this is",
-    helpLines: [
-      "zapret defeats DPI blocking at packet level: YouTube and Discord work directly, with no tunnel and no added latency.",
-      "Download the zapret-discord-youtube bundle and drop the folder or the archive here.",
-      "The app finds the strategies and probes them: enabling each one and checking whether YouTube and Discord came back.",
-      "There are about twenty because every ISP DPI fails differently — it cannot be guessed, only measured.",
-      "The run takes minutes and the connection will flicker: there is no other way to measure it.",
-      "If none of them helps it will say so, rather than pretend the block is handled.",
-    ],
   },
 
   check: {
@@ -1494,13 +1468,11 @@ const ru: Strings = {
     sessionTraffic: "За сессию",
   },
   simple: {
-    /** Step 1 label: paste the subscription link. */
+    /** The only setup step: paste the subscription link. */
     setupLink: "Вставь ссылку на подписку",
     setupLinkPlaceholder: "https://…",
-    setupBypass: "Закинь сюда запрет",
-    setupBypassHint: "Архив или папка zapret — перетащи или нажми",
-    setupBypassOptional: "Обход поставится сам — или подложи свою сборку",
-    bypassOn: "запрет включён",
+    bypassOn: "обход включён",
+    bypassOff: "обход выключен",
     statusOn: "Вы под защитой",
     statusOff: "Вы не подключены",
     server: "Сервер",
@@ -1704,6 +1676,19 @@ const ru: Strings = {
     bypassHint:
       "Обойти глубокую инспекцию пакетов (DPI), которая распознаёт и блокирует рукопожатие туннеля.",
     tlsFragment: "Обход DPI — фрагментация TLS",
+    bypassStatus: "Обход на уровне пакетов",
+    bypassStatusHint:
+      "Пакетный фильтр, из-за которого YouTube и Discord работают напрямую — без туннеля и без лишнего пинга.",
+    bypassStatusOn: "работает",
+    bypassStatusOff: "не работает",
+    bypassPick: "Подбор стратегии",
+    bypassPickHint:
+      "Прогнать все стратегии сборки по реальным адресам и оставить победившую. Занимает минуты; ответ перестаёт быть верным, когда меняются фильтры.",
+    bypassPickRun: "Подобрать заново",
+    bypassPicking: "Подбираю…",
+    bypassPicked: "обход: переключился на",
+    bypassPickedNothing:
+      "обход: ни одна стратегия не улучшила — блокировка не здесь",
     bypassVersion: "Сборка обхода",
     bypassVersionInstalled: "установлена",
     bypassVersionUnknown: "ещё не установлена",
@@ -1796,32 +1781,6 @@ const ru: Strings = {
       "Неопределённо — данных для вердикта недостаточно. Это не гарантия.",
     leakDnsUnavailable: "Не удалось выполнить проверку DNS. Это не гарантия.",
     leakDnsResolvers: "Резолверы",
-  },
-  blocklist: {
-    title: "Запрет",
-    hint: "Перетащи папку или архив zapret — обходчик блокировок РКН для YouTube и Discord. Приложение само подберёт рабочую стратегию.",
-    dropHint: "Перетащи сюда папку zapret или её архив",
-    loading: "Читаю…",
-    badFile:
-      "Это не похоже на сборку zapret: внутри нет bin\\winws.exe и стратегий .bat",
-    rules: "стратегий",
-    counting: "разбираю…",
-    remove: "Убрать",
-    close: "Закрыть",
-    open: "Открыть",
-    enable: "Включить",
-    disable: "Выключить",
-    picking: "Подбираю рабочую стратегию…",
-    helpLabel: "Как это работает",
-    helpTitle: "Что это и что сюда класть",
-    helpLines: [
-      "zapret обходит блокировки РКН на уровне пакетов: YouTube и Discord работают напрямую, без туннеля и без лишнего пинга.",
-      "Скачай сборку zapret-discord-youtube и перетащи сюда папку или архив — как удобно.",
-      "Приложение само найдёт стратегии и переберёт их: включит каждую и проверит, ожили ли YouTube и Discord.",
-      "Стратегий около двадцати, потому что у каждого провайдера DPI ломается по-своему — угадать нельзя, только измерить.",
-      "Перебор занимает несколько минут, и связь будет моргать: иначе проверить нечем.",
-      "Если ни одна не поможет — так и скажет, а не сделает вид, что всё исправлено.",
-    ],
   },
 
   check: {

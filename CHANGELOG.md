@@ -11,6 +11,64 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **The screen showed no bypass on a machine where the bypass was installed and
+  running.** Whether one existed was a renderer-side flag, set only by a manual
+  import made in the current session and reset by every restart — so on the very
+  path the product is built around, the core downloading a bundle on the first
+  connect and bringing the packet filter up with the tunnel, the app drew "no
+  bypass" over a working one and went on asking for the archive. The core has
+  reported the truth in every status snapshot since 0.5.0 (`zapret_active`,
+  `zapret_strategy`, `zapret_version`); only the Settings screen read any of it.
+  Both views read it now: the shell's bottom bar carries the packet filter's
+  state and the strategy carrying traffic, the one-button screen names the same
+  thing under the status word, and neither says anything at all until the core
+  reports a bundle. A filter that is up counts as installed even when the bundle
+  carries no version marker.
+- **A missing core no longer looks like a working one.** When `tenebra-core`
+  could not be located or would not start, the app attached to its own demo fake
+  instead: invented profiles, a connect that "succeeded" a second and a half
+  later on a timer, fabricated bypass strategies and a "bypass enabled" toast for
+  a packet filter that did not exist. Nothing on that screen was true, and
+  nothing on it said so. The fallback is now a backend that refuses every command
+  with the reason the transport gave, which the app already renders as "no
+  connection to the background service — retrying"; the one-button screen says it
+  too, rather than showing a calm "disconnected". The demo fake is still there
+  and still selected by `TENEBRA_MOCK=1` — by name, never by accident.
+- **A bundle the core refused to install on trust was reported as "already
+  current".** `update_zapret` answers with `blocked` when a newer bundle exists
+  whose checksum this build does not carry, and the desktop bridge dropped the
+  field on its way through, so the one answer that means "update Tenebra to get
+  the fix" arrived as the one that means "nothing to do here".
+- **The Settings switches for the bypass updater moved on click rather than on
+  the core's reply.** Nothing in the response reaches the stored snapshot, so a
+  refused toggle stayed where it was clicked. Every bypass control now re-reads
+  the core's state after acting.
+
+### Removed
+
+- **The manual bypass import, and user blocklists with it.** The first screen
+  asked for a zapret archive: find the release page, pick the right asset, drag
+  it in. The core has downloaded and installed one by itself since 0.5.0, so this
+  was work handed to the user that the program already does — and the drop zone
+  kept being offered over a bundle that was installed and running, because it
+  read that session flag. User-supplied domain blocklists are gone outright: the
+  app parsed them and there has never been a command that hands the result to the
+  core, so the import had no effect beyond the count it printed (0.5.2 stopped it
+  claiming otherwise; this removes the road to the claim). Gone with them: the
+  bypass panel, its bottom-bar button and count, the zip reader and bundle
+  sniffer written to feed it, and the `import_zapret` command in the desktop
+  bridge. The core's own archive install is untouched — it is what the updater
+  uses, and unpacking a bundle into the data directory by hand still works.
+
+### Changed
+
+- **Switching the bypass on and off, and re-measuring its strategies, live in
+  Settings.** They were only ever reachable from the panel that has been removed,
+  next to the version and the updater switch they belong beside. The status line
+  there is the core's: which strategy is running, or that none is.
+
 ## [0.5.3] - 2026-08-24
 
 ### Fixed
