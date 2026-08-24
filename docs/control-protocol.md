@@ -267,6 +267,7 @@ bypass without ever handing the daemon a file.
 | `leak_check`           | —                                  | `LeakCheck`                 |
 | `run_stun_check`       | —                                  | `StunCheck`                 |
 | `run_speed_test`       | —                                  | `SpeedTest` (connected only) |
+| `collect_diagnostics`  | —                                  | `SupportBundle`             |
 
 ```
 request:  {"id":7,"cmd":"connect","profile":"p1","node":"n3"}
@@ -755,15 +756,47 @@ response: {"id":12,"ok":true,"data":{"mbps":94.3,"sample_bytes":10485760,"durati
 error:    {"id":12,"ok":false,"error":"speed test requires an active connection"}
 ```
 
+### Support bundle (`collect_diagnostics`)
+
+Assembles one block of text describing the machine's current state, for a user to
+save and attach to a bug report. It **probes nothing and sends nothing**: it
+reports what the daemon already holds plus one interface enumeration, and the
+caller decides what to do with the text.
+
+The bundle carries the core, sing-box and bypass-bundle versions, the connection
+state and every routing option in force, the stored profiles (names and node
+counts — never their subscription URLs), the last fallback walk with its
+per-candidate outcome, the machine's interfaces and default routes, the tail of
+sing-box's output, and the tail of the log.
+
+Everything in it is run through the same secret masking the desktop app applies
+to its own copied diagnostics: managed-subscription tokens, share-link userinfo
+and bare UUIDs are replaced with `***`, while hosts, ports, protocols and error
+text are left readable. `filename` is a timestamped name to suggest; it carries
+no path, because the core's own data directory is often not readable by the
+person filing the report.
+
+```
+request:  {"id":13,"cmd":"collect_diagnostics"}
+response: {"id":13,"ok":true,"data":{"text":"Tenebra core diagnostics
+…","filename":"tenebra-diagnostics-20260824-011500.txt"}}
+```
+
 ## Events
 
 | event      | fields                                                              |
 |------------|--------------------------------------------------------------------|
 | `state`    | `state` (`idle`/`connecting`/`connected`/`error`/`health_reconnecting`), `node?`, `error?`|
 | `traffic`  | `up`, `down` (bytes), `up_rate`, `down_rate` (bytes/s)             |
-| `log`      | `level` (`info`/`warn`/`error`), `msg`                            |
+| `log`      | `level` (`debug`/`info`/`warn`/`error`), `msg`                     |
 | `profiles` | none — signal that the stored profile set changed; re-run `list_profiles` |
 | `attempts` | `items` (`Attempt[]`), `outcome` (`""`/`"ok"`/`"exhausted"`) — a fallback-walk snapshot |
+
+`log` events are filtered by the daemon's level threshold, which defaults to
+`info`: a shipped build never emits `debug`. Set `TENEBRA_LOG_LEVEL=debug` in the
+core's environment and restart it to raise the threshold for a support session —
+the same filter governs the process log file, so debug is off on disk too until
+it is asked for.
 
 The `profiles` event is emitted after a profile's stored data changes outside a
 direct request — chiefly the background subscription auto-refresh — so the UI can

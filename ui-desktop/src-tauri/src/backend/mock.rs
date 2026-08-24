@@ -12,8 +12,8 @@ use super::{
     Backend, CheckStage, CheckTarget, ConnectionMode, ConnectionState, DnsResult, DnsStatus,
     EventSink, ExitMatch, ImportLinksResult, LeakCheck, Multihop, NatType, Node, NodeCheck,
     NodeCheckResult, PingResult, Profile, Protocol, RoutingMode, ServiceCheck, ServiceChecks,
-    Source, SpeedTest, SplitMode, State, StunCheck, TunStack, Verdict, ZapretActive, ZapretBundle,
-    ZapretPick, ZapretResult, ZapretTarget, ZapretUpdate,
+    Source, SpeedTest, SplitMode, State, StunCheck, SupportBundle, TunStack, Verdict, ZapretActive,
+    ZapretBundle, ZapretPick, ZapretResult, ZapretTarget, ZapretUpdate,
 };
 
 /// How long the fake "dial" takes before flipping to connected.
@@ -803,6 +803,29 @@ impl Backend for MockBackend {
             udp_ok: true,
             nat_type: NatType::EndpointIndependent,
             external_ip: Some("198.51.100.7".into()),
+        })
+    }
+
+    fn collect_diagnostics(&self) -> Result<SupportBundle, String> {
+        // The mock has no core to ask, so it returns a bundle shaped like the real
+        // one: enough for the settings screen's save-and-report flow to be
+        // exercised end to end without a running daemon.
+        let state = self.shared.inner.lock().unwrap().state.clone();
+        Ok(SupportBundle {
+            text: format!(
+                "Tenebra core diagnostics
+                 ========================
+                 Core version:  mock
+                 sing-box:      mock
+                 Log level:     info
+                 
+                 State
+                 -----
+                 State:         {:?}
+",
+                state.state
+            ),
+            filename: "tenebra-diagnostics-mock.txt".into(),
         })
     }
 

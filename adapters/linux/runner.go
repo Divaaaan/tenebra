@@ -38,6 +38,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -412,6 +413,40 @@ func (r *Runner) scan(rc io.ReadCloser) {
 	for sc.Scan() {
 		r.ring.add(sc.Text())
 	}
+}
+
+// singboxVersionTimeout bounds the `sing-box version` call. The binary answers
+// instantly or not at all; a longer budget would only lengthen the wait when the
+// file on disk is not actually an executable.
+const singboxVersionTimeout = 3 * time.Second
+
+// SingboxVersion reports the version of the sing-box binary this runner
+// launches, or "" when it cannot be determined (no binary, not executable, a
+// build that answers in an unexpected shape).
+//
+// A diagnostics bundle that names the core's version but not sing-box's is
+// missing the half that usually changed: the tunnel's behaviour comes from
+// sing-box, and "which build of it" is the first thing anyone reading a bug
+// report asks. It runs the binary rather than caching a constant so a
+// hand-swapped sing-box (TENEBRA_SINGBOX, a manual copy into the install
+// directory) reports what is actually there.
+func (r *Runner) SingboxVersion() string {
+	bin, err := r.resolveSingbox()
+	if err != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), singboxVersionTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, bin, "version").Output()
+	if err != nil {
+		return ""
+	}
+	// The first line is "sing-box version 1.x.y"; keep it whole rather than
+	// parsing, so an upstream change of shape degrades to a slightly verbose
+	// line instead of an empty one.
+	line, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+	line = strings.TrimSpace(line)
+	return strings.TrimPrefix(line, "sing-box version ")
 }
 
 // resolveSingbox returns the sing-box binary path: the override (env or field)

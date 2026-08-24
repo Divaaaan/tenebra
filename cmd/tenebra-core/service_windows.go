@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sys/windows/svc"
 
 	"github.com/Divaaaan/tenebra/core/control"
+	"github.com/Divaaaan/tenebra/core/logrot"
 )
 
 // serviceName is the name the installer registers the core under with the
@@ -41,6 +42,10 @@ func maybeRunService() (handled bool, err error) {
 	if f, ferr := openServiceLog(); ferr == nil {
 		defer f.Close()
 		log.SetOutput(f)
+		// Hand the diagnostics bundle a way to read its own tail back, so a
+		// support report from a machine where no UI was ever attached still
+		// carries the log the service actually wrote.
+		fileLogTail = f.Tail
 	}
 	log.SetFlags(log.LstdFlags)
 	if err := svc.Run(serviceName, coreService{}); err != nil {
@@ -116,6 +121,13 @@ func (coreService) Execute(args []string, req <-chan svc.ChangeRequest, status c
 // explains it; the separator keeps successive sessions legible, mirroring the
 // sidecar log the desktop shell writes.
 //
+// The file rotates by size (see core/logrot). A service runs for weeks and logs
+// every connect decision, so an unbounded append is not a diagnostic but a slow
+// disk leak — the failure mode a neighbouring bypass client demonstrated by
+// writing 2.66 GB of debug output in forty minutes and then getting in its own
+// way. The whole set is capped at logrot's defaults, which is small enough to
+// attach to a bug report.
+//
 // This is the first thing in the process to touch %ProgramData%\Tenebra, and on
 // the default-inherited %ProgramData% ACL any standard user can pre-create that
 // directory — or the service.log inside it as a junction/symlink — and redirect
@@ -124,7 +136,7 @@ func (coreService) Execute(args []string, req <-chan svc.ChangeRequest, status c
 // opening anything inside it, and refuse a pre-existing service.log that a
 // trusted principal does not own. The log itself is non-fatal, so the caller
 // treats any error here as "run without a log" rather than aborting the service.
-func openServiceLog() (*os.File, error) {
+func openServiceLog() (*logrot.Writer, error) {
 	base := os.Getenv("ProgramData")
 	if base == "" {
 		base = os.TempDir()
@@ -138,10 +150,12 @@ func openServiceLog() (*os.File, error) {
 		return nil, fmt.Errorf("secure log directory %s: %w", dir, err)
 	}
 	logPath := filepath.Join(dir, "service.log")
-	if err := ensureSafeLogTarget(logPath); err != nil {
-		return nil, err
-	}
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	// ensureSafeLogTarget runs as logrot's Verify hook rather than once here, so
+	// every file the rotation creates is checked the same way the first one is.
+	// A rotation is precisely when the path is briefly free for someone else to
+	// claim, so checking only at start-up would leave the guarantee with a hole
+	// it did not have before rotation existed.
+	f, err := logrot.Open(logPath, logrot.Options{Verify: ensureSafeLogTarget})
 	if err != nil {
 		return nil, err
 	}

@@ -397,6 +397,19 @@ export const api = {
     return invoke<SpeedTestResult>("run_speed_test");
   },
 
+  /**
+   * Ask the core to assemble a support bundle, save it beside the crash log, and
+   * resolve with the file's absolute path.
+   *
+   * Nothing is sent anywhere: the core reports what it already knows (state,
+   * versions, the machine's default routes, the last connect walk, the tail of
+   * the log) with subscription tokens and node credentials already masked, and
+   * the shell writes it to a file the user can attach to a report themselves.
+   */
+  collectDiagnostics(): Promise<string> {
+    return invoke<string>("collect_diagnostics");
+  },
+
   /** Actually exit the app. Closing the window only hides it to the tray. */
   quit(): Promise<void> {
     return invoke<void>("quit_app");

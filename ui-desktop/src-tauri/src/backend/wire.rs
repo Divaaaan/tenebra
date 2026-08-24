@@ -26,8 +26,8 @@ use serde_json::{json, Value};
 use super::{
     AttemptsSnapshot, Backend, ConnectionMode, EventSink, ImportLinksResult, LeakCheck, NodeCheck,
     PingResult, Profile, RoutingMode, ServiceChecks, SpeedTest, SplitMode, State, StunCheck,
-    TunStack, ZapretActive, ZapretBundle, ZapretPick, ZapretUpdate, EVENT_ATTEMPTS, EVENT_LOG,
-    EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
+    SupportBundle, TunStack, ZapretActive, ZapretBundle, ZapretPick, ZapretUpdate, EVENT_ATTEMPTS,
+    EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
 /// How long a request waits for its correlated response before giving up. The
@@ -343,6 +343,7 @@ const CMD_SET_PRESETS: &str = "set_presets";
 const CMD_LEAK_CHECK: &str = "leak_check";
 const CMD_RUN_STUN_CHECK: &str = "run_stun_check";
 const CMD_RUN_SPEED_TEST: &str = "run_speed_test";
+const CMD_COLLECT_DIAGNOSTICS: &str = "collect_diagnostics";
 const CMD_IMPORT_ZAPRET: &str = "import_zapret";
 const CMD_LIST_ZAPRET: &str = "list_zapret";
 const CMD_PICK_ZAPRET: &str = "pick_zapret";
@@ -617,6 +618,14 @@ impl<T: WireSession> Backend for T {
         // when idle (a reading off the tunnel is meaningless), which surfaces here
         // as the protocol error the caller sees.
         self.session()?.request_into(CMD_RUN_SPEED_TEST, obj([]))
+    }
+
+    fn collect_diagnostics(&self) -> Result<SupportBundle, String> {
+        // The core assembles and scrubs the text; nothing here inspects or
+        // reformats it, so the bundle a maintainer reads is byte-for-byte what
+        // the core decided was safe to hand out.
+        self.session()?
+            .request_into(CMD_COLLECT_DIAGNOSTICS, obj([]))
     }
 
     fn import_zapret(
@@ -1415,6 +1424,49 @@ mod tests {
         assert!(stun.udp_ok);
         assert_eq!(stun.nat_type, NatType::EndpointIndependent);
         assert_eq!(stun.external_ip.as_deref(), Some("203.0.113.7"));
+
+        server.join().expect("server thread");
+        stop.store(true, Ordering::SeqCst); // unstick the reader
+        reader.join().expect("reader thread");
+    }
+
+    #[test]
+    fn collect_diagnostics_maps_to_the_protocol_command() {
+        // Drive Backend::collect_diagnostics through the blanket impl: no fields,
+        // and the core's bundle (already scrubbed) comes back whole. The shell
+        // must not reformat it — what the core decided was safe to hand out is
+        // exactly what gets written to the file.
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ours, theirs) = duplex(&stop);
+
+        let client = WireClient::new(ours.writer);
+        let sink: Arc<dyn EventSink> = Arc::new(Rec::default());
+        let reader_client = Arc::clone(&client);
+        let reader = thread::spawn(move || read_loop(ours.reader, reader_client, sink));
+
+        let mut server_writer = theirs.writer;
+        let server = thread::spawn(move || {
+            let mut lines = BufReader::new(theirs.reader).lines();
+            let line = lines.next().expect("a request line").expect("readable");
+            let req: Value = serde_json::from_str(&line).expect("request is JSON");
+            assert_eq!(req["cmd"].as_str(), Some("collect_diagnostics"));
+            let id = req["id"].as_u64().expect("request carries an id");
+            let response = json!({
+                "id": id, "ok": true,
+                "data": {
+                    "text": "Tenebra core diagnostics
+Core version:  0.5.0
+",
+                    "filename": "tenebra-diagnostics-20260824-011500.txt",
+                },
+            });
+            writeln!(server_writer, "{response}").expect("write response");
+        });
+
+        let backend = FixedSession(Arc::clone(&client));
+        let bundle = backend.collect_diagnostics().expect("a response");
+        assert!(bundle.text.starts_with("Tenebra core diagnostics"));
+        assert_eq!(bundle.filename, "tenebra-diagnostics-20260824-011500.txt");
 
         server.join().expect("server thread");
         stop.store(true, Ordering::SeqCst); // unstick the reader

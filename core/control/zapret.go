@@ -249,7 +249,18 @@ func (d *Daemon) raiseZapretForConnect(ctx context.Context) bool {
 		d.routing.ZapretCovered = nil
 	}
 	d.refreshZapretStateLocked()
+	strategy := d.zapretActive
+	covered := len(d.routing.ZapretCovered)
 	d.mu.Unlock()
+	// One line that settles where the censored services will actually go on this
+	// connect. It is the answer to the most common report the app gets — "the VPN
+	// is on but YouTube is still slow" — and until now it had to be inferred from
+	// two or three other lines that may not both be present.
+	if up {
+		d.emitLog(LogInfo, fmt.Sprintf("zapret: обход поднят на стратегии %s, %d сервис(ов) идут напрямую", strategy, covered))
+	} else {
+		d.emitLog(LogInfo, "zapret: обход не поднят — YouTube и Discord пойдут через туннель")
+	}
 	return up
 }
 
@@ -549,7 +560,11 @@ func (d *Daemon) autoStartZapret(ctx context.Context, tunnelUp bool) bool {
 	dir := filepath.Join(d.store.Dir(), zapretDirName)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return false // nothing imported; the tunnel does the whole job
+		// Debug, not info: the caller already states at info where the censored
+		// services ended up. This only adds which of the two ways it got there —
+		// no bundle at all, as opposed to a bundle that would not start.
+		d.emitDebug(fmt.Sprintf("zapret: сборки нет в %s — поднимать нечего", dir))
+		return false
 	}
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -559,6 +574,7 @@ func (d *Daemon) autoStartZapret(ctx context.Context, tunnelUp bool) bool {
 	}
 	strategies := zapret.Discover(dir, names)
 	if len(strategies) == 0 {
+		d.emitLog(LogWarn, fmt.Sprintf("zapret: в %s нет ни одной стратегии — обход остаётся выключенным", dir))
 		return false
 	}
 
@@ -567,12 +583,28 @@ func (d *Daemon) autoStartZapret(ctx context.Context, tunnelUp bool) bool {
 	d.mu.Unlock()
 
 	chosen := strategies[0]
+	found := false
 	for _, s := range strategies {
 		if s.Name == want {
-			chosen = s
+			chosen, found = s, true
 			break
 		}
 	}
+	// Which strategy a connect ends up on is a choice with three different
+	// causes, and they look identical from outside: the saved one, the bundle's
+	// first because nothing was saved, and the bundle's first because the saved
+	// one is gone after an update. Only the third is a problem, and it is exactly
+	// the one that used to be invisible.
+	var picked string
+	switch {
+	case found:
+		picked = "выбрана раньше и сохранена"
+	case want != "":
+		picked = fmt.Sprintf("сохранённой %q в сборке больше нет, беру первую", want)
+	default:
+		picked = "выбранной стратегии не записано, беру первую"
+	}
+	d.emitDebug(fmt.Sprintf("zapret: %d стратегий в сборке, беру %s (%s)", len(strategies), chosen.Name, picked))
 
 	d.excludeNodesFromZapret(dir)
 

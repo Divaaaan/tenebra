@@ -580,6 +580,22 @@ pub struct StunCheck {
     pub external_ip: Option<String>,
 }
 
+/// Result of the `collect_diagnostics` command: the assembled support-bundle
+/// text and the filename to suggest saving it under.
+///
+/// The core writes no file. In service mode its data directory is readable only
+/// by SYSTEM and Administrators, so a file dropped there would be one the person
+/// filing the report cannot open — the shell saves it somewhere the user lives.
+/// The text arrives already scrubbed of subscription tokens and node
+/// credentials.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SupportBundle {
+    /// The report, ready to write to a file or paste into an issue.
+    pub text: String,
+    /// A timestamped filename to suggest. It carries no path.
+    pub filename: String,
+}
+
 /// Result of the `run_speed_test` command. Mirrors the core's throughput
 /// measurement through the active tunnel: the download rate in megabits per
 /// second, the bytes the sample actually read, and how long that took. The core
@@ -822,6 +838,11 @@ pub trait Backend: Send + Sync + 'static {
     /// connection — issued while idle it returns an error, since a throughput
     /// reading off the tunnel would be meaningless.
     fn run_speed_test(&self) -> Result<SpeedTest, String>;
+    /// Ask the core to assemble a support bundle: its state, build versions, the
+    /// machine's default routes, the last connect walk and the tail of the log,
+    /// as one block of text with secrets already masked. It probes nothing and
+    /// sends nothing, and is not gated on a connection.
+    fn collect_diagnostics(&self) -> Result<SupportBundle, String>;
 
     /// Install a zapret DPI-bypass bundle. Exactly one of `data` (the archive
     /// base64-encoded) or `path` (an archive or an already-unpacked folder) is

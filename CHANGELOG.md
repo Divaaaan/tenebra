@@ -160,6 +160,43 @@ All notable changes to Tenebra are documented here. The format follows
   and the question is released if the tree goes away while it is open, so no
   future screen can strand a connect the same way. Declining also reports the
   refusal once instead of twice: cancelling is an answer, not a second failure.
+### Added
+
+- **The log now says why a connect went the way it did.** The core had 73 log
+  calls and almost none of them on the live path: which exit a walk leads with
+  and on what grounds, why a connect was refused before it ever started, what a
+  node probe measured stage by stage, whether the DPI bypass came up and under
+  which strategy, and what the tun-conflict guard actually saw in the route table
+  were all decisions taken in silence. They are recorded now — decisions at
+  `info`, the evidence behind them at `debug`.
+- **A diagnostics report, in one action.** `collect_diagnostics` assembles the
+  core's state, its build versions (core, sing-box, bypass bundle), every routing
+  option in force, the stored profiles, the last fallback walk, the machine's
+  interfaces and default routes, and the tail of the log into one file the user
+  can attach to a bug report. Settings → Diagnostics saves it and shows where.
+  It probes nothing and sends nothing, and subscription tokens and node
+  credentials are masked by the same rules the app already applies to the
+  diagnostics it copies from its log console.
+- **A log level that filters.** The level constants existed and nothing consulted
+  them. The core now drops anything below its threshold — `info` by default, so a
+  shipped build never narrates itself — and `TENEBRA_LOG_LEVEL=debug` raises it
+  for a support session. It is an environment variable rather than a stored
+  preference on purpose: debug someone turned on in January and forgot about is
+  the same disease as a log with no ceiling.
+
+### Fixed
+
+- **The logs no longer grow without limit.** `service.log` was appended to
+  forever, and the desktop shell's `core.log` with it. Both now roll over by
+  size and keep a bounded number of generations, so a long-running service costs
+  a fixed amount of disk instead of an unbounded one. The Windows service's
+  guard against a planted log file is re-checked on every rotation, not only at
+  start-up — a rotation is precisely the moment the path is briefly free to
+  claim.
+- **The daemon's own log reaches the log file.** Every line the core produced
+  went only to an attached UI, so a service that failed to autoconnect at boot —
+  with nobody logged in and no app running — left no record of it anywhere. Those
+  lines now go to the process log as well.
 
 ## [0.5.0] - 2026-08-21
 

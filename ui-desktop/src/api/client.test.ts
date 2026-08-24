@@ -358,6 +358,13 @@ describe("api command wrappers", () => {
     expect(mockInvoke).toHaveBeenCalledWith("run_speed_test");
   });
 
+  it("collectDiagnostics returns the saved report's path", async () => {
+    const path = "/home/me/.local/share/Tenebra/tenebra-diagnostics-1.txt";
+    mockInvoke.mockResolvedValueOnce(path);
+    await expect(api.collectDiagnostics()).resolves.toBe(path);
+    expect(mockInvoke).toHaveBeenCalledWith("collect_diagnostics");
+  });
+
   it("runSpeedTest rejects when the core reports no active connection", async () => {
     // The throughput probe is gated on a live tunnel; the core's rejection
     // propagates straight through the wrapper.

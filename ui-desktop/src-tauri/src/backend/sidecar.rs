@@ -170,6 +170,34 @@ fn core_log_path() -> Option<PathBuf> {
     crate::crash::data_dir().map(|d| d.join("core.log"))
 }
 
+/// The size at which `core.log` is rolled over to `core.log.1` before the next
+/// session appends to a fresh file, and how many rolled generations are kept.
+///
+/// This file is the child's raw stderr: the OS writes into the handle and
+/// nothing in this process is in a position to rotate it while the core runs.
+/// So it is checked at spawn, which is the one moment the previous core is gone
+/// and the file is free. Without it the log grows for the life of the install —
+/// a neighbouring DPI-bypass client on the author's machine wrote 2.66 GB of it
+/// in forty minutes and spent the rest of its time getting in its own way.
+const CORE_LOG_MAX_BYTES: u64 = 8 * 1024 * 1024;
+const CORE_LOG_GENERATIONS: u32 = 2;
+
+/// Roll `core.log` aside when it has grown past the ceiling, dropping the oldest
+/// generation. Best-effort throughout: a log that cannot be rotated is not a
+/// reason to refuse to start the core.
+fn roll_core_log(path: &std::path::Path) {
+    let too_big = std::fs::metadata(path).map(|m| m.len() >= CORE_LOG_MAX_BYTES);
+    if !matches!(too_big, Ok(true)) {
+        return;
+    }
+    let generation = |n: u32| path.with_file_name(format!("core.log.{n}"));
+    let _ = std::fs::remove_file(generation(CORE_LOG_GENERATIONS));
+    for n in (1..CORE_LOG_GENERATIONS).rev() {
+        let _ = std::fs::rename(generation(n), generation(n + 1));
+    }
+    let _ = std::fs::rename(path, generation(1));
+}
+
 /// A valid stderr target for the core: the log file if it can be opened,
 /// otherwise the null device. Never an inherited handle — see `spawn`.
 ///
@@ -179,6 +207,7 @@ fn core_log_path() -> Option<PathBuf> {
 fn core_log_stderr() -> Stdio {
     core_log_path()
         .and_then(|p| {
+            roll_core_log(&p);
             let mut file = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -236,6 +265,57 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn roll_core_log_leaves_a_small_log_alone() {
+        // Rolling on every spawn would throw away the previous session for
+        // nothing; only size may trigger it.
+        let dir = TempDir::new("roll-small");
+        let log = dir.0.join("core.log");
+        std::fs::write(&log, b"a short session").unwrap();
+
+        roll_core_log(&log);
+
+        assert!(log.exists(), "a small log must survive a spawn");
+        assert!(!dir.0.join("core.log.1").exists());
+    }
+
+    #[test]
+    fn roll_core_log_rolls_a_big_one_and_drops_the_oldest() {
+        // Past the ceiling the file becomes generation 1, the previous
+        // generation 1 becomes 2, and anything beyond that is deleted — so the
+        // directory can never accumulate more than the generations we allow.
+        let dir = TempDir::new("roll-big");
+        let log = dir.0.join("core.log");
+        std::fs::write(&log, vec![b'x'; CORE_LOG_MAX_BYTES as usize]).unwrap();
+        std::fs::write(dir.0.join("core.log.1"), b"previous").unwrap();
+        std::fs::write(dir.0.join("core.log.2"), b"ancient").unwrap();
+
+        roll_core_log(&log);
+
+        assert!(!log.exists(), "the oversized log must be moved aside");
+        assert_eq!(
+            std::fs::metadata(dir.0.join("core.log.1")).unwrap().len(),
+            CORE_LOG_MAX_BYTES,
+            "generation 1 should now hold what the oversized log held"
+        );
+        assert_eq!(
+            std::fs::read(dir.0.join("core.log.2")).unwrap(),
+            b"previous",
+            "the previous generation 1 should have shifted up"
+        );
+        assert!(
+            !dir.0.join("core.log.3").exists(),
+            "nothing may accumulate past the last generation"
+        );
+    }
+
+    #[test]
+    fn roll_core_log_on_a_missing_file_is_a_no_op() {
+        let dir = TempDir::new("roll-missing");
+        roll_core_log(&dir.0.join("core.log"));
+        assert!(!dir.0.join("core.log.1").exists());
     }
 
     #[test]

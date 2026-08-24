@@ -348,7 +348,13 @@ export interface SpeedTestResult {
 
 // Events the core pushes without being asked.
 
-export type LogLevel = "info" | "warn" | "error";
+/**
+ * Log severities the core emits. `debug` only appears when the core was started
+ * with `TENEBRA_LOG_LEVEL=debug` — a shipped build filters it out before it
+ * reaches the wire — but the type carries it so a support session's console
+ * renders rather than falls through to an unstyled level.
+ */
+export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export interface StateEvent {
   state: ConnectionState;

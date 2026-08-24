@@ -96,6 +96,7 @@ func (d *Daemon) handleCheckNodes(ctx context.Context, req Request) Response {
 		return newError(req.ID, profile.ErrNotFound.Error())
 	}
 	if d.probeRunner == nil {
+		d.emitLog(LogWarn, "check_nodes: no probe runner is configured; cannot measure this profile")
 		return newError(req.ID, "check_nodes: probe runner not configured")
 	}
 
@@ -129,8 +130,12 @@ func (d *Daemon) handleCheckNodes(ctx context.Context, req Request) Response {
 		return newError(req.ID, fmt.Sprintf("check_nodes: encode probe config: %v", err))
 	}
 
+	d.emitLog(LogInfo, fmt.Sprintf("check_nodes: measuring %d node(s) of %q against %d target(s)",
+		len(bindings), p.Name, len(d.checkTargets)))
+
 	runner := d.probeRunner()
 	if err := runner.Start(ctx, raw); err != nil {
+		d.emitLog(LogWarn, fmt.Sprintf("check_nodes: the probe sing-box would not start: %v", err))
 		return newError(req.ID, fmt.Sprintf("check_nodes: start probe: %v", err))
 	}
 	// The probe process is ours alone and must not outlive the command, including
@@ -139,10 +144,16 @@ func (d *Daemon) handleCheckNodes(ctx context.Context, req Request) Response {
 	defer func() { _ = runner.Stop() }()
 
 	if !d.waitForProbeListeners(ctx, bindings) {
+		// This one is worth naming precisely: every node would otherwise score a
+		// failure it did not earn, and the report would blame the exits for a
+		// local process that never bound its ports.
+		d.emitLog(LogWarn, fmt.Sprintf("check_nodes: the probe's loopback listeners never came up within %s; no node was actually measured",
+			checkListenerWait))
 		return newError(req.ID, "check_nodes: probe listeners never came up")
 	}
 
 	results := d.probeBindings(ctx, p, bindings)
+	d.logNodeCheck(results)
 
 	lastGood := ""
 	if st := d.snapshotState(); st.Node != "" {
@@ -156,6 +167,9 @@ func (d *Daemon) handleCheckNodes(ctx context.Context, req Request) Response {
 	}{Results: ranked}
 	if best, found := nodecheck.Best(results, lastGood); found {
 		out.Best = best.NodeID
+		d.emitLog(LogInfo, fmt.Sprintf("check_nodes: best exit is %s", best.NodeID))
+	} else {
+		d.emitLog(LogWarn, "check_nodes: not one node carried a majority of the targets")
 	}
 
 	resp, err := newResult(req.ID, out)
@@ -163,6 +177,39 @@ func (d *Daemon) handleCheckNodes(ctx context.Context, req Request) Response {
 		return newError(req.ID, err.Error())
 	}
 	return resp
+}
+
+// logNodeCheck writes down what the probe actually observed, per node and per
+// stage.
+//
+// The command's reply carries this too, but the reply goes to whoever asked and
+// is then gone. The whole reason this check exists is that a node can accept TCP
+// instantly and carry nothing — the exit that scored fastest on 2026-08-18 while
+// every real request through it hung for 19 seconds — and that verdict is only
+// legible next to the stage breakdown that produced it. A summary line per node
+// keeps a fifty-node profile readable; the per-target detail is debug.
+func (d *Daemon) logNodeCheck(results []nodecheck.NodeResult) {
+	for _, r := range results {
+		stages := map[nodecheck.Stage]int{}
+		for _, t := range r.Targets {
+			stages[t.Stage]++
+		}
+		verdict := "unusable"
+		if r.Usable() {
+			verdict = "usable"
+		}
+		score := "unreachable"
+		if s := r.Score(); s != nodecheck.Unreachable {
+			score = fmt.Sprintf("%dms", s)
+		}
+		d.emitLog(LogInfo, fmt.Sprintf("check_nodes: %s %s, median %s (ok=%d dial=%d handshake=%d probe=%d)",
+			r.NodeID, verdict, score,
+			stages[nodecheck.StageOK], stages[nodecheck.StageDial],
+			stages[nodecheck.StageHandshake], stages[nodecheck.StageProbe]))
+		for _, t := range r.Targets {
+			d.emitDebug(fmt.Sprintf("check_nodes: %s %s -> %s (%dms)", r.NodeID, t.Target, t.Stage, t.RTTMs))
+		}
+	}
 }
 
 // waitForProbeListeners blocks until every probe port accepts a connection, or

@@ -77,6 +77,11 @@ const (
 	CmdLeakCheck     = "leak_check"
 	CmdRunStunCheck  = "run_stun_check"
 	CmdRunSpeedTest  = "run_speed_test"
+	// CmdCollectDiagnostics assembles the support bundle: state, build versions,
+	// the machine's default routes, the last connect walk and the tail of the
+	// log, as one scrubbed block of text. It probes nothing and sends nothing —
+	// it only reports what the daemon already knows.
+	CmdCollectDiagnostics = "collect_diagnostics"
 )
 
 // ConnState is the connection lifecycle state reported in State and state
@@ -126,8 +131,12 @@ const (
 	AttemptOutcomeExhausted = "exhausted"
 )
 
-// Log levels for log events.
+// Log levels for log events, in ascending severity. Debug carries the reasoning
+// behind a decision (which candidates were considered, what a probe measured);
+// info carries the decision itself. The daemon drops anything below its
+// threshold, which defaults to info — see core/control/logging.go.
 const (
+	LogDebug = "debug"
 	LogInfo  = "info"
 	LogWarn  = "warn"
 	LogError = "error"

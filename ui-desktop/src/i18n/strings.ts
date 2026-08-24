@@ -607,6 +607,16 @@ export interface Strings {
     /** Shown in place of the speed-test result while disconnected (gate). */
     speedGateHint: string;
     /**
+     * Support bundle: asks the core for a report of its state, versions, routes
+     * and log tail, saves it to a file and shows where. Nothing is sent
+     * anywhere, and secrets are masked before the text ever leaves the core.
+     */
+    supportBundle: string;
+    supportBundleHint: string;
+    supportBundleWorking: string;
+    supportBundleSaved: string;
+    supportBundleError: string;
+    /**
      * "Simple mode" toggle: renderer-owned like the theme. Writing it flips the
      * `tenebra.simpleMode` localStorage flag and raises a storage event the app
      * shell reacts to; the label and its explanation.
@@ -1176,6 +1186,12 @@ const en: Strings = {
     speedSample: "{mb} MB in {s} s",
     speedError: "The speed test failed. Try again.",
     speedGateHint: "Connect to a node to measure tunnel throughput.",
+    supportBundle: "Save diagnostics report",
+    supportBundleHint:
+      "Writes a file describing what the app is doing right now — versions, connection state, routes and the tail of the log — so you can attach it to a bug report. Subscription tokens and node credentials are masked, and nothing is sent anywhere.",
+    supportBundleWorking: "Collecting…",
+    supportBundleSaved: "Saved to",
+    supportBundleError: "Couldn't write the report. Try again.",
     simpleMode: "Simple mode",
     simpleModeHint:
       "A pared-back interface: just connect and pick a node, with the advanced panels tucked away.",
@@ -1708,6 +1724,12 @@ const ru: Strings = {
     speedError: "Тест скорости не удался. Попробуйте ещё раз.",
     speedGateHint:
       "Подключитесь к узлу, чтобы измерить скорость через туннель.",
+    supportBundle: "Сохранить отчёт диагностики",
+    supportBundleHint:
+      "Записывает файл с тем, что происходит прямо сейчас: версии, состояние подключения, маршруты и хвост лога — его можно приложить к сообщению об ошибке. Токены подписки и ключи узлов скрыты, никуда ничего не отправляется.",
+    supportBundleWorking: "Собираю…",
+    supportBundleSaved: "Сохранено в",
+    supportBundleError: "Не удалось записать отчёт. Попробуйте ещё раз.",
     simpleMode: "Простой режим",
     simpleModeHint:
       "Упрощённый интерфейс: только подключение и выбор узла, продвинутые панели скрыты.",

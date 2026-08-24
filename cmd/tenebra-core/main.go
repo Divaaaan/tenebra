@@ -35,6 +35,13 @@ var pipeMode = flag.Bool("pipe", false, "serve the control protocol on the named
 // daemon's transport without installing one, and what that daemon runs with.
 var socketMode = flag.Bool("socket", false, "serve the control protocol on a unix domain socket instead of stdin/stdout (macOS and Linux only)")
 
+// fileLogTail reads back the trailing lines of the process log when this run
+// writes one to disk — the Windows service sets it to its rotating writer's
+// Tail. It stays nil in the console and sidecar modes, whose diagnostics come
+// from the daemon's in-memory ring instead, because their stderr belongs to
+// whoever launched them.
+var fileLogTail func(n int) []string
+
 func main() {
 	flag.Parse()
 	// The service control manager starts us with no console and no usable
@@ -131,6 +138,19 @@ func buildDaemon() (*control.Daemon, error) {
 	// runner_linux.go for Linux, runner_other.go for Windows).
 	runner := newRunner()
 	daemon := control.NewDaemon(store, runner)
+	// Mirror the daemon's own log into this process's log destination — stderr
+	// for the sidecar and console runs, the rotating service.log for the Windows
+	// service. Until now those lines went only to an attached UI, which meant the
+	// service's whole account of a boot-time autoconnect existed nowhere at all:
+	// nobody is looking at the app when the machine starts, and by the time they
+	// are, the connect that failed is an hour gone.
+	daemon.SetLogSink(func(level, msg string) { log.Printf("%s: %s", level, msg) })
+	// Where this run writes its log to a file, let the diagnostics bundle read
+	// its own tail back; otherwise the bundle falls back to the in-memory ring.
+	daemon.SetLogTail(fileLogTail)
+	if lvl := daemon.LogLevel(); lvl != control.DefaultLogLevel {
+		log.Printf("tenebra-core: log level %s (%s)", lvl, control.LogLevelEnv)
+	}
 	// Arm the tun-conflict guard where the platform can read its route table.
 	// nil (macOS/Linux for now) leaves the guard disabled rather than guessing —
 	// see newInterfaceProbe in the per-platform runner files.

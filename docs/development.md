@@ -117,6 +117,27 @@ TENEBRA_CONFIG_DIR=./scratch ./tenebra-core
 |----------|--------|
 | `TENEBRA_CONFIG_DIR` | Directory for `profiles.json`, `settings.json`, `lastgood.json`. Defaults to the per-user config dir; as a Windows service, to `%ProgramData%\Tenebra\data`. |
 | `TENEBRA_SINGBOX` | Path to the `sing-box` binary to run. Defaults to one resolved next to the executable; as a Windows service, to the bundled copy in `resources\` next to `tenebra-core.exe`. |
+| `TENEBRA_LOG_LEVEL` | Log threshold: `debug`, `info` (default), `warn`, `error`. Read once at start-up, so raising it means restarting the core. It governs both the `log` events the UI shows and what reaches the process log on disk. |
+
+### Logs
+
+The core logs to stderr when it runs as a sidecar or in a console, and to
+`%ProgramData%\Tenebra\service.log` as a Windows service. The service log
+**rotates by size** (8 MiB per file, three rotated generations, 32 MiB for the
+whole set — `core/logrot`); the desktop shell's `core.log` is rolled over at
+spawn when it has grown past 8 MiB.
+
+Debug is off by default, and deliberately not a stored preference: to investigate
+something, set `TENEBRA_LOG_LEVEL=debug`, restart the core, reproduce, then unset
+it. At `debug` the core narrates the reasoning behind each connect decision — the
+resolved candidate order with measured round-trips, each transport strategy tried
+and how its failure was classified, per-target node-probe stages, what the
+tun-conflict guard saw in the route table.
+
+For a report someone else has to read, use `collect_diagnostics` (Settings →
+Diagnostics → *Save diagnostics report*): it writes one file with the state,
+build versions, routes, last connect walk and log tail, with subscription tokens
+and node credentials masked.
 
 ## The Windows service
 

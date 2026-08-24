@@ -144,6 +144,22 @@ type Daemon struct {
 	// it to publish state/traffic/log events. Guarded by mu.
 	emit emitFunc
 
+	// logLevel is the threshold below which log lines are dropped (see
+	// logging.go). Seeded from TENEBRA_LOG_LEVEL, default info. Guarded by mu.
+	logLevel string
+	// logSink is the second destination for log lines that pass the threshold —
+	// the process logger, which in service mode is the rotating file. nil in
+	// tests and in any mode that has not wired one. Guarded by mu.
+	logSink func(level, msg string)
+	// logTail reads the trailing lines of the process log file for the
+	// diagnostics bundle; nil where the process logs to stderr rather than a
+	// file. Guarded by mu.
+	logTail func(n int) []string
+	// logs retains the most recent log lines so a diagnostics bundle can be
+	// assembled from a daemon no UI was ever attached to. It carries its own
+	// lock, so emitLog never holds mu across the append.
+	logs *logRing
+
 	// clientWriteTimeout is handed to every Server built over this daemon (see
 	// defaultClientWriteTimeout). Set before serving — tests shrink it to exercise
 	// the drop of a stalled client without waiting out the production value.
@@ -444,6 +460,9 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 		autoFailover: true,
 		now:          time.Now,
 		fetch:        subscription.Fetch,
+
+		logLevel: logLevelFromEnv(),
+		logs:     newLogRing(logRingSize),
 
 		clientWriteTimeout: defaultClientWriteTimeout,
 
@@ -818,6 +837,8 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		return d.handleRunStunCheck(ctx, req)
 	case CmdRunSpeedTest:
 		return d.handleRunSpeedTest(ctx, req)
+	case CmdCollectDiagnostics:
+		return d.handleCollectDiagnostics(req)
 	default:
 		return newError(req.ID, fmt.Sprintf("unknown command %q", req.Cmd))
 	}
