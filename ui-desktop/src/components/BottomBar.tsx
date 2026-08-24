@@ -79,9 +79,9 @@ export function BottomBar({
           title={t.blocklist.hint}
         >
           ▶ {t.blocklist.title}
-          {/* The count is the only feedback that an imported list is actually
-              loaded — without it the panel looks the same whether or not the
-              drop took. */}
+          {/* The count is the only feedback that an imported bundle is
+              actually installed — without it the panel looks the same whether
+              or not the drop took. */}
           {blocklistCount > 0 && <span className="act-count">{blocklistCount}</span>}
         </button>
         <button type="button" className="act" onClick={onLeakCheck}>

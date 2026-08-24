@@ -11,6 +11,20 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **The bypass panel no longer answers a domain blocklist with a rule count
+  nothing acts on.** Dropping a hosts file or an archive of lists parsed it,
+  listed the source with "12400 rules" beside it and put a badge on the bottom
+  bar — which is precisely what a successful import looks like. Nothing was sent
+  anywhere: no command exists to hand those rules to the core, so the counter was
+  the entire effect of the import, and it read as "loaded" for a list that
+  changed no routing and blocked nothing. The panel now takes only what it can
+  actually apply — a zapret bundle, still recognised by what is inside it rather
+  than by its name — and turns everything else away in the words it already had
+  for a file that is not one. Its English title says what the panel is, the DPI
+  bypass, instead of promising blocklists.
+
 ## [0.5.1] - 2026-08-24
 
 ### Security

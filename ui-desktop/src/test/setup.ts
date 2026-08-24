@@ -33,3 +33,19 @@ if (!window.matchMedia) {
     dispatchEvent: vi.fn(),
   }));
 }
+
+// jsdom's Blob stops at the constructor: it has no arrayBuffer(), so anything
+// that reads a dropped file (the bundle sniffer in lib/zapret, the zip reader)
+// dies on a missing method rather than on its own logic. FileReader is present,
+// so route through it. Node's own Blob is not used here — the tests hand the
+// code File objects, and those come from jsdom.
+if (!Blob.prototype.arrayBuffer) {
+  Blob.prototype.arrayBuffer = function arrayBuffer(this: Blob) {
+    return new Promise<ArrayBuffer>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as ArrayBuffer);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsArrayBuffer(this);
+    });
+  };
+}
