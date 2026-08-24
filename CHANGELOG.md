@@ -54,6 +54,10 @@ All notable changes to Tenebra are documented here. The format follows
   change like the split and DNS settings do. The clients hold their last reading
   across an answer that carries none, so an older core (the hand-installed macOS
   daemon skews behind the app) no longer blanks the readout either.
+- **Turning off automatic bundle updates sprang back to on.** `false` never rode
+  the wire — every flag in the status is omitted when empty, and this is the one
+  whose default is on, so an omitted "off" read back as "on" while the core had
+  stored the choice correctly. It is now always reported, false included.
 
 ### Removed
 

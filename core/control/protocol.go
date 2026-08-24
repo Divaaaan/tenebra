@@ -389,10 +389,18 @@ type State struct {
 	// leaving the user to guess whether the thing that stopped unblocking YouTube
 	// is old — the failure mode of a stale bundle is indistinguishable from a dead
 	// node, so the version has to be visible somewhere.
+	//
+	// ZapretAutoUpdate is the one of the four that is always on the wire, false
+	// included. It defaults ON, so a client that has to guess an absent field
+	// guesses "on" — which is the opposite of what an omitted false means, and a
+	// user who turns bundle updates off watches the switch spring back to on at
+	// the next status while the core has in fact stored their choice. It is a
+	// stored preference rather than a reading of the filter, like the crash-report
+	// consent above, and for the same reason it cannot be carried by omission.
 	ZapretActive     bool   `json:"zapret_active,omitempty"`
 	ZapretStrategy   string `json:"zapret_strategy,omitempty"`
 	ZapretVersion    string `json:"zapret_version,omitempty"`
-	ZapretAutoUpdate bool   `json:"zapret_auto_update,omitempty"`
+	ZapretAutoUpdate bool   `json:"zapret_auto_update"`
 	Error            string `json:"error,omitempty"`
 }
 

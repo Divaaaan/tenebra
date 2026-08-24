@@ -70,7 +70,11 @@ func TestResponseMarshalShape(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	got := string(b)
-	want := `{"id":7,"ok":true,"data":{"state":"connecting","node":"n3"}}`
+	// Every empty field drops out except zapret_auto_update, which rides the wire
+	// even as false: it is the one flag here whose default is on, so a client
+	// meeting an absence has to guess, and guessing "on" turns a user's "stop
+	// updating the bundle" back into "keep updating it" (see State).
+	want := `{"id":7,"ok":true,"data":{"state":"connecting","node":"n3","zapret_auto_update":false}}`
 	if got != want {
 		t.Errorf("response =\n %s\nwant %s", got, want)
 	}

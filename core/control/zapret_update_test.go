@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -237,10 +238,19 @@ func TestZapretAutoUpdateTogglePersists(t *testing.T) {
 	}
 
 	h.send(Request{ID: 1, Cmd: CmdSetZapretAutoUpdate, On: false})
+	resp := h.await()
 	var st State
-	h.dataInto(h.await(), &st)
+	h.dataInto(resp, &st)
 	if st.ZapretAutoUpdate {
 		t.Fatal("disarming was not reflected in the response")
+	}
+	// And it has to be on the wire as a written false, not as an absence. Every
+	// other bool here is omitted when off and read back as off, which works
+	// because off is their default; this one defaults ON, so a client meeting an
+	// absent field reads the user's "off" as "on" and springs the switch back at
+	// the next status — over a core that stored the choice correctly.
+	if !bytes.Contains(resp.Data, []byte(`"zapret_auto_update":false`)) {
+		t.Errorf("disarmed auto-update is not on the wire: %s", resp.Data)
 	}
 
 	h2 := newHarness(t)
