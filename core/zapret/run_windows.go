@@ -111,7 +111,17 @@ func (r *Runner) launchPath(s Strategy) string {
 	return derived
 }
 
-// Stop terminates winws and waits for the packet filter to actually detach.
+// Stop terminates the winws this runner's bundle started and waits for the
+// packet filter to actually detach.
+//
+// Only ours: zapret is a folder anyone can unpack, and a user who keeps their
+// own copy alongside this one is running a second winws.exe that this program
+// never launched and cannot restart. Stopping by image name — which is what
+// `taskkill /IM winws.exe` does, and what this used to do — takes that copy down
+// too, so switching the bypass off inside the app silently killed the bypass the
+// user had running outside it. The same mistake ran the other way through
+// winwsRunning: a stranger's process answered "our filter is up", and Start
+// reported success for a strategy it never brought up.
 //
 // The wait matters: WinDivert unloads asynchronously, and starting the next
 // strategy while the previous filter is still attached makes the new winws exit
@@ -119,11 +129,11 @@ func (r *Runner) launchPath(s Strategy) string {
 // perfectly good — which is exactly how a first probe run mislabelled more than
 // half the bundle.
 func (r *Runner) Stop(ctx context.Context) error {
-	_ = exec.CommandContext(ctx, "taskkill", "/F", "/IM", "winws.exe").Run()
+	killOwnWinws(r.Dir)
 
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if !winwsRunning(ctx) {
+		if !ownWinwsRunning(r.Dir) {
 			// Give the driver a beat to detach after the process is gone.
 			select {
 			case <-ctx.Done():
@@ -141,11 +151,14 @@ func (r *Runner) Stop(ctx context.Context) error {
 	return nil
 }
 
-// waitForWinws polls until the process appears or the budget runs out.
+// waitForWinws polls until this bundle's process appears or the budget runs out.
+// It asks about our directory rather than about the image name for the reason
+// Stop gives: another copy of zapret already running would otherwise make every
+// strategy look like it started instantly, including the ones that never did.
 func (r *Runner) waitForWinws(ctx context.Context, budget time.Duration) bool {
 	deadline := time.Now().Add(budget)
 	for time.Now().Before(deadline) {
-		if winwsRunning(ctx) {
+		if ownWinwsRunning(r.Dir) {
 			// Attached, but the filter needs a moment before it affects traffic.
 			select {
 			case <-ctx.Done():
@@ -158,37 +171,6 @@ func (r *Runner) waitForWinws(ctx context.Context, budget time.Duration) bool {
 		case <-ctx.Done():
 			return false
 		case <-time.After(400 * time.Millisecond):
-		}
-	}
-	return false
-}
-
-func winwsRunning(ctx context.Context) bool {
-	out, err := exec.CommandContext(ctx, "tasklist", "/FI", "IMAGENAME eq winws.exe", "/NH").Output()
-	if err != nil {
-		return false
-	}
-	return len(out) > 0 && containsFold(string(out), "winws.exe")
-}
-
-func containsFold(h, n string) bool {
-	for i := 0; i+len(n) <= len(h); i++ {
-		match := true
-		for j := 0; j < len(n); j++ {
-			a, b := h[i+j], n[j]
-			if a >= 'A' && a <= 'Z' {
-				a += 32
-			}
-			if b >= 'A' && b <= 'Z' {
-				b += 32
-			}
-			if a != b {
-				match = false
-				break
-			}
-		}
-		if match {
-			return true
 		}
 	}
 	return false
