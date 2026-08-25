@@ -60,6 +60,26 @@ func main() {
 	}
 }
 
+// startBackgroundJobs launches the work the daemon does on its own behalf, for
+// as long as ctx lives.
+//
+// It exists as a named function with two callers because it once had one. The
+// Windows service does not go through run() at all — main() hands off to
+// maybeRunService before reaching it — so the bundle job ran only for a core
+// started from a console. In a service install, which is every ordinary Windows
+// install, the DPI bypass therefore never installed itself and never updated:
+// the bundle arrived only as a side effect of connecting, and the twelve-hour
+// refresh that keeps it ahead of the censor did not run at all. Both entry points
+// call this now, and it is the only place the jobs are named.
+//
+// Keeping the bundle current is the one piece whose value expires: the censor
+// learns what a release does, upstream answers with new strategies, and a stale
+// bundle fails exactly like a dead node — the user sees YouTube stop loading with
+// nothing to point at. The loop ends with ctx and never blocks serving.
+func startBackgroundJobs(ctx context.Context, daemon *control.Daemon) {
+	go daemon.RunZapretAutoUpdate(ctx)
+}
+
 // run is the console entry point: it wires up the core and serves the JSON
 // protocol — on stdin/stdout by default, on the named pipe with --pipe, on the
 // unix socket with --socket — until EOF or a shutdown signal.
@@ -100,12 +120,7 @@ func run(usePipe, useSocket bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Keep the DPI-bypass bundle current in the background. It is the one piece
-	// whose value expires: the censor learns what a release does, upstream answers
-	// with new strategies, and a stale bundle fails exactly like a dead node — the
-	// user sees YouTube stop loading with nothing to point at. The loop ends with
-	// ctx and never blocks serving.
-	go daemon.RunZapretAutoUpdate(ctx)
+	startBackgroundJobs(ctx, daemon)
 
 	switch {
 	case usePipe:

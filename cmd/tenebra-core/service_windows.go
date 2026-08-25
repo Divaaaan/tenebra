@@ -82,6 +82,9 @@ func (coreService) Execute(args []string, req <-chan svc.ChangeRequest, status c
 	defer cancel()
 	served := make(chan error, 1)
 	go func() { served <- control.ServeListener(ctx, daemon, l) }()
+	// The same background work a console-started core does. Missing here, it was
+	// missing on every ordinary Windows install: see startBackgroundJobs.
+	startBackgroundJobs(ctx, daemon)
 
 	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
 

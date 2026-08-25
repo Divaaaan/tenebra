@@ -12,6 +12,16 @@ All notable changes to Tenebra are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **On a service install the bypass never installed itself and never updated.**
+  `main()` hands off to the service path before it reaches the console entry
+  point, and the background job that keeps the bundle present and current was
+  started only by the latter — so on every ordinary Windows install it did not run
+  at all. The bundle arrived solely as a side effect of connecting, and the
+  twelve-hour refresh that keeps it ahead of a censor that learns never happened
+  once. Nothing failed and nothing was logged: from the outside it looked like a
+  bypass that was simply getting worse over time. Both entry points now start the
+  daemon's background work through one named function, and the service path has a
+  test that fails if it stops doing so.
 - **The bypass could not be switched on from the app at all.** Hardening the
   daemon in 0.5.1 gated four control commands behind a peer holding an *enabled*
   Administrators membership. Three of them — `start_zapret`, `pick_zapret`,
