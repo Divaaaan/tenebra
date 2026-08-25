@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AttemptsEvent,
   LogEvent,
+  PickProgressEvent,
   Profile,
   State,
   StateEvent,
@@ -26,6 +27,7 @@ const h = vi.hoisted(() => ({
   log: undefined as ((e: LogEvent) => void) | undefined,
   profiles: undefined as (() => void) | undefined,
   attempts: undefined as ((e: AttemptsEvent) => void) | undefined,
+  pickProgress: undefined as ((e: PickProgressEvent) => void) | undefined,
 }));
 
 const mockApi = vi.hoisted(() => ({
@@ -66,6 +68,10 @@ vi.mock("../api", async (orig) => {
       h.attempts = handler;
       return Promise.resolve(() => {});
     }),
+    onPickProgress: vi.fn((handler) => {
+      h.pickProgress = handler;
+      return Promise.resolve(() => {});
+    }),
   };
 });
 
@@ -78,6 +84,7 @@ beforeEach(() => {
   h.log = undefined;
   h.profiles = undefined;
   h.attempts = undefined;
+  h.pickProgress = undefined;
   // Sensible defaults; individual tests override as needed.
   mockApi.status.mockResolvedValue(idleState);
   mockApi.listProfiles.mockResolvedValue([]);
@@ -414,6 +421,47 @@ describe("attempts events", () => {
     expect(result.current.attempts).toEqual(adapted);
     expect(result.current.attempts?.items[0].reason).toBe("censored");
     expect(result.current.attempts?.items[1].strategy).toBe("firefox-fp");
+  });
+});
+
+// A bypass strategy probe run takes minutes, so the core narrates it step by
+// step. Unlike a fallback walk, a step describes a position in a run and nothing
+// else — which is why the run's owner clears it rather than the hook keeping it.
+describe("pick_progress events", () => {
+  const opening: PickProgressEvent = {
+    strategy: "",
+    ok: 0,
+    targets: 5,
+    index: 0,
+    total: 23,
+  };
+  const seventh: PickProgressEvent = {
+    strategy: "general (ALT2)",
+    ok: 3,
+    targets: 5,
+    index: 7,
+    total: 23,
+  };
+
+  it("starts null and keeps the latest step", async () => {
+    const { result } = await mountReady();
+    expect(result.current.pickProgress).toBeNull();
+
+    act(() => h.pickProgress?.(opening));
+    expect(result.current.pickProgress).toEqual(opening);
+
+    act(() => h.pickProgress?.(seventh));
+    expect(result.current.pickProgress).toEqual(seventh);
+  });
+
+  it("clearPickProgress puts it back to nothing", async () => {
+    const { result } = await mountReady();
+
+    act(() => h.pickProgress?.(seventh));
+    expect(result.current.pickProgress).toEqual(seventh);
+
+    act(() => result.current.clearPickProgress());
+    expect(result.current.pickProgress).toBeNull();
   });
 });
 

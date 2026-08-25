@@ -5,12 +5,14 @@ import {
   api,
   onAttempts,
   onLog,
+  onPickProgress,
   onProfilesChanged,
   onState,
   onTraffic,
   type AttemptsEvent,
   type LogEvent,
   type LogLevel,
+  type PickProgressEvent,
   type ConnectionMode,
   type Profile,
   type RoutingMode,
@@ -118,6 +120,13 @@ export interface Tenebra {
    * seen.
    */
   attempts: AttemptsEvent | null;
+  /**
+   * The latest step of a bypass strategy probe run, or null when no step has
+   * arrived since the last {@link clearPickProgress}. A run is minutes long and
+   * the steps are only meaningful while it lasts, so unlike `attempts` this one
+   * is cleared by whoever started the run rather than kept.
+   */
+  pickProgress: PickProgressEvent | null;
 
   /**
    * Start, or move, the tunnel. The resolved state says which of the two just
@@ -183,6 +192,13 @@ export interface Tenebra {
    */
   refreshStatus: () => Promise<void>;
   clearLogs: () => void;
+  /**
+   * Forget the last probe-run step. Called by the screen that runs a pick, both
+   * before it starts one and once it has settled — the step of a finished run
+   * describes nothing that is still happening, and a readout left showing it
+   * would claim work that stopped minutes ago.
+   */
+  clearPickProgress: () => void;
 }
 
 /**
@@ -199,6 +215,9 @@ export function useTenebra(): Tenebra {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [attempts, setAttempts] = useState<AttemptsEvent | null>(null);
+  const [pickProgress, setPickProgress] = useState<PickProgressEvent | null>(
+    null,
+  );
 
   const logSeq = useRef(0);
 
@@ -284,6 +303,9 @@ export function useTenebra(): Tenebra {
           // latest. We never reset it to null once seen — the walk data
           // outlives the walk and the UI decides when to stop showing it.
           onAttempts((e) => setAttempts(e)),
+          // A bypass strategy probe run, step by step. Only the latest step is
+          // kept: it is a position in a run, not a record of one.
+          onPickProgress((e) => setPickProgress(e)),
           // A background (or another window's) refresh changed the stored
           // profiles; reload so usage and node lists stay live.
           onProfilesChanged(() => {
@@ -485,6 +507,7 @@ export function useTenebra(): Tenebra {
   );
 
   const clearLogs = useCallback(() => setLogs([]), []);
+  const clearPickProgress = useCallback(() => setPickProgress(null), []);
 
   return {
     ready,
@@ -494,6 +517,7 @@ export function useTenebra(): Tenebra {
     profiles,
     logs,
     attempts,
+    pickProgress,
     connect,
     disconnect,
     setRouting,
@@ -512,5 +536,6 @@ export function useTenebra(): Tenebra {
     refreshProfiles,
     refreshStatus,
     clearLogs,
+    clearPickProgress,
   };
 }

@@ -109,6 +109,9 @@ const (
 	EventLog      = "log"
 	EventProfiles = "profiles"
 	EventAttempts = "attempts"
+	// EventPickProgress narrates a bypass strategy probe run (pick_zapret),
+	// one event per measured strategy. See pickProgressEvent.
+	EventPickProgress = "pick_progress"
 )
 
 // Attempt statuses reported per candidate in an attempts event. A candidate
@@ -459,6 +462,32 @@ type attemptItem struct {
 type attemptsEvent struct {
 	Items   []attemptItem `json:"items"`
 	Outcome string        `json:"outcome"`
+}
+
+// pickProgressEvent is the body of a pick_progress event: one step of a bypass
+// strategy probe run (pick_zapret).
+//
+// Strategy, OK and Targets describe the strategy just measured — how many of the
+// run's destinations it carried — and Index/Total place it in the run, so a
+// client can say "7 of 23" without knowing what a bundle holds. Targets is the
+// run's destination count rather than the result's own: a strategy whose process
+// never came up carries no measurements at all, and a denominator that dropped to
+// zero mid-run would read as a broken readout instead of the failure it is.
+//
+// The opening event of a run carries Total with an empty Strategy and Index 0.
+// The baseline measurement that goes first costs as much as a strategy does, and
+// a run that said nothing until the first strategy landed would still open with
+// the silence this event exists to end.
+//
+// It exists as a structured event rather than the log line beside it because the
+// screen driving the run needs the numbers: recovering them by parsing a
+// localized sentence breaks the moment the sentence is reworded.
+type pickProgressEvent struct {
+	Strategy string `json:"strategy"`
+	OK       int    `json:"ok"`
+	Targets  int    `json:"targets"`
+	Index    int    `json:"index"`
+	Total    int    `json:"total"`
 }
 
 // newResult builds a successful Response for id, marshalling v as the data

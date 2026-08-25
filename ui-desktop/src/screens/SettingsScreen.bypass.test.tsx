@@ -1,12 +1,14 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getVersion } from "@tauri-apps/api/app";
 import { isEnabled } from "@tauri-apps/plugin-autostart";
 import { invoke } from "@tauri-apps/api/core";
 
-import type { State } from "../api";
+import type { PickProgressEvent, State, ZapretPick } from "../api";
 import { api } from "../api";
+import type { Language } from "../i18n/strings";
+import type { Tenebra } from "../state/useTenebra";
 import { makeTenebra } from "../test/fixtures";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { SettingsScreen } from "./SettingsScreen";
@@ -37,11 +39,19 @@ function clickBypassUpdate() {
   fireEvent.click(btn);
 }
 
-function render(state: Partial<State> = {}) {
+function render(
+  state: Partial<State> = {},
+  overrides: Partial<Tenebra> = {},
+  lang: Language = "en",
+) {
   const tenebra = makeTenebra({
     state: { state: "idle", routing: "smart", ...state } as State,
+    ...overrides,
   });
-  return { ...renderWithProviders(<SettingsScreen tenebra={tenebra} />), tenebra };
+  return {
+    ...renderWithProviders(<SettingsScreen tenebra={tenebra} />, { lang }),
+    tenebra,
+  };
 }
 
 /** The row carrying the bypass on/off switch and its status line. */
@@ -281,6 +291,160 @@ describe("SettingsScreen — bypass bundle", () => {
 
       await waitFor(() => expect(pick).toHaveBeenCalledTimes(1));
       await waitFor(() => expect(tenebra.refreshStatus).toHaveBeenCalled());
+    });
+
+    // The complaint that produced all this: the button said "Measuring…" for five
+    // minutes with nothing behind it, which is indistinguishable from a frozen
+    // app — and was read as one. The core narrates the run now (pick_progress);
+    // these pin that the narration reaches the row, and that it stops.
+    describe("run progress", () => {
+      /** A probe run that is under way and will not finish until told to. */
+      function pendingRun() {
+        let settle!: (r: ZapretPick) => void;
+        const run = new Promise<ZapretPick>((resolve) => {
+          settle = resolve;
+        });
+        vi.spyOn(api, "pickZapret").mockReturnValue(run);
+        return {
+          finish: async () => {
+            await act(async () => {
+              settle({
+              baseline: 1,
+              targets: 5,
+              best: "general",
+              improved: true,
+              results: null,
+            });
+            });
+          },
+        };
+      }
+
+      /** The strategy-pick block: the row, plus whatever it says under it. */
+      function pickBlock(): HTMLElement {
+        const block = screen
+          .getByText(/Strategy choice|Подбор стратегии/)
+          .closest(".set-pick");
+        if (!block) throw new Error("strategy pick block not found");
+        return block as HTMLElement;
+      }
+
+      function startPick() {
+        const button = pickBlock().querySelector("button");
+        if (!button) throw new Error("re-measure button not found");
+        fireEvent.click(button);
+      }
+
+      const step: PickProgressEvent = {
+        strategy: "general (ALT2)",
+        ok: 3,
+        targets: 5,
+        index: 7,
+        total: 23,
+      };
+
+      it("says which strategy the run is on and how far it has come", async () => {
+        pendingRun();
+        render({ zapret_active: true }, { pickProgress: step });
+
+        startPick();
+
+        await waitFor(() => {
+          expect(pickBlock().textContent).toMatch(/Checked general \(ALT2\)/);
+          expect(pickBlock().textContent).toMatch(/7 of 23/);
+        });
+      });
+
+      it("says the same thing in Russian", async () => {
+        pendingRun();
+        render({ zapret_active: true }, { pickProgress: step }, "ru");
+
+        startPick();
+
+        await waitFor(() => {
+          expect(pickBlock().textContent).toMatch(/Проверил general \(ALT2\)/);
+          expect(pickBlock().textContent).toMatch(/7 из 23/);
+        });
+      });
+
+      // The run measures the plain path before it measures any strategy, and that
+      // costs a minute of its own. "0 of 23" would read as a stuck counter, so
+      // the opening step — which names no strategy — gets words instead.
+      it("says what the opening minute is doing", async () => {
+        pendingRun();
+        render(
+          { zapret_active: true },
+          {
+            pickProgress: {
+              strategy: "",
+              ok: 0,
+              targets: 5,
+              index: 0,
+              total: 23,
+            },
+          },
+        );
+
+        startPick();
+
+        await waitFor(() =>
+          expect(pickBlock().textContent).toMatch(/Measuring the plain path/),
+        );
+      });
+
+      // A step is a position in a run, so it says nothing once the run is over.
+      it("takes the line down when the run finishes", async () => {
+        const run = pendingRun();
+        render({ zapret_active: true }, { pickProgress: step });
+
+        startPick();
+        await waitFor(() =>
+          expect(pickBlock().textContent).toMatch(/general \(ALT2\)/),
+        );
+
+        await run.finish();
+
+        await waitFor(() =>
+          expect(pickBlock().textContent).not.toMatch(/general \(ALT2\)/),
+        );
+      });
+
+      // Every other ending, too: a refused run leaves no readout claiming work
+      // that stopped.
+      it("takes the line down when the run is refused", async () => {
+        vi.spyOn(api, "pickZapret").mockRejectedValue(new Error("boom"));
+        const { tenebra } = render(
+          { zapret_active: true },
+          { pickProgress: step },
+        );
+
+        startPick();
+
+        await waitFor(() => expect(tenebra.refreshStatus).toHaveBeenCalled());
+        expect(pickBlock().textContent).not.toMatch(/general \(ALT2\)/);
+        expect(tenebra.clearPickProgress).toHaveBeenCalled();
+      });
+
+      // Nothing is running, so there is nothing to narrate — the row keeps the
+      // shape it has the rest of the time.
+      it("shows nothing while no run is going", () => {
+        render({ zapret_active: true }, { pickProgress: step });
+
+        expect(pickBlock().textContent).not.toMatch(/general \(ALT2\)/);
+      });
+
+      // Otherwise the first thing a new run shows is where the last one stopped.
+      it("forgets the previous run's step before starting a new one", () => {
+        pendingRun();
+        const { tenebra } = render(
+          { zapret_active: true },
+          { pickProgress: step },
+        );
+
+        startPick();
+
+        expect(tenebra.clearPickProgress).toHaveBeenCalled();
+      });
     });
 
     it("does not treat 'nothing helped' as a failed probe", async () => {

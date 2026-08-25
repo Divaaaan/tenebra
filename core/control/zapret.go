@@ -547,6 +547,68 @@ func dirFileNames(dir string) []string {
 	return names
 }
 
+// pickRunner is the one operation a probe run needs from the bypass runner:
+// measure every strategy, reporting each as it lands.
+//
+// It is an interface so the run's bookkeeping — the numbering behind the
+// progress event — can be tested without a packet filter. The real Pick starts
+// winws once per strategy on the WinDivert driver, which is neither available
+// nor acceptable in a test.
+type pickRunner interface {
+	Pick(ctx context.Context, strategies []zapret.Strategy, targets []string, progress func(zapret.Result)) ([]zapret.Result, int, error)
+}
+
+// runPick measures every strategy and narrates the run as pick_progress events.
+//
+// The narration is the point. A run takes minutes — every strategy is attached,
+// probed against each destination and detached — and until this existed the only
+// sign of life was a line on the log screen, nowhere near the button that started
+// it. A control that says "measuring" for five minutes with nothing behind it is
+// indistinguishable from a hung app, and that is exactly how it was read.
+//
+// The numbering is done here rather than inside Pick because only this side knows
+// the plan: the progress callback sees one result at a time, while the length of
+// the run is right here. Widening Pick's signature to carry it would change a
+// call the automatic re-pick shares (see repickStrategy) for the benefit of one
+// caller.
+func (d *Daemon) runPick(ctx context.Context, runner pickRunner, strategies []zapret.Strategy, targets []string) ([]zapret.Result, int, error) {
+	total := len(strategies)
+	// The opening beat goes out before anything is measured: the baseline probe
+	// runs first and costs as much as a strategy does, so a run that only spoke up
+	// after the first strategy landed would open with the same silence.
+	d.emitPickProgress(pickProgressEvent{Targets: len(targets), Total: total})
+
+	measured := 0
+	return runner.Pick(ctx, strategies, targets, func(r zapret.Result) {
+		measured++
+		d.emitPickProgress(pickProgressEvent{
+			Strategy: r.Name,
+			OK:       r.OKCount(),
+			Targets:  len(targets),
+			Index:    measured,
+			Total:    total,
+		})
+		// Kept beside the event rather than replaced by it: this line is what the
+		// log screen and the diagnostics bundle carry, and both outlive the run.
+		d.emitLog(LogInfo, fmt.Sprintf("zapret: %s — %d/%d", r.Name, r.OKCount(), len(r.Targets)))
+	})
+}
+
+// emitPickProgress pushes one step of a probe run to the UI, if one is attached.
+//
+// Nothing is stored: a step is only meaningful while the run that produced it is
+// still going, and the run is a synchronous request whose answer the caller is
+// already waiting on. A client that attaches mid-run simply picks up from the
+// next strategy.
+func (d *Daemon) emitPickProgress(ev pickProgressEvent) {
+	d.mu.Lock()
+	emit := d.emit
+	d.mu.Unlock()
+	if emit != nil {
+		emit(EventPickProgress, ev)
+	}
+}
+
 // handlePickZapret probes every installed strategy and reports which one to use.
 //
 // It runs synchronously and takes minutes: each strategy needs the packet filter
@@ -580,12 +642,9 @@ func (d *Daemon) handlePickZapret(ctx context.Context, req Request) Response {
 	// tunnel would also poison its own measurements.
 	d.excludeNodesFromZapret(dir)
 
+	targets := zapret.DefaultTargets()
 	runner := d.newZapretRunner(dir)
-	results, baseline, err := runner.Pick(ctx, strategies, zapret.DefaultTargets(), func(r zapret.Result) {
-		// Report as it goes: a silent multi-minute operation reads as a hang,
-		// and the user should see which strategy is being tried.
-		d.emitLog(LogInfo, fmt.Sprintf("zapret: %s — %d/%d", r.Name, r.OKCount(), len(r.Targets)))
-	})
+	results, baseline, err := d.runPick(ctx, runner, strategies, targets)
 	if err != nil {
 		return newError(req.ID, err.Error())
 	}
@@ -599,7 +658,7 @@ func (d *Daemon) handlePickZapret(ctx context.Context, req Request) Response {
 	// says nothing about the strategies. Paired with the interface it was measured
 	// on, because that is the thing that goes wrong.
 	d.emitDebug(fmt.Sprintf("zapret: без обхода %d/%d, замер на интерфейсе index=%d",
-		baseline, len(zapret.DefaultTargets()), runner.PinIfaceIndex))
+		baseline, len(targets), runner.PinIfaceIndex))
 
 	// Leave the winner RUNNING. Probing ends with everything stopped so the
 	// machine is not left on whichever strategy happened to be last — but
@@ -623,7 +682,7 @@ func (d *Daemon) handlePickZapret(ctx context.Context, req Request) Response {
 		Results  []zapret.Result `json:"results"`
 	}{
 		Baseline: baseline,
-		Targets:  len(zapret.DefaultTargets()),
+		Targets:  len(targets),
 		Improved: found,
 		Results:  ranked,
 	}

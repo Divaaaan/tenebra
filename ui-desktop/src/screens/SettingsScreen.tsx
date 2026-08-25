@@ -6,6 +6,7 @@ import type { Update } from "@tauri-apps/plugin-updater";
 import {
   api,
   type ConnectionMode,
+  type PickProgressEvent,
   type RoutingMode,
   type SplitMode,
   type TunStack,
@@ -16,7 +17,11 @@ import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import { UpdateConfirm } from "../components/UpdateConfirm";
 import { useI18n } from "../i18n/I18nContext";
 import { useTheme } from "../theme/ThemeContext";
-import { describeCoreError, type Language } from "../i18n/strings";
+import {
+  describeCoreError,
+  type Language,
+  type Strings,
+} from "../i18n/strings";
 import { pushToast } from "../lib/toast";
 import {
   getAutoFastest,
@@ -40,6 +45,25 @@ import { useReducedMotion } from "../lib/useReducedMotion";
 
 interface SettingsScreenProps {
   tenebra: Tenebra;
+}
+
+/**
+ * One line of a bypass probe run: which strategy was just measured and how far
+ * the run has come, e.g. "Checked general (ALT2) — 7 of 23".
+ *
+ * The run opens with a step that names no strategy: the plain path is measured
+ * first, to have something to judge the strategies against, and that minute
+ * costs as much as a strategy does. It gets words of its own rather than a
+ * "0 of 23" that reads like a stuck counter.
+ */
+function describePickStep(step: PickProgressEvent | null, t: Strings): string {
+  if (!step) {
+    return "";
+  }
+  if (!step.strategy || step.index < 1) {
+    return t.settings.bypassPickBaseline;
+  }
+  return `${t.settings.bypassPickStep} ${step.strategy} — ${step.index} ${t.settings.bypassPickStepOf} ${step.total}`;
 }
 
 // The ordered sections, keyed so each key doubles as its i18n label
@@ -413,6 +437,12 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   const [bypassUpdateNote, setBypassUpdateNote] = useState("");
   const [bypassBusy, setBypassBusy] = useState(false);
   const [bypassPicking, setBypassPicking] = useState(false);
+  // What the running probe is on, or "" when none is. Gated on this screen's own
+  // flag as well as on the step: the flag is cleared on every path out of a run,
+  // so the line goes dark even if a core stops speaking mid-run.
+  const pickStep = bypassPicking
+    ? describePickStep(tenebra.pickProgress, t)
+    : "";
 
   /**
    * Switch the packet filter on or off.
@@ -447,6 +477,9 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
    */
   function repickBypass() {
     if (bypassPicking || bypassBusy) return;
+    // Drop whatever the last run ended on, so the first thing this one shows is
+    // its own opening step rather than a stale line from minutes ago.
+    tenebra.clearPickProgress();
     setBypassPicking(true);
     void api
       .pickZapret()
@@ -463,7 +496,14 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
       .catch(reportRefusal)
       .then(() => tenebra.refreshStatus())
       .catch(() => {})
-      .finally(() => setBypassPicking(false));
+      // One exit for every ending — a winner, a run that found nothing, a
+      // refusal, a core that died mid-run — so the progress line cannot outlive
+      // the run that produced it. A readout still narrating work that stopped
+      // minutes ago is worse than no readout at all.
+      .finally(() => {
+        setBypassPicking(false);
+        tenebra.clearPickProgress();
+      });
   }
 
   function updateBypass() {
@@ -1645,21 +1685,35 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
               — that is why a bundle ships twenty of them — and the answer expires.
               This is the re-measure, kept here because it is minutes long and
               belongs nowhere near a connect button. */}
-          <div className="set-row">
-            <span className="set-row-text">
-              <span className="set-row-label">{t.settings.bypassPick}</span>
-              <span className="set-row-hint">{t.settings.bypassPickHint}</span>
-            </span>
-            <button
-              type="button"
-              className="set-btn"
-              disabled={bypassPicking || bypassBusy}
-              onClick={repickBypass}
-            >
-              {bypassPicking
-                ? t.settings.bypassPicking
-                : t.settings.bypassPickRun}
-            </button>
+          <div className="set-pick">
+            <div className="set-row">
+              <span className="set-row-text">
+                <span className="set-row-label">{t.settings.bypassPick}</span>
+                <span className="set-row-hint">
+                  {t.settings.bypassPickHint}
+                </span>
+              </span>
+              <button
+                type="button"
+                className="set-btn"
+                disabled={bypassPicking || bypassBusy}
+                onClick={repickBypass}
+              >
+                {bypassPicking
+                  ? t.settings.bypassPicking
+                  : t.settings.bypassPickRun}
+              </button>
+            </div>
+            {/* The run, step by step, under the button that started it. A probe
+                run is minutes long; before this the only sign it was alive was a
+                line on the log screen, and a control that says "measuring" for
+                five minutes with nothing behind it is indistinguishable from a
+                frozen app — which is exactly how it was read. */}
+            {pickStep && (
+              <p className="set-pick-step" role="status">
+                {pickStep}
+              </p>
+            )}
           </div>
 
           <div className="set-row">

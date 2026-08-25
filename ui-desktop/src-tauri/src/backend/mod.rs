@@ -41,6 +41,7 @@ pub const EVENT_TRAFFIC: &str = "traffic";
 pub const EVENT_LOG: &str = "log";
 pub const EVENT_PROFILES: &str = "profiles";
 pub const EVENT_ATTEMPTS: &str = "attempts";
+pub const EVENT_PICK_PROGRESS: &str = "pick_progress";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -330,6 +331,34 @@ pub struct Attempt {
 pub struct AttemptsSnapshot {
     pub items: Vec<Attempt>,
     pub outcome: String,
+}
+
+/// One step of a bypass strategy probe run (`pick_zapret`), the body of a
+/// `pick_progress` event.
+///
+/// `strategy`, `ok` and `targets` describe the strategy just measured — how many
+/// of the run's destinations it carried — and `index`/`total` place it in the
+/// run, so the UI can say "7 of 23" without knowing what a bundle holds. The
+/// opening event of a run carries `total` with an empty `strategy` and `index`
+/// 0: the run's baseline measurement comes first and costs as much as a strategy
+/// does, and the whole reason this event exists is that those minutes were
+/// silent.
+///
+/// Every field defaults, so a core that grows or drops one still decodes rather
+/// than dropping the step.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PickProgress {
+    /// The strategy just measured; empty on the run's opening event.
+    #[serde(default)]
+    pub strategy: String,
+    #[serde(default)]
+    pub ok: u32,
+    #[serde(default)]
+    pub targets: u32,
+    #[serde(default)]
+    pub index: u32,
+    #[serde(default)]
+    pub total: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -700,6 +729,10 @@ pub trait EventSink: Send + Sync + 'static {
     /// Deliver a fallback-walk snapshot (the anti-DPI attempt sequence) so the UI
     /// can show which protocols the core is trying and how far the walk got.
     fn attempts(&self, snapshot: &AttemptsSnapshot);
+    /// Deliver one step of a bypass strategy probe run, so the screen that
+    /// started it can show the run advancing instead of a control that says
+    /// "measuring" for five minutes with nothing behind it.
+    fn pick_progress(&self, progress: &PickProgress);
 }
 
 /// Everything the control protocol exposes. Methods return a plain `Result`
@@ -989,6 +1022,39 @@ mod tests {
         assert_eq!(snap.outcome, "");
         assert_eq!(snap.items[1].protocol, Protocol::Amneziawg);
         assert_eq!(to_value(&snap).unwrap(), value);
+    }
+
+    #[test]
+    fn pick_progress_round_trips() {
+        // One step of a strategy probe run, exactly as the core emits it: the
+        // strategy just measured, what it carried, and its place in the run.
+        let value = json!({
+            "strategy": "general (ALT2)",
+            "ok": 3,
+            "targets": 5,
+            "index": 7,
+            "total": 23,
+        });
+        let step: PickProgress = from_value(value.clone()).unwrap();
+        assert_eq!(step.strategy, "general (ALT2)");
+        assert_eq!(step.ok, 3);
+        assert_eq!(step.targets, 5);
+        assert_eq!(step.index, 7);
+        assert_eq!(step.total, 23);
+        assert_eq!(to_value(&step).unwrap(), value);
+    }
+
+    #[test]
+    fn pick_progress_opening_step_names_no_strategy() {
+        // The event that opens a run, before anything has been measured: it
+        // carries the size of the run and nothing else, so the UI can say a run
+        // is under way while the baseline measurement takes its minute.
+        let value = json!({ "strategy": "", "ok": 0, "targets": 5, "index": 0, "total": 23 });
+        let step: PickProgress = from_value(value.clone()).unwrap();
+        assert_eq!(step.strategy, "");
+        assert_eq!(step.index, 0);
+        assert_eq!(step.total, 23);
+        assert_eq!(to_value(&step).unwrap(), value);
     }
 
     #[test]

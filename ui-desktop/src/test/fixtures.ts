@@ -44,6 +44,7 @@ export function makeTenebra(overrides: Partial<Tenebra> = {}): Tenebra {
     profiles: [],
     logs: [],
     attempts: null,
+    pickProgress: null,
     connect: vi.fn().mockResolvedValue(undefined),
     disconnect: vi.fn().mockResolvedValue(undefined),
     setRouting: vi.fn().mockResolvedValue(undefined),
@@ -62,6 +63,7 @@ export function makeTenebra(overrides: Partial<Tenebra> = {}): Tenebra {
     refreshProfiles: vi.fn().mockResolvedValue(undefined),
     refreshStatus: vi.fn().mockResolvedValue(undefined),
     clearLogs: vi.fn(),
+    clearPickProgress: vi.fn(),
     ...overrides,
   };
 }
