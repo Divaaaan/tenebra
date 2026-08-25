@@ -9,7 +9,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::{AttemptsSnapshot, EventSink, State};
+use super::{AttemptsSnapshot, EventSink, PickProgress, State};
 
 /// How often a blocked [`ChanReader`] rechecks its stop flag. Mirrors the real
 /// pipe transport, whose reader also wakes periodically rather than parking in
@@ -109,6 +109,7 @@ pub struct Rec {
     pub logs: Mutex<Vec<(String, String)>>,
     pub profiles: AtomicUsize,
     pub attempts: Mutex<Vec<AttemptsSnapshot>>,
+    pub pick_progress: Mutex<Vec<PickProgress>>,
 }
 
 impl Rec {
@@ -156,5 +157,8 @@ impl EventSink for Rec {
     }
     fn attempts(&self, snapshot: &AttemptsSnapshot) {
         self.attempts.lock().unwrap().push(snapshot.clone());
+    }
+    fn pick_progress(&self, progress: &PickProgress) {
+        self.pick_progress.lock().unwrap().push(progress.clone());
     }
 }

@@ -420,6 +420,27 @@ export interface AttemptsEvent {
   outcome: "" | "ok" | "exhausted";
 }
 
+/**
+ * One step of a bypass strategy probe run (`pick_zapret`).
+ *
+ * A run takes minutes — every strategy in the bundle is attached, measured
+ * against each destination and detached — so the core narrates it: `strategy`,
+ * `ok` and `targets` describe the strategy just measured (how many of the run's
+ * destinations it carried), and `index`/`total` place it in the run, which is
+ * what lets a screen say "7 of 23" without knowing what a bundle holds.
+ *
+ * The run's opening event carries `total` with an empty `strategy` and `index`
+ * 0: the baseline measurement goes first and costs as much as a strategy does,
+ * and those first minutes were the silence this event exists to end.
+ */
+export interface PickProgressEvent {
+  strategy: string;
+  ok: number;
+  targets: number;
+  index: number;
+  total: number;
+}
+
 /** An installed zapret bundle: where it lives and what strategies it offers. */
 export interface ZapretBundle {
   dir: string;

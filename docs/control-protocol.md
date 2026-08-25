@@ -857,6 +857,7 @@ response: {"id":13,"ok":true,"data":{"text":"Tenebra core diagnostics
 | `log`      | `level` (`debug`/`info`/`warn`/`error`), `msg`                     |
 | `profiles` | none — signal that the stored profile set changed; re-run `list_profiles` |
 | `attempts` | `items` (`Attempt[]`), `outcome` (`""`/`"ok"`/`"exhausted"`) — a fallback-walk snapshot |
+| `pick_progress` | `strategy`, `ok`, `targets`, `index`, `total` — one step of a `pick_zapret` run |
 
 `log` events are filtered by the daemon's level threshold, which defaults to
 `info`: a shipped build never emits `debug`. Set `TENEBRA_LOG_LEVEL=debug` in the
@@ -913,6 +914,37 @@ over the connection that replaced it.
 ```
 {"event":"attempts","items":[{"seq":1,"protocol":"vless","node":"nl-ams-01","status":"blocked","last_good":true},{"seq":2,"protocol":"hysteria2","node":"fi-hel-01","status":"trying","last_good":false}],"outcome":""}
 {"event":"attempts","items":[{"seq":1,"protocol":"vless","node":"nl-ams-01","status":"blocked","last_good":true},{"seq":2,"protocol":"hysteria2","node":"fi-hel-01","status":"ok","last_good":false}],"outcome":"ok"}
+```
+
+### Bypass strategy probe (`pick_progress`)
+
+A `pick_zapret` run measures every strategy in the bundle: each one is attached,
+probed against every destination and detached, which takes minutes. The core
+narrates it as `pick_progress` events so a client can show the run advancing
+instead of a control that has said "measuring" since the user pressed it.
+
+- The **first** event of a run goes out before anything is measured: `total` is
+  the number of strategies the run covers, `strategy` is empty and `index` is 0.
+  The run measures the plain path first — the baseline every strategy is scored
+  against — and that costs as much as a strategy does.
+- Then **one event per strategy**, as it lands: `strategy` names it, `ok` is how
+  many of the run's destinations it carried, and `index` is its 1-based place in
+  the run.
+- `targets` is the run's destination count and does not move. A strategy whose
+  process never came up measures nothing, and reporting its own empty target list
+  would put a `0/0` on screen mid-run.
+- There is **no terminal event**: a step describes a position in a run, and the
+  run is a synchronous command whose answer the caller is already waiting on. A
+  client stops showing progress when `pick_zapret` returns — answer, error or
+  refusal — rather than waiting for the core to say the run ended.
+
+Nothing is stored: a client that attaches mid-run picks up from the next
+strategy. The same lines also go out as `log` events, which is what the log view
+and the diagnostics bundle keep after the run is over.
+
+```
+{"event":"pick_progress","strategy":"","ok":0,"targets":5,"index":0,"total":23}
+{"event":"pick_progress","strategy":"general (ALT2)","ok":3,"targets":5,"index":7,"total":23}
 ```
 
 ## Types
@@ -991,6 +1023,15 @@ type Attempt = {
 
 // Body of an `attempts` event: a full snapshot of the current fallback walk.
 type Attempts = { items: Attempt[]; outcome: "" | "ok" | "exhausted" };
+
+// Body of a `pick_progress` event: one step of a strategy probe run.
+type PickProgress = {
+  strategy: string; // the strategy just measured; empty on the run's opening event
+  ok: number;       // how many of the run's destinations it carried
+  targets: number;  // the run's destination count; fixed for the whole run
+  index: number;    // 1-based place in the run; 0 on the opening event
+  total: number;    // strategies the run covers
+};
 
 type LeakCheck = {
   public_ip?: string;   // omitted if every echo endpoint failed

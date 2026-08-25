@@ -11,6 +11,20 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **The strategy picker says what it is doing.** "Find a strategy" measures every
+  strategy in the bundle — each one attached, probed against five destinations and
+  detached — which takes five to ten minutes by nature. All the button did for
+  those minutes was say "Measuring…", and the only sign the run was alive was a
+  line on the log screen, which is a different screen from the button. From where
+  the user sits that is a frozen app, and it was read as one. The core now
+  narrates the run as a `pick_progress` event — the strategy just measured, what
+  it carried, its place in the run — and Settings draws it under the button:
+  "Checked general (ALT2) — 7 of 23", or, for the run's first minute, that the
+  plain path is being measured to have something to judge the strategies against.
+  The line goes down on every ending: a winner, a run that beat nothing, a
+  refusal.
+
 ### Fixed
 - **On a service install the bypass never installed itself and never updated.**
   `main()` hands off to the service path before it reaches the console entry

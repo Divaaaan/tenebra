@@ -1355,6 +1355,9 @@ mod tests {
             // The mock never runs a fallback walk, so it emits no attempts; this
             // exists only to satisfy the sink trait.
         }
+        fn pick_progress(&self, _progress: &crate::backend::PickProgress) {
+            // Likewise: the mock measures no bypass strategies.
+        }
     }
 
     /// A backend plus the sink it reports to, so tests can drive one and inspect

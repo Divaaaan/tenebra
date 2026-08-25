@@ -11,6 +11,7 @@ import type {
   CrashReport,
   LogEvent,
   NodeCheck,
+  PickProgressEvent,
   PingResult,
   ServiceChecks,
   Profile,
@@ -504,6 +505,19 @@ export function onAttempts(
   handler: (e: AttemptsEvent) => void,
 ): Promise<UnlistenFn> {
   return listen<AttemptsEvent>("attempts", (event) => handler(event.payload));
+}
+
+// The core narrates a bypass strategy probe run step by step: one event as the
+// run opens, then one per measured strategy. It is a structured event rather
+// than a line in the log stream because the screen that started the run needs
+// the numbers, and digging them back out of a localized sentence breaks the
+// first time the sentence is reworded.
+export function onPickProgress(
+  handler: (e: PickProgressEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<PickProgressEvent>("pick_progress", (event) =>
+    handler(event.payload),
+  );
 }
 
 // Tray-originated events. The tray can disconnect on its own, but connecting and

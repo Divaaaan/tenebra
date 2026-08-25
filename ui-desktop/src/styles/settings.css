@@ -470,6 +470,28 @@
   color: var(--text-dim);
 }
 
+/* ── strategy pick: the row, plus the run's progress under it ──
+   A probe run takes minutes, so it narrates itself here rather than only on the
+   log screen. The line sits under the whole row (the button included) and is
+   only in the tree while a run is going, so the row keeps its usual single-line
+   shape the rest of the time. */
+.set-pick {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.set-pick-step {
+  font-family: var(--mono);
+  font-size: var(--fs-data);
+  letter-spacing: var(--track-body);
+  /* Full-strength text, a step up from the hint above it: this is the live part
+     of the row. Not the signal colour — that one carries refusals here
+     (.set-error), and a progress line must not read as a failure. */
+  color: var(--text);
+  /* One long strategy name must not stretch the settings column. */
+  overflow-wrap: anywhere;
+}
+
 /* ── segmented control (theme / language) — adjacent buttons, borders merged ── */
 .set-seg {
   display: inline-flex;

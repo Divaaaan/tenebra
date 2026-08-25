@@ -575,6 +575,20 @@ export interface Strings {
     /** The button itself — a verb, kept distinct from the row's label. */
     bypassPickRun: string;
     bypassPicking: string;
+    /**
+     * The run's progress, under the button. A probe run is minutes long, and
+     * until it narrated itself the only sign of life was a line on the log
+     * screen — a different screen from the button that starts it.
+     *
+     * bypassPickStep leads the strategy just measured and bypassPickStepOf joins
+     * its place to the size of the run: "Checked general (ALT2) — 7 of 23".
+     * bypassPickBaseline covers the run's opening minute, before any strategy
+     * has been measured: the plain path is measured first, to have something to
+     * judge the strategies against.
+     */
+    bypassPickStep: string;
+    bypassPickStepOf: string;
+    bypassPickBaseline: string;
     /** Toast after a successful probe; the winning strategy is appended. */
     bypassPicked: string;
     /**
@@ -1160,6 +1174,9 @@ const en: Strings = {
       "Try every strategy in the bundle against real destinations and keep the one that wins. Takes minutes; the answer stops being true as filtering changes.",
     bypassPickRun: "Re-measure",
     bypassPicking: "Measuring…",
+    bypassPickStep: "Checked",
+    bypassPickStepOf: "of",
+    bypassPickBaseline: "Measuring the plain path first…",
     bypassPicked: "bypass: switched to",
     bypassPickedNothing:
       "bypass: nothing beat the baseline — the block is elsewhere",
@@ -1686,6 +1703,9 @@ const ru: Strings = {
       "Прогнать все стратегии сборки по реальным адресам и оставить победившую. Занимает минуты; ответ перестаёт быть верным, когда меняются фильтры.",
     bypassPickRun: "Подобрать заново",
     bypassPicking: "Подбираю…",
+    bypassPickStep: "Проверил",
+    bypassPickStepOf: "из",
+    bypassPickBaseline: "Сначала замеряю канал без обхода…",
     bypassPicked: "обход: переключился на",
     bypassPickedNothing:
       "обход: ни одна стратегия не улучшила — блокировка не здесь",

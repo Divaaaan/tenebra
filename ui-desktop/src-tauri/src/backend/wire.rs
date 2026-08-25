@@ -25,9 +25,9 @@ use serde_json::{json, Value};
 
 use super::{
     AttemptsSnapshot, Backend, ConnectionMode, EventSink, ImportLinksResult, LeakCheck, NodeCheck,
-    PingResult, Profile, RoutingMode, ServiceChecks, SpeedTest, SplitMode, State, StunCheck,
-    SupportBundle, TunStack, ZapretActive, ZapretBundle, ZapretPick, ZapretUpdate, EVENT_ATTEMPTS,
-    EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
+    PickProgress, PingResult, Profile, RoutingMode, ServiceChecks, SpeedTest, SplitMode, State,
+    StunCheck, SupportBundle, TunStack, ZapretActive, ZapretBundle, ZapretPick, ZapretUpdate,
+    EVENT_ATTEMPTS, EVENT_LOG, EVENT_PICK_PROGRESS, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
 /// How long a request waits for its correlated response before giving up. The
@@ -281,6 +281,14 @@ fn forward_event(value: &Value, sink: &dyn EventSink) {
             // malformed one like a bad state rather than crashing the reader.
             if let Ok(snapshot) = serde_json::from_value::<AttemptsSnapshot>(value.clone()) {
                 sink.attempts(&snapshot);
+            }
+        }
+        Some(EVENT_PICK_PROGRESS) => {
+            // One step of a strategy probe run. Dropped on a decode failure like
+            // the rest: a step the UI cannot read is worth less than the run's
+            // next one, which is seconds away.
+            if let Ok(progress) = serde_json::from_value::<PickProgress>(value.clone()) {
+                sink.pick_progress(&progress);
             }
         }
         _ => {} // unknown event kind: ignore rather than guess
@@ -867,6 +875,41 @@ mod tests {
     }
 
     #[test]
+    fn forward_event_routes_pick_progress() {
+        let sink = Rec::default();
+        forward_event(
+            &json!({
+                "event": "pick_progress",
+                "strategy": "general (ALT2)",
+                "ok": 3,
+                "targets": 5,
+                "index": 7,
+                "total": 23,
+            }),
+            &sink,
+        );
+        let steps = sink.pick_progress.lock().unwrap();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].strategy, "general (ALT2)");
+        assert_eq!(steps[0].ok, 3);
+        assert_eq!(steps[0].targets, 5);
+        assert_eq!(steps[0].index, 7);
+        assert_eq!(steps[0].total, 23);
+    }
+
+    #[test]
+    fn forward_event_drops_a_malformed_pick_progress() {
+        let sink = Rec::default();
+        // A count that is not a number makes the step unreadable; it is swallowed
+        // rather than forwarded half-decoded.
+        forward_event(
+            &json!({ "event": "pick_progress", "strategy": "general", "index": "seven", "total": 23 }),
+            &sink,
+        );
+        assert!(sink.pick_progress.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn forward_event_ignores_unknown_kind() {
         let sink = Rec::default();
         forward_event(&json!({ "event": "bogus" }), &sink);
@@ -875,6 +918,7 @@ mod tests {
         assert!(sink.logs.lock().unwrap().is_empty());
         assert_eq!(sink.profiles.load(Ordering::SeqCst), 0);
         assert!(sink.attempts.lock().unwrap().is_empty());
+        assert!(sink.pick_progress.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -1528,6 +1572,7 @@ Core version:  0.5.0
         fn log(&self, _level: &str, _msg: &str) {}
         fn profiles(&self) {}
         fn attempts(&self, _snapshot: &AttemptsSnapshot) {}
+        fn pick_progress(&self, _progress: &PickProgress) {}
     }
 
     #[test]

@@ -23,9 +23,9 @@ use tauri_plugin_notification::NotificationExt;
 
 use backend::{
     AttemptsSnapshot, Backend, ConnectionMode, ConnectionState, EventSink, ImportLinksResult,
-    LeakCheck, NodeCheck, PingResult, Profile, RoutingMode, ServiceChecks, SpeedTest, SplitMode,
-    State, StunCheck, TunStack, ZapretActive, ZapretBundle, ZapretPick, ZapretUpdate,
-    EVENT_ATTEMPTS, EVENT_LOG, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
+    LeakCheck, NodeCheck, PickProgress, PingResult, Profile, RoutingMode, ServiceChecks, SpeedTest,
+    SplitMode, State, StunCheck, TunStack, ZapretActive, ZapretBundle, ZapretPick, ZapretUpdate,
+    EVENT_ATTEMPTS, EVENT_LOG, EVENT_PICK_PROGRESS, EVENT_PROFILES, EVENT_STATE, EVENT_TRAFFIC,
 };
 
 /// Held in Tauri's managed state and shared by every command handler. The
@@ -152,6 +152,12 @@ impl EventSink for TauriSink {
         // Forward the fallback-walk snapshot verbatim; the renderer renders the
         // anti-DPI attempt sequence from it.
         let _ = self.app.emit(EVENT_ATTEMPTS, snapshot);
+    }
+
+    fn pick_progress(&self, progress: &PickProgress) {
+        // One step of a strategy probe run, forwarded verbatim: the settings
+        // screen draws the run's progress under the button that started it.
+        let _ = self.app.emit(EVENT_PICK_PROGRESS, progress);
     }
 }
 
