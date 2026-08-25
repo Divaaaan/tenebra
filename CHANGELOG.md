@@ -79,6 +79,19 @@ All notable changes to Tenebra are documented here. The format follows
   fixed the page and left the video spinning could win the run. It is
   `redirector.googlevideo.com` now, a stable name in the same SNI space, and a
   test rejects per-session node names in the probe set.
+- **The bypass check after every connect only ever asked for the YouTube page.**
+  Six seconds after connecting, the daemon verifies that the bypass is really
+  carrying video and hands those services back to the tunnel when it is not — and
+  the entire verdict came from one TLS handshake to `www.youtube.com`. The page is
+  not the part that gets throttled: video streams from `googlevideo.com`, and the
+  block people describe as "YouTube does not work" is exactly the one that leaves
+  the page opening and strangles the stream. So the check reported a healthy
+  bypass in precisely the case it exists to catch, while routing had already sent
+  video to the direct path on the strength of that verdict — leaving it carried by
+  nothing at all. It now asks for the page and for `redirector.googlevideo.com`,
+  the same pair the strategy picker scores against, and credits the bypass only
+  when both answer. The two are asked at once, so a check still costs at most six
+  seconds per attempt.
 - **A manual bundle check could sit for over two minutes without answering.** The
   command inherited no deadline of its own while the HTTP client allows ninety
   seconds per request across two requests, so on a network where GitHub is

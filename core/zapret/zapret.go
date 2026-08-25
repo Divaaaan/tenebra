@@ -215,8 +215,26 @@ func DefaultTargets() []string {
 	return []string{
 		"https://discord.com/api/v9/gateway",
 		"https://cdn.discordapp.com/robots.txt",
-		"https://www.youtube.com/generate_204",
+		"https://" + VideoPageHost + "/generate_204",
 		"https://i.ytimg.com/generate_204",
-		"https://redirector.googlevideo.com/generate_204",
+		"https://" + VideoStreamHost + "/generate_204",
 	}
 }
+
+// VideoPageHost and VideoStreamHost are the two halves of "does YouTube work":
+// the page a user opens, and the host the video itself comes down from.
+//
+// They are named and exported because the pick is not the only thing that has to
+// ask for them. The daemon checks the bypass again after every connect, and that
+// check has to measure the same pair this run is scored on: two independently
+// spelled ideas of what counts as video drift apart at the first edit, and the
+// half that drifts is the half nobody notices — a check still asking only for
+// the page keeps calling a bypass healthy while the picker has moved on.
+//
+// Keeping the pair apart is the point. A censor that throttles the stream and
+// leaves the page loading is not an exotic case; it is the ordinary one, and it
+// is what people mean when they say YouTube does not work.
+const (
+	VideoPageHost   = "www.youtube.com"
+	VideoStreamHost = "redirector.googlevideo.com"
+)
