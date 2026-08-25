@@ -4,18 +4,35 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"net"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/Divaaaan/tenebra/core/zapret"
 )
 
-// videoProbeHost/videoProbeSNI are what the bypass check dials and names in its
-// ClientHello. A censor acts on the name, so the name is the measurement.
-const (
-	videoProbeHost = "www.youtube.com:443"
-	videoProbeSNI  = "www.youtube.com"
-)
+// bypassProbePort is the port both halves of the check dial. Only 443 is worth
+// asking: the censor acts on the TLS handshake, so a probe that never makes one
+// measures nothing it is about.
+const bypassProbePort = "443"
+
+// bypassProbeTargets are the names the check puts in its ClientHello. A censor
+// acts on the name, so the name is the measurement.
+//
+// Both halves are here deliberately. www.youtube.com is the PAGE; the video
+// comes down from googlevideo.com, and the block people describe as "YouTube
+// does not work" is exactly the one that leaves the page opening and strangles
+// the stream. Asking only for the page therefore returned "the bypass is fine"
+// in precisely the case this check exists to catch, and the services stayed on
+// a direct path that was carrying nothing.
+//
+// The names come from core/zapret rather than from a second list here, so this
+// check and the strategy pick cannot end up measuring different things — see
+// zapret.VideoPageHost.
+func bypassProbeTargets() []string {
+	return []string{zapret.VideoPageHost, zapret.VideoStreamHost}
+}
 
 // defaultBypassVerifyDelay is how long after a connect the bypass is checked.
 //
@@ -198,8 +215,12 @@ func (d *Daemon) repickStrategy(ctx context.Context, gen uint64) {
 	d.reapplyLive()
 }
 
-// bypassCarriesVideo reports whether the bypass is piercing the censor for video
+// defaultBypassProbe reports whether the bypass is piercing the censor for video
 // on the path it actually acts on.
+//
+// Video means both halves of it — the page and the stream, see bypassProbeTargets
+// — and the bypass is credited only when both come back, for the reasons in
+// bypassCarriesEvery.
 //
 // The probe is pinned to the physical link (see newPingDialer) and stops at the
 // TLS handshake, because that is exactly the operation the DPI interferes with
@@ -213,16 +234,77 @@ func (d *Daemon) defaultBypassProbe(ctx context.Context) bool {
 	ctx, cancel := context.WithTimeout(ctx, serviceCheckTimeout)
 	defer cancel()
 
-	conn, err := d.dial(ctx, "tcp", videoProbeHost)
+	return bypassCarriesEvery(ctx, bypassProbeTargets(), d.probeTLSName)
+}
+
+// bypassCarriesEvery asks every name and reports whether all of them came back.
+//
+// EVERY, not any, because the two ways of being wrong here are not the same
+// size. A false failure hands YouTube and Discord back to the tunnel and spends
+// five minutes re-picking a strategy: slower, with ads, and the services keep
+// working the whole time. A false success leaves them carried by nothing at all
+// — routing sent them to the direct path *because* the bypass was believed to be
+// working — which is the failure this whole file exists to prevent and is
+// indistinguishable from a broken VPN from the user's side. So one unanswered
+// name is enough to disbelieve the bypass, and the blips that costs are already
+// paid for by bypassVerifyAttempts, which demands two failures in a row.
+//
+// The names are asked at once, under the caller's single timeout, so the second
+// target costs no wall clock: an attempt still lasts at most serviceCheckTimeout
+// and the whole check still lasts at most the delay plus attempts × that.
+// Sequentially it would have been twice that, and this runs while the user is
+// waiting to watch something.
+func bypassCarriesEvery(ctx context.Context, targets []string, ask func(context.Context, string) bool) bool {
+	if len(targets) == 0 {
+		// Nothing was measured, so nothing can be credited. Falling back for no
+		// reason is loud and recoverable; crediting an unmeasured bypass is the
+		// silent failure above.
+		return false
+	}
+	carried := make([]bool, len(targets))
+	var wg sync.WaitGroup
+	for i, name := range targets {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			carried[i] = ask(ctx, name)
+		}()
+	}
+	wg.Wait()
+	for _, ok := range carried {
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// probeTLSName takes one name as far as the TLS handshake on the physical link.
+//
+// Nothing is requested over the connection afterwards: by the time the handshake
+// completes, the operation the censor interferes with has already survived, and
+// a request would only add a page load's worth of time to a check the user is
+// waiting out.
+//
+// Which name failed is worth a debug line. The verdict above is one bit, and a
+// report of "the bypass does not carry video" is a different investigation
+// depending on whether the page answered too.
+func (d *Daemon) probeTLSName(ctx context.Context, name string) bool {
+	conn, err := d.dial(ctx, "tcp", net.JoinHostPort(name, bypassProbePort))
 	if err != nil {
+		d.emitDebug(fmt.Sprintf("проверка обхода: %s не отвечает (%v)", name, err))
 		return false
 	}
 	defer conn.Close()
 	if dl, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(dl)
 	}
-	tlsConn := tls.Client(conn, &tls.Config{ServerName: videoProbeSNI})
-	return tlsConn.HandshakeContext(ctx) == nil
+	tlsConn := tls.Client(conn, &tls.Config{ServerName: name})
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		d.emitDebug(fmt.Sprintf("проверка обхода: %s не дошёл до TLS (%v)", name, err))
+		return false
+	}
+	return true
 }
 
 // fallBackToTunnel records that the bypass is not carrying what it claimed, so
