@@ -32,6 +32,7 @@ type Runner struct {
 	ProbeTimeout      time.Duration
 	KeepVoiceInTunnel bool
 	PinIfaceIndex     int
+	StopOnPerfect     bool
 	Dial              DialFunc
 }
 

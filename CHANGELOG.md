@@ -22,6 +22,17 @@ All notable changes to Tenebra are documented here. The format follows
   strategy's worst case at the settle time plus one budget instead of the settle
   time plus five. The results still come back in the order they were asked for —
   the UI and the diagnostics bundle read them positionally.
+- **The strategy pick stops at the first strategy that works.** The run measured
+  all twenty-two whatever it found, so a bundle whose default already carried
+  every destination still sat through twenty-one more attachments to confirm an
+  answer it had after fifteen seconds. It now ends on the first strategy that
+  takes every control target, which is the one ranking would have picked anyway —
+  coverage decides the winner, and nothing below full coverage can outrank it.
+  One case is deliberately excluded: when the run's baseline already carries
+  everything, nothing on that network is blocked, every strategy scores full
+  marks and the first one measured is not a winner but an accident of
+  alphabetical order. There the whole bundle is still measured and the honest
+  "nothing helped" comes back.
 
 ## [0.5.5] - 2026-08-25
 

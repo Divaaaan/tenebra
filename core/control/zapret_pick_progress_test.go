@@ -3,7 +3,9 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/Divaaaan/tenebra/core/zapret"
 )
@@ -29,6 +31,10 @@ type stubPickRunner struct {
 	dead     map[string]bool
 	baseline int
 	err      error
+	// stopOnPerfect mirrors Runner.StopOnPerfect: the walk ends at the first
+	// strategy that carries every target. It is decided by the same rule the real
+	// Pick uses, so a run driven by this stub ends where a real one would.
+	stopOnPerfect bool
 	// seen records the strategies the run was handed, in order.
 	seen []string
 }
@@ -53,6 +59,9 @@ func (s *stubPickRunner) Pick(
 		out = append(out, res)
 		if progress != nil {
 			progress(res)
+		}
+		if s.stopOnPerfect && zapret.ShouldStopEarly(res, len(targets), s.baseline) {
+			break
 		}
 	}
 	return out, s.baseline, s.err
@@ -197,5 +206,112 @@ func TestPickRunOpensEvenWithNothingToMeasure(t *testing.T) {
 	open := h.awaitPickProgress(1)[0]
 	if open.Total != 0 || open.Index != 0 {
 		t.Errorf("opening event = %+v, want an empty run", open)
+	}
+}
+
+// pickRunSentinel is emitted after a run has returned, so a test can tell "no
+// more progress events are coming" from "the next one has not arrived yet".
+// Counting what was pushed needs an end, and the only reliable end is something
+// known to be last on the same stream.
+const pickRunSentinel = "the pick run has returned"
+
+// awaitPickProgressUntilSentinel drains the event stream up to the sentinel log
+// line, returning every pick_progress that came before it.
+func (h *harness) awaitPickProgressUntilSentinel() []pickProgressEvent {
+	h.t.Helper()
+	var out []pickProgressEvent
+	deadline := time.After(4 * time.Second)
+	for {
+		select {
+		case ev := <-h.events:
+			switch ev["event"] {
+			case EventPickProgress:
+				out = append(out, pickProgressFromEvent(h.t, ev))
+			case EventLog:
+				if msg, _ := ev["msg"].(string); strings.Contains(msg, pickRunSentinel) {
+					return out
+				}
+			}
+		case <-deadline:
+			h.t.Fatalf("timed out waiting for the run to finish; got %d progress events", len(out))
+			return nil
+		}
+	}
+}
+
+// A run that has already found a strategy carrying everything is finished, and
+// the twenty-one strategies after it cost the settle time plus a probe budget
+// each for an answer that cannot change. The run stops there — fewer progress
+// steps than the bundle has strategies — and still hands back a winner.
+func TestPickRunStopsAtTheFirstStrategyThatTakesEveryTarget(t *testing.T) {
+	h := newHarness(t)
+	strategies := pickStrategies("general", "general (ALT2)", "general (МГТС)", "general (FAKE TLS AUTO)")
+	targets := []string{"a", "b", "c", "d", "e"}
+	runner := &stubPickRunner{carries: len(targets), baseline: 3, stopOnPerfect: true}
+
+	results, baseline, err := h.daemon.runPick(context.Background(), runner, strategies, targets)
+	if err != nil {
+		t.Fatalf("runPick: %v", err)
+	}
+	h.daemon.emitLog(LogInfo, pickRunSentinel)
+
+	if len(runner.seen) != 1 {
+		t.Errorf("the run measured %d strategies (%v), want only the first", len(runner.seen), runner.seen)
+	}
+	if len(results) != 1 {
+		t.Errorf("the run reported %d results, want 1", len(results))
+	}
+
+	// One opening beat plus one strategy: fewer steps than the bundle has
+	// strategies, which is the whole point.
+	steps := h.awaitPickProgressUntilSentinel()
+	if len(steps) > len(strategies) {
+		t.Errorf("the run emitted %d progress events for a %d-strategy bundle; it did not stop early",
+			len(steps), len(strategies))
+	}
+	if len(steps) != 2 {
+		t.Fatalf("the run emitted %d progress events, want the opening beat plus one strategy", len(steps))
+	}
+	if steps[1].Strategy != strategies[0].Name || steps[1].Index != 1 {
+		t.Errorf("the one measured step is %+v, want %q at position 1", steps[1], strategies[0].Name)
+	}
+	// The denominator stays the run's plan: stopping early is not a smaller
+	// bundle, and a step that renumbered itself to "1 of 1" would read as one.
+	if steps[1].Total != len(strategies) {
+		t.Errorf("the step reports a total of %d, want the run's %d", steps[1].Total, len(strategies))
+	}
+
+	best, found := zapret.Best(results, baseline)
+	if !found {
+		t.Fatal("the run stopped early and then reported no winner at all")
+	}
+	if best.Name != strategies[0].Name {
+		t.Errorf("winner is %q, want %q", best.Name, strategies[0].Name)
+	}
+}
+
+// The edge the early exit must not take: a network where nothing is blocked. The
+// baseline already carries every target, so the first strategy measured scores
+// full marks — as would every other, and as does running no bypass at all.
+// Stopping there would crown whichever strategy the bundle lists first and leave
+// the user running a kernel packet filter for nothing, on an answer Best then
+// refuses anyway.
+func TestPickRunMeasuresTheWholeBundleWhenNothingIsBlocked(t *testing.T) {
+	h := newHarness(t)
+	strategies := pickStrategies("general", "general (ALT2)", "general (МГТС)")
+	targets := []string{"a", "b", "c"}
+	runner := &stubPickRunner{carries: len(targets), baseline: len(targets), stopOnPerfect: true}
+
+	results, baseline, err := h.daemon.runPick(context.Background(), runner, strategies, targets)
+	if err != nil {
+		t.Fatalf("runPick: %v", err)
+	}
+
+	if len(runner.seen) != len(strategies) {
+		t.Errorf("the run measured %d strategies (%v), want all %d: it stopped on a strategy that beat nothing",
+			len(runner.seen), runner.seen, len(strategies))
+	}
+	if _, found := zapret.Best(results, baseline); found {
+		t.Error("a strategy was reported on a network where the baseline already carried everything")
 	}
 }

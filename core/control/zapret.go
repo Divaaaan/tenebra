@@ -171,6 +171,16 @@ func (d *Daemon) newZapretRunner(dir string) *zapret.Runner {
 func (d *Daemon) newZapretRunnerFor(dir string, tunnelUp bool) *zapret.Runner {
 	r := zapret.NewRunner(dir)
 	r.KeepVoiceInTunnel = tunnelUp
+	// End the run at the first strategy that carries every target. Both callers —
+	// the button and the automatic re-pick after a bypass failure — are asking
+	// "which one do I use now", not "what does the whole bundle score", and both
+	// run while the user is waiting: the button behind a progress bar, the re-pick
+	// with the censored services parked in the tunnel until it finishes. The
+	// bundle's default strategy is measured first (see zapret.Discover) and on a
+	// remembered network the one that won here last is measured before that, so
+	// the run usually ends on its first or second strategy instead of its
+	// twenty-second.
+	r.StopOnPerfect = true
 	// Keep the filter off our own tunnel's adapter, and measure on the very
 	// interface it is kept to. Both come out of one lookup (see pinAndProbeBind):
 	// a filter confined to one link and a measurement taken on another is the same
