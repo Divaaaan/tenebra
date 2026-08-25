@@ -79,28 +79,39 @@ func peerPrivileged(peer, self string, admin bool) bool {
 	return admin
 }
 
-// adminOnlyCommands are the control commands that place executable code into the
-// daemon's own directory, or run code from it. In a service installation that
-// directory is clamped to SYSTEM+Administrators precisely so an unprivileged
-// user cannot plant something the service will trust (see secureDataDir), and
-// the daemon runs the bundle's .bat through cmd.exe as LocalSystem — so a
-// command that writes there on an unprivileged caller's behalf hands that caller
-// SYSTEM without ever showing a UAC prompt.
+// adminOnlyCommands are the control commands through which a caller can hand the
+// daemon executable code of its own choosing. In a service installation the
+// bundle directory is clamped to SYSTEM+Administrators precisely so an
+// unprivileged user cannot plant something the service will trust (see
+// secureDataDir), and the daemon runs the bundle's .bat through cmd.exe as
+// LocalSystem — so a command that writes caller-supplied files there without a
+// privilege check hands that caller SYSTEM without ever showing a UAC prompt.
 //
-// What is deliberately NOT here:
+// The line is *supplying* the code, not running it. Everything the daemon starts
+// out of that directory it put there itself: an archive downloaded from the
+// pinned upstream release and matched against a checksum compiled into this
+// binary, or the copy embedded in the binary. A caller cannot influence those
+// bytes, and the directory's own ACL keeps it from adding to them.
 //
-//   - stop_zapret, set_zapret_auto_update: neither places nor starts code. The
-//     auto-update flag only re-arms a background job whose payload comes from
-//     the upstream release, not from the caller; gating it would also stop an
-//     ordinary user turning it OFF, which is the safer direction.
-//   - connect: it may auto-start an installed bundle, but the bundle's contents
-//     were placed by an administrator (or by the updater). Choosing to run
-//     already-trusted code is not the escalation — supplying the code is.
+// So what is deliberately NOT here:
+//
+//   - start_zapret, pick_zapret: they attach a filter that is already installed
+//     and already trusted. Gating them was this list's one real mistake: the
+//     desktop shell runs as the ordinary interactive user and holds a
+//     UAC-filtered token, so gating them did not prompt anybody — it removed the
+//     bypass from the product for every user who did not know to relaunch the
+//     app elevated, which is all of them. Refusing to start already-trusted code
+//     buys nothing: the same caller may raise and drop the whole tunnel.
+//   - update_zapret: it fetches the pinned upstream release and verifies its
+//     checksum before unpacking. The caller supplies no bytes and chooses no
+//     version, and the same fetch runs unattended on a timer anyway.
+//   - stop_zapret, set_zapret_auto_update: neither places nor starts code, and
+//     gating the flag would also stop an ordinary user turning it OFF, which is
+//     the safer direction.
+//   - connect: it may auto-start an installed bundle, for the same reason
+//     start_zapret may.
 var adminOnlyCommands = map[string]struct{}{
 	CmdImportZapret: {},
-	CmdPickZapret:   {},
-	CmdStartZapret:  {},
-	CmdUpdateZapret: {},
 }
 
 // requiresAdminPeer reports whether cmd may only be run by a peer that already

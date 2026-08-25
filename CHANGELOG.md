@@ -11,6 +11,33 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **The bypass could not be switched on from the app at all.** Hardening the
+  daemon in 0.5.1 gated four control commands behind a peer holding an *enabled*
+  Administrators membership. Three of them — `start_zapret`, `pick_zapret`,
+  `update_zapret` — sit behind buttons in the shipped interface, and the desktop
+  shell runs as the ordinary interactive user, whose token lists Administrators
+  deny-only. So the switch, the "find a strategy" button and the manual bundle
+  check answered "administrator rights required" for every user on every machine,
+  with no elevated path in the app to offer, while the log filled with refusals
+  nobody was looking at. The gate now covers only `import_zapret`, the one command
+  that unpacks bytes of the caller's choosing: the other three attach or refresh a
+  bundle the daemon installed itself, from a pinned release matched against a
+  checksum compiled into the binary or from the copy embedded in it. Choosing to
+  run already-trusted code was never the escalation — supplying the code is.
+- **A machine that had never connected had no bypass to control.** Installing the
+  bundle hung off connecting and nothing else, so on a fresh install every bypass
+  control answered "load a bypass bundle first" — including the re-pick button,
+  which is what a user reaches for precisely when video has stopped working. The
+  embedded copy now goes down when the daemon starts: no network, no waiting, and
+  the bundle is present before anything asks for it.
+- **A manual bundle check could sit for over two minutes without answering.** The
+  command inherited no deadline of its own while the HTTP client allows ninety
+  seconds per request across two requests, so on a network where GitHub is
+  unreachable — a large share of the networks this bypass exists for — the button
+  spun until the user gave up. It is bounded at 45 seconds and reports what
+  happened.
+
 ## [0.5.4] - 2026-08-25
 
 ### Fixed

@@ -107,18 +107,29 @@ func TestUnprivilegedPeerCannotImportZapretFromPath(t *testing.T) {
 	}
 }
 
-// TestUnprivilegedPeerCannotRunZapretCommands: the commands that EXECUTE code
-// from the daemon's directory are refused for the same peer. start_zapret and
-// pick_zapret both end up running a .bat through cmd.exe under the daemon's
-// account, so gating the import alone would leave half the primitive open.
-func TestUnprivilegedPeerCannotRunZapretCommands(t *testing.T) {
+// TestUnprivilegedPeerRunsTheInstalledBypass is the regression test for the
+// release that shipped the bypass switched permanently off.
+//
+// The gate was widened past the command that carries code to the ones that merely
+// start what is already installed, and the desktop shell is exactly the peer that
+// fails such a check: it runs as the ordinary interactive user, whose token lists
+// Administrators deny-only. So the switch, the re-pick button and the bundle
+// updater in settings all answered "you need administrator rights" — on a machine
+// whose owner IS an administrator, with no elevated path in the app to offer. The
+// bypass was unreachable through the product's own interface.
+//
+// These commands may still fail here (this daemon has no bundle) — what they must
+// never do again is fail the privilege check.
+func TestUnprivilegedPeerRunsTheInstalledBypass(t *testing.T) {
 	h := newListenerHarness(t)
 	h.setPeerVerdict(true, false)
 
 	c := h.dial()
 	for i, cmd := range []string{CmdStartZapret, CmdPickZapret, CmdUpdateZapret} {
-		c.send(Request{ID: int64(i + 1), Cmd: cmd, Name: "pwn"})
-		wantAdminRefusal(t, c.await(), cmd)
+		c.send(Request{ID: int64(i + 1), Cmd: cmd, Name: "general"})
+		if r := c.await(); strings.Contains(r.Error, "права администратора") {
+			t.Errorf("%s refused for the user the tunnel belongs to: %s", cmd, r.Error)
+		}
 	}
 }
 
@@ -210,19 +221,25 @@ func TestRejectedPeerNeverReachesTheDaemon(t *testing.T) {
 	}
 }
 
-// TestAdminOnlyCommandsAreTheCodeCarryingOnes pins the gated set. Each entry
-// either writes into the daemon's trusted directory or runs what is in it; the
-// listed exclusions are commands that do neither, so widening this set by
-// accident (or narrowing it) is a deliberate edit with a test to argue with.
+// TestAdminOnlyCommandsAreTheCodeCarryingOnes pins the gated set to the one
+// command through which a caller hands the daemon bytes of its own choosing.
+// Widening it again is what took the bypass off every user's machine, so the set
+// is spelled out here and a change to it has a test to argue with.
 func TestAdminOnlyCommandsAreTheCodeCarryingOnes(t *testing.T) {
-	for _, cmd := range []string{CmdImportZapret, CmdPickZapret, CmdStartZapret, CmdUpdateZapret} {
-		if !requiresAdminPeer(cmd) {
-			t.Errorf("%s places or runs code in the daemon's directory and must require an administrative peer", cmd)
-		}
+	if !requiresAdminPeer(CmdImportZapret) {
+		t.Error("import_zapret unpacks caller-supplied bytes into a directory the daemon runs code from and must require an administrative peer")
 	}
-	for _, cmd := range []string{CmdStatus, CmdConnect, CmdDisconnect, CmdStopZapret, CmdListZapret, CmdSetZapretAutoUpdate, CmdSetRouting} {
+	// Everything here either runs bytes the daemon itself installed, or does not
+	// touch code at all. The first three are the ones a release gated by mistake:
+	// each is reachable from a button in the shipped interface, and the shell that
+	// draws those buttons is never elevated.
+	for _, cmd := range []string{
+		CmdStartZapret, CmdPickZapret, CmdUpdateZapret,
+		CmdStatus, CmdConnect, CmdDisconnect, CmdStopZapret, CmdListZapret,
+		CmdSetZapretAutoUpdate, CmdSetRouting,
+	} {
 		if requiresAdminPeer(cmd) {
-			t.Errorf("%s neither places nor runs code; gating it only takes the tunnel away from its owner", cmd)
+			t.Errorf("%s supplies the daemon no code of the caller's choosing; gating it only takes the product away from its owner", cmd)
 		}
 	}
 }
@@ -252,12 +269,12 @@ func TestPeerPrivilegeContextRoundTrip(t *testing.T) {
 func TestHandleGatesOnTheContextNotTheHandler(t *testing.T) {
 	d, _ := newTestDaemon(t)
 
-	r := d.Handle(withPeerPrivilege(context.Background(), false), Request{ID: 1, Cmd: CmdStartZapret})
-	wantAdminRefusal(t, r, CmdStartZapret)
+	r := d.Handle(withPeerPrivilege(context.Background(), false), Request{ID: 1, Cmd: CmdImportZapret})
+	wantAdminRefusal(t, r, CmdImportZapret)
 
-	r = d.Handle(withPeerPrivilege(context.Background(), true), Request{ID: 2, Cmd: CmdStartZapret})
+	r = d.Handle(withPeerPrivilege(context.Background(), true), Request{ID: 2, Cmd: CmdImportZapret})
 	if r.Ok {
-		t.Fatal("start_zapret with no bundle installed should have failed in the handler")
+		t.Fatal("import_zapret with no archive attached should have failed in the handler")
 	}
 	if strings.Contains(r.Error, "права администратора") {
 		t.Fatalf("a privileged peer was refused by the gate: %s", r.Error)

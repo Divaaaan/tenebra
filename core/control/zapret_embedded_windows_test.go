@@ -191,3 +191,44 @@ func TestTheEmbeddedFloorIsNotRolledBackByAnOlderRelease(t *testing.T) {
 		t.Errorf("version after the check = %q, want the floor %q", got, zapret.EmbeddedVersion)
 	}
 }
+
+// TestTheBypassArrivesWithoutConnecting is the regression test for the second
+// half of the release that shipped the bypass unreachable.
+//
+// Installing the bundle used to hang off connecting, and nothing else. On a
+// machine that had not connected since installing, the bundle directory did not
+// exist — so every control that acts on the bypass answered "load a bypass bundle
+// first", including the re-pick button, which is the one a user presses precisely
+// when video has stopped working. The bytes are compiled into this binary and
+// need neither network nor permission, so there is nothing to wait for.
+//
+// The daemon's own background job is where this belongs: it already owns keeping
+// the bundle present and current, and it starts with the daemon.
+func TestTheBypassArrivesWithoutConnecting(t *testing.T) {
+	d, _ := newTestDaemon(t)
+	withRealEmbeddedBundle(d)
+	dir := filepath.Join(d.store.Dir(), zapretDirName)
+
+	if got := len(zapret.Discover(dir, dirFileNames(dir))); got != 0 {
+		t.Fatalf("a fresh daemon already has %d strategies; the test proves nothing", got)
+	}
+
+	// An already-cancelled context runs the install and then leaves the loop at its
+	// first select, so the job is exercised without a timer or a goroutine.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	d.RunZapretAutoUpdate(ctx)
+
+	if got := zapret.Version(dir); got != zapret.EmbeddedVersion {
+		t.Fatalf("bundle version after start-up = %q, want the embedded %q", got, zapret.EmbeddedVersion)
+	}
+	if got := len(zapret.Discover(dir, dirFileNames(dir))); got == 0 {
+		t.Fatal("no strategies on disk: the bypass controls would still answer \"load a bundle first\"")
+	}
+
+	// The command behind the settings screen's bundle list reads that directory,
+	// and answering it is what the interface needs to show a bypass at all.
+	if r := d.Handle(context.Background(), Request{ID: 1, Cmd: CmdListZapret}); !r.Ok {
+		t.Fatalf("list_zapret after start-up: %s", r.Error)
+	}
+}

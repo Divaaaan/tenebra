@@ -23,6 +23,12 @@ const (
 	zapretUpdateInterval     = 12 * time.Hour
 )
 
+// zapretManualUpdateBudget bounds the check a user asked for by hand. Longer than
+// the one a connect allows itself (that one is racing a handshake the user is
+// waiting on), short enough that "GitHub is unreachable here" comes back as an
+// answer rather than as a spinner that outlasts the user's patience.
+const zapretManualUpdateBudget = 45 * time.Second
+
 // RunZapretAutoUpdate keeps the DPI-bypass bundle current until ctx is done.
 //
 // Why this exists at all: the bypass is the one component whose value expires.
@@ -35,6 +41,18 @@ const (
 // It runs in the background and never blocks anything: a failed check is logged
 // and retried at the next tick.
 func (d *Daemon) RunZapretAutoUpdate(ctx context.Context) {
+	// Put the embedded bundle down before anything else, and before the startup
+	// delay rather than after it.
+	//
+	// Until this existed the only thing that installed a bundle was a connect, so
+	// a machine that had never connected since installing had an empty bundle
+	// directory — and every control that acts on the bypass answered "load a
+	// bypass bundle first". The switch, the re-pick button and the version line in
+	// settings were all dead on a fresh install, which reads as the feature being
+	// broken rather than as it being not yet fetched. The bytes are in this binary
+	// already: no network, no wait, nothing to fail.
+	d.installEmbeddedZapretIfMissing(filepath.Join(d.store.Dir(), zapretDirName))
+
 	timer := time.NewTimer(zapretUpdateStartupDelay)
 	defer timer.Stop()
 
@@ -268,6 +286,16 @@ func discoverStrategies(dir string) []zapret.Strategy {
 // first thing a user wants to do, and waiting up to twelve hours for the timer
 // is not an answer.
 func (d *Daemon) handleUpdateZapret(ctx context.Context, req Request) Response {
+	// Bounded, because somebody is watching a spinner. The work is two network
+	// round-trips — the release feed, then the archive — and the HTTP client caps
+	// each at ninety seconds, so an unbounded command can sit for three minutes
+	// before saying anything. On a network where GitHub is simply unreachable,
+	// which is a large share of the people this bypass exists for, that is exactly
+	// what happens: measured at over two minutes with no answer. A refusal the user
+	// can read beats a spinner that never resolves.
+	ctx, cancel := context.WithTimeout(ctx, zapretManualUpdateBudget)
+	defer cancel()
+
 	from, to, updated, err := d.updateZapret(ctx)
 	// A version newer than any pin is not something the user can fix by retrying:
 	// it is "there is an update, but this Tenebra build does not trust it yet".

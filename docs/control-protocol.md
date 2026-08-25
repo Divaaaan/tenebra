@@ -206,17 +206,25 @@ user are not defended against each other.
 
 ### Commands that need the daemon's own authority
 
-Being admitted to the channel is not being admitted to all of it. Four commands
-carry executable code into the daemon's directory, or run what is there:
-`import_zapret`, `update_zapret`, `pick_zapret` and `start_zapret`. The bundle's
-strategies are `.bat` files the daemon runs through `cmd.exe` — as LocalSystem
-in a service install, into a directory the service clamps to
-SYSTEM+Administrators at every start (see `secureDataDir`) precisely so an
-unprivileged user cannot plant something it will trust. A command that writes
-there on an unprivileged caller's behalf reopens that hole from inside, and
-hands any local user SYSTEM without a UAC prompt.
+Being admitted to the channel is not being admitted to all of it. One command —
+`import_zapret` — unpacks an archive of the caller's choosing into the daemon's
+own directory. The bundle's strategies are `.bat` files the daemon runs through
+`cmd.exe` — as LocalSystem in a service install, into a directory the service
+clamps to SYSTEM+Administrators at every start (see `secureDataDir`) precisely so
+an unprivileged user cannot plant something it will trust. A command that writes
+there on an unprivileged caller's behalf reopens that hole from inside, and hands
+any local user SYSTEM without a UAC prompt.
 
-So these four additionally require a peer that already holds the daemon's
+The boundary is *supplying* the code, not running it. `start_zapret`,
+`pick_zapret` and `update_zapret` are **not** gated: they attach, measure or
+refresh a bundle the daemon installed itself — from a pinned upstream release
+matched against a checksum compiled into the binary, or from the copy embedded in
+it. The caller supplies no bytes and picks no version. Gating them once shipped,
+and it did not prompt anybody: the desktop shell runs as the ordinary interactive
+user, whose token lists Administrators deny-only, so the whole bypass simply
+stopped answering its own buttons.
+
+So `import_zapret` additionally requires a peer that already holds the daemon's
 authority, decided per connection alongside the admission check:
 
 - the peer runs as the daemon's own account — there is no boundary to cross.
