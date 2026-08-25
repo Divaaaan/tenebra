@@ -11,6 +11,8 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-08-25
+
 ### Added
 - **The strategy picker says what it is doing.** "Find a strategy" measures every
   strategy in the bundle — each one attached, probed against five destinations and
@@ -1223,7 +1225,12 @@ Initial tagged release.
   first run. Updates delivered in-app are minisign-verified against the bundled
   key; only the initial download is unsigned.
 
-[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.5.5...HEAD
+[0.5.5]: https://github.com/Divaaaan/tenebra/compare/v0.5.4...v0.5.5
+[0.5.4]: https://github.com/Divaaaan/tenebra/compare/v0.5.3...v0.5.4
+[0.5.3]: https://github.com/Divaaaan/tenebra/compare/v0.5.2...v0.5.3
+[0.5.2]: https://github.com/Divaaaan/tenebra/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/Divaaaan/tenebra/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Divaaaan/tenebra/compare/v0.4.6...v0.5.0
 [0.4.6]: https://github.com/Divaaaan/tenebra/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/Divaaaan/tenebra/compare/v0.4.4...v0.4.5

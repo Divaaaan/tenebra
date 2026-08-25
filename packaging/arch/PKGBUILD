@@ -17,7 +17,7 @@ pkgname=tenebra
 # has to name a tag that exists — scripts/set-version.mjs rewrites this line along
 # with the desktop manifests and the Go core, which is what keeps the two in step.
 # Do not edit it by hand.
-pkgver=0.5.4
+pkgver=0.5.5
 pkgrel=1
 pkgdesc="VPN client built on sing-box: a privileged core daemon and a desktop UI"
 arch=('x86_64')
