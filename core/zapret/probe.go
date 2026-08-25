@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -12,15 +13,15 @@ import (
 // a dialer it already owns instead of describing one.
 type DialFunc func(ctx context.Context, network, address string) (net.Conn, error)
 
-// defaultRequestTimeout bounds one control request when the Runner carries no
-// budget of its own. Zero is not "no limit" here: it reaches
-// context.WithTimeout, which cancels the request before it leaves and scores
+// defaultRequestTimeout bounds a set of control requests when the Runner carries
+// no budget of its own. Zero is not "no limit" here: it reaches
+// context.WithTimeout, which cancels the requests before they leave and scores
 // every strategy in the bundle as broken.
 const defaultRequestTimeout = 8 * time.Second
 
-// requestTimeout is the per-target budget, defaulted so a hand-built Runner —
-// or one from the non-Windows constructor, which sets no timings — measures
-// something instead of cancelling everything.
+// requestTimeout is the budget one Probe call may spend, defaulted so a
+// hand-built Runner — or one from the non-Windows constructor, which sets no
+// timings — measures something instead of cancelling everything.
 func (r *Runner) requestTimeout() time.Duration {
 	if r.ProbeTimeout > 0 {
 		return r.ProbeTimeout
@@ -57,6 +58,25 @@ func (r *Runner) requestTimeout() time.Duration {
 // A nil Dial leaves the transport on its own dialer, which is what this always
 // did: on a machine with no physical interface to bind to, an ordinary routed
 // dial is a real answer and a refused one is not.
+//
+// The targets are asked all at once under one shared budget, not one after
+// another, and that is where the strategy pick's running time went. A blocked
+// destination does not answer "no" — it hangs until the budget expires, so
+// sequentially the cost of a probe is the number of blocked targets times the
+// timeout. With five control targets at eight seconds each that is forty seconds
+// per strategy, and a run measures every strategy in the bundle: the same
+// measurement that took six minutes takes one budget per strategy instead of
+// five. Nothing about the verdict changes — the targets are independent
+// destinations and none of them is affected by another being asked at the same
+// moment — only the waiting is shared. Same reasoning, and the same shape, as
+// control.bypassCarriesEvery.
+//
+// Results are written into a pre-sized slice by index rather than appended from
+// the goroutines, so the answer keeps the order the caller asked in. Callers read
+// it positionally — the UI lists the measurements against its own target list,
+// the diagnostics bundle prints the pair — and completion order would file the
+// fast destination's round-trip under the slow one's name without anything
+// failing.
 func (r *Runner) Probe(ctx context.Context, targets []string) []TargetResult {
 	timeout := r.requestTimeout()
 	transport := &http.Transport{
@@ -69,28 +89,38 @@ func (r *Runner) Probe(ctx context.Context, targets []string) []TargetResult {
 	}
 	client := &http.Client{Transport: transport, Timeout: timeout}
 
-	out := make([]TargetResult, 0, len(targets))
-	for _, t := range targets {
-		reqCtx, cancel := context.WithTimeout(ctx, timeout)
-		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, t, nil)
-		if err != nil {
-			cancel()
-			out = append(out, TargetResult{Target: t})
-			continue
-		}
-		start := time.Now()
-		resp, err := client.Do(req)
-		rtt := time.Since(start).Milliseconds()
-		cancel()
+	// One deadline for the whole set. It is the budget a single target used to
+	// get, because the set is measured in parallel: the slowest target decides
+	// how long the probe takes, not the sum.
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
-		// Any HTTP status counts as reachable: a censored destination fails by
-		// timing out or being reset, not by answering 403.
-		if err != nil {
-			out = append(out, TargetResult{Target: t})
-			continue
-		}
-		_ = resp.Body.Close()
-		out = append(out, TargetResult{Target: t, OK: true, RTTMs: rtt})
+	out := make([]TargetResult, len(targets))
+	var wg sync.WaitGroup
+	for i, t := range targets {
+		// Seeded before the goroutine starts, so a target that cannot even be
+		// turned into a request still reports itself by name.
+		out[i] = TargetResult{Target: t}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, t, nil)
+			if err != nil {
+				return
+			}
+			start := time.Now()
+			resp, err := client.Do(req)
+			rtt := time.Since(start).Milliseconds()
+
+			// Any HTTP status counts as reachable: a censored destination fails by
+			// timing out or being reset, not by answering 403.
+			if err != nil {
+				return
+			}
+			_ = resp.Body.Close()
+			out[i] = TargetResult{Target: t, OK: true, RTTMs: rtt}
+		}()
 	}
+	wg.Wait()
 	return out
 }

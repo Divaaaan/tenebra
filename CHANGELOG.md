@@ -11,6 +11,18 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **A strategy is measured against all five destinations at once.** Each control
+  target was asked in turn, and a blocked destination does not answer "no" — it
+  hangs until the eight-second budget expires. Five of them made every strategy
+  cost up to forty seconds of waiting, and a run measures every strategy in the
+  bundle: 22 of them, timed on a live connection, took 6 minutes 16 seconds. The
+  destinations are independent, so nothing was gained by asking them one after
+  another; they now go out together under one shared budget, which puts a
+  strategy's worst case at the settle time plus one budget instead of the settle
+  time plus five. The results still come back in the order they were asked for —
+  the UI and the diagnostics bundle read them positionally.
+
 ## [0.5.5] - 2026-08-25
 
 ### Added
