@@ -197,12 +197,26 @@ func Best(results []Result, baseline int) (Result, bool) {
 //
 // Probes must be made WITHOUT any proxy. Through a tunnel they would all
 // succeed regardless of the strategy — measuring the tunnel, not the bypass.
+//
+// Every name here has to be one that resolves anywhere, which sounds obvious and
+// was not: the video-host slot held rr1---sn-4g5e6nls.googlevideo.com, an
+// individual CDN node's hostname of the kind a player is handed for one session.
+// Those names are allocated per region and retired, and that one had stopped
+// existing — it answered NXDOMAIN, so the target failed for every strategy and
+// for the no-bypass baseline alike. The scoring survived (everyone lost the same
+// point), but the measurement did not: this is the slot that stands for video
+// actually streaming, and streaming is what a censor throttles when the page
+// still loads. A run could hand back a strategy that fixes the YouTube page and
+// leaves the video spinning, which is the exact complaint the picker exists to
+// answer. redirector.googlevideo.com is Google's stable entry point into the
+// same SNI space, so it can be reached from anywhere and is still judged by the
+// name a censor acts on.
 func DefaultTargets() []string {
 	return []string{
 		"https://discord.com/api/v9/gateway",
 		"https://cdn.discordapp.com/robots.txt",
 		"https://www.youtube.com/generate_204",
 		"https://i.ytimg.com/generate_204",
-		"https://rr1---sn-4g5e6nls.googlevideo.com/generate_204",
+		"https://redirector.googlevideo.com/generate_204",
 	}
 }

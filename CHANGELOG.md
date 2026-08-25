@@ -41,6 +41,17 @@ All notable changes to Tenebra are documented here. The format follows
   which is what a user reaches for precisely when video has stopped working. The
   embedded copy now goes down when the daemon starts: no network, no waiting, and
   the bundle is present before anything asks for it.
+- **The strategy picker never measured video actually streaming.** One of the five
+  destinations a strategy is scored on was `rr1---sn-4g5e6nls.googlevideo.com` — an
+  individual CDN node's hostname, of the kind a player is handed for a single
+  session. Those are allocated per region and retired, and this one had stopped
+  resolving: the target answered NXDOMAIN for every strategy and for the
+  no-bypass baseline alike. The ranking looked healthy because everybody lost the
+  same point, but the one slot standing for video streaming — the thing a censor
+  throttles while the page still loads — measured nothing, so a strategy that
+  fixed the page and left the video spinning could win the run. It is
+  `redirector.googlevideo.com` now, a stable name in the same SNI space, and a
+  test rejects per-session node names in the probe set.
 - **A manual bundle check could sit for over two minutes without answering.** The
   command inherited no deadline of its own while the HTTP client allows ninety
   seconds per request across two requests, so on a network where GitHub is

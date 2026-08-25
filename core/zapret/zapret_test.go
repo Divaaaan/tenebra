@@ -1,6 +1,10 @@
 package zapret
 
-import "testing"
+import (
+	"net/url"
+	"regexp"
+	"testing"
+)
 
 // bundleListing is what an unpacked zapret-discord-youtube release looks like.
 func bundleListing() []string {
@@ -149,4 +153,40 @@ func contains(h, n string) bool {
 		}
 	}
 	return false
+}
+
+// TestDefaultTargetsAreDurableNames guards the probe set against a name that
+// resolves today and is gone next quarter.
+//
+// The video slot shipped as rr1---sn-4g5e6nls.googlevideo.com — one CDN node's
+// hostname, of the kind a player is handed for a single session. Those are
+// allocated per region and retired, and that one had already stopped resolving:
+// the target failed for every strategy and for the baseline alike, so nothing
+// looked wrong in the ranking while the one slot that stands for video actually
+// streaming measured nothing at all. A strategy that fixes the YouTube page and
+// leaves the video spinning would have won, which is precisely the complaint the
+// picker exists to settle.
+//
+// This asserts on shape, not on DNS: a test that resolved names would fail on
+// every machine without a network and pass on a machine whose resolver lies.
+func TestDefaultTargetsAreDurableNames(t *testing.T) {
+	// rrN---sn-XXXXXXX.googlevideo.com and friends: a per-session edge node.
+	ephemeral := regexp.MustCompile(`(?i)://[a-z0-9]+-{2,}sn-`)
+	for _, target := range DefaultTargets() {
+		if ephemeral.MatchString(target) {
+			t.Errorf("%s names an individual CDN node; those are retired without notice "+
+				"and the target then fails for every strategy at once", target)
+		}
+		u, err := url.Parse(target)
+		if err != nil {
+			t.Errorf("%s: %v", target, err)
+			continue
+		}
+		if u.Scheme != "https" {
+			t.Errorf("%s: the censor acts on the TLS handshake, so the probe has to make one", target)
+		}
+		if u.Hostname() == "" {
+			t.Errorf("%s: no host", target)
+		}
+	}
 }
