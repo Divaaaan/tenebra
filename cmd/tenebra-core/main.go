@@ -202,6 +202,15 @@ func buildDaemon() (*control.Daemon, error) {
 	} else {
 		daemon.SetLastGood(lg)
 	}
+	// Persist the bypass strategy per network, next to the store, so a machine
+	// that moves between an ISP at home and one at a cafe starts each of them on
+	// the strategy measured there rather than on the other's. A failure to open it
+	// is non-fatal: the cache then lives only for this session.
+	if ns, err := control.OpenFileNetStrategies(dir); err != nil {
+		log.Printf("tenebra-core: per-network bypass cache unavailable (%v); using in-memory", err)
+	} else {
+		daemon.SetNetStrategies(ns)
+	}
 	// Persist user routing preferences (the per-app split config) next to the
 	// store so a split choice survives a restart. A failure to open it is
 	// non-fatal: preferences then live only for this session.

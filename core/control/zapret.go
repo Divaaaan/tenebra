@@ -557,6 +557,73 @@ func dirFileNames(dir string) []string {
 	return names
 }
 
+// strategyForThisNetwork returns the bypass strategy last measured as working on
+// the network this machine is attached to now, and whether one is recorded.
+//
+// It answers false on a machine whose network cannot be identified (every
+// platform but Windows, and a Windows machine with no default gateway to read),
+// which leaves every caller on the single stored strategy it used before.
+func (d *Daemon) strategyForThisNetwork() (string, bool) {
+	if d.netStrategies == nil || d.netFingerprint == nil {
+		return "", false
+	}
+	network := d.netFingerprint()
+	if network == "" {
+		return "", false
+	}
+	return d.netStrategies.Get(network)
+}
+
+// rememberStrategyForThisNetwork files a measured winner under the network it
+// was measured on.
+//
+// Only a winner is filed, and only from a run that measured one: this records
+// what the probe found here, not what happens to be running. That is the whole
+// difference between it and the global setting — which stays where it is, as the
+// answer for a network nobody has measured yet.
+func (d *Daemon) rememberStrategyForThisNetwork(strategy string) {
+	if d.netStrategies == nil || d.netFingerprint == nil || strategy == "" {
+		return
+	}
+	network := d.netFingerprint()
+	if network == "" {
+		return
+	}
+	d.netStrategies.Set(network, strategy)
+}
+
+// leadWith moves one named strategy to the front of a run, leaving the rest in
+// bundle order.
+//
+// The order of a run matters now that it can end early: the first strategy that
+// carries every target ends it, so leading with the one that won here last turns
+// a repeat pick on a known network into a single measurement. It is a reordering
+// and not a filter — every other strategy is still measured if that one no
+// longer works, which is exactly the case a re-pick exists for.
+//
+// A name that is not in the bundle leaves the order alone: an update can retire
+// a strategy, and a remembered name that no longer exists is a stale cache entry,
+// not a reason to fail.
+func leadWith(strategies []zapret.Strategy, first string) []zapret.Strategy {
+	if first == "" || len(strategies) < 2 {
+		return strategies
+	}
+	for i, s := range strategies {
+		if s.Name != first {
+			continue
+		}
+		if i == 0 {
+			return strategies
+		}
+		out := make([]zapret.Strategy, 0, len(strategies))
+		out = append(out, s)
+		out = append(out, strategies[:i]...)
+		out = append(out, strategies[i+1:]...)
+		return out
+	}
+	return strategies
+}
+
 // pickRunner is the one operation a probe run needs from the bypass runner:
 // measure every strategy, reporting each as it lands.
 //
@@ -646,6 +713,14 @@ func (d *Daemon) handlePickZapret(ctx context.Context, req Request) Response {
 	if len(strategies) == 0 {
 		return newError(req.ID, "pick_zapret: в сборке нет стратегий")
 	}
+	// Measure what won here last before anything else. The run ends at the first
+	// strategy that carries every target, so on a network already seen this
+	// usually costs one strategy instead of the whole bundle — and when the
+	// censor has moved on since, the rest of the bundle is measured as before.
+	if remembered, ok := d.strategyForThisNetwork(); ok {
+		strategies = leadWith(strategies, remembered)
+		d.emitDebug(fmt.Sprintf("zapret: на этой сети раньше работала %s — начинаю с неё", remembered))
+	}
 
 	// Every strategy in the run attaches its own filter, so the exclusion has to be
 	// in place before the first one — a probe run that keeps knocking over the live
@@ -676,6 +751,9 @@ func (d *Daemon) handlePickZapret(ctx context.Context, req Request) Response {
 	// measurement and got nothing switched on, which is how this first shipped
 	// and exactly what was reported: "the bypass itself does not work".
 	if found {
+		// Filed against this network before it is started: the measurement is the
+		// thing worth keeping, and it holds whether or not the winner then comes up.
+		d.rememberStrategyForThisNetwork(best.Name)
 		if started, sErr := runner.Start(ctx, best.Strategy); sErr != nil || !started {
 			d.emitLog(LogWarn, fmt.Sprintf("zapret: %s не запустилась после подбора", best.Name))
 		} else {
@@ -867,6 +945,16 @@ func (d *Daemon) autoStartZapret(ctx context.Context, tunnelUp bool) bool {
 	d.mu.Lock()
 	want := d.zapretActive
 	d.mu.Unlock()
+	// The strategy measured on THIS network beats the one stored globally, which
+	// is whatever won on whichever network was last picked on. A laptop carried
+	// from home to a cafe used to come up on the home answer — a bypass that may
+	// do nothing there, with routing already sending YouTube and Discord down the
+	// direct path because a bypass is "running". The global one stays as the
+	// fallback for a network never measured.
+	fromNetwork := false
+	if remembered, ok := d.strategyForThisNetwork(); ok {
+		want, fromNetwork = remembered, true
+	}
 
 	chosen := strategies[0]
 	found := false
@@ -883,6 +971,8 @@ func (d *Daemon) autoStartZapret(ctx context.Context, tunnelUp bool) bool {
 	// the one that used to be invisible.
 	var picked string
 	switch {
+	case found && fromNetwork:
+		picked = "подобрана для этой сети"
 	case found:
 		picked = "выбрана раньше и сохранена"
 	case want != "":

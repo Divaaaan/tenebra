@@ -34,6 +34,25 @@ All notable changes to Tenebra are documented here. The format follows
   alphabetical order. There the whole bundle is still measured and the honest
   "nothing helped" comes back.
 
+### Added
+- **The bypass strategy is remembered per network.** It was remembered in one
+  setting for the whole machine, so a laptop carried from home to a cafe started
+  the strategy that won at home — on a network whose DPI may fall for something
+  else entirely, while routing had already sent YouTube and Discord down the
+  direct path because a bypass was "running". The strategy that wins a pick is now
+  filed against the network it was measured on, tried first on the next pick there,
+  and started on a connect there. A network nobody has measured still gets the
+  single stored strategy, so nothing is lost on the way to learning one.
+  The network is identified locally, by a hash of the default gateway's hardware
+  address: the router is what differs between home and a cafe, while the machine's
+  own address is the same wherever it is plugged in, and a gateway *address* is
+  192.168.1.1 in half the buildings in the country. Nothing is sent anywhere — the
+  token is a key in a cache file beside the profile store, it is not in the control
+  protocol, the reported state or the diagnostics bundle, and it is hashed so that
+  the file identifies a network without describing it. The cache is its own file
+  rather than a field in settings.json: it holds a measurement the app took, not a
+  choice the user made, and deleting it costs one pick.
+
 ## [0.5.5] - 2026-08-25
 
 ### Added

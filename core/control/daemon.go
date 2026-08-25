@@ -223,6 +223,20 @@ type Daemon struct {
 	// selection on a connect without an explicit node.
 	lastGood fallback.LastGood
 
+	// netStrategies remembers which bypass strategy was measured as working on
+	// which network, so a laptop that moves between an ISP at home and one at a
+	// cafe does not start each of them on the other's answer. It is a cache of a
+	// measurement, not a user preference, which is why it is its own store and
+	// its own file rather than a field in settings.json. Never nil: the in-memory
+	// default keeps the behaviour within one run when nothing durable is wired.
+	netStrategies netStrategyStore
+	// netFingerprint names the network the machine is attached to right now, as
+	// an opaque token that never leaves the machine (see networkFingerprint). It
+	// is a field so a test can drive the machine from one network to another
+	// without a second network to plug into. An empty answer means "not
+	// recognisable", and the memory above then stays out of the way.
+	netFingerprint func() string
+
 	// settings persists user routing preferences (the split config) so they
 	// survive a restart. nil means no persistence (a bare daemon in a unit test):
 	// preferences then live only for the session. Guarded by mu for writes via
@@ -530,10 +544,14 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 			// status before SetSettings already shows the effective value.
 			AutoFailover: true,
 		},
-		lastGood:     fallback.NewMemLastGood(),
-		autoFailover: true,
-		now:          time.Now,
-		fetch:        subscription.Fetch,
+		lastGood: fallback.NewMemLastGood(),
+		// Per-network memory works within this run by default; main swaps in the
+		// disk-backed store so it survives a restart, which is the case it is for.
+		netStrategies:  newMemNetStrategies(),
+		netFingerprint: networkFingerprint,
+		autoFailover:   true,
+		now:            time.Now,
+		fetch:          subscription.Fetch,
 
 		logLevel: logLevelFromEnv(),
 		logs:     newLogRing(logRingSize),
@@ -631,6 +649,18 @@ func (d *Daemon) SetEmitter(emit emitFunc) {
 // before serving — it is not synchronised against an in-flight connect.
 func (d *Daemon) SetLastGood(lg fallback.LastGood) {
 	d.lastGood = lg
+}
+
+// SetNetStrategies swaps in a different per-network strategy cache, replacing
+// the in-memory default. main wires the disk-backed store here so the strategy
+// measured on a network is still there after a restart; tests keep the in-memory
+// one. Call it before serving — it is not synchronised against an in-flight
+// pick.
+func (d *Daemon) SetNetStrategies(s netStrategyStore) {
+	if s == nil {
+		return
+	}
+	d.netStrategies = s
 }
 
 // SetSettings installs a persistent settings store and immediately loads any

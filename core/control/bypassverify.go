@@ -171,6 +171,12 @@ func (d *Daemon) repickStrategy(ctx context.Context, gen uint64) {
 	if len(strategies) == 0 {
 		return
 	}
+	// Lead with what won on this network last. The run stops at the first
+	// strategy that carries every target, and the services are parked in the
+	// tunnel until it does, so the order is minutes of the user's evening.
+	if remembered, ok := d.strategyForThisNetwork(); ok {
+		strategies = leadWith(strategies, remembered)
+	}
 
 	d.emitLog(LogInfo, fmt.Sprintf("подбираю стратегию обхода — %d вариантов", len(strategies)))
 
@@ -194,6 +200,11 @@ func (d *Daemon) repickStrategy(ctx context.Context, gen uint64) {
 			baseline, len(zapret.DefaultTargets())))
 		return
 	}
+
+	// This network's answer, recorded from the run that measured it — including
+	// the case that matters most here, where the censor moved and the strategy
+	// that used to work has just been replaced by another.
+	d.rememberStrategyForThisNetwork(best.Name)
 
 	d.zapretOpMu.Lock()
 	started, startErr := runner.Start(ctx, best.Strategy)
