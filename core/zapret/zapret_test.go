@@ -1,6 +1,7 @@
 package zapret
 
 import (
+	"fmt"
 	"net/url"
 	"regexp"
 	"testing"
@@ -187,6 +188,77 @@ func TestDefaultTargetsAreDurableNames(t *testing.T) {
 		}
 		if u.Hostname() == "" {
 			t.Errorf("%s: no host", target)
+		}
+	}
+}
+
+// carrying builds a result that took n of total targets, as a strategy that
+// actually came up.
+func carrying(name string, n, total int) Result {
+	r := Result{Name: name, Started: true}
+	for i := 0; i < total; i++ {
+		r.Targets = append(r.Targets, TargetResult{
+			Target: fmt.Sprintf("https://target-%d.example/", i), OK: i < n, RTTMs: 10,
+		})
+	}
+	return r
+}
+
+// TestShouldStopEarly covers the rule the probe run ends on.
+//
+// The case that has to be right is the last one: on a network where nothing is
+// blocked, the baseline already equals the number of targets, so the first
+// strategy measured scores full marks — as would every other strategy, and as
+// does running no bypass at all. Stopping there would crown whichever strategy
+// the bundle happens to list first and leave the user running a kernel packet
+// filter for no gain. Best refuses to report a strategy that only ties the
+// baseline, so a run that stopped would have thrown its own answer away.
+func TestShouldStopEarly(t *testing.T) {
+	const targets = 5
+
+	cases := []struct {
+		name     string
+		result   Result
+		targets  int
+		baseline int
+		want     bool
+	}{
+		{"carries everything against a blocked baseline", carrying("general", 5, targets), targets, 3, true},
+		{"carries everything with nothing working before it", carrying("general", 5, targets), targets, 0, true},
+		{"one target short", carrying("general", 4, targets), targets, 3, false},
+		{"carries nothing", carrying("general", 0, targets), targets, 0, false},
+		{"never started", Result{Name: "general"}, targets, 0, false},
+		{"nothing was measured", Result{Name: "general"}, 0, 0, false},
+		{"nothing is blocked on this network", carrying("general", 5, targets), targets, targets, false},
+		{"baseline beyond the target count", carrying("general", 5, targets), targets, targets + 1, false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := ShouldStopEarly(c.result, c.targets, c.baseline); got != c.want {
+				t.Errorf("ShouldStopEarly(%d/%d, baseline %d) = %v, want %v",
+					c.result.OKCount(), c.targets, c.baseline, got, c.want)
+			}
+		})
+	}
+}
+
+// TestShouldStopEarlyAgreesWithBest is the invariant behind stopping at all: a
+// run may only end early on a result Best would then report. Stopping on one it
+// refuses means the run threw away its own answer and every strategy it did not
+// get to.
+func TestShouldStopEarlyAgreesWithBest(t *testing.T) {
+	const targets = 5
+	for ok := 0; ok <= targets; ok++ {
+		for baseline := 0; baseline <= targets; baseline++ {
+			r := carrying("general", ok, targets)
+			if !ShouldStopEarly(r, targets, baseline) {
+				continue
+			}
+			if _, found := Best([]Result{r}, baseline); !found {
+				t.Errorf("the run would stop on %d/%d against a baseline of %d, and Best reports nothing there",
+					ok, targets, baseline)
+			}
 		}
 	}
 }

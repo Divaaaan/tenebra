@@ -188,6 +188,41 @@ func Best(results []Result, baseline int) (Result, bool) {
 	return top, true
 }
 
+// ShouldStopEarly reports whether a probe run can end on this result instead of
+// measuring the rest of the bundle.
+//
+// A run is a search for the strategy that covers the most, and Rank settles that
+// on coverage before anything else. A strategy that carries every target has
+// therefore already won: no strategy later in the bundle can score above it, and
+// each one that is measured anyway costs the settle time plus a probe budget —
+// most of a six-minute run, spent confirming an answer already in hand. What it
+// gives up is Rank's tie-break: a full-coverage strategy further down the bundle
+// might have been a few milliseconds quicker. That is a trade of round-trip
+// against minutes of a progress bar, and the user is sitting in front of the
+// second one.
+//
+// targets is how many destinations the run scores a strategy on; baseline how
+// many of them already worked with the bypass off.
+//
+// The baseline is the edge that matters. When it already equals the number of
+// targets, nothing on this network is blocked: every strategy scores full marks,
+// and so does running no bypass at all. The first strategy measured would then
+// look perfect, the run would stop, and alphabetical order would have decided
+// which kernel packet filter the user runs for no benefit. Best refuses a
+// strategy that merely ties the baseline — it has to BEAT it — so a run that
+// stopped there would have thrown away its own answer along with every strategy
+// it never got to. Above a baseline below the target count, beating it is
+// automatic: full coverage is more than a baseline that is not full.
+func ShouldStopEarly(r Result, targets, baseline int) bool {
+	if targets <= 0 {
+		return false // nothing to cover, so nothing to have covered
+	}
+	if baseline >= targets {
+		return false // nothing is blocked here; no strategy can beat doing nothing
+	}
+	return r.OKCount() >= targets
+}
+
 // DefaultTargets are the destinations a strategy is judged on.
 //
 // They are deliberately the ones that break: Discord's API and CDN, YouTube's

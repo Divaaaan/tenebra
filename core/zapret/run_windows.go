@@ -39,6 +39,15 @@ type Runner struct {
 	// or may appear; zero leaves the filter on every interface, which is only
 	// right on a machine with no tunnel at all.
 	PinIfaceIndex int
+	// StopOnPerfect ends a Pick at the first strategy that carries every control
+	// target, instead of measuring the rest of the bundle (see ShouldStopEarly).
+	//
+	// Off by default so a Runner built by hand still measures everything, which is
+	// what a diagnostic run wants: the full table says which strategies are close
+	// and which are dead, and that is the reason to sit through one. The app turns
+	// it on, because the run it starts is answering "which one do I use now" and
+	// the user is watching a progress bar while it does.
+	StopOnPerfect bool
 	// Dial opens the probe's connections. Set it to a dialer bound to the same
 	// interface as PinIfaceIndex — core/control resolves the two from one lookup
 	// precisely so they cannot differ — and Probe then measures the path the
@@ -188,6 +197,12 @@ func (r *Runner) waitForWinws(ctx context.Context, budget time.Duration) bool {
 //
 // progress, when non-nil, is called after each strategy so a UI can show the run
 // advancing — a silent five-minute operation reads as a hang.
+//
+// With StopOnPerfect set the walk ends at the first strategy that carries every
+// target, so the returned results are the strategies measured up to and
+// including the winner rather than the whole bundle. Ranking, and the choice
+// Best makes out of it, are unaffected: the run stops only on a result that
+// already sorts first (see ShouldStopEarly).
 func (r *Runner) Pick(ctx context.Context, strategies []Strategy, targets []string, progress func(Result)) (results []Result, baseline int, err error) {
 	if err := r.Stop(ctx); err != nil {
 		return nil, 0, err
@@ -211,6 +226,9 @@ func (r *Runner) Pick(ctx context.Context, strategies []Strategy, targets []stri
 		results = append(results, res)
 		if progress != nil {
 			progress(res)
+		}
+		if r.StopOnPerfect && ShouldStopEarly(res, len(targets), baseline) {
+			break
 		}
 	}
 

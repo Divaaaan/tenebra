@@ -11,6 +11,48 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **The bypass strategy is remembered per network.** It was remembered in one
+  setting for the whole machine, so a laptop carried from home to a cafe started
+  the strategy that won at home — on a network whose DPI may fall for something
+  else entirely, while routing had already sent YouTube and Discord down the
+  direct path because a bypass was "running". The strategy that wins a pick is now
+  filed against the network it was measured on, tried first on the next pick there,
+  and started on a connect there. A network nobody has measured still gets the
+  single stored strategy, so nothing is lost on the way to learning one.
+  The network is identified locally, by a hash of the default gateway's hardware
+  address: the router is what differs between home and a cafe, while the machine's
+  own address is the same wherever it is plugged in, and a gateway *address* is
+  192.168.1.1 in half the buildings in the country. Nothing is sent anywhere — the
+  token is a key in a cache file beside the profile store, it is not in the control
+  protocol, the reported state or the diagnostics bundle, and it is hashed so that
+  the file identifies a network without describing it. The cache is its own file
+  rather than a field in settings.json: it holds a measurement the app took, not a
+  choice the user made, and deleting it costs one pick.
+
+### Changed
+- **A strategy is measured against all five destinations at once.** Each control
+  target was asked in turn, and a blocked destination does not answer "no" — it
+  hangs until the eight-second budget expires. Five of them made every strategy
+  cost up to forty seconds of waiting, and a run measures every strategy in the
+  bundle: 22 of them, timed on a live connection, took 6 minutes 16 seconds. The
+  destinations are independent, so nothing was gained by asking them one after
+  another; they now go out together under one shared budget, which puts a
+  strategy's worst case at the settle time plus one budget instead of the settle
+  time plus five. The results still come back in the order they were asked for —
+  the UI and the diagnostics bundle read them positionally.
+- **The strategy pick stops at the first strategy that works.** The run measured
+  all twenty-two whatever it found, so a bundle whose default already carried
+  every destination still sat through twenty-one more attachments to confirm an
+  answer it had after fifteen seconds. It now ends on the first strategy that
+  takes every control target, which is the one ranking would have picked anyway —
+  coverage decides the winner, and nothing below full coverage can outrank it.
+  One case is deliberately excluded: when the run's baseline already carries
+  everything, nothing on that network is blocked, every strategy scores full
+  marks and the first one measured is not a winner but an accident of
+  alphabetical order. There the whole bundle is still measured and the honest
+  "nothing helped" comes back.
+
 ### Fixed
 - **A frozen traffic graph now says why.** The poller treated every failed
   counter reading as "the clash API is not listening yet" — true exactly once,
@@ -21,8 +63,6 @@ All notable changes to Tenebra are documented here. The format follows
   the user's side a frozen graph reads as a dead tunnel. A stall is now reported
   once, after a few seconds of failures rather than on the first, and recovery is
   reported too.
-
-### Fixed
 - **The traffic counters stopped updating on a busy machine.** Upload and
   download totals are read from the engine's connection endpoint, whose response
   carries every live socket alongside the two numbers wanted; the body is parsed

@@ -114,3 +114,76 @@ func TestProbeWithoutADialerStillMeasures(t *testing.T) {
 			got.OKCount())
 	}
 }
+
+// TestProbeSpendsOneBudgetOnEveryTarget is the arithmetic the whole strategy
+// pick was paying for.
+//
+// A blocked destination does not answer "no": it hangs until the budget runs
+// out. Asked one after another, five blocked targets cost five full budgets —
+// and a run measures every strategy in the bundle, so that multiplies by twenty.
+// The wall clock is the measurement here: with a single shared budget the whole
+// set costs one of them, whatever the targets do.
+func TestProbeSpendsOneBudgetOnEveryTarget(t *testing.T) {
+	const budget = 300 * time.Millisecond
+	targets := []string{
+		"http://one.invalid/", "http://two.invalid/", "http://three.invalid/",
+		"http://four.invalid/", "http://five.invalid/",
+	}
+
+	// Every dial hangs until its context is cancelled — a target the censor drops
+	// on the floor, which is the case that costs.
+	r := &Runner{
+		ProbeTimeout: budget,
+		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+
+	start := time.Now()
+	got := Result{Targets: r.Probe(context.Background(), targets)}
+	elapsed := time.Since(start)
+
+	if got.OKCount() != 0 {
+		t.Fatalf("probe scored %d/%d against dials that never connect", got.OKCount(), len(targets))
+	}
+	if elapsed > 2*budget {
+		t.Errorf("probing %d blocked targets took %v, want about one %v budget: they were measured one after another",
+			len(targets), elapsed.Round(time.Millisecond), budget)
+	}
+}
+
+// TestProbeReportsTargetsInTheOrderTheyWereAsked pins the slice's shape against
+// the obvious way to make the probe concurrent.
+//
+// Callers read the results positionally — the UI lists them against the target
+// list it asked for, and the diagnostics bundle prints the pair — so a set
+// collected in completion order silently relabels every measurement: the fast
+// destination's round-trip filed under the slow one's name. Nothing errors, and
+// the report is wrong.
+func TestProbeReportsTargetsInTheOrderTheyWereAsked(t *testing.T) {
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(150 * time.Millisecond)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(slow.Close)
+	fast := alwaysAnswers(t)
+
+	// The first target is the last to answer, so completion order is not ask order.
+	targets := []string{slow.URL + "/slow", fast.URL + "/a", fast.URL + "/b"}
+	out := (&Runner{ProbeTimeout: 5 * time.Second}).Probe(context.Background(), targets)
+
+	if len(out) != len(targets) {
+		t.Fatalf("probe returned %d results, want %d", len(out), len(targets))
+	}
+	for i, want := range targets {
+		if out[i].Target != want {
+			t.Errorf("result %d is %q, want %q: the results came back in completion order",
+				i, out[i].Target, want)
+		}
+		if !out[i].OK {
+			t.Errorf("result %d (%s) did not complete against a server that answers everything",
+				i, out[i].Target)
+		}
+	}
+}
