@@ -26,6 +26,19 @@ All notable changes to Tenebra are documented here. The format follows
   refusal.
 
 ### Fixed
+- **Switching the bypass off killed every winws on the machine, not just ours.**
+  Stopping and detecting the bypass went by image name — `taskkill /F /IM
+  winws.exe` and a `tasklist` filter — and zapret is a folder anyone can unpack
+  anywhere, so a copy the user was running themselves went down with any bypass
+  action taken here: turning it off, picking a strategy, restarting it. The
+  confusion also ran backwards, and more quietly: that foreign process answered
+  "our filter is up", so starting a strategy reported success without having
+  started anything. Both questions are now asked about the process's own
+  executable, read from the Windows process snapshot, and only a winws running
+  from this install's bundle directory is touched. A process whose path cannot be
+  read is never taken for ours — killing a stranger's bypass costs them a working
+  connection, while declining to kill one of ours costs a strategy that says it
+  did not start.
 - **On a service install the bypass never installed itself and never updated.**
   `main()` hands off to the service path before it reaches the console entry
   point, and the background job that keeps the bundle present and current was
