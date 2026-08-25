@@ -298,3 +298,11 @@ func (f *fakeRunner) startCfgs() [][]byte {
 	copy(out, f.cfgs)
 	return out
 }
+
+// setStatsErr makes the clash reads fail from now on, the way a wedged or
+// unparseable API does.
+func (f *fakeRunner) setStatsErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.statsErr = err
+}

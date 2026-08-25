@@ -12,6 +12,17 @@ All notable changes to Tenebra are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **A frozen traffic graph now says why.** The poller treated every failed
+  counter reading as "the clash API is not listening yet" — true exactly once,
+  before the first reading, and after that the same branch swallowed real
+  failures forever. That is how the connection document outgrowing its read
+  limit stayed invisible: every poll failed to parse, the graph stopped moving,
+  the tunnel kept carrying traffic, and nothing anywhere connected the two. From
+  the user's side a frozen graph reads as a dead tunnel. A stall is now reported
+  once, after a few seconds of failures rather than on the first, and recovery is
+  reported too.
+
+### Fixed
 - **The traffic counters stopped updating on a busy machine.** Upload and
   download totals are read from the engine's connection endpoint, whose response
   carries every live socket alongside the two numbers wanted; the body is parsed

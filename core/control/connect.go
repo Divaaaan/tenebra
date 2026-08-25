@@ -17,6 +17,13 @@ import (
 // emits a traffic event with the computed rates.
 const trafficPollInterval = time.Second
 
+// trafficStallTicks is how many consecutive failed readings count as a stall
+// rather than a blip. At one tick a second that is a few seconds of a frozen
+// graph before anything is said — long enough that a single dropped poll passes
+// unremarked, short enough that a user watching the graph and a user reading the
+// log reach the same conclusion at about the same time.
+const trafficStallTicks = 5
+
 // Fallback-loop timing defaults. They are deliberately conservative: the warmup
 // gives sing-box's clash API time to bind before the first probe, and the budget
 // is long enough to ride out a slow-but-working handshake yet short enough that a
@@ -1288,6 +1295,8 @@ func (d *Daemon) pollTraffic(ctx context.Context, gen uint64) {
 	var lastUp, lastDown int64
 	var lastT time.Time
 	have := false
+	stalled := 0
+	reported := false
 
 	for {
 		select {
@@ -1299,9 +1308,31 @@ func (d *Daemon) pollTraffic(ctx context.Context, gen uint64) {
 			}
 			up, down, err := d.runner.Stats()
 			if err != nil {
-				// API not ready yet (process still starting) — skip this tick.
+				// Before the first reading this is the API not listening yet, which
+				// is ordinary: the process is still starting and the next tick will
+				// find it. After a reading it is not — the counters were arriving and
+				// stopped, and the only thing the user sees is a graph that froze
+				// while the tunnel keeps carrying traffic. That silence hid a real
+				// defect for as long as it existed: the connection document outgrew
+				// the read limit, every poll failed to parse, and nothing anywhere
+				// said so.
+				//
+				// Reported once per stall, not per tick: a second of failures is a
+				// blip, and a line every second would be its own kind of broken.
+				if have {
+					stalled++
+					if stalled == trafficStallTicks && !reported {
+						reported = true
+						d.emitLog(LogWarn, fmt.Sprintf(
+							"счётчики трафика не отвечают (%v) — туннель работает, замер стоит", err))
+					}
+				}
 				continue
 			}
+			if reported {
+				d.emitLog(LogInfo, "счётчики трафика снова отвечают")
+			}
+			stalled, reported = 0, false
 			now := d.now()
 			ev := TrafficEvent{Up: up, Down: down}
 			if have {
