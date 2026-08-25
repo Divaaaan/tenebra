@@ -16,8 +16,13 @@ wire format, [control-protocol.md](control-protocol.md). This document is the
 
 CI builds the core on Go 1.26 and the desktop bundle with Node 24, so those are
 known-good; the minimums above are what `go.mod` and the front end actually
-require. The desktop app currently targets **Windows**; the Go core, however,
-builds and tests on every platform (it deliberately avoids OS-specific imports).
+require. The desktop app builds for **Windows, macOS and Linux** (this guide is
+written from the Windows side; the platform-specific parts are in
+[porting/macos.md](porting/macos.md) and [porting/linux.md](porting/linux.md)),
+and the Go core builds and tests on every platform — it deliberately avoids
+OS-specific imports outside the adapters. The Android client has its own
+toolchain (NDK + Gradle) and its own guide,
+[porting/android.md](porting/android.md).
 
 Tauri has its own platform prerequisites (a C toolchain, WebView2 on Windows).
 If `npm run tauri build` complains about a missing system dependency, check the
@@ -33,16 +38,31 @@ core/           Go, platform-agnostic (Windows service/pipe plumbing aside):
   routing/      smart/global/direct + per-app split -> sing-box route/dns blocks
   singbox/      assemble a full sing-box config as plain JSON (no sing-box dependency)
   fallback/     pure REALITY->Hysteria2->AmneziaWG fallback state machine
+  zapret/       drive the DPI-bypass bundle, embedded + downloaded (Windows only)
+  logrot/       size-capped log writer; the Windows service logs through it
   control/      the line-delimited JSON protocol and the daemon that drives it
+core-bridge/    the same config generator as a library for the mobile clients
+mobile/         gomobile wrapper: binds core-bridge + libbox into one artifact
 adapters/
   windows/      spawn & supervise the sing-box process; read traffic via its clash API
+  macos/        the same under the root LaunchDaemon (utun)
+  linux/        the same under the root systemd service (/dev/net/tun)
 cmd/
-  tenebra-core/ the core binary; protocol on stdin/stdout, or a named pipe on Windows
+  tenebra-core/ the core binary; protocol on stdin/stdout, a named pipe on Windows,
+                or a unix socket on macOS/Linux
 ui-desktop/
   src-tauri/    the Rust/Tauri shell (sidecar bridge, tray, autostart)
   src/          the React + TypeScript front end
+ui-android/     Kotlin/Compose client (VpnService + libbox), alpha
+ui-ios/         SwiftUI + Network Extension scaffold, never compiled
+deploy/         the privileged daemon's service definitions per platform
+packaging/arch/ PKGBUILD building core, app and unit for Arch Linux
 scripts/
   fetch-resources.ps1  download the pinned sing-box binary and wintun.dll
+  fetch-resources.sh   the same for macOS and Linux (plus the rule-sets)
+  build-libbox-android.sh  one gomobile bind -> the fused tenebra.aar
+  build-libbox.sh      the same bind for Apple platforms (xcframework)
+  macos/, linux/       install/remove the privileged daemon there
 ```
 
 ## The Go core
@@ -330,10 +350,11 @@ into `src-tauri/binaries/` first (step 2 above), then run `cargo test` again.
 
 ### What is *not* covered automatically
 
-Standing up an actual tunnel — wintun device + a live sing-box dialing a real
-server — is **not** in any automated test. It needs administrator rights on
-Windows and real server credentials, so it has to be done by hand. This is the
-main thing still being validated; see [the maintainer notes](#known-gaps).
+Standing up an actual tunnel — a tun device + a live sing-box dialing a real
+server — is **not** in any automated test, on any platform. It needs
+administrator rights (root on macOS and Linux) and real server credentials, so
+it is done by hand; see [the maintainer notes](#known-gaps) for where that has
+happened and where it has not.
 
 ## Coding conventions
 
@@ -391,12 +412,16 @@ requirement, not a Tenebra one — see the
 
 For contributors deciding where to dig in, the honest open items:
 
-- **Live tunnel validation.** The wintun + sing-box path needs an elevated,
-  real-server run. Until then, "connected" is exercised in tests with a fake
-  runner only.
-- **Non-Windows adapters.** Only `adapters/windows` exists. macOS/Linux (utun),
-  Android (`VpnService`) and iOS (Network Extension) are unwritten; the core is
-  ready for them.
+- **Live tunnel validation.** No automated test stands up a real tunnel on any
+  platform — in tests "connected" is always a fake runner. The Windows path is
+  run by hand against real servers routinely; the macOS and Linux ones have had
+  no privileged live run signed off (see
+  [porting/macos.md](porting/macos.md#open-questions-and-risks) and
+  [porting/linux.md](porting/linux.md#open-questions-and-risks)).
+- **Platform adapters.** `adapters/windows`, `adapters/macos` and
+  `adapters/linux` all exist, and Android runs libbox in-process through
+  `ui-android/` rather than an adapter. iOS (Network Extension) is a scaffold
+  that has never been compiled — that is the one still unwritten.
 - **Installer code-signing.** The installer is not Authenticode-signed, so Windows
   SmartScreen warns on first run. The tagged `release` workflow already builds and
   publishes it and minisign-signs the in-app updater artifacts; Authenticode
