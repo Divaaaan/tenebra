@@ -11,6 +11,19 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **The traffic counters stopped updating on a busy machine.** Upload and
+  download totals are read from the engine's connection endpoint, whose response
+  carries every live socket alongside the two numbers wanted; the body is parsed
+  as one JSON value, so the whole list has to be read to reach them. The read
+  stopped at a megabyte, which a few thousand connections — a torrent client, a
+  browser left open for a day — pass without trouble. Past that point the
+  document arrived cut in half, every poll failed to parse, and the counters
+  froze on their last value: no error, no log line, nothing on screen. What the
+  user saw was a flat graph, which reads as a dead tunnel while traffic is in
+  fact still flowing. The read is now bounded well above what any real machine
+  produces.
+
 ## [0.5.5] - 2026-08-25
 
 ### Added

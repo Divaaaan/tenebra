@@ -59,6 +59,17 @@ const logRingSize = 200
 // is slow or not yet listening.
 const statsTimeout = 2 * time.Second
 
+// maxConnectionsBody bounds the read of the /connections document. It has to be
+// generous because the body is parsed as one JSON value: the totals live at the
+// head of the object, but json.Unmarshal still has to walk the whole connection
+// list to get there, so a body cut short is a parse error and not a shorter
+// answer. A machine with a few thousand live sockets — a torrent client, a
+// browser with a hundred tabs — exceeds a megabyte easily, and under the old
+// limit the traffic counters simply stopped updating with nothing said. Eight
+// megabytes is far past that while still refusing to read unbounded from a
+// process that has stopped making sense.
+const maxConnectionsBody = 8 << 20
+
 // selectTimeout bounds the PUT that moves the selector. It is short on purpose:
 // the call goes to loopback, so anything slower than this means the API is not
 // answering, and a live exit switch that hangs is worse than one that fails fast
@@ -287,7 +298,7 @@ func (r *Runner) Stats() (up, down int64, err error) {
 	if resp.StatusCode != http.StatusOK {
 		return 0, 0, fmt.Errorf("linux: clash stats: status %s", resp.Status)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxConnectionsBody))
 	if err != nil {
 		return 0, 0, fmt.Errorf("linux: clash stats: read: %w", err)
 	}
