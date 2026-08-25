@@ -109,9 +109,18 @@ func imagePath(pid uint32) string {
 // same folder. Comparing the raw strings makes our own process look foreign the
 // first time any of the three differs — a bypass that then cannot be stopped.
 //
-// GetLongPathName only answers for a path that exists; when it does not, the
-// cleaned absolute form is the best available and is still correct for every
-// comparison where neither side has a short name.
+// GetLongPathName only answers for a path that exists, and "use the cleaned form
+// when it does not" is not good enough: the two sides of a comparison do not have
+// to exist alike. The bundle directory is on disk and expands; a path naming a
+// file inside it that is absent does not, so one side comes back expanded and the
+// other still carrying PROGRA~1, and the same location compares unequal. Not
+// hypothetical — this is how it first failed, on a CI runner whose temp directory
+// lives under C:\Users\RUNNER~1.
+//
+// So expand the longest prefix Windows will answer for and re-attach the rest.
+// The part that exists gets its real name, the part that does not is carried
+// through unchanged, and both sides are treated the same way whether or not the
+// leaf is there.
 func comparablePath(p string) string {
 	if p == "" {
 		return ""
@@ -119,10 +128,31 @@ func comparablePath(p string) string {
 	if abs, err := filepath.Abs(p); err == nil {
 		p = abs
 	}
-	if long := longPath(p); long != "" {
-		p = long
+	return strings.ToLower(filepath.Clean(expandLongestExisting(p)))
+}
+
+// expandLongestExisting walks up until Windows resolves a prefix, then puts the
+// unresolved tail back on it. A path that exists outright is answered on the
+// first attempt; one whose every component is gone comes back as it came, which
+// is the honest answer — nothing is known about names that cannot be looked up.
+func expandLongestExisting(p string) string {
+	var tail []string
+	for cur := p; ; {
+		if long := longPath(cur); long != "" {
+			for i := len(tail) - 1; i >= 0; i-- {
+				long = filepath.Join(long, tail[i])
+			}
+			return long
+		}
+		parent := filepath.Dir(cur)
+		// Dir returns its input at a root, which is where walking up stops finding
+		// anything new.
+		if parent == cur {
+			return p
+		}
+		tail = append(tail, filepath.Base(cur))
+		cur = parent
 	}
-	return strings.ToLower(filepath.Clean(p))
 }
 
 // longPath expands the 8.3 components of an existing path, or returns "" when

@@ -265,3 +265,45 @@ func TestImagePathRefusesToGuess(t *testing.T) {
 		t.Error("an empty bundle directory claimed a process; it would claim every process")
 	}
 }
+
+// TestOwnWinwsSeesThroughShortNamesWhenTheImageIsGone is the case that got past
+// the suite above and failed on CI.
+//
+// The short-name test before this one writes the executable first, so both sides
+// of the comparison exist and both expand. Nothing existed to force the other
+// arrangement — a directory that resolves next to an image path that does not —
+// until a runner supplied it: GitHub's Windows image puts the temp directory
+// under C:\Users\RUNNER~1, so every path in the suite carried a short component,
+// the bundle directory expanded to the account's real name and the path naming
+// winws.exe inside it did not. Same folder, unequal strings, and every case in
+// the table failed at once.
+//
+// That is not a test artefact. A process's image can be replaced or deleted while
+// it runs, and then the path Windows reports for it no longer resolves either —
+// on a machine with 8.3 enabled, which is the default, that is a live bypass that
+// can no longer be switched off.
+func TestOwnWinwsSeesThroughShortNamesWhenTheImageIsGone(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "zapret-discord-youtube-1.10.2")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	shortDir := shortPathName(t, dir)
+	if strings.EqualFold(shortDir, dir) {
+		t.Skip("this volume generates no 8.3 names, so there is no short spelling to resolve")
+	}
+
+	// Never written: this is the image of a process whose file is no longer there.
+	absent := filepath.Join(shortDir, "bin", winwsImage)
+
+	if got := ownWinws(dir, []winwsProcess{{PID: 4242, Path: absent}}); len(got) != 1 {
+		t.Errorf("a process reported as %q was not recognised as belonging to %q\n"+
+			"(the directory resolves, the missing image does not, and the two spellings diverge)",
+			absent, dir)
+	}
+	// The mirror image: the runner is configured with the short spelling and the
+	// process reports the long one, with the leaf still absent.
+	longAbsent := filepath.Join(dir, "bin", winwsImage)
+	if got := ownWinws(shortDir, []winwsProcess{{PID: 4242, Path: longAbsent}}); len(got) != 1 {
+		t.Errorf("a process reported as %q was not recognised as belonging to %q", longAbsent, shortDir)
+	}
+}
