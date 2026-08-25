@@ -8,7 +8,7 @@
 [![Platform](https://img.shields.io/badge/platform-Windows_%7C_macOS_%7C_Linux-0e0e0e.svg)](#project-status)
 
 **A cross-platform VPN client built on [sing-box](https://github.com/SagerNet/sing-box).**<br>
-Desktop first — Windows is user-ready; macOS and Linux ship but are for advanced users (see below). A shared Go core is meant to extend to Android and iOS.
+Desktop first — Windows is user-ready; macOS and Linux ship but are for advanced users (see below). The same Go core drives an Android client, in alpha and installed by hand; iOS is a scaffold.
 
 <img src="docs/assets/eclipse.svg" alt="A total eclipse: intercepted noise enters the dark, one clean signal leaves it. In tenebris lux." width="100%">
 
@@ -16,9 +16,12 @@ Desktop first — Windows is user-ready; macOS and Linux ship but are for advanc
 
 > **Project status — early development.** The desktop client is the current
 > focus. The core, the control protocol and the UI are in good shape and well
-> tested, but the real tunnel path (wintun + sing-box, which needs an elevated
-> live run) is still being validated end to end. Treat this as pre-release:
-> not yet "production-ready", and expect things to move around. See
+> tested, and the Windows tunnel path (wintun + sing-box under the service) is
+> exercised against real servers rather than only in tests — but no automated
+> test stands up a real tunnel on any platform, and the macOS and Linux tunnels
+> have had no privileged live run signed off. Treat this as pre-release: not
+> yet "production-ready",
+> and expect things to move around. See
 > [Project status](#project-status) for the honest breakdown.
 
 ## Why another client
@@ -43,8 +46,8 @@ Everything below is implemented in this repo today (the UI features are desktop)
   AmneziaWG, Shadowsocks, Trojan and VMess. A single normalized node model feeds
   a from-scratch sing-box config generator. *(AmneziaWG links import and connect,
   but the bundled stock sing-box applies none of the AWG obfuscation parameters —
-  the tunnel runs as plain WireGuard; full AmneziaWG obfuscation is on the
-  [roadmap](ROADMAP.md).)*
+  the tunnel runs as plain WireGuard; full AmneziaWG obfuscation is
+  [planned](ROADMAP.md#planned) and needs a build that links a fork.)*
 - **Import the way you have it.** Subscription URL, a raw share link, a `.txt`
   file of links, clipboard paste, or a QR code (image file or pasted image).
   Subscription bodies handle a Clash/Mihomo YAML config, base64, or plaintext
@@ -171,11 +174,12 @@ get one:
 | Control protocol (core ↔ UI) | Implemented; covered by Go tests **and** a real-binary e2e |
 | Desktop UI (Tauri 2 + React) | Implemented: all screens, reactive tray, notifications, deep links, autostart, i18n, themes |
 | Windows tunnel (wintun + sing-box) | Implemented — a background **service** runs the tunnel, so the app connects without an elevated GUI; installer sets it up, the in-app updater refreshes both app and service |
-| macOS tunnel (utun + sing-box) | Builds and runs — universal `.app`/DMG — but see the **macOS note** below: it needs a hand-installed root daemon and is not yet a click-to-run product |
+| macOS tunnel (utun + sing-box) | Builds and runs — universal `.app`/DMG — but see the **macOS note** below: it needs a hand-installed root daemon and is not yet a click-to-run product. No live-tunnel sign-off yet |
 | Linux tunnel (`/dev/net/tun` + sing-box) | Builds and runs — a root **systemd service** owns the tunnel, installed by an Arch package or a `sudo` script; see the **Linux note** below. No live-tunnel sign-off yet |
-| Android / iOS | Planned — the core is shared and platform-agnostic |
-| Release pipeline | Tag-triggered `release` workflow builds the Windows and macOS bundles, minisign-signs the in-app updater artifacts, and publishes a GitHub release |
-| Code-signing | Not set up — the Windows installer is Authenticode-unsigned (SmartScreen warns) and the macOS build is unsigned/un-notarized (Gatekeeper needs a manual "Open Anyway") |
+| Android (`VpnService` + libbox) | **Alpha, hand-installed** — a Kotlin / Compose client in [`ui-android/`](ui-android/README.md) builds and runs on a device: subscription import, node list with latency badges, an AUTO exit, switching the live exit without a reconnect, connect-on-boot, a Quick Settings tile, in-app logs and crash reports. Routing is *Global* only and there is no DPI bypass. CI builds a debug APK; a tagged release carries a signed one only once the signing key is in CI secrets |
+| iOS (Network Extension) | Scaffold only — none of the Swift under `ui-ios/` has been compiled and no framework has been built; the plan is [docs/porting/ios.md](docs/porting/ios.md) |
+| Release pipeline | Tag-triggered `release` workflow builds the Windows, macOS and Linux bundles plus the Arch package, minisign-signs the in-app updater artifacts, and publishes the GitHub release once every expected asset is on it; Android is a separate workflow on the same tag |
+| Code-signing | Not set up — the Windows installer is Authenticode-unsigned (SmartScreen warns), the macOS build is unsigned/un-notarized (Gatekeeper needs a manual "Open Anyway"), and the Android release APK has no keystore in CI yet |
 
 ### macOS note — read before downloading the DMG
 
@@ -257,20 +261,28 @@ tenebra/
 │   ├── fallback/         Pure REALITY->Hysteria2->AmneziaWG fallback state machine.
 │   ├── zapret/           Drive the DPI-bypass bundle, embedded + downloaded (Windows).
 │   └── control/          The line-delimited JSON protocol + the daemon.
+├── core-bridge/          The same generator as a mobile-facing library (no sing-box).
+├── mobile/               gomobile wrapper: binds core-bridge + libbox into one artifact.
 ├── adapters/
-│   └── windows/          Spawn & supervise sing-box; traffic via its clash API.
+│   ├── windows/          Spawn & supervise sing-box; traffic via its clash API.
+│   ├── macos/            The same over utun, under the root LaunchDaemon.
+│   └── linux/            The same over /dev/net/tun, under the root systemd service.
 ├── cmd/
 │   └── tenebra-core/     The sidecar entry point (talks the protocol on stdin/stdout).
 ├── ui-desktop/           Tauri 2 app: Rust shell (src-tauri) + React/TS front end (src).
+├── ui-android/           Kotlin/Compose client: VpnService + libbox (alpha).
+├── ui-ios/               SwiftUI + Network Extension scaffold; never compiled.
 ├── deploy/               The privileged daemon's service definitions per platform.
 ├── packaging/
 │   └── arch/             PKGBUILD building the whole thing for Arch Linux.
 ├── scripts/
-│   ├── fetch-resources.ps1   Download pinned sing-box + wintun for bundling (Windows).
-│   ├── fetch-resources.sh    The same for macOS and Linux.
-│   ├── macos/            Install/remove the root LaunchDaemon.
-│   └── linux/            Install/remove the root systemd service.
-└── docs/                 Architecture, control protocol, and the dev guide.
+│   ├── fetch-resources.ps1     Download pinned sing-box + wintun (Windows).
+│   ├── fetch-resources.sh      The same for macOS and Linux.
+│   ├── build-libbox-android.sh One gomobile bind -> the fused tenebra.aar.
+│   ├── build-libbox.sh         The same bind for Apple (xcframework).
+│   ├── macos/                  Install/remove the root LaunchDaemon.
+│   └── linux/                  Install/remove the root systemd service.
+└── docs/                 Architecture, control protocol, the dev guide, porting notes.
 ```
 
 ## Building

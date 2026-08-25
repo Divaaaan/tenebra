@@ -204,10 +204,10 @@ desktop/core checks). On `ubuntu-latest`:
 - **Build then assemble.** The script runs the single bind, then
   `./gradlew :app:assembleDebug` (or `assembleRelease` on a tag).
 
-The workflow references `ui-android/` (the Gradle project, owned by the client
-scaffold work) — until that module lands, the Android job has nothing to assemble.
-The toolchain half (this doc, the build script, the workflow) is complete and lands
-first; the job goes green once `ui-android/` exists.
+The workflow assembles [`ui-android/`](../../ui-android/README.md), which now
+exists: the debug job builds the client on every Android-touching push and PR. The
+release job is gated on the signing secrets below and fails loudly when they are
+absent, rather than skipping and reporting a green run that built nothing.
 
 ## Release signing
 
@@ -292,28 +292,27 @@ keystore or the passwords; the base64 lives only in the secret.
 
 ## Honest status
 
-- The gomobile bind and the Gradle APK build have **not** been run on the authoring
-  host (Windows, no NDK). `scripts/build-libbox-android.sh` was checked with
-  `bash -n` only; the workflow YAML was validated but not executed. **The first real
-  bind and the first APK are on CI** — treat the script and workflow as an
-  executable plan until that run is green.
+- The bind and the APK build run on CI, not on the authoring host (Windows, no
+  NDK). The bind is where the engine pin was settled: sing-box `v1.13.13` cannot
+  build `experimental/libbox` from the module graph at all, so `mobile/` is pinned
+  to `v1.13.14` while the desktop sidecar keeps its prebuilt `v1.13.13` binary.
+  Do not "resync" the two.
 - `gomobile init` is intentionally omitted from the build script: sing-box's proven
-  `lib_install` path runs no init, and modern gomobile binds on demand. If the first
-  CI bind proves otherwise, adding `gomobile init` after `make lib_install` is a
-  one-line fix.
-- The workflow depends on the `ui-android/` Gradle project (owned separately). Its
-  release build type must leave the APK unsigned for the CI signing step to own the
-  keystore.
+  `lib_install` path runs no init, and modern gomobile binds on demand.
+- The `ui-android/` release build type must leave the APK **unsigned** for the CI
+  signing step to own the keystore. Nothing in the release path is exercised until
+  the signing secrets exist.
+- What CI cannot answer is device behaviour: the tunnel, Doze and OEM battery
+  handling are only ever characterised on real hardware.
 
 ## Open questions and risks
 
-- **First-run toolchain unknowns.** Whether the fused bind succeeds unmodified on
-  the CI image (NDK r28 discovery, the sing-box `//go:linkname` linker workarounds
-  under Go 1.26, `gomobile init` necessity, D8 accepting the single-runtime `.aar`)
-  is only proven once the job runs. This is the main thing to watch on the first green.
+- **Toolchain drift.** The fused bind depends on NDK r28 discovery, the sing-box
+  `//go:linkname` linker workarounds, and D8 accepting the single-runtime `.aar`.
+  A bump to any of the three — engine, NDK, Go — is the thing most likely to break
+  the bind, and it breaks in the bind rather than in the Kotlin.
 - **`ui-android` contract.** The workflow assumes the module id `:app`, the standard
-  AGP output paths, and an unsigned release build type. Those must match the client
-  scaffold.
+  AGP output paths, and an unsigned release build type; keep them that way.
 - **Shared release tag.** Desktop `release.yml` and this workflow both publish to
   the same `v*` release; this job only *adds* the APK asset and does not rewrite the
   body, but the two runs are not ordered across workflows.

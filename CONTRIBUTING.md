@@ -63,19 +63,24 @@ A quick map (full version in
 [docs/development.md](docs/development.md#repository-layout)):
 
 - `core/` — Go, platform-agnostic, **standard library only**, fully unit-tested.
-  `model`, `subscription`, `profile`, `routing`, `singbox`, `fallback`, `control`.
-- `adapters/` — the per-OS system tunnel. Only `windows` exists today.
+  `model`, `subscription`, `profile`, `routing`, `singbox`, `fallback`, `zapret`,
+  `control`.
+- `core-bridge/` + `mobile/` — the same generator as a mobile library, and the
+  gomobile wrapper that binds it with libbox into one artifact.
+- `adapters/` — the per-OS system tunnel: `windows`, `macos`, `linux`.
 - `cmd/tenebra-core/` — the sidecar binary; talks the protocol on stdin/stdout.
 - `ui-desktop/` — Tauri 2: `src-tauri/` (Rust shell) + `src/` (React + TypeScript).
-- `docs/` — architecture, the control protocol, and the dev guide.
+- `ui-android/` — Kotlin/Compose client (alpha); `ui-ios/` — an uncompiled scaffold.
+- `docs/` — architecture, the control protocol, the dev guide and porting notes.
 
 The core never contains infrastructure: no hardcoded servers, subscription URLs,
 node IPs or keys. Servers come from user input; tests use obviously fake data.
 
 ## Running the tests
 
-CI runs the Go tests, the front-end tests and a Windows desktop build on every
-push and pull request; keep them green. Locally:
+CI runs the Go tests, the front-end tests, a Windows desktop build and a Linux
+one (plus the Arch package checks) on every push and pull request; Android has
+its own workflow. Keep them green. Locally:
 
 ```
 go test ./...                       # Go unit tests (core/ and adapters/)

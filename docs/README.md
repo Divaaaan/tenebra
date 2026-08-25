@@ -19,6 +19,10 @@ Platform ports:
 - **[porting/macos.md](porting/macos.md)** — the macOS desktop port: same sidecar
   model as Windows, with a privileged helper for the `utun` tunnel and a
   DMG/notarization distribution path.
+- **[porting/android.md](porting/android.md)** — the Android client: the fused
+  gomobile artifact, the `VpnService` that owns the tun, the CI that builds the
+  APK, and release signing. The client itself lives in
+  [`ui-android/`](../ui-android/README.md).
 - **[porting/ios.md](porting/ios.md)** — the iOS port: the engine linked in-process
   via gomobile inside a Network Extension, the ~50 MB memory budget that dominates
   the design, and the provisioning and distribution constraints.
