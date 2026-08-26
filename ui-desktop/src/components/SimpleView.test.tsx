@@ -31,6 +31,7 @@ function setup(overrides: Partial<Parameters<typeof SimpleView>[0]> = {}) {
     onSubscribe: vi.fn(async () => {}),
     serviceChecks: [],
     serviceChecking: false,
+    onReportProblem: vi.fn(),
     ...overrides,
   };
   const utils = renderWithProviders(<SimpleView {...props} />);
@@ -196,5 +197,16 @@ describe("SimpleView", () => {
 
     dispatch.mockRestore();
     localStorage.clear();
+  });
+
+  // This screen hides Settings and the log console, so before this it offered
+  // no way at all to say something was wrong — the one view where a stuck user
+  // is most likely to be a non-technical one.
+  it("offers a way to report a problem", () => {
+    const { props } = setup();
+
+    fireEvent.click(screen.getByRole("button", { name: "Report a problem" }));
+
+    expect(props.onReportProblem).toHaveBeenCalledTimes(1);
   });
 });

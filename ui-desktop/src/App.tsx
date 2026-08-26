@@ -11,6 +11,7 @@ import { DaemonSkewBanner } from "./components/DaemonSkewBanner";
 import { CrashConsentBanner } from "./components/CrashConsentBanner";
 import { CrashReportBanner } from "./components/CrashReportBanner";
 import { CrashReportModal } from "./components/CrashReportModal";
+import { ProblemReportModal } from "./components/ProblemReportModal";
 import { DeepLinkConfirm } from "./components/DeepLinkConfirm";
 import { TunConflictConfirm } from "./components/TunConflictConfirm";
 import { ProfilesScreen } from "./screens/ProfilesScreen";
@@ -44,6 +45,7 @@ import { useTunOverrideAsk } from "./lib/useTunOverrideAsk";
 import { useUpdateCheck } from "./lib/useUpdateCheck";
 import { useDaemonSkew } from "./lib/useDaemonSkew";
 import { useCrashReport } from "./lib/useCrashReport";
+import { useProblemReport } from "./lib/useProblemReport";
 import { useActionToasts } from "./lib/useActionToasts";
 import { formatMbps } from "./lib/format";
 import { getAutoFastest, migrateLegacyAutoconnect } from "./lib/settings";
@@ -206,6 +208,12 @@ export function App() {
   const crashAsked = state.crash_reports_asked ?? false;
   const crash = useCrashReport(crashConsent, tenebra.ready);
   const [viewingReport, setViewingReport] = useState(false);
+
+  // Reporting a problem by hand, reachable from every view and gated on
+  // nothing. The crash path above needs both a consent and a crash file, which
+  // together describe almost none of the ways this app actually disappoints
+  // someone — a bypass that stopped carrying video leaves neither.
+  const problem = useProblemReport(state.daemon_version, tenebra.logs);
 
   // The core-owned controls the shell drives directly. Their drawn position is
   // the state the daemon echoes back, so a refused command leaves the control
@@ -485,6 +493,7 @@ export function App() {
   const crashReportShown = usePresence(
     viewingReport && crash.report ? crash.report : null,
   );
+  const problemReportShown = usePresence(problem.active || null);
 
   // Close overlays on Escape.
   useEffect(() => {
@@ -670,6 +679,18 @@ export function App() {
     />
   ) : null;
 
+  // Built once and rendered by both views, for the reason above it: a surface
+  // only one branch draws is a surface the other branch silently loses.
+  const problemReport = problemReportShown.value ? (
+    <ProblemReportModal
+      report={problem.report}
+      building={problem.building}
+      onClose={problem.close}
+      onOpenIssue={problem.openIssue}
+      leaving={problemReportShown.leaving}
+    />
+  ) : null;
+
   // Simple mode: one calm screen instead of the full shell. It reads the same
   // connection state and shares the same actions, so the two never disagree. The
   // eclipse easter egg still rides along; the console/toast layers do too.
@@ -695,8 +716,10 @@ export function App() {
           onSubscribe={handleSimpleSubscribe}
           serviceChecks={services.checks}
           serviceChecking={services.checking}
+          onReportProblem={problem.open}
         />
         {tunConflictPrompt}
+        {problemReport}
         <EclipseOverlay active={eclipse} onDone={endEclipse} />
         <ToastHost />
       </div>
@@ -823,6 +846,7 @@ export function App() {
         onToggleKillSwitch={handleToggleKill}
         onLeakCheck={() => setOverlay("logs")}
         onSettings={() => setOverlay("settings")}
+        onReportProblem={problem.open}
         bypassInstalled={bypassInstalled}
         bypassOn={bypassOn}
         bypassStrategy={bypassStrategy}
@@ -897,6 +921,8 @@ export function App() {
           leaving={crashReportShown.leaving}
         />
       )}
+
+      {problemReport}
 
       <EclipseOverlay active={eclipse} onDone={endEclipse} />
 

@@ -29,6 +29,7 @@ import "./styles/settings.css";
 import "./styles/profiles.css";
 import "./styles/logs.css";
 import "./styles/crash.css";
+import "./styles/report.css";
 import "./styles/simple.css";
 import "./styles/eclipse.css";
 import "./styles/credits.css";

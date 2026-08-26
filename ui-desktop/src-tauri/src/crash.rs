@@ -16,6 +16,11 @@
 //! (untrusted subscription names must never reach the OS opener), so the webview
 //! cannot open URLs at all and cannot influence the destination host — Rust builds
 //! the entire URL from a fixed constant plus a title derived from the local file.
+//!
+//! The same opener also serves the "report a problem" flow ([`open_problem_url`]),
+//! which has no crash behind it: there the title carries only the version and OS
+//! this process reads for itself. That report travels on the clipboard, so the
+//! rule above holds unchanged — nothing the user typed or pasted enters a URL.
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -212,6 +217,12 @@ fn latest_message(report: &str) -> String {
         .to_string()
 }
 
+/// Placeholder dropped into the issue form's log field, telling the reporter
+/// where the report they just copied goes. English, like the rest of the issue
+/// template and the bundle it will be pasted next to — this is text a maintainer
+/// reads on GitHub, not app chrome, and the webview supplies none of it.
+const PASTE_HINT: &str = "Paste the report Tenebra copied to your clipboard here.";
+
 /// Build the pre-filled new-issue URL from a fixed base plus an encoded title.
 /// Only the title varies, and it is derived from the local crash file (our own
 /// version, OS and panic summary) — never from webview input — and percent-encoded
@@ -228,6 +239,26 @@ fn build_issue_url(version: &str, os: &str, summary: &str) -> String {
     url.query_pairs_mut()
         .append_pair("template", "bug_report.yml")
         .append_pair("title", &title);
+    url.to_string()
+}
+
+/// Build the new-issue URL for a problem the user is reporting by hand — the
+/// ordinary failure with no crash behind it, so there is no local file to
+/// summarise.
+///
+/// Same discipline as [`build_issue_url`], and for the same reason: every part
+/// of the URL comes from this process (the `Cargo.toml` version and
+/// `std::env::consts`) and none of it from the webview, so no subscription name
+/// or pasted string can steer the destination. Only the metadata the shell
+/// already knows travels here; the report itself goes on the clipboard, being
+/// far past any browser's URL limit.
+fn build_problem_url(version: &str, os: &str) -> String {
+    let mut url = Url::parse(ISSUE_BASE).expect("issue base URL is a valid constant");
+    url.query_pairs_mut()
+        .append_pair("template", "bug_report.yml")
+        .append_pair("title", &format!("Problem report (v{version}, {os})"))
+        .append_pair("version", version)
+        .append_pair("logs", PASTE_HINT);
     url.to_string()
 }
 
@@ -279,6 +310,18 @@ pub fn open_report_url() -> Result<(), String> {
         .map(|t| latest_message(&t))
         .unwrap_or_default();
     let url = build_issue_url(version(), &os_arch(), &summary);
+    open::that_detached(&url).map_err(|e| format!("could not open the browser: {e}"))
+}
+
+/// Open the new-issue form for a hand-written problem report. Reachable from the
+/// app at any time — no crash file, no consent gate — because the failures worth
+/// hearing about mostly aren't crashes.
+///
+/// Called only from the front end's own "open the issue form" button, never as a
+/// side effect of assembling a report: building one has to stay a local act.
+#[tauri::command]
+pub fn open_problem_url() -> Result<(), String> {
+    let url = build_problem_url(version(), &os_arch());
     open::that_detached(&url).map_err(|e| format!("could not open the browser: {e}"))
 }
 
@@ -412,5 +455,48 @@ mod tests {
             url.contains("Crash+report") || url.contains("Crash%20report"),
             "{url}"
         );
+    }
+
+    #[test]
+    fn build_problem_url_carries_the_version_and_the_os() {
+        let url = build_problem_url("0.5.5", "windows x86_64");
+        assert!(url.contains("0.5.5"), "{url}");
+        assert!(url.contains("windows"), "{url}");
+        assert!(url.contains("x86_64"), "{url}");
+        assert!(url.contains("template=bug_report.yml"), "{url}");
+    }
+
+    /// The whole URL is built here from constants and `std::env`; the webview
+    /// supplies nothing. Whatever the inputs, it has to stay on the repo.
+    #[test]
+    fn build_problem_url_never_leaves_the_pinned_host() {
+        for (version, os) in [
+            ("0.5.5", "windows x86_64"),
+            ("", ""),
+            ("https://evil.example/?x=", "//evil.example"),
+            ("0.5.5 ?&#/\\", "linux aarch64"),
+        ] {
+            let url = build_problem_url(version, os);
+            let parsed = Url::parse(&url).expect("a well-formed URL");
+            assert_eq!(parsed.host_str(), Some("github.com"), "{url}");
+            assert_eq!(parsed.path(), "/Divaaaan/tenebra/issues/new", "{url}");
+            assert_eq!(parsed.scheme(), "https", "{url}");
+        }
+    }
+
+    /// The report itself travels on the clipboard, not in the query string: a
+    /// bundle is far past any browser's URL limit. The form should still say
+    /// where it goes.
+    #[test]
+    fn build_problem_url_asks_for_the_report_to_be_pasted() {
+        let url = build_problem_url("0.5.5", "windows x86_64");
+        let parsed = Url::parse(&url).expect("a well-formed URL");
+        let logs = parsed
+            .query_pairs()
+            .find(|(k, _)| k == "logs")
+            .map(|(_, v)| v.into_owned())
+            .expect("a logs field");
+        assert!(logs.to_lowercase().contains("paste"), "{logs}");
+        assert!(url.len() < 1000, "URL should stay short: {}", url.len());
     }
 }

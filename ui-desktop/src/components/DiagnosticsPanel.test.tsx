@@ -157,9 +157,10 @@ describe("DiagnosticsPanel", () => {
 
   describe("support bundle", () => {
     it("collects the report and shows where it was saved", async () => {
-      vi.mocked(api.collectDiagnostics).mockResolvedValue(
-        String.raw`C:\Users\me\AppData\Local\Tenebra\tenebra-diagnostics-20260824-011500.txt`,
-      );
+      vi.mocked(api.collectDiagnostics).mockResolvedValue({
+        path: String.raw`C:\Users\me\AppData\Local\Tenebra\tenebra-diagnostics-20260824-011500.txt`,
+        text: "Tenebra core diagnostics\n",
+      });
       const user = userEvent.setup();
       renderWithProviders(<DiagnosticsPanel connected={false} />);
 
@@ -174,7 +175,10 @@ describe("DiagnosticsPanel", () => {
     });
 
     it("is not gated on a connection — it is worth most when nothing works", async () => {
-      vi.mocked(api.collectDiagnostics).mockResolvedValue("/tmp/report.txt");
+      vi.mocked(api.collectDiagnostics).mockResolvedValue({
+        path: "/tmp/report.txt",
+        text: "Tenebra core diagnostics\n",
+      });
       renderWithProviders(<DiagnosticsPanel connected={false} />);
 
       expect(
@@ -196,6 +200,36 @@ describe("DiagnosticsPanel", () => {
       expect(await screen.findByRole("alert")).toHaveTextContent(
         "Couldn't write the report",
       );
+    });
+  });
+
+  // Saving the bundle used to be the whole of this section, and it never said
+  // what to do with the file it wrote. The two intentions are separate buttons
+  // now: keep a copy, or actually report the thing.
+  describe("report a problem", () => {
+    it("offers reporting alongside saving, as its own action", () => {
+      renderWithProviders(<DiagnosticsPanel connected={false} />);
+
+      expect(
+        screen.getByRole("button", { name: "Save diagnostics report" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Report a problem" }),
+      ).toBeInTheDocument();
+    });
+
+    it("hands the report flow to the app shell instead of collecting its own", async () => {
+      const asked = vi.fn();
+      window.addEventListener("tenebra:report-problem", asked);
+      const user = userEvent.setup();
+      renderWithProviders(<DiagnosticsPanel connected={false} />);
+
+      await user.click(screen.getByRole("button", { name: "Report a problem" }));
+
+      expect(asked).toHaveBeenCalledTimes(1);
+      // The shell owns the report; the panel starts no second collection here.
+      expect(api.collectDiagnostics).not.toHaveBeenCalled();
+      window.removeEventListener("tenebra:report-problem", asked);
     });
   });
 });

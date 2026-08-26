@@ -43,6 +43,8 @@ interface SimpleViewProps {
   serviceChecks: ServiceCheckResult[];
   /** True while those checks are in flight. */
   serviceChecking: boolean;
+  /** Open the report-a-problem flow. */
+  onReportProblem: () => void;
 }
 
 /**
@@ -72,6 +74,7 @@ export function SimpleView({
   onSubscribe,
   serviceChecks,
   serviceChecking,
+  onReportProblem,
 }: SimpleViewProps) {
   const { t } = useI18n();
 
@@ -216,13 +219,25 @@ export function SimpleView({
 
       <SimpleSetup hasProfile={hasProfile} onSubscribe={onSubscribe} />
 
-      <button
-        type="button"
-        className="simple-advanced"
-        onClick={exitSimpleMode}
-      >
-        {t.simple.advanced}
-      </button>
+      {/* This screen has no Settings and no log console, so before this there
+          was nothing here to complain with at all — a user whose video stopped
+          loading could only close the app. */}
+      <div className="simple-foot">
+        <button
+          type="button"
+          className="simple-advanced"
+          onClick={onReportProblem}
+        >
+          {t.report.action}
+        </button>
+        <button
+          type="button"
+          className="simple-advanced"
+          onClick={exitSimpleMode}
+        >
+          {t.simple.advanced}
+        </button>
+      </div>
     </div>
   );
 }

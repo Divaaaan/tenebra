@@ -16,6 +16,7 @@ function baseProps(overrides: Partial<Parameters<typeof BottomBar>[0]> = {}) {
     onToggleKillSwitch: vi.fn(),
     onLeakCheck: vi.fn(),
     onSettings: vi.fn(),
+    onReportProblem: vi.fn(),
     bypassInstalled: false,
     bypassOn: false,
     bypassStrategy: "",
@@ -129,6 +130,19 @@ describe("BottomBar", () => {
 
       await user.click(screen.getByRole("button", { name: /settings/ }));
       expect(onSettings).toHaveBeenCalledTimes(1);
+    });
+
+    // Out here with leak-check and settings, not tucked into a menu: the app
+    // had no way to say "this is broken" that didn't require a crash first.
+    it("calls the report handler", async () => {
+      const onReportProblem = vi.fn();
+      const user = userEvent.setup();
+      renderWithProviders(<BottomBar {...baseProps({ onReportProblem })} />);
+
+      await user.click(
+        screen.getByRole("button", { name: /report a problem/i }),
+      );
+      expect(onReportProblem).toHaveBeenCalledTimes(1);
     });
   });
 

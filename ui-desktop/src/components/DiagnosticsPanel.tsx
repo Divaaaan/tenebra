@@ -3,6 +3,7 @@ import { useState } from "react";
 import { api, type NatType, type SpeedTestResult, type StunResult } from "../api";
 import { useI18n } from "../i18n/I18nContext";
 import type { Strings } from "../i18n/strings";
+import { REPORT_PROBLEM_EVENT } from "../lib/useProblemReport";
 
 interface DiagnosticsPanelProps {
   /**
@@ -93,13 +94,24 @@ export function DiagnosticsPanel({ connected }: DiagnosticsPanelProps) {
     setBundleBusy(true);
     setBundleError(false);
     try {
-      setBundlePath(await api.collectDiagnostics());
+      // Only the path matters here: this button is "keep a copy", and the text
+      // it wrote is the report flow's business, not this row's.
+      setBundlePath((await api.collectDiagnostics()).path);
     } catch {
       setBundlePath(null);
       setBundleError(true);
     } finally {
       setBundleBusy(false);
     }
+  }
+
+  // Ask the app shell to run the report flow rather than running one here.
+  // The shell owns that surface for two reasons: it can put the app's own log
+  // buffer into the report (this panel never sees it), and the report survives
+  // the settings overlay being closed on top of it. Same one-line custom-event
+  // handshake simple mode uses to hand the shell back its full view.
+  function askForReport() {
+    window.dispatchEvent(new CustomEvent(REPORT_PROBLEM_EVENT));
   }
 
   const sampleMb = speed ? (speed.sample_bytes / (1024 * 1024)).toFixed(1) : "";
@@ -233,6 +245,28 @@ export function DiagnosticsPanel({ connected }: DiagnosticsPanelProps) {
             </div>
           </dl>
         )}
+      </div>
+
+      {/* Reporting the problem, as its own action. Saving a bundle answers
+          "keep a copy"; it never answered "who do I tell", and a file the user
+          is left holding is not a bug report. */}
+      <div className="set-diag-probe">
+        <div className="set-row">
+          <span className="set-row-text">
+            <span className="set-row-label">{t.report.action}</span>
+            <span id="report-hint" className="set-row-hint">
+              {t.report.panelHint}
+            </span>
+          </span>
+          <button
+            type="button"
+            className="set-btn"
+            onClick={askForReport}
+            aria-describedby="report-hint"
+          >
+            {t.report.action}
+          </button>
+        </div>
       </div>
     </div>
   );

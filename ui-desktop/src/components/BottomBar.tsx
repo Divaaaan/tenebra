@@ -8,6 +8,8 @@ interface BottomBarProps {
   onToggleKillSwitch: () => void;
   onLeakCheck: () => void;
   onSettings: () => void;
+  /** Open the report-a-problem flow. */
+  onReportProblem: () => void;
   /** True when the core reports a bundle on disk (or a filter already running). */
   bypassInstalled: boolean;
   /** True when the core reports the packet filter as carrying traffic. */
@@ -37,6 +39,7 @@ export function BottomBar({
   onToggleKillSwitch,
   onLeakCheck,
   onSettings,
+  onReportProblem,
   bypassInstalled,
   bypassOn,
   bypassStrategy,
@@ -94,6 +97,13 @@ export function BottomBar({
             {bypassOn && bypassStrategy ? ` · ${bypassStrategy}` : ""}
           </span>
         )}
+        {/* Reporting sits out here with the other quick actions rather than
+            behind Settings: the app had no way at all to say "this is broken"
+            unless it had crashed *and* the user had opted into crash reports,
+            which is not how most things break. */}
+        <button type="button" className="act" onClick={onReportProblem}>
+          ▶ {t.bottom.report}
+        </button>
         <button type="button" className="act" onClick={onLeakCheck}>
           ▶ {t.bottom.leakCheck}
         </button>

@@ -16,6 +16,7 @@ import type {
   ServiceChecks,
   Profile,
   RoutingMode,
+  SavedDiagnostics,
   SpeedTestResult,
   SplitMode,
   State,
@@ -373,15 +374,17 @@ export const api = {
 
   /**
    * Ask the core to assemble a support bundle, save it beside the crash log, and
-   * resolve with the file's absolute path.
+   * resolve with the file's absolute path and its text.
    *
    * Nothing is sent anywhere: the core reports what it already knows (state,
    * versions, the machine's default routes, the last connect walk, the tail of
    * the log) with subscription tokens and node credentials already masked, and
    * the shell writes it to a file the user can attach to a report themselves.
+   * The text comes back with it because the webview cannot read that file — it
+   * is what the report flow puts on the clipboard.
    */
-  collectDiagnostics(): Promise<string> {
-    return invoke<string>("collect_diagnostics");
+  collectDiagnostics(): Promise<SavedDiagnostics> {
+    return invoke<SavedDiagnostics>("collect_diagnostics");
   },
 
   /** Actually exit the app. Closing the window only hides it to the tray. */
@@ -421,6 +424,19 @@ export const api = {
    */
   openReportUrl(): Promise<void> {
     return invoke<void>("open_report_url");
+  },
+
+  /**
+   * Open the new-issue form for a problem the user is reporting by hand — no
+   * crash file behind it, no consent gate.
+   *
+   * Like {@link openReportUrl} the whole URL is built in Rust from constants and
+   * the version/OS it reads itself; the report travels on the clipboard. Call it
+   * only from the user's own "open the issue form" click: assembling a report
+   * must never open anything.
+   */
+  openProblemUrl(): Promise<void> {
+    return invoke<void>("open_problem_url");
   },
 };
 

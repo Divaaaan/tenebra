@@ -821,8 +821,23 @@ async fn run_speed_test(state: TauriState<'_, AppState>) -> Result<SpeedTest, St
     off_thread(Arc::clone(&state.backend), |b| b.run_speed_test()).await
 }
 
+/// A support bundle that has been written to disk: where it went, and what went
+/// into it.
+///
+/// The text comes back alongside the path because the two serve different ends.
+/// The file is the archive — complete, and something the user can attach or
+/// open later. The text is what the "report a problem" flow puts on the
+/// clipboard, trimmed to what an issue body will take. Returning only the path
+/// left the front end with a file it could not read (no `fs` capability) and
+/// therefore nothing to paste anywhere.
+#[derive(serde::Serialize)]
+struct SavedDiagnostics {
+    path: String,
+    text: String,
+}
+
 /// Ask the core for a support bundle and save it next to the crash log, then
-/// hand the UI the path.
+/// hand the UI the path and the text.
 ///
 /// The file is written here rather than by the core because the core may be a
 /// LocalSystem service whose data directory the reporting user cannot read. It
@@ -834,7 +849,7 @@ async fn run_speed_test(state: TauriState<'_, AppState>) -> Result<SpeedTest, St
 /// separator in it is refused outright: a filename is not a place to accept a
 /// path from another process, however trusted.
 #[tauri::command]
-async fn collect_diagnostics(state: TauriState<'_, AppState>) -> Result<String, String> {
+async fn collect_diagnostics(state: TauriState<'_, AppState>) -> Result<SavedDiagnostics, String> {
     off_thread(Arc::clone(&state.backend), |b| {
         let bundle = b.collect_diagnostics()?;
         let name = std::path::Path::new(&bundle.filename)
@@ -846,7 +861,10 @@ async fn collect_diagnostics(state: TauriState<'_, AppState>) -> Result<String, 
         let path = dir.join(name);
         std::fs::write(&path, bundle.text.as_bytes())
             .map_err(|e| format!("could not write {}: {e}", path.display()))?;
-        Ok(path.to_string_lossy().into_owned())
+        Ok(SavedDiagnostics {
+            path: path.to_string_lossy().into_owned(),
+            text: bundle.text,
+        })
     })
     .await
 }
@@ -1045,6 +1063,7 @@ pub fn run() {
             crash::check_crash_report,
             crash::record_web_crash,
             crash::open_report_url,
+            crash::open_problem_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tenebra");

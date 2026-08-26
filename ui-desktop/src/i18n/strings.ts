@@ -144,6 +144,8 @@ export interface Strings {
     killSwitchHint: string;
     leakCheck: string;
     settings: string;
+    /** Quick action opening the report-a-problem flow. */
+    report: string;
   };
 
   /**
@@ -289,6 +291,37 @@ export interface Strings {
     /** ErrorBoundary fallback shown when the UI itself throws. */
     fallbackTitle: string;
     fallbackReload: string;
+  };
+
+  /**
+   * Reporting a problem by hand — the flow for the ordinary failure that never
+   * crashed anything, which is most of them. Unlike `crash.*` it sits behind no
+   * consent and no crash file: the report is assembled, shown in full, and only
+   * moves if the user copies it and opens the issue form themselves.
+   */
+  report: {
+    /** Entry-point label, shared by simple mode and the diagnostics panel. */
+    action: string;
+    /** Row hint in the diagnostics panel, next to the save-a-copy action. */
+    panelHint: string;
+    /** Modal heading. */
+    title: string;
+    /** The claim the whole flow has to earn: nothing has been sent. */
+    lead: string;
+    /** The three steps, in order. */
+    step1: string;
+    step2: string;
+    step3: string;
+    /** Placeholder in the report box while the bundle is being collected. */
+    building: string;
+    /** Prefix before the path of the untrimmed copy on disk. */
+    savedTo: string;
+    /** Shown instead when the core never answered and this is half a report. */
+    corePartial: string;
+    copy: string;
+    copied: string;
+    openIssue: string;
+    close: string;
   };
 
   home: {
@@ -871,6 +904,7 @@ const en: Strings = {
       "Block traffic that tries to bypass the tunnel; if the tunnel dies, restart it. Applies live; connects get rougher while armed.",
     leakCheck: "leak-check",
     settings: "settings",
+    report: "report a problem",
   },
   toast: {
     tunnelUp: "tunnel up",
@@ -940,6 +974,24 @@ const en: Strings = {
     reportClose: "Close",
     fallbackTitle: "Something went wrong",
     fallbackReload: "Reload",
+  },
+  report: {
+    action: "Report a problem",
+    panelHint:
+      "Builds the same report, shows it to you in full, and gives you a copy button and the issue form. Nothing is sent — you post it.",
+    title: "Report a problem",
+    lead: "Nothing has been sent. This report was put together on your machine, and it goes nowhere until you post it yourself.",
+    step1: "Copy the report.",
+    step2: "Open the issue form — it opens in your browser.",
+    step3: "Paste the report into the Logs field and say what went wrong.",
+    building: "Collecting…",
+    savedTo: "Full report saved to",
+    corePartial:
+      "The core didn't answer, so this report carries only what the app itself could see.",
+    copy: "Copy report",
+    copied: "Copied",
+    openIssue: "Open GitHub issue",
+    close: "Close",
   },
   home: {
     connect: "Connect",
@@ -1400,6 +1452,7 @@ const ru: Strings = {
       "Блокировать трафик в обход туннеля; при падении туннеля — перезапустить его. Применяется сразу; коннект с ним грубее.",
     leakCheck: "проверка",
     settings: "настройки",
+    report: "сообщить о проблеме",
   },
   toast: {
     tunnelUp: "туннель поднят",
@@ -1469,6 +1522,24 @@ const ru: Strings = {
     reportClose: "Закрыть",
     fallbackTitle: "Что-то пошло не так",
     fallbackReload: "Перезагрузить",
+  },
+  report: {
+    action: "Сообщить о проблеме",
+    panelHint:
+      "Собирает такой же отчёт, показывает его целиком и даёт кнопку копирования и форму issue. Ничего не отправляется — публикуете вы.",
+    title: "Сообщить о проблеме",
+    lead: "Ничего не отправлено. Отчёт собран на вашей машине и никуда не уйдёт, пока вы не опубликуете его сами.",
+    step1: "Скопируйте отчёт.",
+    step2: "Откройте форму issue — она откроется в браузере.",
+    step3: "Вставьте отчёт в поле Logs и опишите, что пошло не так.",
+    building: "Собираю…",
+    savedTo: "Полный отчёт сохранён в",
+    corePartial:
+      "Ядро не ответило, поэтому в отчёте только то, что видит само приложение.",
+    copy: "Копировать отчёт",
+    copied: "Скопировано",
+    openIssue: "Открыть issue на GitHub",
+    close: "Закрыть",
   },
   home: {
     connect: "Подключиться",
