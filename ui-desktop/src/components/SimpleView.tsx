@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import type {
   ConnectionState,
   Node,
@@ -45,6 +47,11 @@ interface SimpleViewProps {
   serviceChecking: boolean;
   /** Open the report-a-problem flow. */
   onReportProblem: () => void;
+  /**
+   * The app's own offer to report, when the checks below have twice said video
+   * isn't getting through. Built by the shell so both views raise the same one.
+   */
+  reportNudge?: ReactNode;
 }
 
 /**
@@ -75,6 +82,7 @@ export function SimpleView({
   serviceChecks,
   serviceChecking,
   onReportProblem,
+  reportNudge = null,
 }: SimpleViewProps) {
   const { t } = useI18n();
 
@@ -171,6 +179,10 @@ export function SimpleView({
             measured. The status word alone leaves a user watching a spinning
             YouTube with no way to say what is wrong. */}
         <ServiceChecks checks={serviceChecks} checking={serviceChecking} />
+
+        {/* Directly under the check that raised it, where the ✕ it is talking
+            about is on screen. */}
+        {reportNudge}
       </div>
 
       <div className="simple-pick">

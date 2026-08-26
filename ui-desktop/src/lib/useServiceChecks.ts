@@ -5,6 +5,13 @@ import { api, type ConnectionState, type ServiceCheck } from "../api";
 export interface ServiceChecksState {
   checks: ServiceCheck[];
   checking: boolean;
+  /**
+   * How many checks have finished this session, counting the ones that came
+   * back empty. A watcher that wants to reason across runs — "video has failed
+   * twice in a row" — needs to know when a new verdict has landed, and `checks`
+   * is a fresh array on every render whether or not anything was measured.
+   */
+  runs: number;
   /** Re-run the checks on demand. */
   refresh: () => void;
 }
@@ -23,6 +30,7 @@ export interface ServiceChecksState {
 export function useServiceChecks(phase: ConnectionState): ServiceChecksState {
   const [checks, setChecks] = useState<ServiceCheck[]>([]);
   const [checking, setChecking] = useState(false);
+  const [runs, setRuns] = useState(0);
   const inFlight = useRef(false);
 
   const run = useCallback(() => {
@@ -38,6 +46,7 @@ export function useServiceChecks(phase: ConnectionState): ServiceChecksState {
       .finally(() => {
         inFlight.current = false;
         setChecking(false);
+        setRuns((n) => n + 1);
       });
   }, []);
 
@@ -49,5 +58,5 @@ export function useServiceChecks(phase: ConnectionState): ServiceChecksState {
     setChecks([]);
   }, [phase, run]);
 
-  return { checks, checking, refresh: run };
+  return { checks, checking, runs, refresh: run };
 }

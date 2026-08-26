@@ -49,6 +49,19 @@ All notable changes to Tenebra are documented here. The format follows
   opens only on a second, separate click, and the URL it opens carries the version
   and the operating system this app reads for itself — never the report, and
   nothing the user typed.
+- **The app offers to report when video keeps failing.** The post-connect check
+  already knows when video isn't getting through — it is the same check that
+  draws the ✕ — and that knowledge went nowhere; whether it became a bug report
+  depended on the user working out that the project has an issue tracker. It now
+  offers the report flow itself, under the check that raised it.
+  Deliberately hard to trigger: two failing checks in a row, so a single flake
+  stays quiet, only while the tunnel is up, and at most once a day. The daily
+  clock starts when the prompt appears rather than when it is dismissed —
+  otherwise an ignored prompt returns on every reconnect, and a prompt that
+  appears whenever it is still right is one people learn to click away without
+  reading, which costs exactly the day it matters. Dismissing it takes one click
+  and nothing with it: the offer is a button, and the report behind it is still
+  assembled locally and still filed by hand.
 
 ### Changed
 - **A strategy is measured against all five destinations at once.** Each control

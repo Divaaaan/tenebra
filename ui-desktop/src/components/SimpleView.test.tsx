@@ -209,4 +209,20 @@ describe("SimpleView", () => {
 
     expect(props.onReportProblem).toHaveBeenCalledTimes(1);
   });
+
+  // The app's own offer to report is built by the shell so both views raise the
+  // same one; this screen gives it a place under the checks that provoked it.
+  it("makes room for the shell's report offer beside the checks", () => {
+    setup({ reportNudge: <p>video is not getting through</p> });
+
+    expect(
+      screen.getByText("video is not getting through"),
+    ).toBeInTheDocument();
+  });
+
+  it("draws nothing extra when there is no offer to make", () => {
+    const { container } = setup();
+
+    expect(container.querySelector(".report-nudge")).toBeNull();
+  });
 });

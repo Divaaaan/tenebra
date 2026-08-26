@@ -48,6 +48,55 @@
   color: var(--warn-soft);
 }
 
+/* ── the proactive nudge — video failed its check twice running ──
+   Same quiet bordered row as the other banners in the strip: it is a offer, not
+   an alarm, and the app raising it unprompted is reason to be more restrained
+   here, not less. */
+.report-nudge {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding: var(--sp-2) 22px;
+  border-bottom: var(--bw) solid var(--line);
+  font-size: var(--fs-label);
+}
+.report-nudge-text {
+  color: var(--warn-soft);
+}
+.report-nudge-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-shrink: 0;
+}
+.report-nudge-actions button {
+  display: inline-flex;
+  gap: 6px;
+  white-space: nowrap;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  transition: color var(--t-fast);
+}
+.report-nudge-actions .report-nudge-primary {
+  color: var(--signal);
+}
+.report-nudge-actions button:hover {
+  color: var(--signal);
+}
+
+/* In simple mode it sits under the service checks rather than in a banner strip
+   there is none of, so it needs its own edges. */
+.simple .report-nudge {
+  max-width: min(460px, 100%);
+  border: var(--bw) solid var(--line);
+  padding: var(--sp-2) var(--sp-3);
+  flex-wrap: wrap;
+  justify-content: center;
+  text-align: center;
+}
+
 /* ── simple mode's footer row ──
    Report and the way back to the full shell, side by side. Both are quiet by
    design: neither should compete with the one big button above them. */

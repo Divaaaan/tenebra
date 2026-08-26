@@ -12,6 +12,7 @@ import { CrashConsentBanner } from "./components/CrashConsentBanner";
 import { CrashReportBanner } from "./components/CrashReportBanner";
 import { CrashReportModal } from "./components/CrashReportModal";
 import { ProblemReportModal } from "./components/ProblemReportModal";
+import { ReportNudge } from "./components/ReportNudge";
 import { DeepLinkConfirm } from "./components/DeepLinkConfirm";
 import { TunConflictConfirm } from "./components/TunConflictConfirm";
 import { ProfilesScreen } from "./screens/ProfilesScreen";
@@ -39,6 +40,7 @@ import { useNodeCheck } from "./lib/useNodeCheck";
 import { usePresence } from "./lib/usePresence";
 import { useNodePings } from "./lib/useNodePings";
 import { useServiceChecks } from "./lib/useServiceChecks";
+import { useReportNudge } from "./lib/useReportNudge";
 import { useSessionClock, formatUptime } from "./lib/useSessionClock";
 import { useTrafficHistory } from "./lib/useTrafficHistory";
 import { useTunOverrideAsk } from "./lib/useTunOverrideAsk";
@@ -267,6 +269,10 @@ export function App() {
   // And, once connected, whether the three things the user came for actually
   // work: video, voice, game latency.
   const services = useServiceChecks(phase);
+  // The one thing this app says first. Video failing its check twice running is
+  // worth interrupting over: it is what most people connected for, and the last
+  // time it broke for everyone nobody said a word for four days.
+  const reportNudge = useReportNudge(phase, services.checks, services.runs);
   const sessionSecs = useSessionClock(phase);
   const history = useTrafficHistory(phase, traffic.downRate, traffic.upRate);
 
@@ -679,8 +685,18 @@ export function App() {
     />
   ) : null;
 
-  // Built once and rendered by both views, for the reason above it: a surface
+  // Built once and rendered by both views, for the reason above them: a surface
   // only one branch draws is a surface the other branch silently loses.
+  const nudge = reportNudge.visible ? (
+    <ReportNudge
+      onReport={() => {
+        reportNudge.dismiss();
+        problem.open();
+      }}
+      onDismiss={reportNudge.dismiss}
+    />
+  ) : null;
+
   const problemReport = problemReportShown.value ? (
     <ProblemReportModal
       report={problem.report}
@@ -717,6 +733,7 @@ export function App() {
           serviceChecks={services.checks}
           serviceChecking={services.checking}
           onReportProblem={problem.open}
+          reportNudge={nudge}
         />
         {tunConflictPrompt}
         {problemReport}
@@ -783,6 +800,8 @@ export function App() {
           onDismiss={crash.dismiss}
         />
       )}
+
+      {nudge}
 
       {/* The one setup step lives on the main screen, not behind a menu: what a
           first-run user lacked was never fewer controls, it was this being

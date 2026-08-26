@@ -318,6 +318,13 @@ export interface Strings {
     savedTo: string;
     /** Shown instead when the core never answered and this is half a report. */
     corePartial: string;
+    /**
+     * The one prompt the app raises on its own: the post-connect check has said
+     * twice running that video isn't getting through. Names the failure — the
+     * user knows something is wrong, and asking them costs the prompt its point.
+     */
+    nudgeText: string;
+    nudgeDismiss: string;
     copy: string;
     copied: string;
     openIssue: string;
@@ -988,6 +995,8 @@ const en: Strings = {
     savedTo: "Full report saved to",
     corePartial:
       "The core didn't answer, so this report carries only what the app itself could see.",
+    nudgeText: "Video isn't getting through the tunnel.",
+    nudgeDismiss: "Not now",
     copy: "Copy report",
     copied: "Copied",
     openIssue: "Open GitHub issue",
@@ -1536,6 +1545,8 @@ const ru: Strings = {
     savedTo: "Полный отчёт сохранён в",
     corePartial:
       "Ядро не ответило, поэтому в отчёте только то, что видит само приложение.",
+    nudgeText: "Видео не проходит через туннель.",
+    nudgeDismiss: "Не сейчас",
     copy: "Копировать отчёт",
     copied: "Скопировано",
     openIssue: "Открыть issue на GitHub",
