@@ -1324,6 +1324,101 @@ describe("SettingsScreen", () => {
       ).toBeInTheDocument();
     });
 
+    // The check runs on a schedule of its own now (lib/updateSchedule), so this
+    // row is the only place the schedule is visible. A client that has quietly
+    // stopped reaching the release host looks exactly like one with nothing to
+    // install unless the row says when it last managed to ask.
+    it("says when the client last checked", async () => {
+      localStorage.setItem(
+        "tenebra.updateLastCheck",
+        String(Date.parse("2026-08-24T14:03:00Z")),
+      );
+
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(
+        await screen.findByText("Last checked Aug 24, 14:03"),
+      ).toBeInTheDocument();
+    });
+
+    it("says so when the last check did not get an answer", async () => {
+      localStorage.setItem(
+        "tenebra.updateLastCheck",
+        String(Date.parse("2026-08-24T14:03:00Z")),
+      );
+      localStorage.setItem("tenebra.updateFailures", "2");
+
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(
+        await screen.findByText("Last check failed Aug 24, 14:03"),
+      ).toBeInTheDocument();
+    });
+
+    it("says nothing has been checked yet on a fresh install", async () => {
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      expect(await screen.findByText("Not checked yet")).toBeInTheDocument();
+    });
+
+    it("records a manual check against the same schedule", async () => {
+      // Whoever asked for it, a check that answered is a check: it clears the
+      // failure run behind the "couldn't check" banner and pushes the next
+      // scheduled one out by a full interval.
+      localStorage.setItem("tenebra.updateFailures", "4");
+      vi.mocked(check).mockResolvedValue(null);
+
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(
+        screen.getByRole("button", { name: "Check for updates" }),
+      );
+      await screen.findByText("You're on the latest version.");
+
+      expect(localStorage.getItem("tenebra.updateFailures")).toBe("0");
+      expect(localStorage.getItem("tenebra.updateLastCheck")).not.toBeNull();
+    });
+
+    it("counts a failed manual check toward the same run", async () => {
+      localStorage.setItem("tenebra.updateFailures", "1");
+      vi.mocked(check).mockRejectedValue(new Error("offline"));
+
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(
+        screen.getByRole("button", { name: "Check for updates" }),
+      );
+      await screen.findByText("Couldn't check for updates. Try again later.");
+
+      expect(localStorage.getItem("tenebra.updateFailures")).toBe("2");
+    });
+
+    it("keeps the updater's own words out of the hint but within reach", async () => {
+      vi.mocked(check).mockRejectedValue(new Error("dns lookup failed"));
+
+      const tenebra = makeTenebra({ state: { state: "idle" } as State });
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsScreen tenebra={tenebra} />);
+
+      await user.click(
+        screen.getByRole("button", { name: "Check for updates" }),
+      );
+
+      const hint = await screen.findByText(
+        "Couldn't check for updates. Try again later.",
+      );
+      // The sentence the user reads is localized; the raw rejection is the
+      // tooltip, for whoever has to work out why.
+      expect(hint).toHaveAttribute("title", "Error: dns lookup failed");
+    });
+
     it("surfaces an install failure as the error hint and never relaunches", async () => {
       const update = {
         version: "9.9.9",

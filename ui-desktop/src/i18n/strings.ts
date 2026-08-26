@@ -182,13 +182,24 @@ export interface Strings {
     dismiss: string;
   };
 
-  /** Update banner shown when the launch check finds a newer release. */
+  /** Update banner shown when a scheduled check finds a newer release. */
   update: {
     /** "{version}" interpolated by the caller. */
     available: string;
     install: string;
     later: string;
     downloading: string;
+    /**
+     * The other strip: no check has got an answer out of the release host in
+     * the best part of a day, so this copy may be sitting on a superseded
+     * build without knowing it. Deliberately not an error — the cause is
+     * usually the network, and a single failure says nothing at all.
+     */
+    stalled: string;
+    /** The stalled strip's action: check again right now. */
+    checkNow: string;
+    /** The stalled strip's other action: hide it for this run. */
+    hide: string;
     /**
      * Shown in place of `available` when an auto-install is held back because a
      * tunnel is up: it applies on its own once the tunnel goes down, so it never
@@ -480,6 +491,17 @@ export interface Strings {
     updatesError: string;
     /** "Current version {version}", shown while idle. */
     updatesCurrent: string;
+    /**
+     * The second line of the updates row, always present on an install that
+     * can update itself: when the client last asked the release host, and
+     * whether it got an answer. "{when}" interpolated by the caller. The check
+     * runs on its own now, so this is the only place the schedule is visible —
+     * a client that has quietly stopped reaching GitHub says so here before
+     * the failures pile up far enough for the banner.
+     */
+    updatesLastChecked: string;
+    updatesLastCheckFailed: string;
+    updatesNeverChecked: string;
     /**
      * Shown in place of the whole updater flow when the app cannot replace
      * itself — a Linux install that came from a package manager rather than an
@@ -893,6 +915,10 @@ const en: Strings = {
     install: "Update",
     later: "Later",
     downloading: "Downloading update…",
+    stalled:
+      "Updates haven't been checked in a while — this copy may be out of date",
+    checkNow: "Check now",
+    hide: "Hide",
     deferred: "Update ready — installs after you disconnect",
     installNow: "Install now",
     confirmTitle: "Install update now?",
@@ -1095,6 +1121,9 @@ const en: Strings = {
     updatesInstalling: "Installing…",
     updatesError: "Couldn't check for updates. Try again later.",
     updatesCurrent: "Current version {version}",
+    updatesLastChecked: "Last checked {when}",
+    updatesLastCheckFailed: "Last check failed {when}",
+    updatesNeverChecked: "Not checked yet",
     updatesPackaged:
       "This copy was installed by your package manager — update Tenebra through it.",
     autoInstall: "Install updates automatically",
@@ -1422,6 +1451,9 @@ const ru: Strings = {
     install: "Обновить",
     later: "Позже",
     downloading: "Загрузка обновления…",
+    stalled: "Обновления давно не проверялись — версия может быть устаревшей",
+    checkNow: "Проверить сейчас",
+    hide: "Скрыть",
     deferred: "Обновление готово — установится после отключения",
     installNow: "Установить сейчас",
     confirmTitle: "Установить обновление сейчас?",
@@ -1626,6 +1658,9 @@ const ru: Strings = {
     updatesInstalling: "Устанавливаю…",
     updatesError: "Не удалось проверить обновление. Попробуйте позже.",
     updatesCurrent: "Текущая версия {version}",
+    updatesLastChecked: "Последняя проверка: {when}",
+    updatesLastCheckFailed: "Последняя проверка не удалась: {when}",
+    updatesNeverChecked: "Ещё не проверялось",
     updatesPackaged:
       "Эта копия установлена пакетным менеджером — обновляйте Tenebra через него.",
     autoInstall: "Устанавливать обновления автоматически",

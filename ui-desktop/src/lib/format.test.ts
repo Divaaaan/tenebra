@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   formatBytes,
   formatDate,
+  formatDateTime,
   formatExpiry,
   formatTime,
   formatTrafficUsage,
@@ -60,6 +61,21 @@ describe("formatDate", () => {
     // ru-RU short month for March; assert the year travels through.
     expect(ru).toMatch(/2026/);
     expect(ru).not.toBe(en);
+  });
+});
+
+describe("formatDateTime", () => {
+  it("returns an em dash when there is no reading to show", () => {
+    expect(formatDateTime(null, "en")).toBe("—");
+    expect(formatDateTime(Number.NaN, "en")).toBe("—");
+  });
+
+  it("renders day and 24-hour time, localized", () => {
+    const at = Date.parse("2026-08-24T14:03:00Z");
+
+    // The suite pins TZ to UTC, so the hour is the one written above.
+    expect(formatDateTime(at, "en")).toBe("Aug 24, 14:03");
+    expect(formatDateTime(at, "ru")).toBe("24 авг., 14:03");
   });
 });
 

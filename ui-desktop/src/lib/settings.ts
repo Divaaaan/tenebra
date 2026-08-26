@@ -6,6 +6,8 @@
 const AUTO_FASTEST_KEY = "tenebra.autoFastest";
 const AUTO_INSTALL_UPDATES_KEY = "tenebra.autoInstallUpdates";
 const UPDATE_CHANNEL_KEY = "tenebra.updateChannel";
+const UPDATE_LAST_CHECK_KEY = "tenebra.updateLastCheck";
+const UPDATE_FAILURES_KEY = "tenebra.updateFailures";
 
 /** The release channel the updater follows. */
 export type UpdateChannel = "stable" | "beta";
@@ -55,7 +57,7 @@ export function setAutoFastest(on: boolean): void {
 }
 
 /**
- * Whether an update found by the launch check installs on its own instead of
+ * Whether an update found by a scheduled check installs on its own instead of
  * being offered in the banner. Off unless explicitly turned on: installing
  * restarts the app, so it has to be an opt-in.
  */
@@ -68,7 +70,7 @@ export function setAutoInstallUpdates(on: boolean): void {
 }
 
 /**
- * The release channel the launch check and the manual check follow. "stable"
+ * The release channel the scheduled and manual checks follow. "stable"
  * (the default) offers only tested releases; "beta" also offers prereleases,
  * and always at least the newest stable, so a beta user is never held back from
  * a shipped release. Renderer-owned like the toggles above: the updater reads
@@ -82,4 +84,42 @@ export function getUpdateChannel(): UpdateChannel {
 
 export function setUpdateChannel(channel: UpdateChannel): void {
   localStorage.setItem(UPDATE_CHANNEL_KEY, channel);
+}
+
+/**
+ * Wall-clock milliseconds of the last update check this install started, or
+ * null when it has never run one. The schedule is decided by comparing this
+ * against the current time rather than by counting timer ticks (see
+ * lib/updateSchedule), so it has to outlive the process that wrote it.
+ *
+ * Any value that isn't a positive finite number — unset, or a stale/garbage
+ * entry — resolves to null, which reads as "never checked" and simply makes a
+ * check due. A stamp *ahead* of now is left alone here and handled by
+ * isCheckDue, which treats it as due for the same reason.
+ */
+export function getUpdateLastCheck(): number | null {
+  const raw = Number(localStorage.getItem(UPDATE_LAST_CHECK_KEY));
+  return Number.isFinite(raw) && raw > 0 ? raw : null;
+}
+
+export function setUpdateLastCheck(at: number): void {
+  localStorage.setItem(UPDATE_LAST_CHECK_KEY, String(at));
+}
+
+/**
+ * How many update checks have failed back to back, counted across runs: a
+ * client that cannot reach the release host is usually one that has been
+ * offline since before it was last started, so a per-run counter would reset
+ * exactly when it mattered. Cleared by the first check that answers.
+ *
+ * Anything that isn't a positive integer resolves to 0, so a corrupt entry can
+ * never pin the "couldn't check" notice on screen.
+ */
+export function getUpdateFailures(): number {
+  const raw = Number(localStorage.getItem(UPDATE_FAILURES_KEY));
+  return Number.isInteger(raw) && raw > 0 ? raw : 0;
+}
+
+export function setUpdateFailures(count: number): void {
+  localStorage.setItem(UPDATE_FAILURES_KEY, String(count));
 }

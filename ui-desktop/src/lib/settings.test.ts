@@ -2,13 +2,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   getUpdateChannel,
+  getUpdateFailures,
+  getUpdateLastCheck,
   migrateLegacyAutoconnect,
   setUpdateChannel,
+  setUpdateFailures,
+  setUpdateLastCheck,
 } from "./settings";
 
 const AUTOCONNECT_KEY = "tenebra.autoconnect";
 const LAST_PROFILE_KEY = "tenebra.lastProfile";
 const UPDATE_CHANNEL_KEY = "tenebra.updateChannel";
+const UPDATE_LAST_CHECK_KEY = "tenebra.updateLastCheck";
+const UPDATE_FAILURES_KEY = "tenebra.updateFailures";
 
 describe("migrateLegacyAutoconnect", () => {
   beforeEach(() => {
@@ -103,6 +109,54 @@ describe("update channel", () => {
     for (const value of ["Beta", "BETA", "nightly", "1", ""]) {
       localStorage.setItem(UPDATE_CHANNEL_KEY, value);
       expect(getUpdateChannel()).toBe("stable");
+    }
+  });
+});
+
+// The schedule's own two values. They are read on every beat and after every
+// restart, so what a corrupt entry resolves to is the whole of the story: a
+// junk timestamp must not wedge the client on its installed version, and a
+// junk counter must not pin a notice on screen that nothing can clear.
+describe("update check bookkeeping", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("reports no last check before the first one", () => {
+    expect(getUpdateLastCheck()).toBeNull();
+  });
+
+  it("round-trips a reading of the clock", () => {
+    const at = Date.parse("2026-08-24T12:00:00Z");
+    setUpdateLastCheck(at);
+
+    expect(getUpdateLastCheck()).toBe(at);
+  });
+
+  it("reads a garbage timestamp as never checked", () => {
+    // Never-checked is the safe resolution: it makes a check due now, which
+    // rewrites the entry with a real reading.
+    for (const value of ["", "soon", "NaN", "0", "-1", "{}"]) {
+      localStorage.setItem(UPDATE_LAST_CHECK_KEY, value);
+      expect(getUpdateLastCheck()).toBeNull();
+    }
+  });
+
+  it("starts the failure run at zero", () => {
+    expect(getUpdateFailures()).toBe(0);
+  });
+
+  it("round-trips a run of failures", () => {
+    setUpdateFailures(3);
+
+    expect(localStorage.getItem(UPDATE_FAILURES_KEY)).toBe("3");
+    expect(getUpdateFailures()).toBe(3);
+  });
+
+  it("reads a garbage counter as no failures at all", () => {
+    for (const value of ["", "lots", "-2", "2.5", "true"]) {
+      localStorage.setItem(UPDATE_FAILURES_KEY, value);
+      expect(getUpdateFailures()).toBe(0);
     }
   });
 });
