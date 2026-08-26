@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { checkForUpdate, inAppUpdatesSupported, installUpdate } from "./updates";
+import {
+  checkForUpdate,
+  inAppUpdatesSupported,
+  installUpdate,
+  notifyUpdateAvailable,
+} from "./updates";
 import {
   check,
   type DownloadEvent,
@@ -214,5 +219,28 @@ describe("inAppUpdatesSupported", () => {
     // every build had before the question existed.
     vi.mocked(invoke).mockRejectedValue(new Error("no such command"));
     await expect(inAppUpdatesSupported()).resolves.toBe(true);
+  });
+});
+
+// The toast for a window minimised to the tray. The shell writes the wording
+// (a system notification is drawn outside the webview, so it is translated
+// where the tray labels are); this side only says which release.
+describe("notifyUpdateAvailable", () => {
+  it("hands the release to the shell", async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined);
+
+    await notifyUpdateAvailable("0.5.6");
+
+    expect(invoke).toHaveBeenCalledWith("notify_update_available", {
+      version: "0.5.6",
+    });
+  });
+
+  it("swallows a shell that has no such command", async () => {
+    // An older shell, a browser preview, or an OS with notifications off. None
+    // of them is a reason to fail the check that produced the release.
+    vi.mocked(invoke).mockRejectedValue(new Error("no such command"));
+
+    await expect(notifyUpdateAvailable("0.5.6")).resolves.toBeUndefined();
   });
 });

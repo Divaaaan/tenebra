@@ -12,6 +12,23 @@ All notable changes to Tenebra are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **A release found while the window is hidden now says so where you can see
+  it.** With automatic installation off — the default, because installing
+  restarts the app — a found release is offered in a strip inside the window,
+  which for a client minimised to the tray is a notice posted to an empty room.
+  A desktop notification naming the version is raised instead, once per release
+  and only while the window is actually hidden: an open window has the strip in
+  it already.
+- **Tenebra says when it has stopped being able to check for updates.** A single
+  failed check stays as silent as it always was — the usual cause is a closed lid
+  or a network that is not there yet, and an offline launch should look exactly
+  like an up-to-date one. But a run of them means this copy has heard nothing
+  from the release host in the best part of a day, and from the inside that is
+  indistinguishable from having nothing to install. After three in a row a quiet
+  strip says so, with a check-now action and a dismiss; Settings now also carries
+  the plain fact of when the client last asked and whether it got an answer, and
+  reports a failed check in words rather than passing the updater's own error
+  string through to the screen.
 - **The bypass strategy is remembered per network.** It was remembered in one
   setting for the whole machine, so a laptop carried from home to a cafe started
   the strategy that won at home — on a network whose DPI may fall for something
@@ -31,6 +48,26 @@ All notable changes to Tenebra are documented here. The format follows
   choice the user made, and deleting it costs one pick.
 
 ### Changed
+- **Updates now reach a client that is left running.** The check ran once, when
+  the window mounted, and never again: for anyone who starts Tenebra, connects
+  and leaves it in the tray — which is how a VPN client is meant to be used —
+  that was a check at install time and nothing after it. Five patches shipped in
+  a single day in August and not one of them reached those machines. It now runs
+  on a schedule for as long as the app is up.
+  The schedule is decided against the wall clock rather than by a long timer,
+  because nothing keeps a long timer honest on a desktop: a machine that
+  suspends loses every timer it holds for the length of the sleep, so an
+  interval armed before an eight-hour sleep would fire eight hours after the
+  wake rather than on it, and a hidden WebView2 window has its background timers
+  coalesced into minute buckets. So a short beat asks how long it has actually
+  been since the last check and does nothing the rest of the time; a laptop that
+  wakes up overdue checks within minutes of the lid opening. The timestamp is
+  stored, so it also survives a restart, and a stamp that turns up in the future
+  — a clock moved backwards, a machine with a dead RTC — counts as due rather
+  than parking the client on its installed version until the date catches up.
+  None of the rules around the check moved: an install that a package manager
+  owns still checks nothing at all, a live tunnel is still never torn down for an
+  update, and auto-install still waits for the tunnel to drop.
 - **A strategy is measured against all five destinations at once.** Each control
   target was asked in turn, and a blocked destination does not answer "no" — it
   hangs until the eight-second budget expires. Five of them made every strategy

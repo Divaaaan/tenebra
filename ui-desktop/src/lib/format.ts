@@ -41,6 +41,27 @@ export function formatDate(iso: string | undefined, lang: Language): string {
   });
 }
 
+/**
+ * A stored wall-clock reading as a short localized date and time, e.g.
+ * "Aug 24, 14:03". Used where the reading is a fact about the app's own
+ * bookkeeping (when it last checked for updates) rather than a date in a
+ * subscription: the day alone is too coarse for something that happens several
+ * times a day, and the year is noise for something that happened this week.
+ * An absent or unusable reading gives an em dash, like formatDate.
+ */
+export function formatDateTime(at: number | null, lang: Language): string {
+  if (at === null || !Number.isFinite(at)) {
+    return "—";
+  }
+  return new Date(at).toLocaleString(lang === "ru" ? "ru-RU" : "en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 /** Wall-clock time for a log line, e.g. "14:03:21". */
 export function formatTime(date: Date, lang: Language): string {
   return date.toLocaleTimeString(lang === "ru" ? "ru-RU" : "en-US", {

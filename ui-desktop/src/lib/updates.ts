@@ -86,6 +86,27 @@ async function checkChannelUpdate(
   return metadata ? new Update(metadata) : null;
 }
 
+/** Ask the shell to raise a desktop notification for a release the periodic
+ *  check found. The caller decides *whether* to: this is for the window nobody
+ *  is looking at, where the banner is drawn into a hidden webview and reaches
+ *  no one.
+ *
+ *  The wording is built in Rust rather than passed from here, the same way the
+ *  connection-state toasts are (see `transition_notice` in src-tauri/src/lib.rs):
+ *  a system notification is drawn outside the webview, so the shell — which
+ *  already tracks the active language for the tray — owns its strings.
+ *
+ *  Fire and forget. A failed call means no backend answered (an older shell, a
+ *  browser preview, a test host) or the OS refused the toast; neither is worth
+ *  disturbing an update check over. */
+export async function notifyUpdateAvailable(version: string): Promise<void> {
+  try {
+    await invoke("notify_update_available", { version });
+  } catch {
+    // No shell, or notifications are off at the OS level.
+  }
+}
+
 /** Download the pending update — reporting integer percent when the server
  *  sends a content length, otherwise `null` — install it, and relaunch. The
  *  process exits during `relaunch`, so on success this never returns. */

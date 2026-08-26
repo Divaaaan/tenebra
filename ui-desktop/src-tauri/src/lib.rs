@@ -1039,6 +1039,7 @@ pub fn run() {
             set_zapret_auto_update,
             quit_app,
             set_language,
+            notify_update_available,
             take_launch_deep_links,
             update_channel::check_update_for_channel,
             update_channel::in_app_updates_supported,
@@ -1238,6 +1239,39 @@ fn transition_notice(
             Lang::Ru => ("Отключено", "Туннель выключен.".to_string()),
         }),
         _ => None,
+    }
+}
+
+/// Raise a desktop notification for a release the front end's scheduled check
+/// found. Called only when the window is hidden: the update banner is drawn
+/// inside the webview, so for the many people who leave the client in the tray
+/// and never open it, the banner announces the release to an empty room. That
+/// is the one case that made a periodic check worth having.
+///
+/// The wording is built here rather than passed in, the same way the
+/// connection toasts are: a system notification is drawn outside the webview,
+/// so — like the tray labels — the shell translates it itself. A missing
+/// notification (permission denied, headless test host) is non-fatal; the
+/// banner is still waiting behind the window.
+#[tauri::command]
+fn notify_update_available(app: AppHandle, version: String) {
+    let (title, body) = update_notice(current_lang(&app), &version);
+    let _ = app.notification().builder().title(title).body(body).show();
+}
+
+/// The desktop notification announcing an available release, as
+/// `(title, body)`. Pure so the wording is unit-tested without a Tauri app or a
+/// real toast, like [`transition_notice`].
+fn update_notice(lang: Lang, version: &str) -> (&'static str, String) {
+    match lang {
+        Lang::En => (
+            "Update available",
+            format!("Tenebra {version} is ready to install. Open Tenebra to update."),
+        ),
+        Lang::Ru => (
+            "Доступно обновление",
+            format!("Tenebra {version} готова к установке. Откройте Tenebra, чтобы обновить."),
+        ),
     }
 }
 
@@ -1528,5 +1562,31 @@ mod tests {
         armed.kill_switch = Some(true);
         let killed = transition_notice(Lang::Ru, Some(ConnectionState::Connected), &armed);
         assert_eq!(killed.map(|(t, _)| t), Some("Сработал kill-switch"));
+    }
+
+    #[test]
+    fn update_notice_names_the_release() {
+        let (title, body) = update_notice(Lang::En, "0.5.6");
+        assert_eq!(title, "Update available");
+        assert!(body.contains("0.5.6"), "body was {body}");
+    }
+
+    #[test]
+    fn update_notice_is_localized() {
+        let (title, body) = update_notice(Lang::Ru, "0.5.6");
+        assert_eq!(title, "Доступно обновление");
+        assert!(body.contains("0.5.6"), "body was {body}");
+        assert_ne!(body, update_notice(Lang::En, "0.5.6").1);
+    }
+
+    /// The toast fires on a window nobody is looking at, so it has to say what
+    /// to do about it rather than only that something happened — there is no
+    /// banner in view to read next.
+    #[test]
+    fn update_notice_says_what_to_do() {
+        for lang in [Lang::En, Lang::Ru] {
+            let (_, body) = update_notice(lang, "0.5.6");
+            assert!(body.contains("Tenebra"), "body was {body}");
+        }
     }
 }

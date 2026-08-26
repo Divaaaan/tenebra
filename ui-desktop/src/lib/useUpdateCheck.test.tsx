@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StrictMode } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 
@@ -7,18 +7,38 @@ import {
   checkForUpdate,
   inAppUpdatesSupported,
   installUpdate,
+  notifyUpdateAvailable,
 } from "./updates";
+import { getUpdateChannel, setUpdateChannel } from "./settings";
+import { UPDATE_CHECK_INTERVAL_MS, UPDATE_PULSE_MS } from "./updateSchedule";
 import type { ConnectionState } from "../api";
 import type { Update } from "@tauri-apps/plugin-updater";
 
 // The hook drives the whole launch flow through these calls; stub the module so
 // no test touches the updater plugin or performs a real download. tunnelBusy is
-// left real (from ./tunnel) — the gate logic is what we exercise.
+// left real (from ./tunnel) — the gate logic is what we exercise. So is
+// ./settings: the schedule's timestamp and failure counter are ordinary
+// localStorage, and a stub would hide the very thing that has to survive a
+// restart.
 vi.mock("./updates", () => ({
   checkForUpdate: vi.fn(),
   inAppUpdatesSupported: vi.fn(),
   installUpdate: vi.fn(),
+  notifyUpdateAvailable: vi.fn(),
 }));
+
+/**
+ * Report the window as minimised to the tray, the way a Tauri window hidden by
+ * the close handler reports itself. jsdom answers "visible" from a prototype
+ * getter, so shadow it with an own property; the suite's afterEach drops that
+ * again.
+ */
+function hideWindow() {
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    get: () => "hidden",
+  });
+}
 
 // Only the version is read off the handle before it is passed back to
 // installUpdate, so a bare object stands in for the plugin's Update.
@@ -35,9 +55,17 @@ describe("useUpdateCheck", () => {
     vi.mocked(inAppUpdatesSupported).mockResolvedValue(true);
   });
 
+  afterEach(() => {
+    // Undo a hideWindow() and any suite that reached for fake timers, here
+    // rather than at the end of the test bodies: an assertion that fails half
+    // way through must not leak either into the next test.
+    delete (document as { visibilityState?: unknown }).visibilityState;
+    vi.useRealTimers();
+  });
+
   it("does not even check on an install that cannot replace itself", async () => {
     // A Linux copy owned by a package manager: the banner's only action would
-    // fail, so the launch check is skipped outright and nothing is offered.
+    // fail, so the check is skipped outright and nothing is offered.
     vi.mocked(inAppUpdatesSupported).mockResolvedValue(false);
     vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
 
@@ -102,9 +130,12 @@ describe("useUpdateCheck", () => {
     act(() => result.current.dismiss());
 
     expect(result.current.available).toBeNull();
-    // "Later" means this run only: nothing is written, so the next launch
-    // offers the same release again.
-    expect(localStorage.length).toBe(0);
+    // "Later" means this run only: the schedule's own bookkeeping is the whole
+    // of what gets written, so the next launch offers the same release again.
+    expect(Object.keys(localStorage).sort()).toEqual([
+      "tenebra.updateFailures",
+      "tenebra.updateLastCheck",
+    ]);
   });
 
   it("installs on the banner action and reports download progress", async () => {
@@ -271,6 +302,313 @@ describe("useUpdateCheck", () => {
       await waitFor(() =>
         expect(installUpdate).toHaveBeenCalledWith(update, expect.any(Function)),
       );
+    });
+  });
+
+  // The schedule. A client parked in the tray never remounts this hook, so a
+  // check that only ran at mount ran once per install — days on a machine that
+  // is only ever woken and slept, across which every patch shipped in between
+  // went unseen. The heartbeat decides on the wall clock, so these move the
+  // clock rather than counting ticks.
+  describe("schedule", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-08-24T12:00:00Z"));
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** Advance both clocks and let every promise the beat started settle. */
+    async function beat(ms = 0) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+    }
+
+    it("checks again once the interval has passed", async () => {
+      vi.mocked(checkForUpdate).mockResolvedValue(null);
+
+      renderHook(() => useUpdateCheck("idle"));
+
+      await beat();
+      expect(checkForUpdate).toHaveBeenCalledTimes(1);
+
+      await beat(UPDATE_CHECK_INTERVAL_MS);
+      expect(checkForUpdate).toHaveBeenCalledTimes(2);
+    });
+
+    it("leaves the release host alone in between", async () => {
+      vi.mocked(checkForUpdate).mockResolvedValue(null);
+
+      renderHook(() => useUpdateCheck("idle"));
+      await beat();
+
+      // Every beat in the interval asks the clock and finds nothing to do; the
+      // beat is a comparison, not a request.
+      await beat(UPDATE_CHECK_INTERVAL_MS - UPDATE_PULSE_MS);
+      expect(checkForUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it("checks on the first beat after a long sleep", async () => {
+      vi.mocked(checkForUpdate).mockResolvedValue(null);
+
+      renderHook(() => useUpdateCheck("idle"));
+      await beat();
+      expect(checkForUpdate).toHaveBeenCalledTimes(1);
+
+      // Suspend: the machine is out for eight hours, so no timer fires and the
+      // slept time is gone from every one of them — moving the system clock
+      // without ticking is exactly that. A plain interval would now wait out
+      // its full period; the wall-clock comparison sees the overdue check on
+      // the very next beat.
+      vi.setSystemTime(new Date("2026-08-24T20:00:00Z"));
+      await beat(UPDATE_PULSE_MS);
+      expect(checkForUpdate).toHaveBeenCalledTimes(2);
+    });
+
+    it("picks a channel switch up on the next check", async () => {
+      // checkForUpdate reads the channel when it is called, so a switch needs
+      // no plumbing of its own — but only as long as a later check happens.
+      const asked: string[] = [];
+      vi.mocked(checkForUpdate).mockImplementation(() => {
+        asked.push(getUpdateChannel());
+        return Promise.resolve(null);
+      });
+
+      renderHook(() => useUpdateCheck("idle"));
+      await beat();
+      expect(asked).toEqual(["stable"]);
+
+      setUpdateChannel("beta");
+      await beat(UPDATE_CHECK_INTERVAL_MS);
+      expect(asked).toEqual(["stable", "beta"]);
+    });
+
+    it("never checks on an install that cannot replace itself", async () => {
+      // A Linux copy owned by a package manager, left running for a day: the
+      // schedule must not turn a skipped check into 96 skipped checks, and the
+      // one question it does ask is asked once.
+      vi.mocked(inAppUpdatesSupported).mockResolvedValue(false);
+      vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
+
+      const { result } = renderHook(() => useUpdateCheck("idle"));
+      await beat();
+      await beat(24 * 60 * 60 * 1000);
+
+      expect(checkForUpdate).not.toHaveBeenCalled();
+      expect(inAppUpdatesSupported).toHaveBeenCalledTimes(1);
+      expect(result.current.available).toBeNull();
+      expect(result.current.stalled).toBe(false);
+    });
+
+    it("offers a release found by a later check, not just the first", async () => {
+      vi.mocked(checkForUpdate).mockResolvedValueOnce(null);
+      vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate("0.5.6"));
+
+      const { result } = renderHook(() => useUpdateCheck("idle"));
+      await beat();
+      expect(result.current.available).toBeNull();
+
+      await beat(UPDATE_CHECK_INTERVAL_MS);
+      expect(result.current.available).toBe("0.5.6");
+    });
+
+    it("re-arms the deferred install for a second release", async () => {
+      // The first install fails, so the app is still running when the next
+      // release turns up. The deferred fire is latched per release rather than
+      // per run: latching it for the session would leave the second one behind
+      // an "installs after you disconnect" that never came.
+      localStorage.setItem("tenebra.autoInstallUpdates", "1");
+      vi.mocked(checkForUpdate).mockResolvedValueOnce(fakeUpdate("0.5.6"));
+      vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate("0.5.7"));
+      vi.mocked(installUpdate).mockRejectedValueOnce(new Error("disk full"));
+      vi.mocked(installUpdate).mockResolvedValue();
+
+      const { result, rerender } = renderHook(
+        ({ phase }: { phase: ConnectionState }) => useUpdateCheck(phase),
+        { initialProps: { phase: "connected" as ConnectionState } },
+      );
+
+      await beat();
+      expect(result.current.deferred).toBe(true);
+
+      // Tunnel down: it fires, fails, and falls back to the banner.
+      rerender({ phase: "idle" });
+      await beat();
+      expect(installUpdate).toHaveBeenCalledTimes(1);
+      expect(result.current.available).toBe("0.5.6");
+
+      // Connected again, and the next check finds a newer release.
+      rerender({ phase: "connected" });
+      await beat(UPDATE_CHECK_INTERVAL_MS);
+      expect(result.current.available).toBe("0.5.7");
+      expect(result.current.deferred).toBe(true);
+
+      rerender({ phase: "idle" });
+      await beat();
+      expect(installUpdate).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not re-offer a release the user already put off", async () => {
+      vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate("0.5.6"));
+
+      const { result } = renderHook(() => useUpdateCheck("idle"));
+      await beat();
+      act(() => result.current.dismiss());
+      expect(result.current.available).toBeNull();
+
+      // "Later" has to mean later than six hours: the same release coming back
+      // round on the next check would undo the dismissal on a timer.
+      await beat(UPDATE_CHECK_INTERVAL_MS);
+      expect(result.current.available).toBeNull();
+    });
+
+    // Three failures in a row is about eighteen hours without a single answer.
+    // One is a closed lid.
+    describe("checks that keep failing", () => {
+      it("says nothing about the first failure", async () => {
+        vi.mocked(checkForUpdate).mockRejectedValue(new Error("offline"));
+
+        const { result } = renderHook(() => useUpdateCheck("idle"));
+        await beat();
+
+        // An offline launch still looks exactly like an up-to-date one.
+        expect(result.current.stalled).toBe(false);
+        expect(result.current.available).toBeNull();
+      });
+
+      it("surfaces the third failure in a row", async () => {
+        vi.mocked(checkForUpdate).mockRejectedValue(new Error("offline"));
+
+        const { result } = renderHook(() => useUpdateCheck("idle"));
+        await beat();
+        await beat(UPDATE_CHECK_INTERVAL_MS);
+        expect(result.current.stalled).toBe(false);
+
+        await beat(UPDATE_CHECK_INTERVAL_MS);
+        expect(result.current.stalled).toBe(true);
+      });
+
+      it("counts failures across restarts", async () => {
+        // The usual shape of this: a client that cannot reach the release host
+        // was already offline before it was last started, so a counter that
+        // reset on mount would reset precisely when it mattered.
+        localStorage.setItem("tenebra.updateFailures", "2");
+        vi.mocked(checkForUpdate).mockRejectedValue(new Error("offline"));
+
+        const { result } = renderHook(() => useUpdateCheck("idle"));
+        await beat();
+
+        expect(result.current.stalled).toBe(true);
+      });
+
+      it("goes quiet again as soon as a check answers", async () => {
+        localStorage.setItem("tenebra.updateFailures", "4");
+        vi.mocked(checkForUpdate).mockResolvedValue(null);
+
+        const { result } = renderHook(() => useUpdateCheck("idle"));
+        await beat();
+
+        expect(result.current.stalled).toBe(false);
+        expect(localStorage.getItem("tenebra.updateFailures")).toBe("0");
+      });
+
+      it("checks on demand whatever the schedule says", async () => {
+        localStorage.setItem("tenebra.updateFailures", "3");
+        vi.mocked(checkForUpdate).mockRejectedValueOnce(new Error("offline"));
+        vi.mocked(checkForUpdate).mockResolvedValue(null);
+
+        const { result } = renderHook(() => useUpdateCheck("idle"));
+        await beat();
+        expect(result.current.stalled).toBe(true);
+        expect(checkForUpdate).toHaveBeenCalledTimes(1);
+
+        // The notice's own action, seconds after the check it is reporting on:
+        // the interval has nowhere near elapsed, and it still checks.
+        await act(async () => {
+          result.current.checkNow();
+          await vi.advanceTimersByTimeAsync(0);
+        });
+
+        expect(checkForUpdate).toHaveBeenCalledTimes(2);
+        expect(result.current.stalled).toBe(false);
+      });
+
+      it("hides the notice for the run on dismiss", async () => {
+        localStorage.setItem("tenebra.updateFailures", "3");
+        vi.mocked(checkForUpdate).mockRejectedValue(new Error("offline"));
+
+        const { result } = renderHook(() => useUpdateCheck("idle"));
+        await beat();
+        expect(result.current.stalled).toBe(true);
+
+        act(() => result.current.dismissStalled());
+        expect(result.current.stalled).toBe(false);
+
+        // Still hidden after another failure: dismissing is for this run, and
+        // the count keeps rising underneath it.
+        await beat(UPDATE_CHECK_INTERVAL_MS);
+        expect(result.current.stalled).toBe(false);
+        expect(localStorage.getItem("tenebra.updateFailures")).toBe("5");
+      });
+    });
+  });
+
+  // The whole point of the schedule is the window nobody is looking at, and a
+  // banner drawn into a hidden webview reaches no one.
+  describe("hidden window", () => {
+    it("raises a desktop notification when the window is hidden", async () => {
+      hideWindow();
+      vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate("0.5.6"));
+
+      renderHook(() => useUpdateCheck("idle"));
+
+      await waitFor(() =>
+        expect(notifyUpdateAvailable).toHaveBeenCalledWith("0.5.6"),
+      );
+      expect(notifyUpdateAvailable).toHaveBeenCalledTimes(1);
+    });
+
+    it("leaves it to the banner while the window is open", async () => {
+      vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate("0.5.6"));
+
+      const { result } = renderHook(() => useUpdateCheck("idle"));
+
+      await waitFor(() => expect(result.current.available).toBe("0.5.6"));
+      expect(notifyUpdateAvailable).not.toHaveBeenCalled();
+    });
+
+    it("notifies once per release, not once per check", async () => {
+      hideWindow();
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-08-24T12:00:00Z"));
+      vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate("0.5.6"));
+
+      renderHook(() => useUpdateCheck("idle"));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+      });
+
+      expect(notifyUpdateAvailable).toHaveBeenCalledTimes(1);
+    });
+
+    it("says nothing when the update installs itself", async () => {
+      // Auto-install with the tunnel down: the release applies and the app
+      // relaunches into it. A toast announcing what already happened is noise.
+      hideWindow();
+      localStorage.setItem("tenebra.autoInstallUpdates", "1");
+      vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate("0.5.6"));
+      vi.mocked(installUpdate).mockResolvedValue();
+
+      renderHook(() => useUpdateCheck("idle"));
+
+      await waitFor(() => expect(installUpdate).toHaveBeenCalled());
+      expect(notifyUpdateAvailable).not.toHaveBeenCalled();
     });
   });
 });

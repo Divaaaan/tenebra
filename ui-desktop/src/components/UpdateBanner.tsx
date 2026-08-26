@@ -15,7 +15,7 @@ interface UpdateBannerProps {
   onDismiss: () => void;
 }
 
-// One-line strip under the top bar offering the release the launch check found.
+// One-line strip under the top bar offering the release the update check found.
 // Deliberately quiet next to the kill-switch banner — an update is a heads-up,
 // not an incident — and inline in the shell flow, never an overlay. While the
 // install runs the strip shows download progress and drops the dismiss action:

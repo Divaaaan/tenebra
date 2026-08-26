@@ -7,6 +7,7 @@ import { ServerList, type ServerRow } from "./components/ServerList";
 import { BottomBar } from "./components/BottomBar";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { UpdateConfirm } from "./components/UpdateConfirm";
+import { UpdateStaleBanner } from "./components/UpdateStaleBanner";
 import { DaemonSkewBanner } from "./components/DaemonSkewBanner";
 import { CrashConsentBanner } from "./components/CrashConsentBanner";
 import { CrashReportBanner } from "./components/CrashReportBanner";
@@ -183,11 +184,12 @@ export function App() {
   // The UI just reflects the reported state and toggles it over the protocol.
   const killSwitch = state.kill_switch ?? false;
 
-  // Launch update check: offers a found release in the banner strip, or — when
-  // the auto-install preference is on — installs it silently and relaunches.
-  // Gated on the tunnel state (the live `phase`): a relaunch would drop an
-  // active VPN, so auto-install waits for the tunnel to go down and a manual
-  // install while it is up asks first.
+  // Update check: runs on its own schedule for as long as the app is up, and
+  // offers a found release in the banner strip — or, when the auto-install
+  // preference is on, installs it silently and relaunches. Gated on the tunnel
+  // state (the live `phase`): a relaunch would drop an active VPN, so
+  // auto-install waits for the tunnel to go down and a manual install while it
+  // is up asks first.
   const update = useUpdateCheck(phase);
 
   // Daemon build vs app build, latched from state snapshots. A skew means the
@@ -731,6 +733,16 @@ export function App() {
           progress={update.progress}
           onInstall={update.install}
           onDismiss={update.dismiss}
+        />
+      )}
+
+      {update.stalled && (
+        // The other end of the same story: not a release we found, but a run
+        // of checks that got no answer at all. Quiet, and only after enough of
+        // them that the network is no longer the likely explanation.
+        <UpdateStaleBanner
+          onCheckNow={update.checkNow}
+          onDismiss={update.dismissStalled}
         />
       )}
 

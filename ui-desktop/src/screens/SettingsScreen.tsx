@@ -27,11 +27,16 @@ import {
   getAutoFastest,
   getAutoInstallUpdates,
   getUpdateChannel,
+  getUpdateFailures,
+  getUpdateLastCheck,
   setAutoFastest,
   setAutoInstallUpdates,
   setUpdateChannel,
+  setUpdateFailures,
+  setUpdateLastCheck,
   type UpdateChannel,
 } from "../lib/settings";
+import { formatDateTime } from "../lib/format";
 import { isValidDnsServer } from "../lib/dns";
 import { isValidDomainSuffix } from "../lib/rules";
 import {
@@ -331,6 +336,12 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     kind: "idle",
   });
   const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null);
+  // When the client last asked the release host anything, and whether it got an
+  // answer. Read once from the shared store and then kept in step by the check
+  // below, so the row reports the schedule the app is actually on rather than
+  // only what this screen did while it was open.
+  const [lastCheck, setLastCheck] = useState(getUpdateLastCheck);
+  const [checkFailed, setCheckFailed] = useState(() => getUpdateFailures() > 0);
   // A manual install while a tunnel is up would be dropped by the relaunch, so it
   // waits on a confirm; this holds that dialog open.
   const [confirmingInstall, setConfirmingInstall] = useState(false);
@@ -644,8 +655,8 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     });
   }
 
-  // Update channel is renderer-owned, like the auto-* toggles: the launch check
-  // and the manual check read the persisted value to resolve which signed
+  // Update channel is renderer-owned, like the auto-* toggles: the scheduled
+  // check and the manual check read the persisted value to resolve which signed
   // manifest to compare against. The radiogroup mirrors the routing/stack
   // pattern below — a roving tabIndex plus arrow keys that carry focus with the
   // selection.
@@ -685,10 +696,19 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     channelRefs.current[nextIndex]?.focus();
   }
 
+  // "Check for updates" by hand. It writes the same two values the scheduled
+  // check does (lib/updateSchedule): a check is a check whoever asked for it,
+  // so a successful one here clears the "couldn't check" banner and pushes the
+  // next scheduled one a full interval out, and a failed one counts toward the
+  // same run.
   async function checkUpdates() {
     setUpdateStatus({ kind: "checking" });
+    setUpdateLastCheck(Date.now());
+    setLastCheck(Date.now());
     try {
       const update = await checkForUpdate();
+      setUpdateFailures(0);
+      setCheckFailed(false);
       if (!update) {
         setPendingUpdate(null);
         setUpdateStatus({ kind: "uptodate" });
@@ -697,6 +717,8 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
       setPendingUpdate(update);
       setUpdateStatus({ kind: "available", version: update.version });
     } catch (e) {
+      setUpdateFailures(getUpdateFailures() + 1);
+      setCheckFailed(true);
       setUpdateStatus({ kind: "error", message: String(e) });
     }
   }
@@ -766,6 +788,20 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
           ? t.settings.updatesCurrent.replace("{version}", appVersion)
           : "";
     }
+  })();
+
+  // The line under the status, on every install that can update itself. The
+  // check runs on its own now, so without this there is nowhere to see whether
+  // it still runs at all: a client that quietly stopped reaching GitHub looks
+  // exactly like one that has nothing to install.
+  const lastCheckText = ((): string => {
+    if (lastCheck === null) {
+      return t.settings.updatesNeverChecked;
+    }
+    const when = formatDateTime(lastCheck, lang);
+    return checkFailed
+      ? t.settings.updatesLastCheckFailed.replace("{when}", when)
+      : t.settings.updatesLastChecked.replace("{when}", when);
   })();
 
   const routing = tenebra.state.routing ?? "smart";
@@ -2097,7 +2133,22 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
           <div className="set-row">
             <span className="set-row-text">
               <span className="set-row-label">{t.settings.updatesCheck}</span>
-              <span className="set-row-hint">{updateStatusText}</span>
+              <span
+                className="set-row-hint"
+                // The localized sentence is what the user reads; the updater's
+                // own words are kept where someone diagnosing a failure can
+                // still reach them, rather than shown as the message.
+                title={
+                  updateStatus.kind === "error"
+                    ? updateStatus.message
+                    : undefined
+                }
+              >
+                {updateStatusText}
+              </span>
+              {selfUpdating && (
+                <span className="set-row-hint">{lastCheckText}</span>
+              )}
             </span>
             {selfUpdating &&
             pendingUpdate &&
