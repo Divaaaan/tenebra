@@ -31,6 +31,7 @@ function setup(overrides: Partial<Parameters<typeof SimpleView>[0]> = {}) {
     onSubscribe: vi.fn(async () => {}),
     serviceChecks: [],
     serviceChecking: false,
+    onReportProblem: vi.fn(),
     ...overrides,
   };
   const utils = renderWithProviders(<SimpleView {...props} />);
@@ -196,5 +197,32 @@ describe("SimpleView", () => {
 
     dispatch.mockRestore();
     localStorage.clear();
+  });
+
+  // This screen hides Settings and the log console, so before this it offered
+  // no way at all to say something was wrong — the one view where a stuck user
+  // is most likely to be a non-technical one.
+  it("offers a way to report a problem", () => {
+    const { props } = setup();
+
+    fireEvent.click(screen.getByRole("button", { name: "Report a problem" }));
+
+    expect(props.onReportProblem).toHaveBeenCalledTimes(1);
+  });
+
+  // The app's own offer to report is built by the shell so both views raise the
+  // same one; this screen gives it a place under the checks that provoked it.
+  it("makes room for the shell's report offer beside the checks", () => {
+    setup({ reportNudge: <p>video is not getting through</p> });
+
+    expect(
+      screen.getByText("video is not getting through"),
+    ).toBeInTheDocument();
+  });
+
+  it("draws nothing extra when there is no offer to make", () => {
+    const { container } = setup();
+
+    expect(container.querySelector(".report-nudge")).toBeNull();
   });
 });

@@ -1,0 +1,109 @@
+/* ── report a problem — the hand-filed report overlay ──
+   Shares the modal card and the pre-formatted body with the crash report (see
+   crash.css): they are the same artefact read the same way, and giving them two
+   visual languages would suggest one is more serious than the other. What is
+   added here is the part a crash report never had to explain — that the user is
+   the one who sends it, and in what order. */
+.problem-report-modal {
+  width: min(680px, 100%);
+}
+
+/* The claim the flow stands on. Stated first, before the report itself, because
+   a wall of diagnostics is exactly the moment someone wonders where it is
+   going. */
+.problem-report-lead {
+  margin: 0;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  line-height: 1.5;
+}
+
+.problem-report-steps {
+  margin: 0;
+  padding-left: var(--sp-5);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text-dim-2);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  line-height: 1.5;
+}
+
+/* Where the untrimmed copy lives, or that the core went quiet. Long paths wrap
+   rather than push the card wide. */
+.problem-report-note {
+  margin: 0;
+  color: var(--text-dim-2);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+/* Half a report is still a report — but say so in the colour the app uses for
+   "this is not the whole picture", never in the calm one. */
+.problem-report-note.is-warn {
+  color: var(--warn-soft);
+}
+
+/* ── the proactive nudge — video failed its check twice running ──
+   Same quiet bordered row as the other banners in the strip: it is a offer, not
+   an alarm, and the app raising it unprompted is reason to be more restrained
+   here, not less. */
+.report-nudge {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding: var(--sp-2) 22px;
+  border-bottom: var(--bw) solid var(--line);
+  font-size: var(--fs-label);
+}
+.report-nudge-text {
+  color: var(--warn-soft);
+}
+.report-nudge-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-shrink: 0;
+}
+.report-nudge-actions button {
+  display: inline-flex;
+  gap: 6px;
+  white-space: nowrap;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  transition: color var(--t-fast);
+}
+.report-nudge-actions .report-nudge-primary {
+  color: var(--signal);
+}
+.report-nudge-actions button:hover {
+  color: var(--signal);
+}
+
+/* In simple mode it sits under the service checks rather than in a banner strip
+   there is none of, so it needs its own edges. */
+.simple .report-nudge {
+  max-width: min(460px, 100%);
+  border: var(--bw) solid var(--line);
+  padding: var(--sp-2) var(--sp-3);
+  flex-wrap: wrap;
+  justify-content: center;
+  text-align: center;
+}
+
+/* ── simple mode's footer row ──
+   Report and the way back to the full shell, side by side. Both are quiet by
+   design: neither should compete with the one big button above them. */
+.simple-foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+}

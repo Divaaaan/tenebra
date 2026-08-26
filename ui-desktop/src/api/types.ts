@@ -346,6 +346,22 @@ export interface SpeedTestResult {
   duration_ms: number;
 }
 
+/**
+ * Result of `collect_diagnostics`: the support bundle the shell just wrote, as
+ * both the file it went to and the text that went into it.
+ *
+ * The webview has no filesystem capability, so a path alone is something it can
+ * show but never read — and the text is what a problem report actually needs on
+ * the clipboard. The file stays the complete archive; the text is what gets
+ * trimmed to fit an issue body. Secrets are already masked by the core.
+ */
+export interface SavedDiagnostics {
+  /** Absolute path of the saved bundle, in the per-user Tenebra directory. */
+  path: string;
+  /** The bundle's full, untrimmed text. */
+  text: string;
+}
+
 // Events the core pushes without being asked.
 
 /**

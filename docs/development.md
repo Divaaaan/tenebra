@@ -159,6 +159,12 @@ Diagnostics → *Save diagnostics report*): it writes one file with the state,
 build versions, routes, last connect walk and log tail, with subscription tokens
 and node credentials masked.
 
+*Report a problem* (bottom bar, simple mode, or Settings → Diagnostics) builds on
+the same bundle: it adds the app's own versions and log console, trims the result
+to what a GitHub issue body will take, and shows it for the user to copy. It sends
+nothing — the browser opens only on a second, separate click, and carries the
+version and OS, never the report.
+
 ## The Windows service
 
 On Windows the core also runs as a service named **`tenebra`**, serving the

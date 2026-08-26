@@ -46,6 +46,39 @@ All notable changes to Tenebra are documented here. The format follows
   the file identifies a network without describing it. The cache is its own file
   rather than a field in settings.json: it holds a measurement the app took, not a
   choice the user made, and deleting it costs one pick.
+- **You can report a problem from inside the app.** There was no way to say
+  something was broken short of finding the repository by hand. The one button
+  that mentioned issues sat behind a crash: it needed crash reports switched on
+  *and* a crash file on disk, and the ordinary failure — the bypass stops carrying
+  video, a node quietly dies — produces neither. *Report a problem* now sits in
+  the bottom bar, on the simple screen, and in Settings → Diagnostics beside the
+  save-a-copy button that never said what the file was for.
+  It assembles the core's support bundle and the app's own versions, platform and
+  log console into one block, masks subscription tokens and node credentials,
+  saves the full text to a file and shows the whole thing on screen. What goes on
+  the clipboard is trimmed to fit a GitHub issue body by removing the middle, not
+  the end — the newest log lines are the ones that explain the failure — and the
+  cut is marked with the path to the untrimmed copy. A core that cannot answer
+  does not sink the report: the app's half is still collected and the gap is
+  written into it, which matters because a wedged core is one of the likelier
+  things somebody is reporting.
+  Nothing is sent, at any point. Assembling a report is local work; the browser
+  opens only on a second, separate click, and the URL it opens carries the version
+  and the operating system this app reads for itself — never the report, and
+  nothing the user typed.
+- **The app offers to report when video keeps failing.** The post-connect check
+  already knows when video isn't getting through — it is the same check that
+  draws the ✕ — and that knowledge went nowhere; whether it became a bug report
+  depended on the user working out that the project has an issue tracker. It now
+  offers the report flow itself, under the check that raised it.
+  Deliberately hard to trigger: two failing checks in a row, so a single flake
+  stays quiet, only while the tunnel is up, and at most once a day. The daily
+  clock starts when the prompt appears rather than when it is dismissed —
+  otherwise an ignored prompt returns on every reconnect, and a prompt that
+  appears whenever it is still right is one people learn to click away without
+  reading, which costs exactly the day it matters. Dismissing it takes one click
+  and nothing with it: the offer is a button, and the report behind it is still
+  assembled locally and still filed by hand.
 
 ### Changed
 - **Updates now reach a client that is left running.** The check ran once, when

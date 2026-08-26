@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import type {
   ConnectionState,
   Node,
@@ -43,6 +45,13 @@ interface SimpleViewProps {
   serviceChecks: ServiceCheckResult[];
   /** True while those checks are in flight. */
   serviceChecking: boolean;
+  /** Open the report-a-problem flow. */
+  onReportProblem: () => void;
+  /**
+   * The app's own offer to report, when the checks below have twice said video
+   * isn't getting through. Built by the shell so both views raise the same one.
+   */
+  reportNudge?: ReactNode;
 }
 
 /**
@@ -72,6 +81,8 @@ export function SimpleView({
   onSubscribe,
   serviceChecks,
   serviceChecking,
+  onReportProblem,
+  reportNudge = null,
 }: SimpleViewProps) {
   const { t } = useI18n();
 
@@ -168,6 +179,10 @@ export function SimpleView({
             measured. The status word alone leaves a user watching a spinning
             YouTube with no way to say what is wrong. */}
         <ServiceChecks checks={serviceChecks} checking={serviceChecking} />
+
+        {/* Directly under the check that raised it, where the ✕ it is talking
+            about is on screen. */}
+        {reportNudge}
       </div>
 
       <div className="simple-pick">
@@ -216,13 +231,25 @@ export function SimpleView({
 
       <SimpleSetup hasProfile={hasProfile} onSubscribe={onSubscribe} />
 
-      <button
-        type="button"
-        className="simple-advanced"
-        onClick={exitSimpleMode}
-      >
-        {t.simple.advanced}
-      </button>
+      {/* This screen has no Settings and no log console, so before this there
+          was nothing here to complain with at all — a user whose video stopped
+          loading could only close the app. */}
+      <div className="simple-foot">
+        <button
+          type="button"
+          className="simple-advanced"
+          onClick={onReportProblem}
+        >
+          {t.report.action}
+        </button>
+        <button
+          type="button"
+          className="simple-advanced"
+          onClick={exitSimpleMode}
+        >
+          {t.simple.advanced}
+        </button>
+      </div>
     </div>
   );
 }
