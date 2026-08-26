@@ -124,6 +124,22 @@ All notable changes to Tenebra are documented here. The format follows
   "nothing helped" comes back.
 
 ### Fixed
+- **The bypass survives a restart.** It came up from exactly one place —
+  connecting — so anyone running it without a tunnel, which is a perfectly normal
+  way to use it because the filter works on the direct channel and needs no exit
+  node, lost the bypass entirely whenever the service restarted: an app update, a
+  reboot, a crash. Nothing said so. The switch still read on, the state was honest
+  that no filter was running, and the first sign was video that stopped loading,
+  hours later. It stayed down until the button was pressed by hand. The daemon now
+  records the switch itself, and puts the bypass back at start-up on the strategy
+  a connect would have used — the one measured on this network, then the one
+  stored for the machine, then the bundle's default.
+  What it will not do is start a bypass nobody asked for. A machine whose owner
+  has never touched the switch has no answer stored, and an absent answer is "not
+  asked" rather than "yes"; a bypass switched off stays off; and the automatic
+  fallback that parks the censored services in the tunnel when video fails its
+  check no longer counts as switching the bypass off, so a bad evening does not
+  erase the setting.
 - **A frozen traffic graph now says why.** The poller treated every failed
   counter reading as "the clash API is not listening yet" — true exactly once,
   before the first reading, and after that the same branch swallowed real

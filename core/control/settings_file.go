@@ -147,6 +147,25 @@ type persistedSettings struct {
 	// the user's choice to hold a version. Same shape, same reason, as
 	// AutoFailover.
 	ZapretAutoUpdate *bool `json:"zapret_auto_update,omitempty"`
+
+	// ZapretEnabled remembers the bypass switch itself — not which strategy, but
+	// whether the user has the bypass on — so the daemon can put it back at
+	// start-up (see raiseZapretOnStart).
+	//
+	// Without it the bypass came up from exactly one place: connecting. Someone
+	// who runs the bypass on the direct channel with no tunnel — a legitimate
+	// setup, the packet filter needs no exit node — was left with no bypass at all
+	// after a service restart, an app update or a reboot, silently, until they
+	// pressed the button themselves. Measured on this author's machine at thirteen
+	// hours.
+	//
+	// A *bool, for the same reason CrashReports is one: absent (nil) means nobody
+	// has ever touched the switch, and that is not "off". Starting a kernel packet
+	// filter on a machine whose owner never asked for one would be a surprise, not
+	// a restoration, so only a stored true raises anything. Being a pointer, an old
+	// file written before the field existed reads back as nil — never asked — which
+	// is exactly the pre-restore behaviour, so no version bump is needed to add it.
+	ZapretEnabled *bool `json:"zapret_enabled,omitempty"`
 }
 
 // settingsVersion is the current persisted-settings format version.
