@@ -34,6 +34,19 @@ jobs:
           go-version: '1.26'
           cache: false
       - run: go vet ./...
+      # gofmt reports rather than rewrites here, and the diff is printed: a
+      # formatting drift is a one-command fix, and the point of catching it in CI
+      # is that nobody notices it locally. One file had been unformatted in the
+      # tree for days without a single run saying so.
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt would rewrite these files:"
+            echo "$unformatted"
+            gofmt -d .
+            exit 1
+          fi
       - run: go test ./... -race -count=1
       - uses: dominikh/staticcheck-action@v1
         with:
