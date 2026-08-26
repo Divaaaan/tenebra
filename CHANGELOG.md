@@ -124,6 +124,18 @@ All notable changes to Tenebra are documented here. The format follows
   "nothing helped" comes back.
 
 ### Fixed
+- **The bypass comes back after a restart.** It was raised only on the way to a
+  connection, so a machine that restarted the service — an app update, a reboot,
+  a crash — came back with the packet filter off, however deliberately the user
+  had switched it on. Nothing said so, and the app was not lying either: it
+  reported the bypass as off, because it was. The person only found out when
+  video stopped loading, which is the failure this whole area exists to prevent.
+  Measured on one machine as thirteen hours unfiltered. The switch is now
+  remembered as a choice and put back when the daemon starts, on the strategy
+  remembered for that network. A tunnel-only fallback after a failed video check
+  does not count as switching it off — that is a verdict about tonight's censor,
+  not a change of mind — so the bypass returns after a restart rather than
+  staying down.
 - **The bypass survives a restart.** It came up from exactly one place —
   connecting — so anyone running it without a tunnel, which is a perfectly normal
   way to use it because the filter works on the direct channel and needs no exit
