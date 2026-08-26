@@ -224,11 +224,16 @@ export function useUpdateCheck(phase: ConnectionState): UpdatePrompt {
       setUpdate(found);
       // The banner is now the only way this release gets applied, and on a
       // window minimised to the tray it is drawn where nobody will see it. Say
-      // it where the user is instead. A window that is open needs no toast —
-      // the strip is right there.
-      if (document.visibilityState === "hidden") {
-        void notifyUpdateAvailable(found.version);
-      }
+      // it where the user is instead.
+      //
+      // Whether the user is actually looking is not decided here. The renderer's
+      // answer to that is `document.visibilityState`, and what it reports once
+      // the tray handler has called `window.hide()` is a property of the
+      // embedded browser rather than of this app — nobody had verified it, and a
+      // toast that silently never fires is exactly the kind of failure this
+      // whole change exists to stop. The shell asks the window manager instead
+      // and drops the toast itself when the window is in front of someone.
+      void notifyUpdateAvailable(found.version);
     } finally {
       inFlight.current = false;
       setChecking(false);

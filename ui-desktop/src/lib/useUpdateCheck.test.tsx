@@ -27,19 +27,6 @@ vi.mock("./updates", () => ({
   notifyUpdateAvailable: vi.fn(),
 }));
 
-/**
- * Report the window as minimised to the tray, the way a Tauri window hidden by
- * the close handler reports itself. jsdom answers "visible" from a prototype
- * getter, so shadow it with an own property; the suite's afterEach drops that
- * again.
- */
-function hideWindow() {
-  Object.defineProperty(document, "visibilityState", {
-    configurable: true,
-    get: () => "hidden",
-  });
-}
-
 // Only the version is read off the handle before it is passed back to
 // installUpdate, so a bare object stands in for the plugin's Update.
 function fakeUpdate(version = "9.9.9"): Update {
@@ -56,10 +43,9 @@ describe("useUpdateCheck", () => {
   });
 
   afterEach(() => {
-    // Undo a hideWindow() and any suite that reached for fake timers, here
-    // rather than at the end of the test bodies: an assertion that fails half
-    // way through must not leak either into the next test.
-    delete (document as { visibilityState?: unknown }).visibilityState;
+    // Restore real timers here rather than at the end of the test bodies: an
+    // assertion that fails half way through must not leak them into the next
+    // test.
     vi.useRealTimers();
   });
 
@@ -557,10 +543,14 @@ describe("useUpdateCheck", () => {
   });
 
   // The whole point of the schedule is the window nobody is looking at, and a
-  // banner drawn into a hidden webview reaches no one.
-  describe("hidden window", () => {
-    it("raises a desktop notification when the window is hidden", async () => {
-      hideWindow();
+  // banner drawn into a hidden webview reaches no one. Whether anybody is
+  // looking is the shell's call, not this hook's: the renderer would have to
+  // answer from `document.visibilityState`, whose value once the tray handler
+  // has hidden the window is a property of the embedded browser that nobody
+  // here has verified. So the hook offers the toast and the shell drops it when
+  // the window is in front of someone.
+  describe("announcing a release the user has to act on", () => {
+    it("offers the toast for a release that is waiting on the user", async () => {
       vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate("0.5.6"));
 
       renderHook(() => useUpdateCheck("idle"));
@@ -571,17 +561,19 @@ describe("useUpdateCheck", () => {
       expect(notifyUpdateAvailable).toHaveBeenCalledTimes(1);
     });
 
-    it("leaves it to the banner while the window is open", async () => {
+    it("offers it regardless of what the renderer thinks it can see", async () => {
+      // An open window is not a reason to stay silent here: this hook cannot
+      // tell an open window from a hidden one, and pretending otherwise is how
+      // the toast would go missing on whichever platform reports it differently.
       vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate("0.5.6"));
 
       const { result } = renderHook(() => useUpdateCheck("idle"));
 
       await waitFor(() => expect(result.current.available).toBe("0.5.6"));
-      expect(notifyUpdateAvailable).not.toHaveBeenCalled();
+      expect(notifyUpdateAvailable).toHaveBeenCalledWith("0.5.6");
     });
 
     it("notifies once per release, not once per check", async () => {
-      hideWindow();
       vi.useFakeTimers();
       vi.setSystemTime(new Date("2026-08-24T12:00:00Z"));
       vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate("0.5.6"));
@@ -600,7 +592,6 @@ describe("useUpdateCheck", () => {
     it("says nothing when the update installs itself", async () => {
       // Auto-install with the tunnel down: the release applies and the app
       // relaunches into it. A toast announcing what already happened is noise.
-      hideWindow();
       localStorage.setItem("tenebra.autoInstallUpdates", "1");
       vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate("0.5.6"));
       vi.mocked(installUpdate).mockResolvedValue();

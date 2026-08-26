@@ -1274,6 +1274,25 @@ fn transition_notice(
 /// banner is still waiting behind the window.
 #[tauri::command]
 fn notify_update_available(app: AppHandle, version: String) {
+    // Whether the window is in front of the user is decided here, not in the
+    // webview. The renderer's own answer to that question is
+    // `document.visibilityState`, and what it reports when the tray handler
+    // calls `window.hide()` is a property of the embedded browser, not
+    // something this app controls or has ever verified. Asking the window
+    // manager is the same question with an answer that cannot drift: a window
+    // that is hidden or minimised is one nobody is looking at.
+    //
+    // A window we cannot find, or one whose state the platform will not report,
+    // counts as visible — a toast nobody needed is a smaller failure than a
+    // release nobody hears about, but guessing the other way would put a toast
+    // over an open window every six hours.
+    if let Some(window) = app.get_webview_window("main") {
+        let hidden = !window.is_visible().unwrap_or(true);
+        let minimised = window.is_minimized().unwrap_or(false);
+        if !hidden && !minimised {
+            return;
+        }
+    }
     let (title, body) = update_notice(current_lang(&app), &version);
     let _ = app.notification().builder().title(title).body(body).show();
 }
