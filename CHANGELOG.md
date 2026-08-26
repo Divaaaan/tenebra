@@ -11,6 +11,8 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.10] - 2026-08-26
+
 ### Added
 - **A release found while the window is hidden now says so where you can see
   it.** With automatic installation off — the default, because installing
@@ -1387,7 +1389,8 @@ Initial tagged release.
   first run. Updates delivered in-app are minisign-verified against the bundled
   key; only the initial download is unsigned.
 
-[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.5.5...HEAD
+[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.5.10...HEAD
+[0.5.10]: https://github.com/Divaaaan/tenebra/compare/v0.5.5...v0.5.10
 [0.5.5]: https://github.com/Divaaaan/tenebra/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/Divaaaan/tenebra/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/Divaaaan/tenebra/compare/v0.5.2...v0.5.3
