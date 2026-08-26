@@ -40,6 +40,11 @@ const zapretManualUpdateBudget = 45 * time.Second
 //
 // It runs in the background and never blocks anything: a failed check is logged
 // and retried at the next tick.
+//
+// It has also become the daemon's start-up hook for the bypass, because it is
+// the one job that runs at every start of every entry point: it puts the bundle
+// on disk and then raises the bypass again for a user who had it on (see
+// raiseZapretOnStart) before settling into the update cadence.
 func (d *Daemon) RunZapretAutoUpdate(ctx context.Context) {
 	// Put the embedded bundle down before anything else, and before the startup
 	// delay rather than after it.
@@ -52,6 +57,15 @@ func (d *Daemon) RunZapretAutoUpdate(ctx context.Context) {
 	// broken rather than as it being not yet fetched. The bytes are in this binary
 	// already: no network, no wait, nothing to fail.
 	d.installEmbeddedZapretIfMissing(filepath.Join(d.store.Dir(), zapretDirName))
+
+	// With a bundle guaranteed on disk, put the bypass back up if that is where
+	// the user left it. Here rather than after the startup delay: a user whose
+	// bypass is down is a user whose video is not loading, and forty-five seconds
+	// of that is forty-five seconds of the bug this fixes. It is also the reason
+	// this job is the right home for the restore — it already runs at every
+	// daemon start, in the service as well as the console (see startBackgroundJobs),
+	// which is exactly the set of starts the bypass has to survive.
+	d.raiseZapretOnStart(ctx)
 
 	timer := time.NewTimer(zapretUpdateStartupDelay)
 	defer timer.Stop()
@@ -253,7 +267,7 @@ func (d *Daemon) restartZapretAfterUpdate(ctx context.Context, dir, strategy str
 	}
 
 	d.excludeNodesFromZapret(dir)
-	started, err := d.newZapretRunner(dir).Start(ctx, chosen)
+	started, err := d.startRunnerFor(dir).Start(ctx, chosen)
 	if err != nil || !started {
 		d.emitLog(LogWarn, fmt.Sprintf("zapret: %s не запустилась после обновления", chosen.Name))
 		d.applyZapretState(false, chosen.Name)

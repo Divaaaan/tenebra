@@ -350,6 +350,40 @@ func (d *Daemon) applyZapretState(running bool, strategy string) {
 	}
 }
 
+// applyZapretChoice is applyZapretState for the three commands where the USER is
+// the one deciding: the switch on, the switch off, and the probe button, which
+// deliberately leaves its winner running.
+//
+// The extra thing it does is remember the decision, and only these three are
+// entitled to. Everything else that moves routing.ZapretActive is the system
+// reacting to a situation, and writing the switch from there would make the
+// daemon's own machinery overwrite an answer only the user can give:
+//
+//   - raiseZapretForConnect raises the bypass because a connect is happening, not
+//     because anybody asked for a bypass. Recording it would arm the start-up
+//     restore for someone who only ever pressed Connect, leaving a packet filter
+//     running on a machine that came up without connecting to anything.
+//   - fallBackToTunnel drops the flag when the bypass stops carrying video. That
+//     is a verdict about the censor this evening, not a change of mind: the user
+//     still wants the bypass, it is simply not working this minute — which is why
+//     a re-pick follows it. Writing "off" there would let one failed video check
+//     erase the setting for good, and the next restart would come up bare.
+//   - restartZapretAfterUpdate puts back whatever was running across a bundle
+//     swap, and repickStrategy puts the services back once some strategy works
+//     again. Both restore a state; neither chooses one.
+func (d *Daemon) applyZapretChoice(running bool, strategy string) {
+	// A fresh local, addressed once: the pointer is handed to the settings store
+	// as it is, so it must not alias a field a later choice would rewrite.
+	want := running
+	d.mu.Lock()
+	d.zapretWanted = &want
+	d.mu.Unlock()
+	// The write to disk is applyZapretState's own, which persists after it has
+	// moved the routing — so the switch and what it did to the routing land in one
+	// save rather than two.
+	d.applyZapretState(running, strategy)
+}
+
 // raiseZapretForConnect brings the bypass up as part of connecting and records
 // where that leaves the routing.
 //
@@ -388,6 +422,54 @@ func (d *Daemon) raiseZapretForConnect(ctx context.Context) bool {
 		d.emitLog(LogInfo, "zapret: обход не поднят — YouTube и Discord пойдут через туннель")
 	}
 	return up
+}
+
+// raiseZapretOnStart brings the bypass back up at daemon start when the user had
+// it on, so it survives a restart of the service.
+//
+// Until this existed the bypass came up from exactly one place: connecting.
+// Someone who uses it WITHOUT a tunnel — the filter works on the direct channel
+// and needs no exit node, which is a normal way to run this — lost it entirely
+// whenever the service restarted: an app update, a reboot, a crash. Nothing said
+// so. The switch still read "on" from the settings file, the reported state was
+// honest that no filter was running, and the first sign was video that stopped
+// loading, hours later. It stayed down until the user pressed the button
+// themselves, because nothing else in the daemon ever pressed it for them.
+//
+// Three things guard it. A user who never touched the switch has no stored
+// answer and gets nothing started — a packet filter appearing on a machine
+// nobody asked one for is a surprise, not a restoration. A user who turned it off
+// gets nothing started, which is the whole point of storing false rather than
+// nothing. And a bypass already running is left alone: autoconnect fires before
+// this job starts (see startBackgroundJobs) and raises the bypass on the way to
+// its tunnel, so starting again here would stop the filter it just attached and
+// re-attach it for nothing.
+//
+// The strategy is not chosen here. autoStartZapret owns that decision — this
+// network's remembered winner first, then the stored one, then the bundle's
+// default — and a restart has to land on the same one a connect would.
+func (d *Daemon) raiseZapretOnStart(ctx context.Context) {
+	d.mu.Lock()
+	wanted := d.zapretWanted != nil && *d.zapretWanted
+	already := d.routing.ZapretActive
+	d.mu.Unlock()
+	if !wanted || already {
+		return
+	}
+
+	// Normally nothing is connected this early, but autoconnect may already be
+	// building a tunnel, and the voice block has to be decided for the session
+	// that exists rather than for the one this line assumes (see
+	// newZapretRunnerFor).
+	if !d.autoStartZapret(ctx, d.snapshotState().State == StateConnected) {
+		d.emitLog(LogWarn, "zapret: the bypass was on, but it did not come up at start-up")
+		return
+	}
+	// Routing has to follow, exactly as it does when the user presses the switch:
+	// this is the same raise, made on their behalf. The choice itself is left
+	// alone — it is being obeyed here, not made again.
+	d.applyZapretState(true, "")
+	d.emitLog(LogInfo, "zapret: the bypass was on before the restart — brought it back up")
 }
 
 // zapretInstallBudget bounds the first-run bundle download so a connect cannot
@@ -624,6 +706,27 @@ func leadWith(strategies []zapret.Strategy, first string) []zapret.Strategy {
 	return strategies
 }
 
+// startRunner is the one operation raising the bypass needs from the bypass
+// runner: launch a strategy and report whether the packet filter came up.
+//
+// It is an interface for the same reason pickRunner is. The real Start hands a
+// .bat to cmd.exe, which puts winws on the WinDivert driver — a kernel driver
+// load — and everything worth testing about a raise happens around that call:
+// which strategy was chosen, whether one was raised at all, and what the daemon
+// recorded afterwards. Production binds it to the real runner in NewDaemon (see
+// Daemon.newStartRunner).
+type startRunner interface {
+	Start(ctx context.Context, s zapret.Strategy) (bool, error)
+}
+
+// startRunnerFor builds the launcher with the tunnel question answered from the
+// live state, for the callers that are not mid-connect and can simply read it —
+// the same split newZapretRunner and newZapretRunnerFor draw, and for the same
+// reason.
+func (d *Daemon) startRunnerFor(dir string) startRunner {
+	return d.newStartRunner(dir, d.snapshotState().State == StateConnected)
+}
+
 // pickRunner is the one operation a probe run needs from the bypass runner:
 // measure every strategy, reporting each as it lands.
 //
@@ -757,7 +860,10 @@ func (d *Daemon) handlePickZapret(ctx context.Context, req Request) Response {
 		if started, sErr := runner.Start(ctx, best.Strategy); sErr != nil || !started {
 			d.emitLog(LogWarn, fmt.Sprintf("zapret: %s не запустилась после подбора", best.Name))
 		} else {
-			d.applyZapretState(true, best.Name)
+			// A pick that ends with its winner running is the user turning the bypass
+			// on — they pressed a button and the switch reads on afterwards — so the
+			// answer is recorded like the switch's own.
+			d.applyZapretChoice(true, best.Name)
 			d.emitLog(LogInfo, fmt.Sprintf("zapret: включена %s", best.Name))
 		}
 	}
@@ -877,8 +983,7 @@ func (d *Daemon) handleStartZapret(ctx context.Context, req Request) Response {
 
 	// A hand-started bypass answers the tunnel question from the live state:
 	// nothing is about to change here, unlike the connect path.
-	runner := d.newZapretRunner(dir)
-	started, err := runner.Start(ctx, chosen)
+	started, err := d.startRunnerFor(dir).Start(ctx, chosen)
 	if err != nil {
 		return newError(req.ID, err.Error())
 	}
@@ -890,7 +995,9 @@ func (d *Daemon) handleStartZapret(ctx context.Context, req Request) Response {
 			"start_zapret: %s не запустилась — winws требует прав администратора", chosen.Name))
 	}
 
-	d.applyZapretState(true, chosen.Name)
+	// The user pressed the switch, so this is the one raise that is also an answer
+	// worth keeping: it is what brings the bypass back after a restart.
+	d.applyZapretChoice(true, chosen.Name)
 	d.emitLog(LogInfo, fmt.Sprintf("zapret: включена %s", chosen.Name))
 
 	resp, err := newResult(req.ID, struct {
@@ -902,13 +1009,18 @@ func (d *Daemon) handleStartZapret(ctx context.Context, req Request) Response {
 	return resp
 }
 
-// autoStartZapret brings the bypass up as part of connecting, when a bundle is
-// installed.
+// autoStartZapret brings the bypass up without anybody naming a strategy, when a
+// bundle is installed: on the way to a tunnel (raiseZapretForConnect) and at
+// daemon start for a user who had the bypass on (raiseZapretOnStart).
 //
 // This is what makes the product one button. The user bought a VPN, pasted a
 // link, dropped the bypass archive — expecting to press connect once and have
 // YouTube and Discord work with no lag in games. Requiring them to also find and
 // flip a second switch would put the assembly back on them.
+//
+// Both callers share it so the strategy cannot differ between them: a bypass that
+// came back after a restart on a different strategy from the one a connect would
+// have raised is the same app behaving two ways for no reason the user can see.
 //
 // Failures here never block the connect: the tunnel alone still carries the
 // censored services (that is what UnblockServices is for), so a bypass that will
@@ -984,8 +1096,7 @@ func (d *Daemon) autoStartZapret(ctx context.Context, tunnelUp bool) bool {
 
 	d.excludeNodesFromZapret(dir)
 
-	runner := d.newZapretRunnerFor(dir, tunnelUp)
-	started, err := runner.Start(ctx, chosen)
+	started, err := d.newStartRunner(dir, tunnelUp).Start(ctx, chosen)
 	if err != nil || !started {
 		// The usual cause is elevation: WinDivert loads a driver, which an
 		// unprivileged process cannot do. Say so rather than leaving a silent gap
@@ -995,10 +1106,12 @@ func (d *Daemon) autoStartZapret(ctx context.Context, tunnelUp bool) bool {
 		return false
 	}
 
-	// The routing flag is set by the caller (handleConnect), which is mid-connect
-	// and rebuilds the config immediately after — going through applyZapretState
-	// here would fire a reapplyLive into a connect that has not happened yet. Only
-	// the choice is recorded.
+	// The routing flag is left to the caller, because the two callers set it at
+	// different moments: the connect is mid-flight and rebuilds the config
+	// immediately after, so going through applyZapretState here would fire a
+	// reapplyLive into a connect that has not happened yet, while the start-up
+	// restore has no connect to ride on and calls applyZapretState itself. Only
+	// which strategy is running gets recorded here.
 	d.mu.Lock()
 	d.zapretActive = chosen.Name
 	d.routing.ZapretCovered = zapret.Covered(dir)
@@ -1035,6 +1148,11 @@ func (d *Daemon) stopZapretQuietly() {
 // start_zapret with no name must bring back that one rather than the bundle
 // default. Routing is told, so the censored services return to the tunnel
 // instead of being left pointing at the direct path the bypass no longer covers.
+//
+// The switch itself is recorded off, which is what stops the next start-up from
+// raising the bypass again (see raiseZapretOnStart). Turning it off has to
+// overwrite the stored "on" — a restore that ignored this command would put back
+// a bypass the user had just switched off, at every launch.
 func (d *Daemon) handleStopZapret(ctx context.Context, req Request) Response {
 	d.zapretOpMu.Lock()
 	defer d.zapretOpMu.Unlock()
@@ -1043,7 +1161,7 @@ func (d *Daemon) handleStopZapret(ctx context.Context, req Request) Response {
 	if err := runner.Stop(ctx); err != nil {
 		return newError(req.ID, err.Error())
 	}
-	d.applyZapretState(false, "")
+	d.applyZapretChoice(false, "")
 	d.emitLog(LogInfo, "zapret: выключен")
 	return newResult0(req.ID)
 }

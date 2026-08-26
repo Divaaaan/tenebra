@@ -155,6 +155,14 @@ type Daemon struct {
 	// across connects.
 	zapretExclude func(dir string, servers []string, lookups []zapret.Lookup) (zapret.ExcludeReport, error)
 
+	// newStartRunner builds what a raise launches its strategy with (see
+	// startRunner). Every path that brings the bypass up goes through it — the
+	// connect, the switch, the restore after a bundle update, the restore at
+	// start-up — so a test can exercise all four without loading the WinDivert
+	// driver, which is neither available on a build machine nor acceptable on a
+	// developer's. Bound to the real bundle runner in NewDaemon, then only read.
+	newStartRunner func(dir string, tunnelUp bool) startRunner
+
 	// zapretOpMu serializes every operation that drives the bypass: probing,
 	// starting, stopping and updating. They share one winws process and one
 	// directory on disk, and overlapping them replaces a bundle under a running
@@ -164,6 +172,21 @@ type Daemon struct {
 
 	mu           sync.Mutex
 	zapretActive string
+	// zapretWanted is the bypass switch as the user last set it: true after they
+	// turned it on, false after they turned it off, nil when nobody has ever
+	// touched it. It is the third and last of the three things this daemon knows
+	// about the bypass, and they answer different questions: zapretActive is WHICH
+	// strategy, routing.ZapretActive is whether the filter is up RIGHT NOW, and
+	// this one is whether the user wants it up at all.
+	//
+	// Only that last one survives a restart as an instruction: it is what decides
+	// whether the daemon raises the bypass on its own at start-up (see
+	// raiseZapretOnStart), which is why the system's own reactions — a connect
+	// raising it, a failed video check dropping it — must never write here. See
+	// applyZapretChoice. Persisted as persistedSettings.ZapretEnabled. Guarded by
+	// mu; always replaced as a whole pointer, never written through, so a snapshot
+	// handed to the settings store cannot race a later choice.
+	zapretWanted *bool
 	routing      routing.Options
 	state        State
 	tun          singbox.TunOptions
@@ -612,6 +635,12 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 	// the adapter list only to turn that index into a socket option (see
 	// pinAndProbeBind).
 	d.probeIfaces = hostInterfaces
+	// Raising the bypass means starting winws from the installed bundle, with the
+	// voice block and the interface pin decided for the session that will exist
+	// (see newZapretRunnerFor).
+	d.newStartRunner = func(dir string, tunnelUp bool) startRunner {
+		return d.newZapretRunnerFor(dir, tunnelUp)
+	}
 	// The peer check needs the daemon (it logs its refusals), so it is bound
 	// after construction like the other self-referential seams below.
 	d.authorizeConn = d.authorizePeer
@@ -716,6 +745,12 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	// Absent (an old file) keeps automatic bundle updates on; only an explicit
 	// stored false holds the installed version.
 	d.zapretAutoUpdate = ps.ZapretAutoUpdate == nil || *ps.ZapretAutoUpdate
+	// The switch is loaded as the three-state answer it is — on, off, or never
+	// asked — and nothing is launched here either: raiseZapretOnStart reads it
+	// from the background job, which is the one place allowed to start a packet
+	// filter. The pointer comes from a freshly decoded struct, so holding it is
+	// safe (see crashReports below, same reasoning).
+	d.zapretWanted = ps.ZapretEnabled
 	d.refreshZapretStateLocked()
 	d.routing = d.routing.Normalize()
 	// A stack value from a corrupt or hand-edited file must not reach sing-box;
@@ -873,6 +908,10 @@ func (d *Daemon) settingsLocked() persistedSettings {
 		// Copied into a local first for the same reason as autoFailover: the
 		// returned struct outlives the lock.
 		ZapretAutoUpdate: &zapretAutoUpdate,
+		// Passed through as the pointer it is, like CrashReports: nil here is a
+		// meaningful answer — nobody has touched the bypass switch — and flattening
+		// it to false would tell the next launch the user turned the bypass off.
+		ZapretEnabled: d.zapretWanted,
 	}
 }
 
