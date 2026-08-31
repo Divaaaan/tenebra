@@ -11,6 +11,21 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **A bypass you switched off no longer turns itself back on.** Connecting raised
+  the packet filter unconditionally — the rule that one button should do the whole
+  job, applied to somebody who had already answered the question by hand. The
+  switch read off, the connection started the filter regardless, and so did the
+  next connection and the one after that. What had been hiding it is that raising
+  the bypass needs a bundle at all, and a machine that had never fetched one had
+  nothing to start; 0.5.10 puts a bundle inside the binary and lays it down at
+  every start, so the raise stopped failing for want of one and the switch turned
+  out to be decorative on every machine that connects. Off now means off — on a
+  connection, at start-up, and across a bundle update — until the switch is turned
+  back on. Never having touched it is still not an answer: the button goes on
+  deciding for anyone who has not opened the bypass settings, which is what the
+  one-button setup rests on.
+
 ## [0.5.10] - 2026-08-26
 
 ### Added
