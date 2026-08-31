@@ -11,6 +11,8 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.11] - 2026-08-31
+
 ### Fixed
 - **Switching the bypass off is recorded even when the stop itself fails.** A
   stop interrupted mid-command returned an error without writing the choice

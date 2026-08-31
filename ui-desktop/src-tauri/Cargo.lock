@@ -4259,7 +4259,7 @@ dependencies = [
 
 [[package]]
 name = "tenebra-desktop"
-version = "0.5.10"
+version = "0.5.11"
 dependencies = [
  "open",
  "serde",
