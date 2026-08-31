@@ -38,6 +38,12 @@ type Runner struct {
 
 var errUnsupported = errors.New("zapret: поддерживается только на Windows")
 
+// DefaultSettle is zero here for the same reason Start is a stub: nothing is
+// launched, so nothing has to attach. It exists so the platform-neutral budget
+// arithmetic in core/control compiles everywhere (see DefaultSettle in
+// run_windows.go).
+const DefaultSettle time.Duration = 0
+
 func NewRunner(dir string) *Runner { return &Runner{Dir: dir} }
 
 func (r *Runner) Start(context.Context, Strategy) (bool, error) { return false, errUnsupported }
