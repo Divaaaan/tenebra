@@ -21,12 +21,18 @@ func withRealEmbeddedBundle(d *Daemon) {
 	d.zapretEmbed = zapret.InstallEmbedded
 }
 
-// TestConnectFallsBackToTheEmbeddedBundle walks every way an install from
+// TestTheUpdaterFallsBackToTheEmbeddedBundle walks every way an install from
 // upstream can end with nothing installed. Each one used to leave the user with
 // no bypass at all, and the third is not hypothetical: upstream published 1.10.2
 // before this client pinned it, so every install made in between got the "there
 // is a newer bundle, update Tenebra" notice and zero bypass behind it.
-func TestConnectFallsBackToTheEmbeddedBundle(t *testing.T) {
+//
+// The two calls below are what RunZapretAutoUpdate does, in its order: it lays
+// the floor at start and checks upstream on its own cadence. Fetching used to
+// hang off the connect instead, which is where its sixty-second budget outlived
+// the desktop bridge's; the fallback itself is unchanged and still has to hold
+// however the check ends.
+func TestTheUpdaterFallsBackToTheEmbeddedBundle(t *testing.T) {
 	pinned := zapret.Release{Version: "1.10.1", ArchiveURL: "https://github.com/x/b.zip"}
 
 	cases := []struct {
@@ -43,7 +49,7 @@ func TestConnectFallsBackToTheEmbeddedBundle(t *testing.T) {
 			latest: func(context.Context) (zapret.Release, error) {
 				return zapret.Release{}, errors.New("dial tcp: no route to host")
 			},
-			says: "не удалось скачать сборку",
+			says: "проверка обновления не удалась",
 		},
 		{
 			// GitHub answers the API but the asset host does not, or the transfer
@@ -53,7 +59,7 @@ func TestConnectFallsBackToTheEmbeddedBundle(t *testing.T) {
 			apply: func(context.Context, string, zapret.Release) error {
 				return errors.New("zapret: обрыв при скачивании: unexpected EOF")
 			},
-			says: "не удалось скачать сборку",
+			says: "проверка обновления не удалась",
 		},
 		{
 			// Upstream is ahead of every checksum this build carries. Nothing is
@@ -92,7 +98,10 @@ func TestConnectFallsBackToTheEmbeddedBundle(t *testing.T) {
 				d.zapretApply = c.apply
 			}
 
-			d.installZapretIfMissing(context.Background())
+			if from, to, _, err := d.updateZapret(context.Background()); err != nil {
+				d.reportZapretUpdateOutcome(from, to, err)
+			}
+			d.installEmbeddedZapretIfMissing(context.Background(), dir)
 
 			if got := zapret.Version(dir); got != zapret.EmbeddedVersion {
 				t.Fatalf("installed version = %q, want the embedded %q", got, zapret.EmbeddedVersion)
@@ -141,11 +150,7 @@ func TestTheEmbeddedBundleLeavesAnInstalledOneAlone(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			d.zapretLatest = func(context.Context) (zapret.Release, error) {
-				return zapret.Release{}, errors.New("dial tcp: no route to host")
-			}
-
-			d.installZapretIfMissing(context.Background())
+			d.installEmbeddedZapretIfMissing(context.Background(), dir)
 
 			if got := zapret.Version(dir); got != version {
 				t.Fatalf("installed version = %q, want the untouched %q", got, version)
@@ -167,10 +172,7 @@ func TestTheEmbeddedFloorIsNotRolledBackByAnOlderRelease(t *testing.T) {
 	withRealEmbeddedBundle(d)
 	dir := filepath.Join(d.store.Dir(), zapretDirName)
 
-	d.zapretLatest = func(context.Context) (zapret.Release, error) {
-		return zapret.Release{}, errors.New("dial tcp: no route to host")
-	}
-	d.installZapretIfMissing(context.Background())
+	d.installEmbeddedZapretIfMissing(context.Background(), dir)
 	if got := zapret.Version(dir); got != zapret.EmbeddedVersion {
 		t.Fatalf("the floor did not go in: version = %q", got)
 	}
