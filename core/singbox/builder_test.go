@@ -2,6 +2,7 @@ package singbox
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -576,6 +577,20 @@ func TestWireGuardEndpoint(t *testing.T) {
 	}
 }
 
+// ruleSetBundle returns a temp directory holding the bundled .srs binaries. The
+// routing layer stats them while it assembles a config, so a config that is
+// supposed to carry the geo split needs real files on disk.
+func ruleSetBundle(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, f := range []string{"geoip-ru.srs", "geosite-ru.srs", "geosite-ads.srs"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("srs"), 0o644); err != nil {
+			t.Fatalf("writing %s: %v", f, err)
+		}
+	}
+	return dir
+}
+
 func TestRouteBlock(t *testing.T) {
 	cfg := buildFake(t)
 	route := cfg["route"].(map[string]any)
@@ -585,21 +600,18 @@ func TestRouteBlock(t *testing.T) {
 	if route["auto_detect_interface"] != true {
 		t.Errorf("auto_detect_interface = %v", route["auto_detect_interface"])
 	}
-	rs, ok := route["rule_set"].([]map[string]any)
-	if !ok || len(rs) != 2 {
-		t.Fatalf("route rule_set = %v, want 2", route["rule_set"])
+	// buildFake ships no rule-set bundle, so smart mode degrades: the route block
+	// must carry no rule_set key at all. Emitting an empty or dangling one is the
+	// failure this guards — sing-box refuses a config that names a rule-set it
+	// cannot load, so every node would die at launch and report as a blocked
+	// protocol.
+	if rs, has := route["rule_set"]; has {
+		t.Errorf("route rule_set = %v with no bundle on disk, want the key omitted", rs)
 	}
-	// Confirm the official RU rule-set URLs are wired through.
-	var urls []string
-	for _, s := range rs {
-		urls = append(urls, s["url"].(string))
-	}
-	joined := strings.Join(urls, " ")
-	if !strings.Contains(joined, "sing-geoip/rule-set/geoip-ru.srs") {
-		t.Errorf("missing geoip-ru url: %v", urls)
-	}
-	if !strings.Contains(joined, "sing-geosite/rule-set/geosite-category-ru.srs") {
-		t.Errorf("missing geosite-category-ru url: %v", urls)
+	for _, r := range route["rules"].([]map[string]any) {
+		if _, has := r["rule_set"]; has {
+			t.Errorf("route rule references an undefined rule-set: %v", r)
+		}
 	}
 }
 
@@ -607,7 +619,7 @@ func TestRouteBlock(t *testing.T) {
 // route block as local rule-sets with on-disk paths and no download URLs — the
 // core of the freeze fix.
 func TestRouteBlockLocalRuleSets(t *testing.T) {
-	dir := "C:\\res"
+	dir := ruleSetBundle(t)
 	cfg, err := Build(fakeNodes(), "", routing.Options{Mode: routing.ModeSmart, RuleSetDir: dir}, TunOptions{})
 	if err != nil {
 		t.Fatal(err)

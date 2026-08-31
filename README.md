@@ -55,8 +55,10 @@ Everything below is implemented in this repo today (the UI features are desktop)
   and expiry.
 - **Smart RU routing.** *Smart* keeps Russian domains and IPs (and your LAN)
   direct and tunnels the rest; *Global* tunnels everything; *Direct* is the
-  proxy off. Geodata is pulled from the official public sing-geoip / sing-geosite
-  rule-sets at runtime — the client ships none of its own.
+  proxy off. Geodata comes from the official public sing-geoip / sing-geosite
+  rule-sets, shipped in the build as local `.srs` binaries and loaded from disk —
+  never downloaded while you are connecting. If a build is missing them, *Smart*
+  routes like *Global* and says so in the log rather than failing to connect.
 - **DPI bypass that works on the first connect.** Windows only: the client drives
   [zapret](https://github.com/bol-van/zapret) so censored services work at their
   own latency instead of through an exit node. One bundle release is compiled

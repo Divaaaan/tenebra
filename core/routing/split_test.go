@@ -119,7 +119,7 @@ func TestSplitOffLeavesRoutingUnchanged(t *testing.T) {
 }
 
 func TestSplitExcludeAddsProcessNameDirectRule(t *testing.T) {
-	rules := (Options{Mode: ModeSmart, SplitMode: SplitExclude, SplitApps: []string{"Chrome.exe", "steam.exe"}}).
+	rules := (Options{Mode: ModeSmart, SplitMode: SplitExclude, SplitApps: []string{"Chrome.exe", "steam.exe"}, RuleSetDir: ruleSetDir(t)}).
 		Normalize().RouteRules()
 	assertSniffHijackFirst(t, rules)
 
@@ -149,7 +149,7 @@ func TestSplitExcludeAddsProcessNameDirectRule(t *testing.T) {
 }
 
 func TestSplitExcludeRuleComesBeforeGeoSplit(t *testing.T) {
-	rules := (Options{Mode: ModeSmart, SplitMode: SplitExclude, SplitApps: []string{"chrome.exe"}}).
+	rules := (Options{Mode: ModeSmart, SplitMode: SplitExclude, SplitApps: []string{"chrome.exe"}, RuleSetDir: ruleSetDir(t)}).
 		Normalize().RouteRules()
 	procIdx, geoIdx := -1, -1
 	for i, r := range rules {
@@ -337,15 +337,115 @@ func TestSplitIncludeDNSRuleInEveryBaseMode(t *testing.T) {
 	}
 }
 
-// TestSplitExcludeAddsNoDNSProcessRule: exclude split does not add a dns
-// process_name rule. Excluded apps go direct, so resolving them via the base
-// final (dns-remote in smart/global, dns-direct in direct) never leaks a
-// tunnelled app's DNS — there is nothing to pin.
-func TestSplitExcludeAddsNoDNSProcessRule(t *testing.T) {
+// TestSplitExcludeResolvesThroughTheDirectResolver is the mirror of the include
+// rule above, and it replaces a test that asserted the opposite.
+//
+// That test argued an excluded app needed no DNS rule because sending its lookups
+// through the base final could not leak a tunnelled app's names. True, and beside
+// the point: the damage is not a leak but a mismatch of vantage points. In
+// smart or global mode the DNS final is dns-remote, so an app pinned direct had
+// its names answered from the exit country and then connected to those addresses
+// over the local line — a Steam client told about content servers near Frankfurt
+// and reaching them from Russia. The route decision and the resolver have to
+// agree, in both directions.
+func TestSplitExcludeResolvesThroughTheDirectResolver(t *testing.T) {
 	for _, m := range []Mode{ModeSmart, ModeGlobal, ModeDirect} {
-		opts := (Options{Mode: m, SplitMode: SplitExclude, SplitApps: []string{"chrome.exe"}}).Normalize()
-		if _, ok := dnsProcessRule(opts.dnsRules()); ok {
-			t.Errorf("exclude base %q unexpectedly added a dns process_name rule", m)
+		opts := (Options{Mode: m, SplitMode: SplitExclude, SplitApps: []string{"Chrome.exe"}}).Normalize()
+		pr, ok := dnsProcessRule(opts.dnsRules())
+		if !ok {
+			t.Errorf("exclude base %q: no dns process_name rule; the app resolves from the wrong place", m)
+			continue
+		}
+		if pr["action"] != "route" || pr["server"] != dnsDirectTag {
+			t.Errorf("exclude base %q: dns process rule = %v, want route to %s", m, pr, dnsDirectTag)
+		}
+		names, _ := pr["process_name"].([]string)
+		if !reflect.DeepEqual(names, []string{"chrome.exe"}) {
+			t.Errorf("exclude base %q: dns process_name = %v, want [chrome.exe]", m, names)
+		}
+
+		// The two layers must name the same executables and the opposite ends of the
+		// same path: traffic direct, lookups direct.
+		route, ok := processRule(opts.RouteRules())
+		if !ok || route["outbound"] != tagDirect {
+			t.Errorf("exclude base %q: route rule = %v, want the app pinned direct", m, route)
+		}
+		routeNames, _ := route["process_name"].([]string)
+		if !reflect.DeepEqual(routeNames, names) {
+			t.Errorf("exclude base %q: route names %v and dns names %v disagree", m, routeNames, names)
+		}
+	}
+}
+
+// TestGamesPresetResolvesThroughTheDirectResolver: the preset is the reason this
+// matters in practice, and it works with split tunnelling switched off entirely,
+// so the DNS mirror has to follow it there too. A game launcher whose traffic
+// goes direct while its DNS came from the exit node does not merely run slowly —
+// launchers that tie a session to the address they were issued hang on a login
+// that never completes.
+func TestGamesPresetResolvesThroughTheDirectResolver(t *testing.T) {
+	opts := (Options{Mode: ModeSmart, GamesDirect: true}).Normalize()
+	if opts.SplitMode == SplitExclude {
+		t.Fatalf("test assumes split mode stays off, got %q", opts.SplitMode)
+	}
+
+	pr, ok := dnsProcessRule(opts.dnsRules())
+	if !ok {
+		t.Fatalf("games preset emitted no dns process rule; rules=%v", opts.dnsRules())
+	}
+	if pr["server"] != dnsDirectTag {
+		t.Errorf("games dns rule server = %v, want %s", pr["server"], dnsDirectTag)
+	}
+	names, _ := pr["process_name"].([]string)
+	if !contains(names, "dota2.exe") {
+		t.Errorf("games dns rule does not cover the preset's own executables: %v", names)
+	}
+
+	// Whatever the route layer sends direct is exactly what resolves direct.
+	route, _ := processRule(opts.RouteRules())
+	routeNames, _ := route["process_name"].([]string)
+	if !reflect.DeepEqual(routeNames, names) {
+		t.Errorf("games route names %v and dns names %v disagree", routeNames, names)
+	}
+}
+
+// The DNS mirror is a direct pin like every other, so it yields to the kill
+// switch and to direct mode. Under the kill switch only the preset half drops
+// out: an app the user typed into the exclude list themselves is the explicit
+// per-application choice directPinAllowed already exempts, and its lookups have
+// to keep following its traffic.
+func TestSplitExcludeDNSMirrorFollowsTheDirectPinRules(t *testing.T) {
+	killed := (Options{
+		Mode:        ModeSmart,
+		KillSwitch:  true,
+		SplitMode:   SplitExclude,
+		SplitApps:   []string{"myapp.exe"},
+		GamesDirect: true,
+	}).Normalize()
+	pr, ok := dnsProcessRule(killed.dnsRules())
+	if !ok {
+		t.Fatal("the user's own excluded app lost its dns rule under the kill switch")
+	}
+	names, _ := pr["process_name"].([]string)
+	if !contains(names, "myapp.exe") {
+		t.Errorf("user app dropped from the dns mirror: %v", names)
+	}
+	if contains(names, "dota2.exe") {
+		t.Errorf("the games preset rode into the dns mirror under the kill switch: %v", names)
+	}
+
+	// Games only, kill switch on: nothing is pinned direct, so there is no mirror.
+	presetOnly := (Options{Mode: ModeSmart, KillSwitch: true, GamesDirect: true}).Normalize()
+	if _, ok := dnsProcessRule(presetOnly.dnsRules()); ok {
+		t.Error("the games preset emitted a dns direct pin under the kill switch")
+	}
+
+	// Include mode contributes nothing to the direct mirror: its apps go to the
+	// proxy, and the one process rule it emits must still target dns-remote.
+	inc := (Options{Mode: ModeSmart, SplitMode: SplitInclude, SplitApps: []string{"work.exe"}, GamesDirect: true}).Normalize()
+	for _, r := range inc.dnsRules() {
+		if _, has := r["process_name"]; has && r["server"] != dnsRemoteTag {
+			t.Errorf("include mode emitted a direct-resolver process rule: %v", r)
 		}
 	}
 }

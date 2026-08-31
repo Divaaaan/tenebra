@@ -104,6 +104,30 @@ func (o Options) dnsRules() []map[string]any {
 			"server":       dnsRemoteTag,
 		})
 	}
+	// The mirror image: apps pinned to the DIRECT outbound — the exclude list and
+	// the games preset — must resolve through the direct resolver, for the same
+	// reason and with a different symptom.
+	//
+	// The include rule above exists to stop a leak. This one exists to stop a
+	// mismatch of vantage points, and it is the more visible of the two. In smart
+	// or global mode the DNS final is dns-remote, so a game pinned direct still had
+	// its names answered from the exit country: Steam asked for its content servers
+	// and was told about the ones near Frankfurt, then connected to them over a
+	// Russian consumer line — worse than either path used honestly. Launchers that
+	// tie a session to the address they were issued do not merely run slowly under
+	// that; they hang, and the user sees a launcher that will not sign in while the
+	// VPN says everything is fine.
+	//
+	// It sits directly after the include rule so the route layer and this one apply
+	// the same precedence: an app decision beats a domain rule in both, which is
+	// what keeps a lookup and the connection it feeds on the same path.
+	if apps := o.directSplitApps(); len(apps) > 0 {
+		rules = append(rules, map[string]any{
+			"process_name": apps,
+			"action":       "route",
+			"server":       dnsDirectTag,
+		})
+	}
 	// Mirror the route-layer custom/preset rules onto DNS so each domain resolves
 	// through the resolver its traffic uses: a domain pinned direct resolves via
 	// dns-direct, one pinned to the proxy via dns-remote. Without this a domain
@@ -145,7 +169,10 @@ func (o Options) dnsRules() []map[string]any {
 			"server":        dnsRemoteTag,
 		})
 	}
-	if o.Mode == ModeSmart {
+	// The smart-mode RU rule drops out with its geodata (smartGeoActive), exactly
+	// like its route-layer twin: without the .srs on disk this would name an
+	// undefined rule-set and sing-box would refuse the config outright.
+	if o.smartGeoActive() {
 		rules = append(rules, map[string]any{
 			"rule_set": []string{ruleSetGeositeRU},
 			"action":   "route",
@@ -156,14 +183,19 @@ func (o Options) dnsRules() []map[string]any {
 }
 
 // adBlockActive reports whether ad/tracker DNS blocking should be emitted. It
-// requires both the opt-in toggle and a local rule-set directory: the blocklist
-// ships ONLY as a bundled local .srs (never a remote rule-set, which would block
-// sing-box at startup), so without RuleSetDir there is nothing to match and the
-// feature stays inert rather than referencing an undefined rule-set — which would
-// FATAL the config. The desktop app always sets RuleSetDir in a real install, so
-// this gate only makes ad-blocking a no-op in dev builds missing the bundled file.
+// requires both the opt-in toggle and the blocklist file itself being readable
+// right now: the blocklist ships ONLY as a bundled local .srs, so with nothing on
+// disk there is nothing to match and the feature stays inert rather than
+// referencing a rule-set sing-box cannot load — which would FATAL the config and
+// take the whole tunnel with it.
+//
+// It asks for its own file rather than for the directory. The blocklist is
+// optional in a way the RU geodata is not — a user who never turns ad-blocking on
+// never needs it — so a build shipping only the geodata still gets a working
+// smart mode, and turning the toggle on there is a no-op instead of a failure to
+// connect.
 func (o Options) adBlockActive() bool {
-	return o.AdBlock && o.RuleSetDir != ""
+	return o.AdBlock && o.ruleSetFilePresent(fileGeositeAds)
 }
 
 // dnsRejectRule sinkholes every lookup matching the named domain rule-set. The

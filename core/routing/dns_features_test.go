@@ -69,7 +69,7 @@ func TestValidDNSServer(t *testing.T) {
 // the FIRST dns rule (so ads are refused before any routing rule), it is a REFUSED
 // reject with no_drop set, and it matches the local ads rule-set.
 func TestDNSAdBlockRule(t *testing.T) {
-	dir := filepath.Join("C:\\", "res")
+	dir := ruleSetDir(t)
 	rules := (Options{Mode: ModeSmart, AdBlock: true, RuleSetDir: dir}).Normalize().dnsRules()
 	if len(rules) != 2 {
 		t.Fatalf("smart+adblock dns rules = %d, want 2 (reject then RU route)", len(rules))
@@ -97,7 +97,7 @@ func TestDNSAdBlockRule(t *testing.T) {
 // TestDNSAdBlockActiveInEveryMode: the reject rule leads the dns rules in smart,
 // global and direct alike — ad-blocking is not mode-specific.
 func TestDNSAdBlockActiveInEveryMode(t *testing.T) {
-	dir := filepath.Join("C:\\", "res")
+	dir := ruleSetDir(t)
 	for _, mode := range []Mode{ModeSmart, ModeGlobal, ModeDirect} {
 		rules := (Options{Mode: mode, AdBlock: true, RuleSetDir: dir}).Normalize().dnsRules()
 		if len(rules) == 0 || rules[0]["action"] != "reject" {
@@ -121,7 +121,7 @@ func TestDNSAdBlockGatedOnLocalRuleSet(t *testing.T) {
 	}
 
 	// Ad-blocking off keeps the rules clean even with a rule-set dir present.
-	off := (Options{Mode: ModeGlobal, RuleSetDir: filepath.Join("C:\\", "res")}).Normalize().dnsRules()
+	off := (Options{Mode: ModeGlobal, RuleSetDir: ruleSetDir(t)}).Normalize().dnsRules()
 	if len(off) != 0 {
 		t.Errorf("global no-adblock dns rules = %v, want empty", off)
 	}
@@ -131,7 +131,7 @@ func TestDNSAdBlockGatedOnLocalRuleSet(t *testing.T) {
 // to reference, in every mode, and ALWAYS as a local set — never remote, so it can
 // never reintroduce the startup-blocking fetch.
 func TestRouteRuleSetsAdBlockLocalOnly(t *testing.T) {
-	dir := filepath.Join("C:\\", "res")
+	dir := ruleSetDir(t)
 
 	// Global mode: RU is smart-only, so adblock contributes exactly the ads set.
 	rs := (Options{Mode: ModeGlobal, AdBlock: true, RuleSetDir: dir}).Normalize().RouteRuleSets()
@@ -208,7 +208,7 @@ func TestDNSCustomResolvers(t *testing.T) {
 // TestDNSWithAdBlockMarshals guards the whole dns block (reject rule included)
 // against emitting anything encoding/json can't handle.
 func TestDNSWithAdBlockMarshals(t *testing.T) {
-	dns := (Options{Mode: ModeSmart, AdBlock: true, RuleSetDir: filepath.Join("C:\\", "res")}).Normalize().DNS()
+	dns := (Options{Mode: ModeSmart, AdBlock: true, RuleSetDir: ruleSetDir(t)}).Normalize().DNS()
 	if _, err := json.Marshal(dns); err != nil {
 		t.Fatalf("dns block with adblock does not marshal: %v", err)
 	}

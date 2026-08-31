@@ -2,9 +2,32 @@ package routing
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 )
+
+// ruleSetDirWith returns a temporary directory holding exactly the named .srs
+// files. Rule-set presence is now a filesystem question answered while the config
+// is assembled, so a test that wants the geo rules emitted has to put real files
+// somewhere real — a plausible-looking path is exactly what the production code
+// no longer trusts.
+func ruleSetDirWith(t *testing.T, files ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, f := range files {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("srs"), 0o644); err != nil {
+			t.Fatalf("writing %s: %v", f, err)
+		}
+	}
+	return dir
+}
+
+// ruleSetDir is the full bundle: both RU sets and the ad blocklist.
+func ruleSetDir(t *testing.T) string {
+	t.Helper()
+	return ruleSetDirWith(t, fileGeoIPRU, fileGeositeRU, fileGeositeAds)
+}
 
 func TestNormalizeDefaults(t *testing.T) {
 	got := Options{}.Normalize()
@@ -49,46 +72,20 @@ func TestValidate(t *testing.T) {
 }
 
 func TestRuleSetsOnlyForSmart(t *testing.T) {
-	if rs := (Options{Mode: ModeSmart}).Normalize().RouteRuleSets(); len(rs) != 2 {
+	dir := ruleSetDir(t)
+	if rs := (Options{Mode: ModeSmart, RuleSetDir: dir}).Normalize().RouteRuleSets(); len(rs) != 2 {
 		t.Fatalf("smart rule_sets = %d, want 2", len(rs))
 	}
-	if rs := (Options{Mode: ModeGlobal}).Normalize().RouteRuleSets(); rs != nil {
+	if rs := (Options{Mode: ModeGlobal, RuleSetDir: dir}).Normalize().RouteRuleSets(); rs != nil {
 		t.Errorf("global rule_sets = %v, want nil", rs)
 	}
-	if rs := (Options{Mode: ModeDirect}).Normalize().RouteRuleSets(); rs != nil {
+	if rs := (Options{Mode: ModeDirect, RuleSetDir: dir}).Normalize().RouteRuleSets(); rs != nil {
 		t.Errorf("direct rule_sets = %v, want nil", rs)
 	}
 }
 
-func TestRuleSetURLsAndDetour(t *testing.T) {
-	rs := (Options{Mode: ModeSmart}).Normalize().RouteRuleSets()
-	wantURL := map[string]string{
-		ruleSetGeoIPRU:   urlGeoIPRU,
-		ruleSetGeositeRU: urlGeositeRU,
-	}
-	for _, set := range rs {
-		tag := set["tag"].(string)
-		if set["url"] != wantURL[tag] {
-			t.Errorf("rule_set %q url = %v, want %v", tag, set["url"], wantURL[tag])
-		}
-		if set["download_detour"] != tagDirect {
-			t.Errorf("rule_set %q detour = %v, want %q", tag, set["download_detour"], tagDirect)
-		}
-		if set["format"] != "binary" {
-			t.Errorf("rule_set %q format = %v, want binary", tag, set["format"])
-		}
-		if set["type"] != "remote" {
-			t.Errorf("rule_set %q type = %v, want remote", tag, set["type"])
-		}
-	}
-	// Both official public sources must be referenced.
-	if urlGeoIPRU == "" || urlGeositeRU == "" {
-		t.Fatal("rule-set URLs must be set")
-	}
-}
-
 func TestRuleSetsLocalWhenDirSet(t *testing.T) {
-	dir := filepath.Join("C:\\", "resources")
+	dir := ruleSetDir(t)
 	rs := (Options{Mode: ModeSmart, RuleSetDir: dir}).Normalize().RouteRuleSets()
 	if len(rs) != 2 {
 		t.Fatalf("local rule_sets = %d, want 2", len(rs))
@@ -118,23 +115,6 @@ func TestRuleSetsLocalWhenDirSet(t *testing.T) {
 	}
 }
 
-// TestRuleSetsRemoteWhenDirEmpty pins the fallback: with no RuleSetDir the sets
-// stay remote and carry no local path.
-func TestRuleSetsRemoteWhenDirEmpty(t *testing.T) {
-	rs := (Options{Mode: ModeSmart}).Normalize().RouteRuleSets()
-	if len(rs) != 2 {
-		t.Fatalf("remote rule_sets = %d, want 2", len(rs))
-	}
-	for _, set := range rs {
-		if set["type"] != "remote" {
-			t.Errorf("rule_set %q type = %v, want remote", set["tag"], set["type"])
-		}
-		if _, has := set["path"]; has {
-			t.Errorf("remote rule_set %q must not have a path, got %v", set["tag"], set["path"])
-		}
-	}
-}
-
 // TestRuleSetDirSurvivesNormalize guards the plumbing: Normalize must preserve
 // RuleSetDir so the value the daemon sets reaches Build unchanged.
 func TestRuleSetDirSurvivesNormalize(t *testing.T) {
@@ -158,7 +138,7 @@ func TestRouteRulesDNSHijackFirst(t *testing.T) {
 }
 
 func TestSmartRouteSendsRUDirect(t *testing.T) {
-	rules := (Options{Mode: ModeSmart}).Normalize().RouteRules()
+	rules := (Options{Mode: ModeSmart, RuleSetDir: ruleSetDir(t)}).Normalize().RouteRules()
 	var found bool
 	for _, r := range rules {
 		if r["action"] == "route" && r["outbound"] == tagDirect {
@@ -268,11 +248,12 @@ func TestDNSStrategyIPv4Only(t *testing.T) {
 }
 
 func TestDNSRulesSmartOnly(t *testing.T) {
-	smart := (Options{Mode: ModeSmart}).Normalize().dnsRules()
+	dir := ruleSetDir(t)
+	smart := (Options{Mode: ModeSmart, RuleSetDir: dir}).Normalize().dnsRules()
 	if len(smart) != 1 || smart[0]["server"] != dnsDirectTag {
 		t.Errorf("smart dns rules = %v, want RU->direct", smart)
 	}
-	global := (Options{Mode: ModeGlobal}).Normalize().dnsRules()
+	global := (Options{Mode: ModeGlobal, RuleSetDir: dir}).Normalize().dnsRules()
 	if len(global) != 0 {
 		t.Errorf("global dns rules = %v, want empty", global)
 	}

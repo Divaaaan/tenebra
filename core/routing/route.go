@@ -3,14 +3,13 @@ package routing
 import "path/filepath"
 
 // RouteRuleSets returns the rule_set definitions the route/dns blocks reference
-// by tag. Only smart mode needs them (global/direct match no geodata), so the
-// other modes get an empty slice and sing-box loads/downloads nothing.
+// by tag. Every one is a local .srs read from RuleSetDir, and every one is
+// emitted only when the file behind it is present at this moment — the same
+// condition the rules referencing it ask, so a definition and its user always
+// appear or vanish together.
 //
-// When RuleSetDir is set, the sets are local .srs binaries loaded from disk, so
-// sing-box never blocks startup on a network fetch. When it is empty, they are
-// remote .srs binaries pulled through the direct outbound so the download
-// survives a blocked proxy — the original behaviour, kept as a fallback for dev
-// builds or installs missing the bundled files.
+// Only smart mode needs the RU geodata (global/direct match none), so the other
+// modes get an empty slice and sing-box loads nothing.
 func (o Options) RouteRuleSets() []map[string]any {
 	local := func(tag, file string) map[string]any {
 		return map[string]any{
@@ -23,37 +22,18 @@ func (o Options) RouteRuleSets() []map[string]any {
 
 	var sets []map[string]any
 
-	// Smart mode needs the RU geodata (local when the .srs are bundled, else
-	// remote through the direct outbound). Global and direct match no geodata, so
-	// they reference none of it.
-	if o.Mode == ModeSmart {
-		if o.RuleSetDir != "" {
-			sets = append(sets,
-				local(ruleSetGeoIPRU, fileGeoIPRU),
-				local(ruleSetGeositeRU, fileGeositeRU),
-			)
-		} else {
-			remote := func(tag, url string) map[string]any {
-				return map[string]any{
-					"type":            "remote",
-					"tag":             tag,
-					"format":          "binary",
-					"url":             url,
-					"download_detour": tagDirect,
-					"update_interval": ruleSetUpdateInterval,
-				}
-			}
-			sets = append(sets,
-				remote(ruleSetGeoIPRU, urlGeoIPRU),
-				remote(ruleSetGeositeRU, urlGeositeRU),
-			)
-		}
+	// Smart mode needs the RU geodata. Without the files on disk it emits nothing
+	// and the geo rules below drop out with it (see smartGeoActive).
+	if o.smartGeoActive() {
+		sets = append(sets,
+			local(ruleSetGeoIPRU, fileGeoIPRU),
+			local(ruleSetGeositeRU, fileGeositeRU),
+		)
 	}
 
 	// The ad/tracker blocklist applies in every mode when opted in. The dns reject
-	// rule references it by tag, so it must be defined here. adBlockActive already
-	// requires RuleSetDir, so it is emitted strictly as a local set and can never
-	// reintroduce a startup-blocking remote fetch.
+	// rule references it by tag, so it must be defined here; adBlockActive already
+	// requires the file itself, so the two never disagree.
 	if o.adBlockActive() {
 		sets = append(sets, local(ruleSetGeositeAds, fileGeositeAds))
 	}
@@ -88,14 +68,10 @@ func (o Options) RouteRules() []map[string]any {
 	// The games preset merges into the exclude list, so a switched-on preset and a
 	// hand-added app land in the same rule. It only affects exclude: pinning games
 	// to the proxy in include mode would be the opposite of what the preset means.
-	excludeApps := o.splitAppsWithPresets()
+	// directSplitApps decides which apps go direct (exclude list plus the games
+	// preset, including with split mode off); dnsRules mirrors the same call so an
+	// app's lookups leave from the same place its packets do.
 	switch o.SplitMode {
-	case SplitExclude:
-		if len(excludeApps) > 0 {
-			rules = append(rules,
-				route(map[string]any{"process_name": excludeApps}, tagDirect),
-			)
-		}
 	case SplitInclude:
 		if len(o.SplitApps) > 0 {
 			rules = append(rules,
@@ -103,12 +79,9 @@ func (o Options) RouteRules() []map[string]any {
 			)
 		}
 	default:
-		// With split tunnelling off entirely, the games preset still has to work —
-		// otherwise "keep games direct" would silently require the user to also
-		// turn on split mode and understand what it is.
-		if o.gamesDirectActive() && len(excludeApps) > 0 {
+		if apps := o.directSplitApps(); len(apps) > 0 {
 			rules = append(rules,
-				route(map[string]any{"process_name": excludeApps}, tagDirect),
+				route(map[string]any{"process_name": apps}, tagDirect),
 			)
 		}
 	}
@@ -157,25 +130,24 @@ func (o Options) RouteRules() []map[string]any {
 		)
 	}
 
-	if !includeOnly {
-		switch o.Mode {
-		case ModeDirect:
-			// Everything direct; nothing else needs a rule, final stays proxy but
-			// the singbox layer points final at direct for this mode.
-		case ModeGlobal:
-			// Everything via proxy; LAN may still be excused below.
-		case ModeSmart:
-			// RU IPs and RU domains go direct.
-			rules = append(rules,
-				route(map[string]any{"rule_set": []string{ruleSetGeoIPRU, ruleSetGeositeRU}}, tagDirect),
-			)
-		}
+	// The mode-level split. Direct needs no rule (the singbox layer points the
+	// final at direct), global needs none either (everything already goes to the
+	// proxy final), and smart pins RU IPs and RU domains direct.
+	//
+	// The smart rule asks smartGeoActive, not just the mode: naming a rule-set whose
+	// .srs is not on disk is a fatal config error, so without the geodata smart
+	// emits nothing here and the session runs as global rather than not running at
+	// all.
+	if !includeOnly && o.smartGeoActive() {
+		rules = append(rules,
+			route(map[string]any{"rule_set": []string{ruleSetGeoIPRU, ruleSetGeositeRU}}, tagDirect),
+		)
 	}
 
 	if o.lanBypassActive() {
 		// Private/LAN destinations should never traverse the tunnel. Match the
-		// well-known private ranges directly instead of relying on a rule-set so
-		// this works offline before any download completes.
+		// well-known private ranges directly instead of relying on a rule-set, so
+		// this keeps working on an install that is missing its geodata.
 		rules = append(rules,
 			route(map[string]any{"ip_is_private": true}, tagDirect),
 		)

@@ -175,9 +175,9 @@ func TestSetDNSPersistsAcrossRestart(t *testing.T) {
 // rule backed by a LOCAL geosite-ads rule-set (never remote).
 func TestSetDNSLiveReapplyInjectsAdBlockRule(t *testing.T) {
 	h := newHarness(t)
-	// The blocklist is local-only, so ad-block is inert without a rule-set dir; the
-	// fake runner never reads the path, so any directory drives the config shape.
-	h.daemon.SetRuleSetDir("C:\\res")
+	// The blocklist is local-only and is now checked file by file as the config is
+	// assembled, so ad-block is inert unless geosite-ads.srs is really there.
+	h.daemon.SetRuleSetDir(ruleSetBundle(t))
 	p := seedMultiProto(t, h)
 
 	h.send(Request{ID: 1, Cmd: CmdConnect, Profile: p.ID})
