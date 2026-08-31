@@ -144,4 +144,34 @@ describe("trimToBudget", () => {
       expect(trimmed.length).toBeLessThanOrEqual(500);
     }
   });
+
+  // The report is written to a UTF-8 file and put on the clipboard, and neither
+  // can carry half a character. JavaScript indexes strings by UTF-16 code unit,
+  // so a cut landing between the two units of an astral character leaves a lone
+  // surrogate — which encodes as U+FFFD, putting a � in the middle of a report
+  // the reporter did not corrupt and will be asked about. Cyrillic and the rest
+  // of the BMP are never at risk here; emoji always are.
+  it("never cuts a character in half", () => {
+    // A high surrogate not followed by a low one, or a low one not preceded by a
+    // high one: the two halves of a pair that survived without the other.
+    const LONE_SURROGATE =
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+    // Two code units each, so shifting the run by one puts every possible split
+    // offset under the cut across the pads.
+    for (let pad = 0; pad < 8; pad++) {
+      const text = "H".repeat(pad) + "🌍".repeat(4000) + "T".repeat(pad);
+      const trimmed = trimToBudget(text, 600, PATH);
+
+      expect(trimmed.length).toBeLessThanOrEqual(600);
+      expect(trimmed).not.toMatch(LONE_SURROGATE);
+      // The round trip a report actually makes: encoding to UTF-8 is what the
+      // file write and the clipboard both come down to, and it is where a lone
+      // surrogate turns into the replacement character.
+      const roundTrip = new TextDecoder().decode(
+        new TextEncoder().encode(trimmed),
+      );
+      expect(roundTrip).toBe(trimmed);
+    }
+  });
 });

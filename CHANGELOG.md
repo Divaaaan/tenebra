@@ -40,6 +40,16 @@ All notable changes to Tenebra are documented here. The format follows
   YouTube and Discord carried through the tunnel until the background updater has
   the bundle in place. Fetching a newer bundle stays where it belongs, on that
   updater's own schedule, where nobody is waiting on it.
+- **A problem report is now text end to end, whatever went into it.** The report
+  is assembled from bytes the app did not author — output captured from sing-box,
+  the tail of a log file on disk — and nothing checked that they were UTF-8. They
+  usually are; when they are not, the corruption used to be repaired silently and
+  far downstream, by the JSON encoder or by whatever wrote the file, leaving a row
+  of `����` in a pasted report with nothing left to say which section produced it.
+  The core now guarantees the bundle it hands out is valid UTF-8, the log tail no
+  longer cuts a character in half when a single line runs past the read window,
+  and the trim that fits a report inside a GitHub issue no longer splits an emoji
+  into two halves that cannot be encoded.
 
 ## [0.5.10] - 2026-08-26
 

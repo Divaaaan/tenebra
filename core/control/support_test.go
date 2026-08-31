@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/Divaaaan/tenebra/core/buildinfo"
 	"github.com/Divaaaan/tenebra/core/model"
@@ -273,6 +274,73 @@ func TestCollectDiagnosticsCommandAnswers(t *testing.T) {
 	}
 	if got.Filename == "" {
 		t.Error("the command's payload carries no suggested filename")
+	}
+}
+
+// cp866 is "обход не вытянул видео" — one of the core's own Russian warnings —
+// encoded in the Windows OEM Cyrillic code page rather than UTF-8. It stands in
+// for any byte a section of the bundle can pick up from outside this process:
+// output captured from a child, a line read back off disk, a string that came
+// through an ANSI Windows API.
+var cp866Warning = []byte{
+	0xAE, 0xA1, 0xE5, 0xAE, 0xA4, 0x20, // обход
+	0xAD, 0xA5, 0x20, // не
+	0xA2, 0xEB, 0xE2, 0xEF, 0xAD, 0xE3, 0xAB, 0x20, // вытянул
+	0xA2, 0xA8, 0xA4, 0xA5, 0xAE, // видео
+}
+
+// TestDiagnosticsIsAlwaysValidUTF8 is the encoding guarantee the report rests
+// on. Every consumer downstream — the JSON reply, the file the desktop writes,
+// the clipboard, a GitHub issue body — is UTF-8 and has no way to carry anything
+// else, and encoding/json quietly swaps invalid bytes for U+FFFD on the way out.
+// Left to that, a bundle assembled from a log line in the console code page
+// reaches a maintainer as a row of ���� with nothing to say which section broke.
+//
+// So the bundle owes its consumers text: the bytes it did not author are made
+// valid here, and the Russian strings the core wrote itself pass through
+// untouched, including across the protocol.
+func TestDiagnosticsIsAlwaysValidUTF8(t *testing.T) {
+	d, runner := bundleDaemon(t)
+	// Every channel that carries bytes from outside this process.
+	runner.mu.Lock()
+	runner.logs = []string{"sing-box says: " + string(cp866Warning)}
+	runner.mu.Unlock()
+	d.SetLogTail(func(int) []string {
+		return []string{"2026-08-31 08:53:55 warn: " + string(cp866Warning)}
+	})
+	// …and the core's own Russian, which is UTF-8 in the source and must survive
+	// whatever is done to the rest.
+	d.emitLog(LogWarn, "обход не вытянул видео — увожу эти сервисы в туннель")
+
+	b := d.CollectDiagnostics()
+	if !utf8.ValidString(b.Text) {
+		t.Errorf("the bundle is not valid UTF-8; a report built from it pastes as garbage:\n%q", b.Text)
+	}
+	if strings.Contains(b.Text, string(cp866Warning)) {
+		t.Error("the bundle still carries the raw non-UTF-8 bytes verbatim")
+	}
+	// The ASCII around the bad bytes is what says which line went wrong; losing it
+	// would trade one unreadable report for another.
+	for _, kept := range []string{"sing-box says:", "2026-08-31 08:53:55 warn:"} {
+		if !strings.Contains(b.Text, kept) {
+			t.Errorf("the bundle dropped the readable context %q around the bad bytes", kept)
+		}
+	}
+
+	// Through the protocol, which is where the desktop actually reads it.
+	resp := d.Handle(context.Background(), Request{ID: 9, Cmd: CmdCollectDiagnostics})
+	if !resp.Ok {
+		t.Fatalf("collect_diagnostics failed: %s", resp.Error)
+	}
+	var got SupportBundle
+	if err := json.Unmarshal(resp.Data, &got); err != nil {
+		t.Fatalf("decode response data: %v", err)
+	}
+	if !utf8.ValidString(got.Text) {
+		t.Error("the bundle is not valid UTF-8 after the JSON round trip")
+	}
+	if !strings.Contains(got.Text, "обход не вытянул видео — увожу эти сервисы в туннель") {
+		t.Errorf("the core's own Russian did not survive the round trip:\n%s", got.Text)
 	}
 }
 
