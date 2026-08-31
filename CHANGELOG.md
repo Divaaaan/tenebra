@@ -25,6 +25,21 @@ All notable changes to Tenebra are documented here. The format follows
   back on. Never having touched it is still not an answer: the button goes on
   deciding for anyone who has not opened the bypass settings, which is what the
   one-button setup rests on.
+- **The first Connect on a fresh install no longer reports failure and leaves the
+  app disconnected.** Pressing it a second time worked, which is the shape of the bug:
+  the first press was fetching the bypass bundle. A machine with none went to
+  GitHub for one under a sixty-second budget, then waited for the packet filter
+  to attach on top of that — and the app abandons a command at sixty seconds, so
+  it announced a failed connect while the daemon was still connecting, and the
+  second press was quick because the bundle had arrived in the meantime. Anything
+  pressed during that minute — status, disconnect — went unanswered too, since
+  commands are served one at a time. Connecting now lays down only the bypass
+  copy that ships inside Tenebra, which needs no network and takes about a
+  second, and the whole bypass step is capped at ten seconds: if it does not
+  finish, the connection goes ahead without the bypass and the log says so, with
+  YouTube and Discord carried through the tunnel until the background updater has
+  the bundle in place. Fetching a newer bundle stays where it belongs, on that
+  updater's own schedule, where nobody is waiting on it.
 
 ## [0.5.10] - 2026-08-26
 

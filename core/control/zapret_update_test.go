@@ -333,11 +333,14 @@ func TestAFailedVerificationIsLouderThanAFailedCheck(t *testing.T) {
 	}
 }
 
-// The first-connect install runs unattended and its failures are ordinarily
+// The background install runs unattended and its failures are ordinarily
 // shrugged off — the tunnel works without a bypass. A refusal to install
 // something that did not verify is not in that category and must not be filed
 // under "could not download".
-func TestAFailedVerificationOnFirstConnectIsSaidOutLoud(t *testing.T) {
+//
+// This is the first-install case specifically: nothing is on disk yet, so the
+// line must not borrow the update wording about a previous bundle being kept.
+func TestAFailedVerificationOnAFirstInstallIsSaidOutLoud(t *testing.T) {
 	d, _ := newTestDaemon(t)
 	events := captureLogs(t, d)
 
@@ -349,7 +352,9 @@ func TestAFailedVerificationOnFirstConnectIsSaidOutLoud(t *testing.T) {
 		return nil
 	}
 
-	d.installZapretIfMissing(context.Background())
+	if from, to, _, err := d.updateZapret(context.Background()); err != nil {
+		d.reportZapretUpdateOutcome(from, to, err)
+	}
 
 	ev, ok := loudest(*events, "целостност")
 	if !ok {

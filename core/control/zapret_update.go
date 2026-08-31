@@ -23,10 +23,13 @@ const (
 	zapretUpdateInterval     = 12 * time.Hour
 )
 
-// zapretManualUpdateBudget bounds the check a user asked for by hand. Longer than
-// the one a connect allows itself (that one is racing a handshake the user is
-// waiting on), short enough that "GitHub is unreachable here" comes back as an
-// answer rather than as a spinner that outlasts the user's patience.
+// zapretManualUpdateBudget bounds the check a user asked for by hand. Long
+// enough for a slow release feed — this is the one bypass command a user is
+// deliberately waiting on, so it may take its time where a connect may not (a
+// connect no longer fetches at all; see raiseZapretForConnect) — and short
+// enough that "GitHub is unreachable here" comes back as an answer rather than
+// as a spinner that outlasts both the user's patience and the desktop bridge's
+// sixty-second ceiling.
 const zapretManualUpdateBudget = 45 * time.Second
 
 // RunZapretAutoUpdate keeps the DPI-bypass bundle current until ctx is done.
@@ -56,7 +59,7 @@ func (d *Daemon) RunZapretAutoUpdate(ctx context.Context) {
 	// settings were all dead on a fresh install, which reads as the feature being
 	// broken rather than as it being not yet fetched. The bytes are in this binary
 	// already: no network, no wait, nothing to fail.
-	d.installEmbeddedZapretIfMissing(filepath.Join(d.store.Dir(), zapretDirName))
+	d.installEmbeddedZapretIfMissing(ctx, filepath.Join(d.store.Dir(), zapretDirName))
 
 	// With a bundle guaranteed on disk, put the bypass back up if that is where
 	// the user left it. Here rather than after the startup delay: a user whose

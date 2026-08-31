@@ -59,9 +59,17 @@ type Runner struct {
 	Dial DialFunc
 }
 
+// DefaultSettle is the settle NewRunner hands out, named so callers can budget
+// against it. Starting a strategy costs at least this much whenever winws is
+// slow to attach, and a caller running under a deadline of its own — the connect
+// path is the one that matters, see zapretConnectRaiseBudget in core/control —
+// has to be able to say so in a constant expression rather than by copying 7s
+// into a second place that then drifts.
+const DefaultSettle = 7 * time.Second
+
 // NewRunner builds a Runner with defaults that hold up on a slow machine.
 func NewRunner(dir string) *Runner {
-	return &Runner{Dir: dir, Settle: 7 * time.Second, ProbeTimeout: 8 * time.Second}
+	return &Runner{Dir: dir, Settle: DefaultSettle, ProbeTimeout: 8 * time.Second}
 }
 
 // Start launches a strategy and reports whether winws came up.

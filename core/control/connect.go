@@ -98,7 +98,12 @@ func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 	// path. Whether it actually started decides where those services are routed —
 	// tunnelling them anyway would pay a round trip they no longer need, and
 	// routing them direct without the bypass would leave them blocked.
-	d.raiseZapretForConnect(ctx)
+	//
+	// Bounded (see raiseZapretForConnectBounded): this runs on the serialized
+	// command loop, under a bridge that abandons the request at sixty seconds, so
+	// the bypass is given a slice of that minute and the connect goes ahead
+	// whatever comes of it.
+	d.raiseZapretForConnectBounded(ctx)
 
 	// A user-driven connect opens a fresh kill-switch relaunch budget.
 	d.mu.Lock()
@@ -1230,7 +1235,11 @@ func (d *Daemon) AutoconnectOnStart() bool {
 	//
 	// Ordered before the connect, like handleConnect: the flag it sets decides
 	// where the censored services are routed in the config the connect builds.
-	d.raiseZapretForConnect(context.Background())
+	//
+	// Bounded like handleConnect's too, though nothing is watching a request here:
+	// autoconnect is racing the user, who opens the app expecting a tunnel, and a
+	// bypass that cannot come up must not be what delays it.
+	d.raiseZapretForConnectBounded(context.Background())
 	// A start failure (e.g. the pinned node vanished from the profile) is
 	// logged and leaves the state untouched: startConnect fails before any
 	// teardown, so the daemon stays idle rather than reporting an error for a

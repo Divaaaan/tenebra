@@ -11,54 +11,82 @@ import (
 	"github.com/Divaaaan/tenebra/core/zapret"
 )
 
-// TestConnectInstallsTheBundleWhenThereIsNone: the product is "paste a link,
-// press one button". A first connect that finds no bypass installed must fetch
-// one rather than quietly tunnelling YouTube and Discord at full round-trip
-// latency — the exact cost the bypass exists to avoid.
-func TestConnectInstallsTheBundleWhenThereIsNone(t *testing.T) {
+// TestConnectLaysTheBundleWithoutTouchingTheNetwork: the product is "paste a
+// link, press one button". A first connect that finds no bypass installed must
+// end with one rather than quietly tunnelling YouTube and Discord at full
+// round-trip latency — the exact cost the bypass exists to avoid.
+//
+// It must do it from the bytes compiled into this binary and from nowhere else.
+// Reaching upstream from here is what made the first press look broken: the
+// download had a sixty-second budget, the settle for winws came after it, and the
+// desktop bridge abandons a request at sixty — so the button reported failure
+// while the daemon connected anyway, and the second press worked because by then
+// the bundle was on disk. Keeping the network off this path is the fix, and
+// RunZapretAutoUpdate is where the newer release comes from instead.
+func TestConnectLaysTheBundleWithoutTouchingTheNetwork(t *testing.T) {
 	d, _ := newTestDaemon(t)
+	// No winws and no cmd.exe: what these check is the bundle on disk, not the
+	// packet filter.
+	stubStarts(d)
 	dir := filepath.Join(d.store.Dir(), zapretDirName)
 
 	d.zapretLatest = func(context.Context) (zapret.Release, error) {
-		return zapret.Release{Version: "1.10.1", ArchiveURL: "https://example.invalid/b.zip"}, nil
+		t.Error("a connect asked GitHub for a release")
+		return zapret.Release{}, errors.New("should not be called")
 	}
-	installed := 0
-	d.zapretApply = func(_ context.Context, target string, rel zapret.Release) error {
-		installed++
-		if err := os.MkdirAll(filepath.Join(target, "bin"), 0o755); err != nil {
-			return err
-		}
-		for _, f := range []string{"general.bat", filepath.Join("bin", "winws.exe")} {
-			if err := os.WriteFile(filepath.Join(target, f), []byte("x"), 0o644); err != nil {
-				return err
-			}
-		}
-		return zapret.WriteVersion(target, rel.Version)
+	d.zapretApply = func(context.Context, string, zapret.Release) error {
+		t.Error("a connect downloaded a bundle")
+		return errors.New("should not be called")
+	}
+	embedded := 0
+	d.zapretEmbed = func(target string) ([]zapret.Strategy, error) {
+		embedded++
+		return seedBundleAt(t, target, "1.10.2"), nil
 	}
 
-	d.installZapretIfMissing(context.Background())
+	d.raiseZapretForConnect(context.Background())
 
-	if installed != 1 {
-		t.Fatalf("bundle installed %d times, want 1", installed)
+	if embedded != 1 {
+		t.Fatalf("the embedded bundle installed %d times, want 1", embedded)
 	}
-	if got := zapret.Version(dir); got != "1.10.1" {
-		t.Errorf("installed version = %q, want 1.10.1", got)
+	if got := zapret.Version(dir); got != "1.10.2" {
+		t.Errorf("installed version = %q, want the embedded 1.10.2", got)
 	}
 }
 
-// TestConnectDoesNotRefetchAnInstalledBundle: a bundle already on disk is the
-// user's, possibly one they dragged in themselves. Replacing it on every connect
-// would undo their choice and pay for a download nobody asked for.
-func TestConnectDoesNotRefetchAnInstalledBundle(t *testing.T) {
+// TestConnectDoesNotReplaceAnInstalledBundle: a bundle already on disk is the
+// user's, possibly one they dragged in themselves or one the updater fetched and
+// newer than this binary's. Laying the compiled-in copy over it on every connect
+// would be a silent rollback, and asking upstream about it would pay for a
+// request nobody is waiting on.
+func TestConnectDoesNotReplaceAnInstalledBundle(t *testing.T) {
 	d, _ := newTestDaemon(t)
-	seedBundle(t, d, "1.9.9")
+	// No winws and no cmd.exe: what these check is the bundle on disk, not the
+	// packet filter.
+	stubStarts(d)
+	dir := seedBundle(t, d, "1.99.0")
+	marker := filepath.Join(dir, "seeded.txt")
+	if err := os.WriteFile(marker, []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	d.zapretLatest = func(context.Context) (zapret.Release, error) {
 		t.Error("checked for a release with a bundle already installed")
 		return zapret.Release{}, errors.New("should not be called")
 	}
+	d.zapretEmbed = func(string) ([]zapret.Strategy, error) {
+		t.Error("laid the embedded floor over a bundle that was already there")
+		return nil, errors.New("should not be called")
+	}
 
-	d.installZapretIfMissing(context.Background())
+	d.raiseZapretForConnect(context.Background())
+
+	if got := zapret.Version(dir); got != "1.99.0" {
+		t.Errorf("installed version = %q, want the untouched 1.99.0", got)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("the installed bundle was replaced: %v", err)
+	}
 }
 
 // TestConnectHonoursTheAutoUpdateChoice: switching automatic bundle updates off
@@ -73,6 +101,9 @@ func TestConnectDoesNotRefetchAnInstalledBundle(t *testing.T) {
 // to explain why.
 func TestConnectHonoursTheAutoUpdateChoice(t *testing.T) {
 	d, _ := newTestDaemon(t)
+	// No winws and no cmd.exe: what these check is the bundle on disk, not the
+	// packet filter.
+	stubStarts(d)
 	dir := filepath.Join(d.store.Dir(), zapretDirName)
 	d.zapretAutoUpdate = false
 
@@ -86,7 +117,7 @@ func TestConnectHonoursTheAutoUpdateChoice(t *testing.T) {
 		return seedBundleAt(t, target, "1.10.2"), nil
 	}
 
-	d.installZapretIfMissing(context.Background())
+	d.installEmbeddedZapretIfMissing(context.Background(), dir)
 
 	if embedded != 1 {
 		t.Fatalf("the embedded bundle installed %d times, want 1", embedded)
@@ -109,12 +140,14 @@ func TestConnectHonoursTheAutoUpdateChoice(t *testing.T) {
 // one. The connect must go on and the log must say what happened, rather than the
 // user meeting a button that appears to do nothing.
 //
-// This is the one path where there is genuinely no bypass left: the download
-// failed AND the embedded copy would not unpack. Both have to be on the log —
-// the second line is the only thing that separates "the network was down" from
-// "the network was down and the floor under it gave way too".
+// This is the path where there is genuinely no bypass left: the floor under
+// everything else would not unpack. It is the one case that has to be on the log,
+// because it is the only one where the app has run out of ways to get a bundle.
 func TestConnectSurvivesAFailedInstall(t *testing.T) {
 	d, _ := newTestDaemon(t)
+	// No winws and no cmd.exe: what these check is the bundle on disk, not the
+	// packet filter.
+	stubStarts(d)
 	var logs []string
 	d.SetEmitter(func(name string, body any) {
 		if name == "log" {
@@ -124,55 +157,20 @@ func TestConnectSurvivesAFailedInstall(t *testing.T) {
 		}
 	})
 
-	d.zapretLatest = func(context.Context) (zapret.Release, error) {
-		return zapret.Release{}, errors.New("release feed unreachable")
-	}
-
-	d.installZapretIfMissing(context.Background())
-
-	for _, want := range []string{"не удалось скачать сборку", "туннель работает без обхода"} {
-		found := false
-		for _, l := range logs {
-			if strings.Contains(l, want) {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("a failed install never said %q on the log channel: %v", want, logs)
-		}
-	}
-}
-
-// TestASuccessfulDownloadIsNotOverwrittenByTheEmbeddedBundle: the compiled-in
-// copy is the floor, and a floor that also lands on top of what it was holding up
-// would downgrade every fresh install to the version this binary was cut with.
-func TestASuccessfulDownloadIsNotOverwrittenByTheEmbeddedBundle(t *testing.T) {
-	d, _ := newTestDaemon(t)
-	dir := filepath.Join(d.store.Dir(), zapretDirName)
-
-	d.zapretLatest = func(context.Context) (zapret.Release, error) {
-		return zapret.Release{Version: "1.10.1", ArchiveURL: "https://github.com/x/b.zip"}, nil
-	}
-	d.zapretApply = func(_ context.Context, target string, rel zapret.Release) error {
-		if err := os.MkdirAll(filepath.Join(target, "bin"), 0o755); err != nil {
-			return err
-		}
-		for _, f := range []string{"general.bat", filepath.Join("bin", "winws.exe")} {
-			if err := os.WriteFile(filepath.Join(target, f), []byte("x"), 0o644); err != nil {
-				return err
-			}
-		}
-		return zapret.WriteVersion(target, rel.Version)
-	}
 	d.zapretEmbed = func(string) ([]zapret.Strategy, error) {
-		t.Error("laid the embedded floor over a bundle that had just installed")
-		return nil, errors.New("should not be called")
+		return nil, errors.New("архив повреждён")
 	}
 
-	d.installZapretIfMissing(context.Background())
+	d.raiseZapretForConnect(context.Background())
 
-	if got := zapret.Version(dir); got != "1.10.1" {
-		t.Fatalf("installed version = %q, want the downloaded 1.10.1", got)
+	found := false
+	for _, l := range logs {
+		if strings.Contains(l, "туннель работает без обхода") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a failed install never said the tunnel is on its own: %v", logs)
 	}
 }
 
@@ -181,19 +179,22 @@ func TestASuccessfulDownloadIsNotOverwrittenByTheEmbeddedBundle(t *testing.T) {
 // zapret.Apply uses — so it has to be serialized against every other bypass
 // operation exactly the way updateZapret is.
 //
-// Without the lock the window is real and reachable: installZapretIfMissing gets
-// here just after updateZapret handed the lock back, and RunZapretAutoUpdate
-// fires 45 seconds after the daemon starts (or the user presses Update). Both
-// then run os.RemoveAll on the same staging directory and swap it into the same
-// place, which ends as a failed install with an incoherent message, a staging
-// directory deleted from under a live unpack, or a bundle directory holding files
-// of two releases under one version stamp.
+// Without the lock the window is real and reachable: a connect gets here while
+// RunZapretAutoUpdate, which fires 45 seconds after the daemon starts (or when
+// the user presses Update), is mid-install. Both then run os.RemoveAll on the
+// same staging directory and swap it into the same place, which ends as a failed
+// install with an incoherent message, a staging directory deleted from under a
+// live unpack, or a bundle directory holding files of two releases under one
+// version stamp.
 //
 // It is a race on the file system rather than on memory, so -race never sees it
 // and no amount of repetition reproduces it on demand. The lock itself is the
 // thing that can be checked, so that is what this checks.
 func TestTheEmbeddedInstallHoldsTheBypassLock(t *testing.T) {
 	d, _ := newTestDaemon(t)
+	// No winws and no cmd.exe: what these check is the bundle on disk, not the
+	// packet filter.
+	stubStarts(d)
 	dir := filepath.Join(d.store.Dir(), zapretDirName)
 
 	inside := make(chan struct{})
@@ -207,7 +208,7 @@ func TestTheEmbeddedInstallHoldsTheBypassLock(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		d.installEmbeddedZapretIfMissing(dir)
+		d.installEmbeddedZapretIfMissing(context.Background(), dir)
 	}()
 
 	<-inside

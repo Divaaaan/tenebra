@@ -416,7 +416,23 @@ func (d *Daemon) zapretSwitchedOff() bool {
 // the tunnel rather than a direct path with nothing carrying them there.
 func (d *Daemon) raiseZapretForConnect(ctx context.Context) bool {
 	d.pickFreeTunAddress()
-	d.installZapretIfMissing(ctx)
+	// Local bytes only. A connect that finds no bundle lays the compiled-in one
+	// and stops there — it does not go to GitHub for a newer release, however
+	// keen it is to have the freshest strategies.
+	//
+	// Fetching from here was what made a first connect look broken. The download
+	// carried a sixty-second budget, the settle for winws came after it, and the
+	// whole thing ran on the serial command loop under a bridge that gives up at
+	// sixty — so the button reported failure while the daemon was still
+	// connecting, and the second press worked because the bundle had arrived in
+	// the meantime.
+	//
+	// Nothing is lost by dropping it: RunZapretAutoUpdate owns keeping the bundle
+	// current, it runs at every daemon start, and it puts the same floor down
+	// itself. The worst case here is a first session on the version this binary
+	// shipped with, replaced by upstream's on the updater's own schedule rather
+	// than while the user waits.
+	d.installEmbeddedZapretIfMissing(ctx, filepath.Join(d.store.Dir(), zapretDirName))
 	// The tunnel is not up yet — this runs on the way to it — but it is about to
 	// be, and the voice block has to be decided for the session that will exist.
 	up := d.autoStartZapret(ctx, true)
@@ -491,84 +507,6 @@ func (d *Daemon) raiseZapretOnStart(ctx context.Context) {
 	d.emitLog(LogInfo, "zapret: the bypass was on before the restart — brought it back up")
 }
 
-// zapretInstallBudget bounds the first-run bundle download so a connect cannot
-// hang on it. The published archive is a couple of megabytes and installs in
-// about a second and a half on a working link; a minute is far past that and far
-// short of "the button did nothing".
-const zapretInstallBudget = 60 * time.Second
-
-// installZapretIfMissing puts a bypass bundle on a machine that has none, so a
-// first connect does not need one dragged in by hand.
-//
-// This is the difference between the product as described — paste a link, press
-// one button — and one that first asks the user to find a release page, pick the
-// right asset and unpack it. The bundle is not optional equipment: without it
-// YouTube and Discord go through the tunnel at full round-trip latency, which is
-// the thing the app exists to avoid.
-//
-// There are two sources, and the user's auto-update choice separates them.
-// Upstream is tried first and is exactly what that choice governs: fetching a
-// release is this app reaching the network on its own, and someone who turned
-// automatic updates off asked it not to. The bundle compiled into this binary is
-// the floor under that (see installEmbeddedZapretIfMissing) and is deliberately
-// NOT governed by it — those bytes cost no request, they are the release this
-// client was built and tested against, and the switch is about keeping the
-// bundle current, not about whether a bypass exists at all. Someone who unticked
-// it turned off updates, not the bypass.
-//
-// So every way the download can end without a bundle — no network, GitHub
-// blocked, a version no pin covers, an archive whose checksum did not match, or
-// the user having declined the download outright — lands on the same fallback,
-// and a first connect stops depending on GitHub being reachable at all.
-//
-// Bounded and best-effort by construction. A failure here is not a failed
-// connect: the tunnel alone still carries everything, just slower, and the log
-// says why.
-func (d *Daemon) installZapretIfMissing(ctx context.Context) {
-	dir := filepath.Join(d.store.Dir(), zapretDirName)
-	if len(zapret.Discover(dir, dirFileNames(dir))) > 0 {
-		return
-	}
-	d.mu.Lock()
-	allowed := d.zapretAutoUpdate
-	d.mu.Unlock()
-
-	if allowed {
-		d.emitLog(LogInfo, "zapret: сборки нет — ставлю сам")
-		fetchCtx, cancel := context.WithTimeout(ctx, zapretInstallBudget)
-		defer cancel()
-		if from, to, ok, err := d.updateZapret(fetchCtx); err != nil {
-			// Each branch reports what upstream did and stops there. What the machine
-			// is left running is not decided here any more: the embedded floor below
-			// answers that, and a line claiming the tunnel is on its own would be a
-			// guess made one statement too early.
-			switch {
-			case errors.Is(err, zapret.ErrIntegrity):
-				// A bundle that failed verification is not "could not download": the
-				// archive arrived and was not what upstream published. Everything else on
-				// this path is a connectivity problem the user can ignore; this one is not.
-				// `from` is empty here by construction — nothing is installed — which is
-				// what keeps the line off claiming a previous bundle was kept.
-				d.reportZapretUpdateFailure(err, from)
-			case errors.Is(err, zapret.ErrUntrustedVersion):
-				// Upstream has moved past every pin this build carries, so there is no
-				// bundle it can install on trust. This is the case that emptied fresh
-				// installs when 1.10.2 was published ahead of its pin, and the one the
-				// embedded copy exists for.
-				d.emitLog(LogInfo, fmt.Sprintf(
-					"zapret: доступна сборка обхода %s, но она новее вшитых в Tenebra проверок — "+
-						"обнови Tenebra, чтобы получить её", versionLabel(to)))
-			default:
-				d.emitLog(LogWarn, fmt.Sprintf("zapret: не удалось скачать сборку (%v)", err))
-			}
-		} else if ok {
-			d.emitLog(LogInfo, fmt.Sprintf("zapret: поставлена сборка %s", to))
-		}
-	}
-
-	d.installEmbeddedZapretIfMissing(dir)
-}
-
 // installEmbeddedZapretIfMissing installs the bundle compiled into this binary
 // when nothing else has left one on the machine.
 //
@@ -582,7 +520,15 @@ func (d *Daemon) installZapretIfMissing(ctx context.Context) {
 // signed binary as this code, their checksum is matched against the pin table on
 // every build, and they are unpacked by the same install path a verified download
 // uses.
-func (d *Daemon) installEmbeddedZapretIfMissing(dir string) {
+func (d *Daemon) installEmbeddedZapretIfMissing(ctx context.Context, dir string) {
+	// Answered without the lock when there is nothing to do, which is every call
+	// after the first. A connect asks this on its way to the tunnel and must not
+	// queue behind a strategy re-pick — minutes of measuring — only to find the
+	// bundle was there all along.
+	if len(zapret.Discover(dir, dirFileNames(dir))) > 0 {
+		return
+	}
+
 	// Serialized with every other operation that writes the bundle directory, for
 	// the same reason updateZapret is: unpacking the embedded copy stages into
 	// dir+".new" and swaps it into place — the very paths zapret.Apply uses — so an
@@ -591,17 +537,24 @@ func (d *Daemon) installEmbeddedZapretIfMissing(dir string) {
 	// one version stamp. Neither -race nor a test sees that: it is a race on the
 	// file system, not on memory.
 	//
-	// Taken here and not by the caller: installZapretIfMissing reaches this only
-	// after updateZapret has taken this lock and given it back, so there is nobody
-	// above holding it. Inside, d.mu is taken and released the same way every other
-	// bypass operation does it — zapretOpMu first, mu second, mu never held across
-	// the call — so the order cannot invert.
-	d.zapretOpMu.Lock()
+	// Taken here and not by the caller: nothing above holds it on either path in.
+	// Inside, d.mu is taken and released the same way every other bypass operation
+	// does it — zapretOpMu first, mu second, mu never held across the call — so the
+	// order cannot invert.
+	//
+	// Bounded by ctx rather than waited on outright: the connect path arrives here
+	// with a deadline (zapretConnectRaiseBudget) and a plain Lock() would ignore it
+	// — see acquireZapretOp. Giving up is the same outcome as an install that
+	// failed, which the caller already treats as a slower session rather than a
+	// failed one.
+	if !d.acquireZapretOp(ctx) {
+		d.emitDebug("zapret: другая операция со сборкой ещё идёт — вшитую ставить не стал")
+		return
+	}
 	defer d.zapretOpMu.Unlock()
 
-	// Re-checked under the lock, not before it. An update that finished while this
-	// was waiting has already left a bundle in place, and the floor has nothing
-	// left to hold up.
+	// Re-checked under the lock. An update that finished while this was waiting has
+	// already left a bundle in place, and the floor has nothing left to hold up.
 	if len(zapret.Discover(dir, dirFileNames(dir))) > 0 {
 		return
 	}
@@ -1077,7 +1030,15 @@ func (d *Daemon) autoStartZapret(ctx context.Context, tunnelUp bool) bool {
 		return false
 	}
 
-	d.zapretOpMu.Lock()
+	// Bounded, because the connect path calls this under a deadline and the
+	// operation ahead of it on this lock may be a re-pick measuring the whole
+	// bundle — minutes during which plain Lock() would hold the command loop and
+	// the user's connect with it. Giving up here is the ordinary "no bypass this
+	// session" outcome the caller is already written for.
+	if !d.acquireZapretOp(ctx) {
+		d.emitDebug("zapret: другая операция с обходом ещё идёт — поднимать не стал")
+		return false
+	}
 	defer d.zapretOpMu.Unlock()
 
 	dir := filepath.Join(d.store.Dir(), zapretDirName)
