@@ -383,14 +383,14 @@ jobs:
           env -u TENEBRA_SINGBOX timeout 5 /usr/lib/tenebra/tenebra-core --socket 2>&1 |
             tee /tmp/core.log || true
           grep -q 'sing-box at /usr/lib/tenebra/sing-box' /tmp/core.log
-          # And it must resolve all three packaged rule-sets out of that same
+          # And it must resolve the packaged rule-sets out of that same
           # directory. The core logs one line either way, so grepping for
           # "rule-set" alone matched the failure sentence as happily as the
           # success one — matching the whole sentence is what makes this an
-          # assertion. A miss means the packaged install falls back to
-          # downloading the sets from GitHub at every connect: a ~10s stall, or
-          # a sing-box FATAL when raw.githubusercontent.com is throttled.
-          grep -q 'loading RU rule-sets locally from /usr/lib/tenebra' /tmp/core.log
+          # assertion. A miss now means smart mode routes like global on this
+          # install: the sets are no longer fetched at connect time, so the
+          # cost is silently losing the RU split rather than a stall.
+          grep -q 'loading rule-sets locally from /usr/lib/tenebra' /tmp/core.log
       - name: Attach the package to the release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
