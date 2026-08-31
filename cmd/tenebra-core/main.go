@@ -219,16 +219,15 @@ func buildDaemon() (*control.Daemon, error) {
 	} else {
 		daemon.SetSettings(st)
 	}
-	// Load the RU geo rule-sets from disk instead of downloading them from GitHub
-	// at every connect, but only if the bundled files are actually present. The
-	// remote fallback (left in place when this is empty) blocks sing-box startup
-	// for ~10s when raw.githubusercontent.com is throttled, which is the freeze we
-	// are eliminating.
+	// Point the routing layer at the bundled rule-sets. This is a hint, not a
+	// guarantee: routing re-checks each file when it builds a config, so a
+	// directory that is emptied by an update later still degrades cleanly instead
+	// of handing sing-box a path it cannot open.
 	if rsDir := ruleSetDir(); rsDir != "" {
-		log.Printf("tenebra-core: loading RU rule-sets locally from %s", rsDir)
+		log.Printf("tenebra-core: loading rule-sets locally from %s", rsDir)
 		daemon.SetRuleSetDir(rsDir)
 	} else {
-		log.Printf("tenebra-core: bundled RU rule-sets not found; falling back to remote download")
+		log.Printf("tenebra-core: bundled RU rule-sets not found; smart mode will route like global until they are installed")
 	}
 	// System-proxy backstop: clear any OS proxy a previous run left pointing at our
 	// loopback mixed inbound (a hard kill can't run the in-process cleanup). It only
@@ -252,34 +251,51 @@ func buildDaemon() (*control.Daemon, error) {
 	return daemon, nil
 }
 
-// ruleSetFiles are the bundled rule-set binaries expected next to the sing-box
-// executable: the two RU geodata sets plus the ad/tracker blocklist. They must
-// match the on-disk names the routing package resolves against Options.RuleSetDir
-// and the names fetch-resources.ps1 writes. Requiring all three keeps the local
-// path an all-or-nothing guarantee — the ad blocklist is referenced only as a
-// local set, so a config that turns ad-blocking on must never point sing-box at a
-// missing path. A build shipping the bundle always carries all three (they are
-// declared resources; the bundle step fails without them), so this never forces
-// the RU sets back to the remote fallback in a real install.
-var ruleSetFiles = []string{"geoip-ru.srs", "geosite-ru.srs", "geosite-ads.srs"}
+// ruleSetFiles are the RU geodata binaries that decide which resource directory
+// is the rule-set directory. They must match the on-disk names the routing
+// package resolves against Options.RuleSetDir and the names fetch-resources.ps1
+// writes.
+//
+// The ad/tracker blocklist is deliberately NOT in this list, even though it ships
+// beside them. It is optional in a way the geodata is not — it is referenced only
+// when the user turns ad-blocking on — so requiring it here meant one absent file
+// disqualified the whole directory and took smart mode's geodata down with it,
+// for a feature that was switched off. The routing layer now checks each file at
+// the moment it builds a config (see routing.Options.ruleSetFilePresent), so the
+// blocklist's absence disables ad-blocking and nothing else.
+var ruleSetFiles = []string{"geoip-ru.srs", "geosite-ru.srs"}
 
-// ruleSetDir returns the directory to load the RU rule-sets from, or "" to keep
-// the remote-download fallback. It walks the platform's resource directories in
+// ruleSetAdBlockFile is the optional blocklist. It is not required to pick a
+// directory; it is only reported on, so an operator who wonders why the
+// ad-blocking toggle does nothing has a line to find.
+const ruleSetAdBlockFile = "geosite-ads.srs"
+
+// ruleSetDir returns the directory to load the rule-sets from, or "" when no
+// candidate holds the RU geodata. It walks the platform's resource directories in
 // order (ruleSetCandidates) and takes the first that holds every required
-// rule-set file, so a dev build or an incomplete install transparently falls
-// back to remote instead of pointing sing-box at a missing path (which would
-// FATAL). A miss names everywhere it looked: the alternative — one line saying
-// only that connects will now stall on a download — leaves the operator with
-// nowhere to put the files.
+// rule-set file.
+//
+// A miss is not fatal and is no longer a fallback either: with no directory,
+// smart mode emits no geo rules and routes like global for the session. The old
+// behaviour — fetching the .srs from GitHub at connect time — was a fallback only
+// on a network that can reach GitHub, and on the networks this client is for it
+// meant sing-box waited out a five-second timeout and then exited, so every node
+// in the walk failed at launch and the user was told the protocols were blocked.
+//
+// A miss names everywhere it looked, because the fix is to put the files in one
+// of those directories and nothing else in the log says where they belong.
 func ruleSetDir() string {
 	candidates := ruleSetCandidates()
 	for _, dir := range candidates {
 		if hasRuleSets(dir) {
+			if _, err := os.Stat(filepath.Join(dir, ruleSetAdBlockFile)); err != nil {
+				log.Printf("tenebra-core: no %s in %s; ad-blocking will stay inert if switched on", ruleSetAdBlockFile, dir)
+			}
 			return dir
 		}
 	}
 	if len(candidates) > 0 {
-		log.Printf("tenebra-core: no complete RU rule-set bundle in any of: %s", strings.Join(candidates, ", "))
+		log.Printf("tenebra-core: no RU rule-set bundle in any of: %s", strings.Join(candidates, ", "))
 	}
 	return ""
 }

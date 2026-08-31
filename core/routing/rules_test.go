@@ -145,6 +145,7 @@ func TestRulesBetweenSplitAndGeo(t *testing.T) {
 		SplitApps:   []string{"chrome.exe"},
 		RulesDirect: []string{"sberbank.ru"},
 		RulesProxy:  []string{"example.com"},
+		RuleSetDir:  ruleSetDir(t),
 	}).Normalize()
 	rules := opts.RouteRules()
 
@@ -287,6 +288,7 @@ func TestRulesDNSMirror(t *testing.T) {
 		Mode:        ModeSmart,
 		RulesDirect: []string{"sberbank.ru"},
 		RulesProxy:  []string{"example.com"},
+		RuleSetDir:  ruleSetDir(t),
 	}).Normalize()
 	rules := opts.dnsRules()
 

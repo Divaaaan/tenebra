@@ -375,6 +375,16 @@ response: {"id":7,"ok":true,"data":{"profile":{ /* …two servers… */ },"impor
 new split takes effect on the **next connect** (live retuning would require
 restarting sing-box). The returned `State` reflects the stored choice.
 
+`smart` needs the bundled RU geodata (`geoip-ru.srs`, `geosite-ru.srs`), and the
+core checks the files are readable **each time it builds a config**, not once at
+startup. When they are missing, it emits no geo rules at all and the session
+routes like `global`, with a `warn` log line naming the paths it looked for. The
+`State` still reports `smart` — the stored choice is unchanged — so a client that
+wants to surface the degradation should read the log rather than the mode.
+Referencing a rule-set sing-box cannot open is a fatal config error, which would
+kill every candidate in the fallback walk and surface to the user as "all
+protocols failed"; degrading is the alternative to that.
+
 `set_kill_switch`, `set_tls_fragment`, `set_multihop`, `set_tun` and
 `set_proxy_mode` go further: all are recorded and persisted the same way, but when
 a tunnel is **live** the core also re-applies them in place — see below.
@@ -418,7 +428,9 @@ untouched — dropping those would leave the domain to the geo split, which in
 `smart` mode can send it direct, i.e. the kill switch causing the leak it exists
 to prevent. Apps the user listed under `set_split` in `exclude` mode do stay
 direct: that is a per-application choice they made one name at a time, unlike a
-preset. Note the consequence of the LAN rule: with the kill switch armed, private
+preset — and because their traffic stays direct, their lookups keep going to the
+direct resolver too, so the two never disagree about where the app is connecting
+from. Note the consequence of the LAN rule: with the kill switch armed, private
 destinations (a router's admin page, a NAS, a printer) go into the tunnel and stop
 answering.
 
@@ -703,7 +715,7 @@ eventually restate one wrong.
 | field      | preset | default | what it does |
 | ---------- | ------ | ------- | ------------ |
 | `services` | unblock services | **on** | Pins the commonly-censored domains (YouTube, Discord, Meta, X, the AI APIs) to the tunnel ahead of the geo split, so `googlevideo.com` resolving to an ISP cache node does not get the video sent direct. While a DPI bypass runs, the domains the bundle actually covers move to the direct path instead. |
-| `games`    | games direct | off | Pins known game clients and launchers (`process_name`) to the direct outbound: no tunnel latency on a match, and no exit-address change for anti-cheat to flag. Every name is specific to one game or launcher — a generic one like `java.exe` would take unrelated programs out of the tunnel. |
+| `games`    | games direct | off | Pins known game clients and launchers (`process_name`) to the direct outbound **and to the direct resolver**, so a game's names are answered from the same place it connects from: resolved over the proxy, a launcher is handed content servers in the exit country and then reaches them over the local line, which hangs the ones that pin a session to the address they were issued. Every name is specific to one game or launcher — a generic one like `java.exe` would take unrelated programs out of the tunnel — and a launcher's embedded browser (`steamwebhelper.exe`, the store and community pages) is deliberately left in the tunnel. |
 | `voice`    | real-time UDP direct | off | Sends UDP ports 50000-65535 direct. Voice and game traffic stop paying the round trip (239ms tunnelled against 9ms direct, measured), **and the peer on the other end sees the ISP address rather than the exit node's** — the same range carries browser WebRTC and torrents. |
 
 `games` and `voice` default **off** because each takes a whole class of traffic
@@ -737,6 +749,15 @@ normalized server-side (trimmed, lowercased, de-duplicated, sorted), so the
   follows the normal routing for the current `mode`.
 - `include` — only the listed apps go through the **proxy**; everything else goes
   direct.
+
+Either way the app's **DNS follows its traffic**: an `include` app resolves via
+the proxied resolver (or its lookups would leak every domain it visits to the
+local resolver while its traffic went through the tunnel), and an `exclude` app —
+plus anything the games preset adds — resolves via the direct one. The second
+half matters for a different reason than the first: an app routed direct while
+its names came back from the exit country is answered for the wrong vantage
+point, so it connects to servers chosen for another continent over its own local
+line.
 
 The split config is **persisted** in the core's config directory
 (`settings.json`, written atomically) so it survives a restart and is loaded

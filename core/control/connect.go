@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Divaaaan/tenebra/core/fallback"
@@ -284,6 +285,17 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 	// this loop builds carries the same chain. An unresolvable pair (a node that
 	// vanished, or one the builder won't render) leaves ro untouched — a single hop.
 	ro = resolveMultihop(ro, mh, tags)
+	// Say it out loud when smart mode is about to run without its geodata. The
+	// connect still succeeds — the geo rules are simply not emitted and everything
+	// goes through the proxy — but the difference is invisible from the outside:
+	// the mode still reads "smart" and the tunnel still comes up, while every
+	// Russian site is now taking a detour abroad. Naming the missing file is the
+	// part that can be acted on.
+	if ro.SmartGeoDegraded() {
+		d.emitLog(LogWarn, fmt.Sprintf(
+			"умный режим без гео-данных (нет %s) — на это подключение маршрутизирую как «весь трафик через VPN»",
+			strings.Join(ro.MissingRuleSets(), ", ")))
+	}
 
 	// Tear down any existing connection (and any in-flight loop) before starting a
 	// new one so we never run two sing-box processes at once.

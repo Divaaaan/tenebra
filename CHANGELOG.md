@@ -50,6 +50,51 @@ All notable changes to Tenebra are documented here. The format follows
   longer cuts a character in half when a single line runs past the read window,
   and the trim that fits a report inside a GitHub issue no longer splits an emoji
   into two halves that cannot be encoded.
+- **A missing geodata file no longer stops the client from connecting at all.**
+  Smart mode names two rule-set files in the config it hands sing-box, and
+  sing-box treats a rule-set it cannot open as a fatal error: the process exits
+  before it serves anything. Every candidate node in the fallback walk therefore
+  died at launch, and the client reported *all protocols failed* — an accusation
+  against the servers for a fault entirely on the local disk, on a build or an
+  install where those files were absent. The fallback that was supposed to cover
+  it made things worse rather than better: it fetched the rule-sets from GitHub
+  at connect time, and on a network where GitHub is blocked — the network this
+  client exists for — that was a five-second timeout followed by the same fatal
+  exit.
+  The files are now checked for at the moment each config is built, rather than
+  once when the daemon starts, and when they are not there smart mode emits no
+  geo rules at all: it routes like *Global* for that session and says so in the
+  log, naming the paths it looked for. The remote fetch is gone from the connect
+  path entirely. Checking per build rather than per start also covers the case a
+  start-of-day check cannot see — an interrupted update or a quarantined file
+  leaving a stale "the files are there" behind for the rest of the run.
+  The ad/tracker blocklist is now required only when ad-blocking is actually
+  switched on; before, that one optional file being absent disqualified the whole
+  resources directory and took smart mode's geodata down with it, for a feature
+  that was turned off.
+- **Games kept direct now also resolve direct.** The games preset and the
+  split-tunnel exclude list pinned an app's *traffic* to the direct outbound but
+  left its *lookups* going through the tunnel, so Steam asked where its content
+  servers were and was told about the ones near the exit node, then connected to
+  them over a Russian consumer line. The result was worse than either path used
+  honestly, and for launchers that tie a session to the address they were issued
+  it was not slowness but a login that never completed. Those apps now resolve
+  through the direct resolver, mirroring the rule that already exists for apps
+  pinned the other way.
+- **`steamwebhelper.exe` is no longer kept out of the tunnel by the games
+  preset.** It is not a game — it renders the store, the community pages and the
+  friends list, the half of Steam most likely to be filtered on the local network
+  — and it has no match latency to protect. Pinning it direct left the storefront
+  blank while the VPN reported itself connected, which reads as a broken VPN.
+  Steam itself and the games stay direct; only the embedded browser goes back
+  through the tunnel. The rest of the preset's list is unchanged.
+- **Telegram and several Google asset hosts are now covered by the
+  unblock-services preset.** `telegram.org`, `t.me`, `telegra.ph`, `telesco.pe`
+  and `cdn-telegram.org` join the list, along with `ggpht.com`,
+  `googleusercontent.com`, `gvt1.com` and `gvt2.com` — the hosts YouTube
+  thumbnails, avatars and client updates actually come from. Their absence showed
+  up as a page that loaded with holes in it, or a link that silently would not
+  open, which reads as the service being broken rather than as a routing gap.
 
 ## [0.5.10] - 2026-08-26
 

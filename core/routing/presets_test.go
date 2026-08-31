@@ -61,11 +61,50 @@ func TestUnblockPinsCensoredServicesToProxy(t *testing.T) {
 	}
 }
 
+// The preset is judged by the holes it leaves, not by the services it names.
+// Telegram is reachable while t.me links and telegra.ph articles are not; YouTube
+// loads while the avatars and thumbnails on googleusercontent/ggpht and the
+// updates on gvt1/gvt2 do not. Each of those reads to a user as the site being
+// broken, and the rule only ever moves a name INTO the tunnel, so the cost of
+// listing one that did not need it is some latency.
+func TestUnblockCoversTheAssetHostsBehindEachService(t *testing.T) {
+	o := Options{Mode: ModeSmart, UnblockServices: true}.Normalize()
+	pinned := suffixesOf(ruleFor(o.RouteRules(), "domain_suffix"))
+
+	for _, want := range []string{
+		// Telegram: API/auth, links, articles, media.
+		"telegram.org", "t.me", "telegra.ph", "telesco.pe", "cdn-telegram.org",
+		// Google asset and update transports YouTube and the clients pull from.
+		"gvt1.com", "gvt2.com", "googleusercontent.com", "ggpht.com",
+	} {
+		if !contains(pinned, want) {
+			t.Errorf("preset leaves %q outside the tunnel", want)
+		}
+		if !contains(BlockedServiceSuffixes(), want) {
+			t.Errorf("%q is missing from the exported list the UI shows", want)
+		}
+	}
+
+	// The same names must resolve through the proxy resolver, or the answer comes
+	// from the resolver most likely to be the one filtering them.
+	var remote []string
+	for _, r := range o.dnsRules() {
+		if r["server"] == dnsRemoteTag {
+			remote = append(remote, suffixesOf(r)...)
+		}
+	}
+	for _, want := range []string{"t.me", "ggpht.com"} {
+		if !contains(remote, want) {
+			t.Errorf("%q is tunnelled but still resolves outside the tunnel", want)
+		}
+	}
+}
+
 // The whole point of the preset: googlevideo.com resolves to an RU cache node,
 // so if the geo rule ran first the video would be pinned direct and never load
 // while the VPN reported itself connected.
 func TestUnblockRuleComesBeforeTheGeoSplit(t *testing.T) {
-	o := Options{Mode: ModeSmart, UnblockServices: true}.Normalize()
+	o := Options{Mode: ModeSmart, UnblockServices: true, RuleSetDir: ruleSetDir(t)}.Normalize()
 	rules := o.RouteRules()
 
 	domainAt := indexOfRule(rules, "domain_suffix")
@@ -117,12 +156,36 @@ func TestGamesPresetPinsLaunchersAndHelpers(t *testing.T) {
 		t.Fatalf("games rule targets %v, want direct", r["outbound"])
 	}
 	apps, _ := r["process_name"].([]string)
-	// The helpers are the entries a hand-built list forgets, and forgetting them
-	// breaks the game more confusingly than forgetting the game itself.
-	for _, want := range []string{"dota2.exe", "cs2.exe", "steamwebhelper.exe", "minecraftlauncher.exe"} {
+	// The launchers and service processes are the entries a hand-built list
+	// forgets, and forgetting them breaks the game more confusingly than
+	// forgetting the game itself.
+	for _, want := range []string{"dota2.exe", "cs2.exe", "steam.exe", "steamservice.exe", "minecraftlauncher.exe"} {
 		if !contains(apps, want) {
 			t.Errorf("preset does not cover %q", want)
 		}
+	}
+}
+
+// A launcher's embedded browser is the one helper that must stay in the tunnel.
+// steamwebhelper.exe renders the store, the community pages and the friends list
+// — a web client inside a game client, and the part of Steam most likely to be
+// filtered on the local network. It carries no match latency to protect, and
+// pinning it direct left the storefront blank while the VPN reported itself
+// connected, which reads as a broken VPN rather than a preset doing as it was
+// told.
+func TestGamesPresetLeavesLauncherWebHelpersInTheTunnel(t *testing.T) {
+	if contains(GameProcesses(), "steamwebhelper.exe") {
+		t.Error("games preset pins steamwebhelper.exe direct; the Steam web layer needs the tunnel")
+	}
+	o := Options{Mode: ModeSmart, GamesDirect: true}.Normalize()
+	apps, _ := ruleFor(o.RouteRules(), "process_name")["process_name"].([]string)
+	if contains(apps, "steamwebhelper.exe") {
+		t.Errorf("steamwebhelper.exe reached the direct rule anyway: %v", apps)
+	}
+	// The game client itself is still direct — dropping the web helper must not
+	// have taken Steam with it.
+	if !contains(apps, "steam.exe") {
+		t.Errorf("steam.exe lost its direct pin: %v", apps)
 	}
 }
 

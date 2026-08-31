@@ -4,13 +4,17 @@
 //
 // The smart mode keeps Russian destinations (and, optionally, LAN) on the
 // direct outbound and sends everything else through the proxy. RU geodata comes
-// from the official public sing-geoip/sing-geosite rule-sets: when the client
-// ships them locally (Options.RuleSetDir) sing-box loads them from disk at
-// startup; otherwise it fetches them at runtime over the direct outbound.
+// from the official public sing-geoip/sing-geosite rule-sets, shipped as local
+// .srs binaries in Options.RuleSetDir and loaded from disk. When they are not
+// there, smart emits no geo rules at all and behaves as global for the session
+// — a degradation, never a download and never a reference to a file sing-box
+// cannot open.
 package routing
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -57,17 +61,20 @@ const (
 	dnsDirectTag = "dns-direct"
 )
 
-// Rule-set identifiers and their upstream source. These are public geodata
-// releases from SagerNet, not Tenebra infrastructure. When the client ships the
-// .srs files locally (RuleSetDir set) they load from disk; otherwise they are
-// fetched over the direct outbound so a blocked proxy can't stop the client from
-// bootstrapping its own routing rules.
+// Rule-set identifiers and the on-disk names of the bundled binaries. The
+// geodata itself is a public release from SagerNet, not Tenebra infrastructure;
+// scripts/fetch-resources.* download it at build time and write it into the
+// resources directory Options.RuleSetDir points at.
+//
+// Every rule-set is loaded strictly as a LOCAL .srs. There is deliberately no
+// remote form: sing-box resolves a remote rule-set before it will serve traffic,
+// so on a network where raw.githubusercontent.com is blocked — the network this
+// client exists for — the fetch times out and the process exits fatally instead
+// of connecting. A missing file degrades the affected rules away (see
+// geoRuleSetsReady / adBlockActive) rather than being downloaded at connect time.
 const (
 	ruleSetGeoIPRU   = "geoip-ru"
 	ruleSetGeositeRU = "geosite-ru"
-
-	urlGeoIPRU   = "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ru.srs"
-	urlGeositeRU = "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ru.srs"
 
 	// fileGeoIPRU and fileGeositeRU are the on-disk names of the bundled rule-set
 	// binaries, resolved against RuleSetDir. They must match what
@@ -75,20 +82,83 @@ const (
 	fileGeoIPRU   = "geoip-ru.srs"
 	fileGeositeRU = "geosite-ru.srs"
 
-	// ruleSetGeositeAds is the opt-in ad/tracker blocklist. It is loaded ONLY as a
-	// local bundled .srs and, unlike the RU sets, has no remote URL fallback on
-	// purpose: a remote rule-set blocks sing-box at startup (the freeze the local
-	// sets already fix), and the blocklist is the exact case that must never
-	// reintroduce it. fileGeositeAds ships via scripts/fetch-resources.* and is
-	// referenced only when RuleSetDir is set (see Options.adBlockActive).
+	// ruleSetGeositeAds is the opt-in ad/tracker blocklist, referenced only when
+	// its own file is present and the toggle is on (see Options.adBlockActive).
 	ruleSetGeositeAds = "geosite-ads"
 	fileGeositeAds    = "geosite-ads.srs"
-
-	// ruleSetUpdateInterval keeps the cached rule-sets reasonably fresh without
-	// hammering GitHub. sing-box only re-downloads after this elapses. It applies
-	// only to the remote form (no RuleSetDir).
-	ruleSetUpdateInterval = "168h" // weekly
 )
+
+// ruleSetFilePresent reports whether name is a readable file inside RuleSetDir,
+// checked at the moment the config is assembled rather than once at daemon
+// start.
+//
+// The timing is the whole point. sing-box treats a rule_set whose path it cannot
+// open as a fatal config error: "parse rule-set: cannot find the path" and the
+// process never starts, so every candidate node in the fallback walk dies at
+// launch and the user is told "all protocols failed" — a message about the nodes
+// for a fault that is entirely local. A start-of-day check cannot prevent that,
+// because it answers for the directory as it was when the daemon started: an
+// update that replaces the resources folder, a half-finished install, an
+// antivirus quarantine or a user tidying up leaves a stale "yes" behind and every
+// connect from then on is fatal. Statting per build costs two syscalls on a path
+// that already spawns a process.
+func (o Options) ruleSetFilePresent(name string) bool {
+	if o.RuleSetDir == "" {
+		return false
+	}
+	st, err := os.Stat(filepath.Join(o.RuleSetDir, name))
+	return err == nil && !st.IsDir()
+}
+
+// geoRuleSetsReady reports whether both RU geodata sets can be loaded right now.
+// Both are required together: the route rule names them in one match, and half
+// the geodata is not a usable smart split.
+func (o Options) geoRuleSetsReady() bool {
+	return o.ruleSetFilePresent(fileGeoIPRU) && o.ruleSetFilePresent(fileGeositeRU)
+}
+
+// smartGeoActive reports whether the RU geo split may be emitted: smart mode with
+// its geodata actually on disk. When the files are missing, smart degrades to
+// global — everything through the proxy — instead of referencing a rule-set that
+// would stop sing-box from starting at all. Slower is a worse tunnel; fatal is no
+// tunnel, and the failure surfaces as an accusation against the nodes.
+func (o Options) smartGeoActive() bool {
+	return o.Mode == ModeSmart && o.geoRuleSetsReady()
+}
+
+// SmartGeoDegraded reports whether smart mode is running without its geodata, so
+// the caller can say so out loud. Silence here is the expensive part: the tunnel
+// works, but every Russian destination now takes the long way round and nothing
+// in the UI distinguishes that from the smart split doing its job.
+func (o Options) SmartGeoDegraded() bool {
+	return o.Mode == ModeSmart && !o.geoRuleSetsReady()
+}
+
+// MissingRuleSets names the rule-set files the current options would use but
+// cannot read, as full paths when RuleSetDir is known. It exists for diagnostics:
+// a warning that says which file is missing and where it was looked for is
+// actionable, one that says "geodata unavailable" is not.
+func (o Options) MissingRuleSets() []string {
+	var want []string
+	if o.Mode == ModeSmart {
+		want = append(want, fileGeoIPRU, fileGeositeRU)
+	}
+	if o.AdBlock {
+		want = append(want, fileGeositeAds)
+	}
+	var missing []string
+	for _, f := range want {
+		if o.ruleSetFilePresent(f) {
+			continue
+		}
+		if o.RuleSetDir == "" {
+			missing = append(missing, f)
+			continue
+		}
+		missing = append(missing, filepath.Join(o.RuleSetDir, f))
+	}
+	return missing
+}
 
 // Default resolvers. Remote DNS runs encrypted over the proxy so lookups for
 // proxied destinations don't leak to the local network; direct DNS uses a fast
@@ -164,10 +234,15 @@ type Options struct {
 	// so a match is played over the ISP path instead of through the exit node.
 	//
 	// This is the one split every user of a Russian ISP ends up building by hand,
-	// and building it by hand is where it goes wrong: miss `steamwebhelper.exe`
-	// and the Steam overlay stalls the game, miss `riotclientservices.exe` and the
-	// match never starts. The preset ships the list so the common case is one
-	// switch rather than a dozen remembered executable names.
+	// and building it by hand is where it goes wrong: miss `riotclientservices.exe`
+	// and the match never starts, add `steamwebhelper.exe` and the Steam store goes
+	// blank. The preset ships the list so the common case is one switch rather than
+	// a dozen remembered executable names.
+	//
+	// The apps it pins resolve through the direct resolver too (see
+	// directSplitApps): a game routed direct while its names were answered from the
+	// exit country was handed content servers on the wrong continent, which is how
+	// a launcher ends up hanging on a login rather than merely running slowly.
 	//
 	// Games are the traffic that least needs a tunnel and suffers most from one:
 	// nothing about a match is censored, while the detour adds the same latency
@@ -240,12 +315,15 @@ type Options struct {
 	MultihopEntry string
 	MultihopExit  string
 
-	// RuleSetDir is the absolute directory holding the bundled RU rule-set
-	// binaries (geoip-ru.srs / geosite-ru.srs). When set, smart mode references
-	// them as local rule-sets loaded from disk, so sing-box starts instantly and
-	// never blocks on a GitHub download. Empty keeps the legacy remote behaviour:
-	// sing-box fetches the .srs over the direct outbound at startup. The daemon
-	// only sets this once it has confirmed both files exist there.
+	// RuleSetDir is the absolute directory holding the bundled rule-set binaries
+	// (geoip-ru.srs / geosite-ru.srs, plus geosite-ads.srs for the blocklist).
+	// Every set is loaded from disk; nothing is ever downloaded at connect time.
+	//
+	// Presence is re-checked per file each time a config is built, so this is a
+	// hint about where to look rather than a promise that anything is there. An
+	// empty value, a directory that has since been replaced by an update, or a
+	// single missing file all lead to the same place: the rules that would have
+	// referenced it are simply not emitted.
 	RuleSetDir string
 }
 

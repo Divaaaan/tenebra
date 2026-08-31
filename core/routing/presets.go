@@ -12,12 +12,20 @@ import (
 // gameProcesses are the executables the GamesDirect preset pins to the direct
 // outbound.
 //
-// The list includes launchers and helper processes, not just the games: those
+// The list includes launchers and service processes, not just the games: those
 // are exactly the entries a hand-built list forgets, and forgetting them breaks
-// the game more confusingly than forgetting the game itself. `steamwebhelper.exe`
-// renders the in-game overlay and the store, so tunnelling it stalls the overlay
-// while the match itself is fine; the Riot and Epic clients hold the session the
-// game needs to even start.
+// the game more confusingly than forgetting the game itself — the Riot and Epic
+// clients hold the session the game needs to even start.
+//
+// What it deliberately does NOT include is a launcher's embedded browser.
+// `steamwebhelper.exe` renders the store, the community pages, the news feed and
+// the friends list — a web client living inside a game client, and the half of
+// Steam most exposed to whatever the local network filters. It has no match
+// latency to protect (it is not in the packet path of a game), and pinning it
+// direct meant the storefront failed to load while the VPN reported itself
+// connected, which reads as a broken VPN rather than as a routing preset doing
+// what it was told. The game and its lobby traffic go direct; the web layer stays
+// in the tunnel.
 //
 // Names are matched case-insensitively on the executable file name by sing-box's
 // process_name, so paths and casing do not matter — and that is also the reason
@@ -31,7 +39,7 @@ import (
 // is covered here and the game itself needs a hand-added entry.
 var gameProcesses = []string{
 	// Valve
-	"steam.exe", "steamwebhelper.exe", "steamservice.exe", "steamerrorreporter.exe",
+	"steam.exe", "steamservice.exe", "steamerrorreporter.exe",
 	"dota2.exe", "cs2.exe", "csgo.exe", "hl2.exe", "gmod.exe", "tf_win64.exe",
 	// Facepunch / Unity-based survival
 	"rustclient.exe",
@@ -73,13 +81,34 @@ func GameProcesses() []string {
 // YouTube alone spreads across youtube.com (page), googlevideo.com (video),
 // ytimg.com (thumbnails) and youtubei.googleapis.com (the API the app calls) —
 // pinning only youtube.com yields a page that loads and a video that spins.
+//
+// Erring wide is the cheap direction. Every entry here only ever moves a domain
+// INTO the tunnel, so a name that did not need the detour pays some latency,
+// while a missing one is a hole in a page the user reads as the service being
+// down. The asymmetry is why the CDN and asset hosts belong in the list even
+// though nobody thinks of them as services.
 var blockedServiceSuffixes = []string{
 	// YouTube / YouTube Music
 	"youtube.com", "youtu.be", "googlevideo.com", "ytimg.com", "yt3.ggpht.com",
 	"youtubei.googleapis.com", "music.youtube.com",
+	// The Google asset hosts YouTube and the Play/Chrome updaters actually pull
+	// bytes from. ggpht.com carries channel avatars and thumbnails beyond the
+	// yt3 host named above; googleusercontent.com serves user-uploaded media
+	// across Google properties; gvt1/gvt2 are the Google Video Transport CDNs
+	// that deliver client updates and, for the mobile app, part of the video
+	// path. Left out, a page loads with holes in it — which reads as the site
+	// being broken rather than as a routing gap.
+	"ggpht.com", "googleusercontent.com", "gvt1.com", "gvt2.com",
 	// Discord (signalling, CDN, media)
 	"discord.com", "discordapp.com", "discordapp.net", "discord.gg", "discord.media",
 	"discordcdn.com", "discordstatus.com",
+	// Telegram. The apex carries the API and the auth flow; t.me is every invite
+	// and channel link anyone shares; telegra.ph is the article host; telesco.pe
+	// and cdn-telegram.org serve the media the clients and the web preview fetch.
+	// Blocking here is intermittent and regional rather than total, which is the
+	// worst shape for a user: the app connects, then a link or an image silently
+	// does not open.
+	"telegram.org", "t.me", "telegra.ph", "telesco.pe", "cdn-telegram.org",
 	// Meta
 	"instagram.com", "cdninstagram.com", "facebook.com", "fbcdn.net", "whatsapp.com",
 	// X / Twitter
@@ -226,6 +255,39 @@ func (o Options) proxySuffixesWithPresets() []string {
 // blanket "all UDP direct" would push QUIC web traffic out of the tunnel and
 // silently un-censor nothing while exposing plenty.
 const voicePortRange = "50000:65535"
+
+// directSplitApps is the set of executables pinned to the DIRECT outbound by the
+// per-app split: the user's exclude list merged with the games preset. It is the
+// single answer both layers ask — route.RouteRules for the traffic and
+// dnsRules for the lookups — so the two can never drift apart.
+//
+// Keeping them together is not tidiness. An app routed direct while its DNS is
+// answered over the proxy gets addresses chosen for the exit node's vantage
+// point and then connects to them from its own: a Steam client resolving from
+// Frankfurt is handed Frankfurt content servers and reaches them over a Russian
+// consumer line, which is slower than either path used honestly and, for a
+// launcher that pins its session to the address it was issued, is a login that
+// never completes.
+//
+// Include mode contributes nothing here: its listed apps go to the proxy, and
+// the games preset is deliberately not applied to it (pinning games to the
+// tunnel would be the opposite of what the preset means).
+func (o Options) directSplitApps() []string {
+	switch o.SplitMode {
+	case SplitInclude:
+		return nil
+	case SplitExclude:
+		return o.splitAppsWithPresets()
+	default:
+		// With split tunnelling off entirely, the games preset still has to work —
+		// otherwise "keep games direct" would silently require the user to also turn
+		// on split mode and understand what it is.
+		if !o.gamesDirectActive() {
+			return nil
+		}
+		return o.splitAppsWithPresets()
+	}
+}
 
 // splitAppsWithPresets merges the user's split apps with any enabled preset,
 // lowercased and de-duplicated, preserving the user's own entries.
