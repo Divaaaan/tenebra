@@ -384,6 +384,21 @@ func (d *Daemon) applyZapretChoice(running bool, strategy string) {
 	d.applyZapretState(running, strategy)
 }
 
+// zapretSwitchedOff reports that the user has explicitly turned the bypass off,
+// as against never having touched the switch at all.
+//
+// That difference is the entire content of the three-state answer zapretWanted
+// holds. nil is "nobody has said", which an automatic raise is free to read as
+// consent — it is what keeps one button doing the whole job for someone who never
+// opened the bypass settings. false is a decision, and the daemon's own machinery
+// may not overrule it. Only the automatic raises ask: a user pressing the switch
+// on is not asking permission of their earlier self.
+func (d *Daemon) zapretSwitchedOff() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.zapretWanted != nil && !*d.zapretWanted
+}
+
 // raiseZapretForConnect brings the bypass up as part of connecting and records
 // where that leaves the routing.
 //
@@ -395,6 +410,10 @@ func (d *Daemon) applyZapretChoice(running bool, strategy string) {
 //
 // It does not rebuild a live tunnel: both callers are about to build one, and the
 // flag set here is what that build reads.
+//
+// A bypass the user has switched off is not raised: the raise declines (see
+// autoStartZapret) and the routing follows it down, so the censored services ride
+// the tunnel rather than a direct path with nothing carrying them there.
 func (d *Daemon) raiseZapretForConnect(ctx context.Context) bool {
 	d.pickFreeTunAddress()
 	d.installZapretIfMissing(ctx)
@@ -1018,6 +1037,19 @@ func (d *Daemon) handleStartZapret(ctx context.Context, req Request) Response {
 // YouTube and Discord work with no lag in games. Requiring them to also find and
 // flip a second switch would put the assembly back on them.
 //
+// One answer outranks that: a user who has switched the bypass off. "One button"
+// is a default for somebody who has never expressed a preference, not a licence
+// to overrule one — and this path had no check at all, which made the switch
+// decorative on any machine that connects. It read off, the next connect raised
+// the packet filter regardless, and so did every connect after it. What had been
+// hiding that is a bundle: the raise needs one, and until 0.5.10 a machine that
+// had never fetched one had nothing to raise. 0.5.10 compiles a bundle into the
+// binary and lays it down at every start, so the raise stopped failing for want
+// of one and the switch's having no effect became visible — a user reported the
+// bypass turning itself on with the switch off, on every connection. A switch
+// that is off means off until the user turns it back on. nil still means the
+// button decides, so nothing changes for anyone who never touched it.
+//
 // Both callers share it so the strategy cannot differ between them: a bypass that
 // came back after a restart on a different strategy from the one a connect would
 // have raised is the same app behaving two ways for no reason the user can see.
@@ -1030,6 +1062,21 @@ func (d *Daemon) handleStartZapret(ctx context.Context, req Request) Response {
 // Returns whether the bypass ended up running, which decides where the censored
 // services are routed.
 func (d *Daemon) autoStartZapret(ctx context.Context, tunnelUp bool) bool {
+	// Asked here rather than in each caller: both automatic raises funnel through
+	// this function, so a switch obeyed at this point cannot be forgotten by the
+	// next path that wants a bypass up. Read before the bypass lock, because this
+	// is a decision NOT to run and nothing the lock protects can change it —
+	// queueing it behind a probe run of several minutes would only delay the
+	// answer the connect is waiting on.
+	if d.zapretSwitchedOff() {
+		// Debug, for the same reason the missing-bundle branch below is: the caller
+		// states at info where the censored services ended up, and this only adds
+		// which of the ways it got there. The start-up restore never reaches this
+		// line — it reads the same switch first and returns.
+		d.emitDebug("zapret: the switch is off — leaving the bypass down")
+		return false
+	}
+
 	d.zapretOpMu.Lock()
 	defer d.zapretOpMu.Unlock()
 
