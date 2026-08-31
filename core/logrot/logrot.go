@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"unicode/utf8"
 )
 
 // Defaults sized for a support artefact rather than a data lake: eight
@@ -362,12 +363,28 @@ func tailFile(path string, n int) []string {
 		start = size - tailWindow
 	}
 	buf := make([]byte, size-start)
-	if _, err := f.ReadAt(buf, start); err != nil && len(buf) == 0 {
+	// Keep only what was actually read. A rotation between the Stat and the ReadAt
+	// shortens the file under us and ReadAt then leaves the rest of buf as zero
+	// bytes; reporting those as the end of the log puts a run of NULs in front of
+	// whoever is reading the report.
+	read, err := f.ReadAt(buf, start)
+	if read <= 0 {
 		return nil
+	}
+	if err != nil && read < len(buf) {
+		buf = buf[:read]
 	}
 	if start > 0 {
 		if i := bytes.IndexByte(buf, '\n'); i >= 0 {
 			buf = buf[i+1:]
+		} else {
+			// An unterminated line longer than the whole window: there is no newline
+			// to cut at, so the window's own start is where this line begins — and it
+			// can land inside a multi-byte rune. Drop the orphaned continuation
+			// bytes. Left in, they turn a perfectly good log file into a tail that is
+			// not UTF-8, and it stays that way through the JSON reply and into a
+			// pasted bug report (see core/control.ensureUTF8).
+			buf = trimPartialRune(buf)
 		}
 	}
 	lines := []string{}
@@ -381,4 +398,19 @@ func tailFile(path string, n int) []string {
 		lines = lines[len(lines)-n:]
 	}
 	return lines
+}
+
+// trimPartialRune drops the continuation bytes of a rune a read window cut in
+// half, so a tail always starts on a character boundary.
+//
+// A UTF-8 continuation byte is 10xxxxxx and never starts a rune, and at most
+// three of them follow one starter — so skipping the leading run of them lands
+// on the first whole character in the buffer, and leaves a buffer that already
+// begins with one alone.
+func trimPartialRune(b []byte) []byte {
+	n := 0
+	for n < len(b) && n < utf8.UTFMax-1 && b[n]&0xC0 == 0x80 {
+		n++
+	}
+	return b[n:]
 }

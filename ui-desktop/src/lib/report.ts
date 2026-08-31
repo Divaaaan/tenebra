@@ -31,6 +31,35 @@ export const REPORT_BUDGET = 55000;
 /** Share of the surviving text kept from the head; the rest is the tail. */
 const HEAD_SHARE = 0.4;
 
+/**
+ * Move `end` back off the tail of a surrogate pair, so `slice(0, end)` cannot
+ * cut a character in half.
+ *
+ * JavaScript indexes strings by UTF-16 code unit, and every character outside
+ * the BMP — an emoji in a profile name, in a log line the user pasted, in a
+ * Windows adapter name — is two of them. Cutting between the halves leaves a
+ * lone surrogate, which is not encodable: written to the report file or handed
+ * to the clipboard it becomes U+FFFD, and the reporter sees a � in a report they
+ * did not corrupt. One character short is the correct answer.
+ */
+function backOffSurrogate(text: string, end: number): number {
+  const code = text.charCodeAt(end - 1);
+  // A high surrogate here means the pair's other half is at `end`, on the far
+  // side of the cut.
+  return code >= 0xd800 && code <= 0xdbff ? end - 1 : end;
+}
+
+/**
+ * Move `start` forward off the head of a surrogate pair, the mirror of
+ * {@link backOffSurrogate} for a slice that runs to the end of the string.
+ */
+function forwardOffSurrogate(text: string, start: number): number {
+  const code = text.charCodeAt(start);
+  // A low surrogate here means this index is the second half of a pair whose
+  // first half was cut away.
+  return code >= 0xdc00 && code <= 0xdfff ? start + 1 : start;
+}
+
 export interface ProblemReportInput {
   /** The app build, from the __APP_VERSION__ define. */
   appVersion: string;
@@ -86,10 +115,11 @@ export function trimToBudget(
 
   const head = Math.floor(keep * HEAD_SHARE);
   const tail = keep - head;
+  // Both cuts only ever move inwards, so the result still fits the budget.
+  const headEnd = backOffSurrogate(text, head);
+  const tailStart = forwardOffSurrogate(text, text.length - tail);
   return (
-    text.slice(0, head) +
-    marker(text.length - keep) +
-    text.slice(text.length - tail)
+    text.slice(0, headEnd) + marker(tailStart - headEnd) + text.slice(tailStart)
   );
 }
 

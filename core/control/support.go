@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Divaaaan/tenebra/core/buildinfo"
 	"github.com/Divaaaan/tenebra/core/tunguard"
@@ -191,9 +192,32 @@ func (d *Daemon) CollectDiagnostics() SupportBundle {
 	}
 
 	return SupportBundle{
-		Text:     scrubSecrets(b.String()),
+		Text:     scrubSecrets(ensureUTF8(b.String())),
 		Filename: fmt.Sprintf("tenebra-diagnostics-%s.txt", now.UTC().Format("20060102-150405")),
 	}
+}
+
+// ensureUTF8 forces s to be text, replacing any byte sequence that is not valid
+// UTF-8 with U+FFFD.
+//
+// Most of a bundle is Go source strings and is valid by construction. Two of its
+// sections are not: sing-box's captured output and the tail of the log file on
+// disk are bytes this process did not author, and either can carry something
+// that is not UTF-8 — a line a read window cut mid-rune, an OS string that
+// arrived in the console code page, junk left by a process that died mid-write.
+//
+// One bad byte anywhere in the blob is not a local problem. The reply travels as
+// JSON and encoding/json substitutes U+FFFD for invalid bytes on its own —
+// silently, after the bundle has left this function — so the damage surfaces as
+// ���� in a pasted bug report with nothing left to say where it came from, and
+// the file the desktop saves and the text it copies can disagree. Doing it here
+// makes validity the type's guarantee instead of a side effect of the transport,
+// and one the tests can hold whatever a runner hands over.
+func ensureUTF8(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	return strings.ToValidUTF8(s, "�")
 }
 
 // probeInterfaces enumerates the machine's interfaces for the bundle, or returns

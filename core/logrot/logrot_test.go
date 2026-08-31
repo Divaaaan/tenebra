@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 // line makes a payload of exactly n bytes including its newline, so a test can
@@ -325,6 +326,45 @@ func TestTailReadsAcrossGenerations(t *testing.T) {
 		want := fmt.Sprintf("line %02d", 30+i)
 		if ln != want {
 			t.Fatalf("tail[%d] = %q, want %q (full: %v)", i, ln, want, got)
+		}
+	}
+}
+
+// TestTailKeepsCyrillicWhole: the tail of the log goes into a support bundle a
+// person pastes into a bug tracker, so it has to be text.
+//
+// The read window walks back a fixed number of bytes from the end of the file
+// and normally cuts at the first newline inside it, which lands on a character
+// boundary for free. An unterminated line longer than the whole window — a core
+// killed mid-write, a stack dump still being appended — leaves no newline to cut
+// at, so the cut falls wherever the arithmetic put it: for Russian log lines,
+// halfway through a two-byte rune every other time. The orphaned half is not
+// UTF-8 and stays that way through the JSON reply, landing in the report as ����.
+func TestTailKeepsCyrillicWhole(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "service.log")
+
+	// An unterminated line longer than the window, of runes that straddle the
+	// boundary wherever it falls. Both alignments are covered: the one-byte prefix
+	// shifts the window's start off the rune boundary the other case lands on.
+	for _, prefix := range []string{"", "x"} {
+		body := prefix + strings.Repeat("обход не вытянул видео ", (tailWindow/22)+64)
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("seed log: %v", err)
+		}
+		got := tailFile(path, 5)
+		if len(got) == 0 {
+			t.Fatalf("prefix %q: tail of a one-line log is empty", prefix)
+		}
+		for i, ln := range got {
+			if !utf8.ValidString(ln) {
+				t.Errorf("prefix %q: tail[%d] is not valid UTF-8: %q", prefix, i, ln)
+			}
+		}
+		// It is still the end of the file, just starting at the next whole
+		// character — a truncated tail, not a mangled one.
+		if last := got[len(got)-1]; !strings.HasSuffix(body, last) {
+			t.Errorf("prefix %q: tail does not end the file: %q", prefix, last)
 		}
 	}
 }
