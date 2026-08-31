@@ -12,6 +12,11 @@ All notable changes to Tenebra are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **Switching the bypass off is recorded even when the stop itself fails.** A
+  stop interrupted mid-command returned an error without writing the choice
+  down, so the next connect raised the filter the user had just switched off.
+  The wish is now recorded before the stop is attempted; the error still
+  reaches the caller.
 - **A bypass you switched off no longer turns itself back on.** Connecting raised
   the packet filter unconditionally — the rule that one button should do the whole
   job, applied to somebody who had already answered the question by hand. The

@@ -255,3 +255,34 @@ func TestABundleUpdateDoesNotRaiseTheBypassTheUserSwitchedOff(t *testing.T) {
 		t.Error("the update left routing believing a bypass is running that the user switched off")
 	}
 }
+
+// A stop that fails is still the user answering off. The one way Runner.Stop
+// fails on Windows is a dead context — the client tore the connection down
+// mid-command — and before this was pinned, the error return skipped recording
+// the wish, so the very next connect raised the filter the user had just
+// switched off. The wish must survive the failure; the error must still reach
+// the caller, because the filter itself may well be alive.
+func TestAFailedStopStillRecordsTheSwitchGoingOff(t *testing.T) {
+	store, settings := t.TempDir(), t.TempDir()
+	seedBypassBundle(t, store, "general (FAKE TLS AUTO)")
+
+	d, _ := launchBypassDaemon(t, store, settings)
+	turnTheBypassOn(t, d, "general (FAKE TLS AUTO)")
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	resp := d.handleStopZapret(cancelled, Request{ID: 3, Cmd: CmdStopZapret})
+	if resp.Ok {
+		// A stub runner that shrugs at a dead context would leave this test
+		// asserting nothing about the error path.
+		t.Skip("the runner stopped despite the cancelled context; the failure path is not reachable here")
+	}
+
+	if stored := storedBypassChoice(t, settings); stored == nil || *stored {
+		t.Errorf("the stored switch = %s after a failed stop, want off written down", describeChoice(stored))
+	}
+	// And the next automatic raise obeys it: the recorded off is the whole point.
+	if d.autoStartZapret(context.Background(), true) {
+		t.Error("a connect after the failed stop raised the bypass the user switched off")
+	}
+}

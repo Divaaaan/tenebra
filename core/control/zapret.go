@@ -384,6 +384,21 @@ func (d *Daemon) applyZapretChoice(running bool, strategy string) {
 	d.applyZapretState(running, strategy)
 }
 
+// recordZapretWish stores the user's answer to the bypass switch and persists
+// it, without moving the routing. It exists for the one path where the answer
+// and the outcome can part ways: a stop that fails still happened as a choice —
+// the user said off — and forgetting it because the filter would not die meant
+// the next connect raised what they had just switched off. Success paths keep
+// going through applyZapretChoice, which records the same wish and then moves
+// the routing to match; this records only the wish.
+func (d *Daemon) recordZapretWish(want bool) {
+	w := want
+	d.mu.Lock()
+	d.zapretWanted = &w
+	d.mu.Unlock()
+	d.persistSettings()
+}
+
 // zapretSwitchedOff reports that the user has explicitly turned the bypass off,
 // as against never having touched the switch at all.
 //
@@ -1164,6 +1179,16 @@ func (d *Daemon) stopZapretQuietly() {
 func (d *Daemon) handleStopZapret(ctx context.Context, req Request) Response {
 	d.zapretOpMu.Lock()
 	defer d.zapretOpMu.Unlock()
+
+	// The user's answer is recorded before the stop is attempted, not after it
+	// succeeds. Stop can fail on a cancelled request (the client tore the
+	// connection down mid-command), and losing the recorded "off" to that meant
+	// the next connect raised the filter the user had just switched off — the
+	// exact complaint this switch exists to prevent. Recording the wish is not
+	// the same as declaring the filter stopped: the routing state is still moved
+	// only by applyZapretChoice below on the success path, and a filter that
+	// survived a failed stop is reported to the caller as the error.
+	d.recordZapretWish(false)
 
 	runner := zapret.NewRunner(filepath.Join(d.store.Dir(), zapretDirName))
 	if err := runner.Stop(ctx); err != nil {
