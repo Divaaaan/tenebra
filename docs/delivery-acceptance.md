@@ -37,6 +37,37 @@ builds may opt in using `TENEBRA_PIPE=off`; custom debug pipe names remain a
 development facility. Repair instructions preserve profiles and require a GUI
 restart after repairing the service.
 
+Explicit uninstall (`UpdateMode <> 1`) stops the service first, then queries only
+the fixed T05 provider `fcb43b44-9358-4cd7-a998-9e7f822d5248` and sublayer
+`fcb43b45-9358-4cd7-a998-9e7f822d5248`. Both exact WFP NOT_FOUND results permit
+legacy removal without executing an old core. Query failures are not absence.
+If either object exists, the installed `tenebra-core.exe
+--release-host-protection` must confirm removal and a second probe must find both
+objects absent before the service registration or binaries are removed. The
+core alone checks ownership (`tenebra/persistent-host-guard/v1`) and deletes its
+objects. A missing, unsupported or failing core while policy exists aborts
+uninstall and retains the binary for repair. Cleanup has a 20-second child-process
+deadline; the containing PowerShell invocation has an NSIS 35-second timeout.
+The read-only WFP probe itself uses synchronous local Windows API calls.
+
+The embedded cleanup wrapper executes only the exact installed core. It checks
+all path ancestors for reparse points and administrator/SYSTEM/TrustedInstaller
+ownership plus ACLs excluding unprivileged mutation, then holds the EXE open
+against writes and replacement while running the fixed cleanup command. Unsafe
+custom install locations require repair into an administrator-controlled path.
+No installed or temporary PowerShell script is executed; the reviewed source is
+embedded as constant chunks. Regenerate its include with
+`node scripts/embed-uninstall-helper.mjs`; CI checks the source and embed agree.
+
+Ordinary update and repair in update mode preserve persistent protection. The
+first upgrade uses the previous uninstaller's compiled hooks and installs these
+new hooks for later removals. Rolling back to a pre-T05 core requires explicitly
+disabling/releasing host protection with a T05-capable core first and confirming
+its provider/sublayer are absent; an older uninstaller cannot know how to remove
+new policy. VM acceptance must cover legacy with no policy, current owned policy,
+missing/old core with policy, query failure, cleanup failure/timeout, unsafe EXE
+locations, ordinary update/repair retention, and rollback preparation.
+
 ## Release channels
 
 All platform jobs upload into one draft. Only `publish` may open the release,

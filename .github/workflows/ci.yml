@@ -91,6 +91,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Check uninstall trust policy without native side effects
+        run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test-uninstall-policy.ps1
       - name: Check Rust formatting
         working-directory: ui-desktop/src-tauri
         run: cargo fmt --check

@@ -37,12 +37,15 @@
   ${EndIf}
 !macroend
 
+!include "${__FILEDIR__}\installer-wfp-probe.nsh"
+!include "${__FILEDIR__}\installer-release-protection.nsh"
+
 !macro TenebraStopService
   ; 1060 means first install. Other query failures (including denied access)
   ; must stop installation before replacing a live service's files.
   nsExec::Exec /TIMEOUT=35000 '"$SYSDIR\sc.exe" query tenebra'
   Pop $0
-  ${If} $0 = 0
+  ${If} $0 == "0"
     nsExec::Exec /TIMEOUT=35000 '"$SYSDIR\sc.exe" stop tenebra'
     Pop $0
     ${If} $0 != 1062
@@ -189,6 +192,17 @@
   ; Keep the registration through updates; POSTINSTALL reconfigures it.
   !insertmacro TenebraStopService
   ${If} $UpdateMode <> 1
+    ; Legacy cores cannot create T05 policy and do not implement its remover.
+    ; A read-only absence proof permits their uninstall without executing them.
+    !insertmacro TenebraProbeHostProtection
+    ${If} $0 == "present"
+      !insertmacro TenebraReleaseHostProtection
+      !insertmacro TenebraProbeHostProtection
+      ${If} $0 != "absent"
+        StrCpy $0 "owned WFP objects remain after cleanup"
+        !insertmacro TenebraServiceFailure "confirm host protection removal before unregistering"
+      ${EndIf}
+    ${EndIf}
     nsExec::Exec /TIMEOUT=35000 '"$SYSDIR\sc.exe" delete tenebra'
     Pop $0
     ${If} $0 != 1060
