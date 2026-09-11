@@ -307,10 +307,8 @@ type Options struct {
 	// at the exit. MultihopEntry and MultihopExit are the builder outbound tags
 	// (what singbox.sanitizeTag assigns) of the two chosen nodes, already resolved
 	// from the user's stable server-ID selection by the control layer — the builder
-	// works only in tags. Multihop is inert unless both tags are set, distinct, and
-	// resolve to regular built outbounds; the builder then falls back to the normal
-	// selector, so a stale or unresolvable selection degrades to a single hop rather
-	// than a broken config.
+	// works only in tags. An enabled chain requires distinct tags resolving to
+	// regular built outbounds; the builder rejects stale or unsupported selections.
 	Multihop      bool
 	MultihopEntry string
 	MultihopExit  string

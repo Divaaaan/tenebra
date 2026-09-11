@@ -9,8 +9,7 @@ import (
 
 // These tests cover the multihop chain the builder emits: the exit outbound gains
 // a detour through the entry outbound, the selector collapses to the exit so the
-// route final egresses via exit -> entry, and — crucially — the whole thing degrades
-// to the normal single-hop selector for any selection that can't form a real chain
+// route final egresses via exit -> entry, and the build rejects any selection that can't form a real chain
 // (missing tag, equal endpoints, an AmneziaWG endpoint that isn't a regular
 // outbound), never a config carrying a dangling detour. TestMultihopPassesSingBoxCheck
 // validates the emitted shape against a real sing-box.
@@ -81,10 +80,8 @@ func TestMultihopDefaultsOff(t *testing.T) {
 	}
 }
 
-// TestMultihopInertOnUnresolvableSelection: a selection the builder can't turn into
-// a real two-hop chain must leave the normal single-hop selector untouched rather
-// than emit a dangling detour (which sing-box accepts and then silently misroutes).
-func TestMultihopInertOnUnresolvableSelection(t *testing.T) {
+// An explicitly enabled two-hop chain must never degrade silently to one hop.
+func TestMultihopRejectsUnresolvableSelection(t *testing.T) {
 	cases := []struct {
 		name        string
 		entry, exit string
@@ -102,25 +99,17 @@ func TestMultihopInertOnUnresolvableSelection(t *testing.T) {
 				MultihopEntry: c.entry,
 				MultihopExit:  c.exit,
 			}, TunOptions{})
-			if err != nil {
-				t.Fatalf("Build() error: %v", err)
-			}
-			for tag, o := range outboundsByTag(t, cfg) {
-				if _, ok := o["detour"]; ok {
-					t.Errorf("outbound %q carries a detour for an unresolvable multihop selection", tag)
-				}
-			}
-			if outs, _ := selectorOf(t, cfg)["outbounds"].([]string); len(outs) != 2 {
-				t.Errorf("selector narrowed to %d outbounds; an unresolvable selection must keep the full selector", len(outs))
+			if err == nil || cfg != nil {
+				t.Error("invalid multihop must return an error and no config")
 			}
 		})
 	}
 }
 
-// TestMultihopInertWhenEndpointIsWireGuard: an AmneziaWG node is emitted as a
+// TestMultihopRejectsWireGuardEndpoint: an AmneziaWG node is emitted as a
 // top-level endpoint, not a regular outbound, so it can neither carry a detour nor
-// be one. Selecting it as the exit leaves the config single-hop.
-func TestMultihopInertWhenEndpointIsWireGuard(t *testing.T) {
+// be one. Selecting it must fail rather than build a single-hop config.
+func TestMultihopRejectsWireGuardEndpoint(t *testing.T) {
 	nodes := []model.Node{
 		{
 			Protocol: model.VLESS, Name: "vless-ws", Server: "ws.example.test", Port: 443,
@@ -138,11 +127,8 @@ func TestMultihopInertWhenEndpointIsWireGuard(t *testing.T) {
 		MultihopEntry: "vless-ws",
 		MultihopExit:  "awg",
 	}, TunOptions{})
-	if err != nil {
-		t.Fatalf("Build() error: %v", err)
-	}
-	if _, ok := outboundsByTag(t, cfg)["vless-ws"]["detour"]; ok {
-		t.Error("a WireGuard-endpoint exit must not chain: no detour should be set")
+	if err == nil || cfg != nil {
+		t.Error("WireGuard multihop must return an error and no config")
 	}
 }
 

@@ -241,23 +241,19 @@ func Build(nodes []model.Node, selectedTag string, ro routing.Options, tun TunOp
 	// Multihop rewires the topology into a two-hop chain: the exit outbound gets a
 	// detour through the entry outbound, and the selector collapses to the exit so
 	// the route final (still proxyTag) egresses via exit -> entry -> internet. It
-	// engages only when both endpoints resolve to distinct regular outbounds this
-	// config actually built — an AmneziaWG endpoint or a dropped/invalid node leaves
-	// its tag out of outs — so a stale or unsupported selection degrades to the
-	// normal selector rather than emitting a dangling detour, which sing-box accepts
-	// at check time and then silently misroutes. sing-box's detour is a plain
+	// requires distinct regular outbounds this config actually built. An enabled
+	// chain that cannot be built is an error, never permission to use one hop.
+	// sing-box's detour is a plain
 	// top-level outbound field naming the tag to dial through (verified against the
 	// bundled 1.13 schema).
-	if ro.Multihop && ro.MultihopEntry != "" && ro.MultihopExit != "" && ro.MultihopEntry != ro.MultihopExit {
-		_, entryOK := outboundByTag(outs, ro.MultihopEntry)
-		exitObj, exitOK := outboundByTag(outs, ro.MultihopExit)
-		if entryOK && exitOK {
-			// The entry outbound needs no change: it is dialed as an ordinary
-			// outbound and only referenced by the exit's detour.
-			exitObj["detour"] = ro.MultihopEntry
-			selOutbounds = []string{ro.MultihopExit}
-			def = ro.MultihopExit
+	if ro.Multihop {
+		if err := validateMultihopOutbounds(outs, ro.MultihopEntry, ro.MultihopExit); err != nil {
+			return nil, err
 		}
+		exitObj, _ := outboundByTag(outs, ro.MultihopExit)
+		exitObj["detour"] = ro.MultihopEntry
+		selOutbounds = []string{ro.MultihopExit}
+		def = ro.MultihopExit
 	}
 
 	// Shared outbounds: the selector over the eligible nodes, plus direct/block.
