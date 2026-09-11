@@ -230,10 +230,9 @@ func (o Options) proxySuffixesWithPresets() []string {
 	}
 	merged := make([]string, 0, len(base)+len(blockedServiceSuffixes))
 	merged = append(merged, base...)
-	if o.ZapretActive {
-		covered := o.coverage()
+	if direct := o.zapretDirectSuffixes(); len(direct) > 0 {
 		for _, s := range blockedServiceSuffixes {
-			if !coveredByZapret(covered, s) {
+			if !coveredByZapret(direct, s) {
 				merged = append(merged, s)
 			}
 		}
@@ -285,7 +284,7 @@ func (o Options) directSplitApps() []string {
 		if !o.gamesDirectActive() {
 			return nil
 		}
-		return o.splitAppsWithPresets()
+		return normalizeApps(gameProcesses)
 	}
 }
 
