@@ -1,5 +1,7 @@
 package control
 
+import "errors"
+
 // proxyUser identifies the owner of a per-user proxy lease. Session ID alone
 // can be reused after logout; SID must also match before any cleanup is run.
 type proxyUser struct {
@@ -35,7 +37,16 @@ func (p *sessionSystemProxy) Disable() error {
 		return nil
 	}
 	if err := p.ops.Run(*p.owner, "restore", ""); err != nil {
-		return err
+		// A logout destroys the old WTS session. Its HKCU lease still belongs
+		// to the same SID when that user logs on again with a new session ID.
+		current, currentErr := p.ops.Current()
+		if currentErr != nil || current.SID == "" || current.SID != p.owner.SID || current.Session == p.owner.Session {
+			return errors.Join(err, currentErr)
+		}
+		p.owner = &current
+		if retryErr := p.ops.Run(current, "restore", ""); retryErr != nil {
+			return errors.Join(err, retryErr)
+		}
 	}
 	p.owner = nil
 	return nil
