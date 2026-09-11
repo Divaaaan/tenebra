@@ -80,9 +80,9 @@ describe("ServerList", () => {
   it("reflects online and showing counts", () => {
     renderWithProviders(<ServerList {...baseProps()} />);
 
-    // Two of three rows are live → the heading reads "Nodes · 2 online".
+    // A TCP response describes reachability, not a verified VPN handshake.
     expect(
-      screen.getByRole("heading", { name: /Nodes · 2 online/ }),
+      screen.getByRole("heading", { name: /Nodes · 2 TCP reachable/ }),
     ).toBeInTheDocument();
     // All three rows are visible with no filter → "showing 3".
     expect(

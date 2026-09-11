@@ -360,17 +360,8 @@
 .srv-row.active .srv-node {
   color: var(--signal);
 }
-/* A dead node dims whole and stops responding to hover — nothing to select. */
-.srv-row.is-dead {
-  cursor: default;
-  opacity: 0.55;
-}
-.srv-row.is-dead:hover {
-  background: transparent;
-}
-.srv-row.is-dead:hover::before {
-  transform: scaleY(0);
-}
+/* A failed TCP check still allows a manual connection. Keep the row readable
+   and interactive; the ping label and empty signal bars carry the result. */
 .srv-name {
   display: flex;
   flex-direction: column;
@@ -456,8 +447,7 @@
 
    Filled `backwards`, not `both`. A filled final frame outranks ordinary author
    declarations, so `both` left every row pinned at the keyframe's opacity: 1 for
-   good — which is why `.srv-row.is-dead { opacity: 0.55 }` never dimmed a dead
-   node at all. `backwards` still holds the first frame through the stagger delay
+   good. `backwards` still holds the first frame through the stagger delay
    (the part an entrance actually needs) and hands the row back to the stylesheet
    the moment it lands. The same applies to every entrance in the app. */
 @keyframes srv-row-in {
