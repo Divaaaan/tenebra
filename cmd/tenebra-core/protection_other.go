@@ -7,7 +7,7 @@ import (
 	"github.com/Divaaaan/tenebra/core/control"
 )
 
-func configureHostProtection(*control.Daemon) {}
+func configureHostProtection(d *control.Daemon) { d.UseLegacyEngineProtection() }
 func releaseNativeHostProtection() error {
 	return errors.New("persistent host protection cleanup is Windows-only")
 }

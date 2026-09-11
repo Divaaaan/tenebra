@@ -1671,7 +1671,7 @@ func (d *Daemon) handleSetKillSwitch(req Request) Response {
 		// Retry even if the desired value is already OFF: an earlier removal may
 		// have failed after settings were saved. Only explicit commands release.
 		protectionErr = d.protection.Release()
-	} else {
+	} else if !d.protection.LegacyEngineOnly() {
 		cur := d.snapshotState()
 		if (changed || before.Status != "active") && (cur.State == StateConnected || cur.State == StateConnecting || cur.Protection.Enforced || before.Status == "error") {
 			if err := protection.ValidateDNS(d.snapshotRouting().Normalize().DNSDirect); err != nil {

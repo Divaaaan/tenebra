@@ -24,12 +24,13 @@ type Backend interface {
 }
 
 type Guard struct {
-	op      sync.Mutex
-	mu      sync.Mutex
-	backend Backend
-	state   State
-	notify  func()
-	tunnel  *verifiedTunnel
+	op               sync.Mutex
+	mu               sync.Mutex
+	backend          Backend
+	state            State
+	notify           func()
+	tunnel           *verifiedTunnel
+	legacyEngineOnly bool // immutable, explicitly selected by non-Windows composition
 }
 
 type verifiedTunnel struct {
@@ -44,6 +45,17 @@ func New(b Backend) *Guard {
 	}
 	return g
 }
+
+// NewLegacyEngineOnly preserves preexisting non-Windows engine routing without
+// claiming independent host protection. A missing Backend never selects this.
+func NewLegacyEngineOnly() *Guard {
+	g := New(nil)
+	g.legacyEngineOnly = true
+	g.state.Error = "Persistent host protection is unavailable on this platform; legacy engine routing only, while the engine is running."
+	return g
+}
+
+func (g *Guard) LegacyEngineOnly() bool { return g.legacyEngineOnly }
 
 // SetNotify is configured once before commands begin. The callback runs without
 // Guard.mu and may safely read Snapshot; it must not perform another operation.

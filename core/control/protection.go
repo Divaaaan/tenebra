@@ -28,6 +28,12 @@ func (d *Daemon) SetProtection(g *protection.Guard) {
 	g.SetNotify(d.emitProtection)
 }
 
+// UseLegacyEngineProtection is selected only by the non-Windows production
+// composition root. Default/missing-backend constructors remain fail closed.
+func (d *Daemon) UseLegacyEngineProtection() {
+	d.SetProtection(protection.NewLegacyEngineOnly())
+}
+
 func (d *Daemon) emitProtection() {
 	s := d.snapshotState()
 	d.mu.Lock()
@@ -50,6 +56,9 @@ func (d *Daemon) RecoverProtectionAtStartup() error {
 func (d *Daemon) prepareProtection(ro routing.Options) error {
 	d.protectionOp.Lock()
 	defer d.protectionOp.Unlock()
+	if d.protection.LegacyEngineOnly() {
+		return nil
+	}
 	d.mu.Lock()
 	wanted := d.routing.KillSwitch
 	d.mu.Unlock()
@@ -72,6 +81,9 @@ func (d *Daemon) prepareProtection(ro routing.Options) error {
 // section. Keep protectionOp held through every local gate and the connected
 // publication, so a setting command cannot replace the verified policy.
 func (d *Daemon) activateProtectionLocked(ro routing.Options, tun singbox.TunOptions) error {
+	if d.protection.LegacyEngineOnly() {
+		return nil
+	}
 	d.mu.Lock()
 	wanted := d.routing.KillSwitch
 	d.mu.Unlock()
@@ -99,5 +111,5 @@ func (d *Daemon) ProtectionDNS() (string, bool) {
 	ro := d.routing
 	d.mu.Unlock()
 	s := d.protection.Snapshot()
-	return ro.Normalize().DNSDirect, ro.KillSwitch || s.Enforced || s.Status == "error"
+	return ro.Normalize().DNSDirect, !d.protection.LegacyEngineOnly() && (ro.KillSwitch || s.Enforced || s.Status == "error")
 }
