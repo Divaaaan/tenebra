@@ -477,6 +477,12 @@ func (d *Daemon) handleDisconnect(req Request) Response {
 // It waits on d.wg, which never tracks those goroutines (they run under
 // relaunchWG), so the wait cannot deadlock against a connMu holder.
 func (d *Daemon) teardown(newState ConnState, profileID, nodeID string) error {
+	// Acceptance holds protectionOp until Active/Connected is published. Claim
+	// cancellation under the same fence so that publication either finishes
+	// before teardown, or observes this generation as cancelled before any gates.
+	// Lock order is connMu -> protectionOp -> mu; recordSuccess never waits on
+	// connMu, and setting commands release protectionOp before reapplyLive.
+	d.protectionOp.Lock()
 	d.mu.Lock()
 	cancel := d.cancel
 	d.cancel = nil
@@ -495,6 +501,9 @@ func (d *Daemon) teardown(newState ConnState, profileID, nodeID string) error {
 	if cancel != nil {
 		cancel()
 	}
+	// An old fallback goroutine may be waiting to enter recordSuccess. It must
+	// acquire the fence, see cancellation and drain, so never hold it for wg.Wait.
+	d.protectionOp.Unlock()
 	// Stop the process and wait for connection goroutines (the fallback loop, then
 	// any watcher/poller it started) to finish before we declare the new state, so
 	// events don't interleave across connections. The loop also stops the runner
@@ -882,6 +891,9 @@ func (d *Daemon) attemptNode(ctx context.Context, loop fallbackLoop, attempt fal
 func (d *Daemon) recordSuccess(ctx context.Context, loop fallbackLoop, attempt fallback.Attempt, tracker *attemptTracker, strat fallback.Strategy, sel selectorShape) error {
 	d.protectionOp.Lock()
 	defer d.protectionOp.Unlock()
+	if ctx.Err() != nil || !d.isCurrent(loop.gen) {
+		return context.Canceled
+	}
 	if err := d.activateProtectionLocked(loop.ro, loop.tun); err != nil {
 		return fmt.Errorf("host protection: %w", err)
 	}
