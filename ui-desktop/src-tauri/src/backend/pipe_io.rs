@@ -335,7 +335,7 @@ mod tests {
         );
         let server_name = name.clone();
         let (ready_tx, ready_rx) = mpsc::channel();
-        let (release_tx, release_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
         let server = thread::spawn(move || unsafe {
             let wide: Vec<u16> = server_name.encode_utf16().chain(Some(0)).collect();
             let handle = CreateNamedPipeW(
