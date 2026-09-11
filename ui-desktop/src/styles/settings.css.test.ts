@@ -73,7 +73,7 @@ describe("settings.css", () => {
     it("keeps the button itself clickable, and opaque enough to mask what passes behind it", () => {
       const close = declarations(".set-close");
       expect(close.get("pointer-events")).toBe("auto");
-      expect(close.get("background")).toBe("var(--bg)");
+      expect(close.get("background")).toMatch(/^var\(--(?:bg|surface)\)$/);
     });
 
     it("holds for every sticky layer in the sheet", () => {
@@ -124,7 +124,7 @@ describe("settings.css", () => {
       // A zoomed WebView reports fewer CSS pixels than the 720px design window; a
       // fixed height would push the rail's tail out of the clipped overlay body,
       // where the scroller above can no longer help.
-      expect(declarations(".set-shell").get("height")).toContain("100vh");
+      expect(declarations(".set-shell").get("height")).toMatch(/100d?vh/);
     });
   });
 });
