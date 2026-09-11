@@ -113,6 +113,10 @@ prepare() {
 
 build() {
   cd "${pkgname}"
+  # Use exactly the patch tested by CI; the system Go only bootstraps it.
+  export GOTOOLCHAIN="go$(cat .go-version)"
+  go version
+
 
   export GOPATH="${srcdir}/gopath"
   # Arch's Go packaging template builds with cgo and an external linker, which
@@ -126,6 +130,7 @@ build() {
   # go.mod mid-build, and -modcacherw leaves the module cache deletable.
   export GOFLAGS="-trimpath -mod=readonly -modcacherw -buildmode=pie"
   go build -o build/tenebra-core ./cmd/tenebra-core
+  node scripts/verify-core-build.mjs build/tenebra-core linux amd64 build/core-buildinfo.json
 
   # Tauri resolves an externalBin sidecar by target triple at build time, so the
   # core has to exist under that name even though the packaged app never spawns

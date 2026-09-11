@@ -36,6 +36,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  GOTOOLCHAIN: local
+
 jobs:
   debug:
     # Every Android-relevant push/PR (path-filtered above). Tag pushes skip this
@@ -48,7 +51,7 @@ jobs:
         with:
           # >= the sing-box v1.13.14 floor (go 1.24.7) and the same version the
           # rest of CI pins, so every job builds the Go core with one toolchain.
-          go-version: '1.26'
+          go-version-file: '.go-version'
           cache: false
       - uses: actions/setup-java@v4
         with:
@@ -161,7 +164,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.26'
+          go-version-file: '.go-version'
           cache: false
       - uses: actions/setup-java@v4
         with:

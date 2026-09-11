@@ -103,6 +103,33 @@ function stepNamed(text, name) {
   return found[0];
 }
 
+test("only the final release job can publish either updater channel", () => {
+  const releaseJobs = jobs(workflow("release.yml"));
+  const publishers = [...releaseJobs].filter(([, body]) => steps(body).some(s => /run:.*publish-release\.mjs/.test(s)));
+  assert.deepEqual(publishers.map(([name]) => name), ["publish"]);
+  const required = /needs:\s*\[([^\]]+)\]/.exec(releaseJobs.get("publish"))?.[1].split(',').map(s => s.trim());
+  assert.deepEqual(new Set(required), new Set(['windows', 'macos', 'linux', 'arch-package']));
+  for (const [name, body] of releaseJobs) {
+    if (name === 'publish') continue;
+    for (const step of steps(body)) assert.doesNotMatch(step, /run:.*publish-(?:beta-manifest|release)\.mjs/, name);
+  }
+});
+
+test("every Go setup resolves one exact committed patch", () => {
+  const expected = readFileSync(new URL('../../.go-version', import.meta.url), 'utf8').trim();
+  assert.match(expected, /^\d+\.\d+\.\d+$/);
+  let checked = 0;
+  for (const { name, text } of allWorkflows()) {
+    for (const step of steps(text).filter(s => /uses: actions\/setup-go@/.test(s))) {
+      const file = /go-version-file:\s*['"]?([^'"\s]+)/.exec(step)?.[1];
+      assert.equal(file, '.go-version', name);
+      assert.doesNotMatch(step, /go-version:/, name);
+      checked++;
+    }
+  }
+  assert.ok(checked >= 3);
+});
+
 test("the Arch attach step names the repository instead of asking git", () => {
   // The build step chowns the checkout to `builder` so makepkg can run, and this
   // step runs as root: gh's own repository resolution shells out to git, git

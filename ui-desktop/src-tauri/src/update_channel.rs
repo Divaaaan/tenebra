@@ -14,9 +14,9 @@ use tauri::{AppHandle, Manager, ResourceId, Webview};
 use tauri_plugin_updater::UpdaterExt;
 use url::Url;
 
-/// Base location the signed channel manifests are published to. Both manifests
-/// live beside the installer on the latest GitHub release, so the stable one
-/// keeps the exact URL that installed 0.3.0 clients already poll.
+/// Beta is one file on an atomic Git ref; stable keeps its existing release URL.
+const BETA_MANIFEST: &str =
+    "https://raw.githubusercontent.com/Divaaaan/tenebra/update-channels/beta.json";
 const MANIFEST_BASE: &str = "https://github.com/Divaaaan/tenebra/releases/latest/download";
 
 /// The manifest URL for a release channel. `beta` resolves to `beta.json`;
@@ -24,12 +24,19 @@ const MANIFEST_BASE: &str = "https://github.com/Divaaaan/tenebra/releases/latest
 /// `latest.json`, so a stale or malformed channel can only ever fall back to
 /// the safe stable manifest, never to an unintended endpoint.
 fn manifest_url(channel: &str) -> String {
-    let file = if channel == "beta" {
-        "beta.json"
+    if channel == "beta" {
+        BETA_MANIFEST.to_string()
     } else {
-        "latest.json"
-    };
-    format!("{MANIFEST_BASE}/{file}")
+        format!("{MANIFEST_BASE}/latest.json")
+    }
+}
+
+fn manifest_urls(channel: &str) -> Vec<String> {
+    let mut urls = vec![manifest_url(channel)];
+    if channel == "beta" {
+        urls.push(manifest_url("stable"));
+    }
+    urls
 }
 
 /// The `Update` fields the front end needs to rebuild a handle. Mirrors the
@@ -58,10 +65,14 @@ pub async fn check_update_for_channel(
     webview: Webview,
     channel: String,
 ) -> Result<Option<ChannelUpdate>, String> {
-    let endpoint = Url::parse(&manifest_url(&channel)).map_err(|e| e.to_string())?;
+    let endpoints = manifest_urls(&channel)
+        .iter()
+        .map(|url| Url::parse(url))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
     let updater = webview
         .updater_builder()
-        .endpoints(vec![endpoint])
+        .endpoints(endpoints)
         .map_err(|e| e.to_string())?
         .build()
         .map_err(|e| e.to_string())?;
@@ -118,10 +129,19 @@ mod tests {
     const LATEST: &str = "https://github.com/Divaaaan/tenebra/releases/latest/download/latest.json";
 
     #[test]
+    fn beta_keeps_stable_as_network_failure_fallback() {
+        assert_eq!(
+            super::manifest_urls("beta"),
+            vec![super::BETA_MANIFEST.to_string(), LATEST.to_string()]
+        );
+        assert_eq!(super::manifest_urls("stable"), vec![LATEST.to_string()]);
+    }
+
+    #[test]
     fn beta_resolves_to_the_beta_manifest() {
         assert_eq!(
             manifest_url("beta"),
-            "https://github.com/Divaaaan/tenebra/releases/latest/download/beta.json"
+            "https://raw.githubusercontent.com/Divaaaan/tenebra/update-channels/beta.json"
         );
     }
 
