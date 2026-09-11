@@ -43,6 +43,13 @@ var socketMode = flag.Bool("socket", false, "serve the control protocol on a uni
 var fileLogTail func(n int) []string
 
 func main() {
+	if handled, err := control.RunUserProxyHelper(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	flag.Parse()
 	// The service control manager starts us with no console and no usable
 	// stdio, so the service path must be detected before anything touches

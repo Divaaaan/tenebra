@@ -124,11 +124,8 @@ func TestSystemProxyDisarmWithoutArmIsNoop(t *testing.T) {
 	}
 }
 
-// TestSystemProxyArmFailureLeavesDisarmed: a failed Enable must leave the guard
-// disarmed, so a later teardown does not wrongly believe it owns (and then clear)
-// a proxy that was never set. The tunnel is up but unprotected — a visible, safe
-// failure, not a corrupt half-state.
-func TestSystemProxyArmFailureLeavesDisarmed(t *testing.T) {
+// A failed Enable can have partially applied state, so it must be rolled back.
+func TestSystemProxyArmFailureRollsBack(t *testing.T) {
 	d, f := bareDaemonWithProxy(t)
 	f.enableErr = errors.New("registry write denied")
 
@@ -137,8 +134,8 @@ func TestSystemProxyArmFailureLeavesDisarmed(t *testing.T) {
 		t.Errorf("enables = %d, want 1 attempt", f.enables())
 	}
 	d.disarmSystemProxy()
-	if f.disables() != 0 {
-		t.Errorf("disarm after a failed arm called Disable %d times, want 0 (nothing was set)", f.disables())
+	if f.disables() != 1 {
+		t.Errorf("disarm after a failed arm called Disable %d times, want 1 rollback", f.disables())
 	}
 }
 

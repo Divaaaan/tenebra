@@ -86,7 +86,7 @@ func (coreService) Execute(args []string, req <-chan svc.ChangeRequest, status c
 	// missing on every ordinary Windows install: see startBackgroundJobs.
 	startBackgroundJobs(ctx, daemon)
 
-	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
+	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown | svc.AcceptSessionChange}
 
 	for {
 		select {
@@ -100,6 +100,8 @@ func (coreService) Execute(args []string, req <-chan svc.ChangeRequest, status c
 			switch c.Cmd {
 			case svc.Interrogate:
 				status <- c.CurrentStatus
+			case svc.SessionChange:
+				go daemon.ReconcileSystemProxyWhenIdle()
 			case svc.Stop, svc.Shutdown:
 				// The teardown stops sing-box and waits for the connection
 				// goroutines to drain; give the SCM an explicit budget for that

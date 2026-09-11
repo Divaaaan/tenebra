@@ -190,10 +190,13 @@ type Daemon struct {
 	routing      routing.Options
 	state        State
 	tun          singbox.TunOptions
-	// proxyArmed records whether the daemon currently has the OS system proxy
-	// pointed at our mixed inbound, so disarmSystemProxy clears it exactly once and
-	// never touches a proxy we didn't set. Guarded by mu.
-	proxyArmed bool
+	// proxyMu serializes apply/rollback; the fields below are also protected by mu
+	// when inspected with the rest of the daemon state. Armed means cleanup is
+	// owed, including a partial apply. Applied is true only after confirmed success.
+	proxyMu      sync.Mutex
+	proxyArmed   bool
+	proxyApplied bool
+	proxyTarget  string
 
 	// emit is set by the server via SetEmitter before serving; the daemon calls
 	// it to publish state/traffic/log events. Guarded by mu.
@@ -498,7 +501,7 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 	d := &Daemon{
 		store:  store,
 		runner: runner,
-		proxy:  realSystemProxy{},
+		proxy:  newSystemProxyController(),
 		// Only UnblockServices ships on, and the split is by direction rather than
 		// by convenience. It pins censored domains *to* the tunnel ahead of the geo
 		// rule, which is what stops YouTube from being sent direct because

@@ -1,6 +1,7 @@
 package control
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -24,53 +25,52 @@ type proxyState struct {
 // sequencing is unit-testable with a fake — the real registry/networksetup calls
 // run only in a live session, never a unit test.
 //
-// The guard deliberately toggles the proxy on and off rather than saving and
-// restoring a user's pre-existing proxy: a machine that already routes through a
-// corporate proxy is not a machine that also needs this mode, and capture/restore
-// adds a second failure surface. See the report's "left for live acceptance" note.
+// Enable must retain enough ownership information to restore any partially
+// applied change. Disable restores that snapshot and is harmless when Enable
+// failed before changing anything. A failed Disable must retain its snapshot.
 type systemProxyController interface {
 	// Enable points the OS at hostport (the loopback mixed inbound).
 	Enable(hostport string) error
-	// Disable removes the proxy pointer, restoring direct connectivity.
+	// Disable restores the configuration owned by this controller.
 	Disable() error
 	// Get reads the current OS proxy configuration. It backs the startup reconcile
 	// that clears a proxy a previous run left pointing at our mixed inbound.
 	Get() (proxyState, error)
 }
 
-// realSystemProxy is the production controller. Its methods defer to the
-// build-tagged platform functions (proxy_windows.go / proxy_darwin.go /
-// proxy_other.go), mirroring how newPingDialer defers to bindSocketToInterface.
-type realSystemProxy struct{}
-
-func (realSystemProxy) Enable(hostport string) error { return enableSystemProxy(hostport) }
-func (realSystemProxy) Disable() error               { return disableSystemProxy() }
-func (realSystemProxy) Get() (proxyState, error)     { return readSystemProxy() }
-
-var _ systemProxyController = realSystemProxy{}
-
-// armSystemProxy points the OS at hostport and records that WE now own the proxy
-// pointer, so disarmSystemProxy later knows to clear it. It is idempotent: a
-// second call while already armed is a no-op, so a hot-swap that re-promotes the
-// same connection doesn't rewrite the registry. A failure to enable is logged and
-// leaves the guard disarmed — the tunnel is up but the OS still routes direct,
-// which the user sees as "connected but not protected", a visible, safe failure
-// rather than a half-set proxy.
-func (d *Daemon) armSystemProxy(hostport string) {
+// armSystemProxy confirms apply before the connection can be promoted. Ownership
+// starts before Enable because an error can follow a partial OS mutation.
+func (d *Daemon) armSystemProxy(hostport string) error {
+	d.proxyMu.Lock()
+	defer d.proxyMu.Unlock()
 	d.mu.Lock()
-	already := d.proxyArmed
+	already := d.proxyApplied && d.proxyTarget == hostport
+	pending := d.proxyArmed
 	d.mu.Unlock()
 	if already {
-		return
+		return nil
 	}
-	if err := d.proxy.Enable(hostport); err != nil {
-		d.emitLog(LogError, fmt.Sprintf("system proxy: could not point the OS at %s: %v", hostport, err))
-		return
+	if pending {
+		if err := d.disarmSystemProxyLocked(); err != nil {
+			return fmt.Errorf("restore previous system proxy before applying: %w", err)
+		}
 	}
 	d.mu.Lock()
 	d.proxyArmed = true
 	d.mu.Unlock()
+	if err := d.proxy.Enable(hostport); err != nil {
+		rollback := d.disarmSystemProxyLocked()
+		if rollback != nil {
+			rollback = fmt.Errorf("rollback system proxy: %w", rollback)
+		}
+		return errors.Join(err, rollback)
+	}
+	d.mu.Lock()
+	d.proxyApplied = true
+	d.proxyTarget = hostport
+	d.mu.Unlock()
 	d.emitLog(LogInfo, "system proxy: OS now routing through "+hostport)
+	return nil
 }
 
 // disarmSystemProxy clears the OS proxy pointer if (and only if) we armed it,
@@ -78,22 +78,31 @@ func (d *Daemon) armSystemProxy(hostport string) {
 // leaves a system-proxy connection — an explicit disconnect, a tunnel-process
 // death, connect supersession, and daemon shutdown — funnels through it, so the
 // OS is never left pointing at a mixed inbound that is no longer listening. It is
-// idempotent (a no-op when not armed) and clears the armed flag up front, so a
-// Disable error can't wedge the guard into retrying forever; a persistent failure
-// is logged loudly and the next startup's reconcile is the backstop.
-func (d *Daemon) disarmSystemProxy() {
+// idempotent. A failure retains ownership so a later disconnect/startup can retry.
+func (d *Daemon) disarmSystemProxy() error {
+	d.proxyMu.Lock()
+	defer d.proxyMu.Unlock()
+	return d.disarmSystemProxyLocked()
+}
+
+func (d *Daemon) disarmSystemProxyLocked() error {
 	d.mu.Lock()
 	armed := d.proxyArmed
-	d.proxyArmed = false
+	d.proxyApplied = false
 	d.mu.Unlock()
 	if !armed {
-		return
+		return nil
 	}
 	if err := d.proxy.Disable(); err != nil {
-		d.emitLog(LogError, fmt.Sprintf("system proxy: could not restore direct connectivity: %v; turn the proxy off in OS network settings", err))
-		return
+		d.emitLog(LogError, fmt.Sprintf("system proxy: could not restore previous settings: %v; cleanup remains pending", err))
+		return err
 	}
-	d.emitLog(LogInfo, "system proxy: cleared; OS back to direct")
+	d.mu.Lock()
+	d.proxyArmed = false
+	d.proxyTarget = ""
+	d.mu.Unlock()
+	d.emitLog(LogInfo, "system proxy: previous settings restored")
+	return nil
 }
 
 // ReconcileSystemProxyAtStartup clears a system proxy a previous run left pointing
@@ -110,6 +119,19 @@ func (d *Daemon) disarmSystemProxy() {
 // touches a proxy tenebra did not set. main calls it once at startup, before
 // serving, while the daemon is idle. It never arms anything.
 func (d *Daemon) ReconcileSystemProxyAtStartup() (cleared bool, err error) {
+	d.proxyMu.Lock()
+	defer d.proxyMu.Unlock()
+	if owned, ok := d.proxy.(interface{ Reconcile() (bool, error) }); ok {
+		found, restoreErr := owned.Reconcile()
+		d.mu.Lock()
+		if found {
+			d.proxyArmed = restoreErr != nil
+			d.proxyApplied = false
+			d.proxyTarget = ""
+		}
+		d.mu.Unlock()
+		return found && restoreErr == nil, restoreErr
+	}
 	st, err := d.proxy.Get()
 	if err != nil {
 		return false, fmt.Errorf("read OS proxy state: %w", err)
@@ -122,6 +144,32 @@ func (d *Daemon) ReconcileSystemProxyAtStartup() (cleared bool, err error) {
 		return false, fmt.Errorf("clear stale proxy %q: %w", st.Server, err)
 	}
 	return true, nil
+}
+
+// ReconcileSystemProxyWhenIdle handles a console logon after service startup.
+// Session notifications must not block the SCM handler or race a new connect.
+func (d *Daemon) ReconcileSystemProxyWhenIdle() {
+	if !d.connMu.TryLock() {
+		return
+	}
+	defer d.connMu.Unlock()
+	st := d.snapshotState()
+	if st.State != StateIdle && st.State != StateError {
+		return
+	}
+	if cleared, err := d.ReconcileSystemProxyAtStartup(); err != nil {
+		d.emitLog(LogWarn, fmt.Sprintf("system proxy session restore: %v", err))
+		d.mu.Lock()
+		pending := d.proxyArmed
+		d.mu.Unlock()
+		if pending {
+			st.State = StateError
+			st.Error = "system proxy restore remains pending: " + err.Error()
+			d.setState(st)
+		}
+	} else if cleared {
+		d.emitLog(LogInfo, "system proxy: recovered previous user settings after logon")
+	}
 }
 
 // sameProxyTarget reports whether two proxy server strings name the same

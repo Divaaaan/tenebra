@@ -2,7 +2,33 @@
 
 package control
 
-import "testing"
+import (
+	"testing"
+	"unsafe"
+)
+
+func TestUserProxyWinINetABILayout(t *testing.T) {
+	var option internetPerConnOption
+	var list internetPerConnList
+	if unsafe.Sizeof(uintptr(0)) == 8 {
+		if unsafe.Sizeof(option) != 16 || unsafe.Offsetof(option.Value) != 8 || unsafe.Sizeof(list) != 32 || unsafe.Offsetof(list.Options) != 24 {
+			t.Fatal("WinINet 64-bit ABI mismatch")
+		}
+	} else if unsafe.Sizeof(option) != 12 || unsafe.Offsetof(option.Value) != 4 || unsafe.Sizeof(list) != 20 || unsafe.Offsetof(list.Options) != 16 {
+		t.Fatal("WinINet 32-bit ABI mismatch")
+	}
+}
+
+func TestUserProxyHelperRejectsInvalidArgumentsBeforeNativeWork(t *testing.T) {
+	for _, args := range [][]string{{proxyHelperFlag}, {proxyHelperFlag, "restore", "extra"}, {proxyHelperFlag, "apply", "192.0.2.1:80"}, {proxyHelperFlag, "anything"}} {
+		if handled, err := RunUserProxyHelper(args); !handled || err == nil {
+			t.Fatalf("accepted malformed helper arguments: %v", args)
+		}
+	}
+	if handled, err := RunUserProxyHelper([]string{"--pipe"}); handled || err != nil {
+		t.Fatal("ordinary core flags treated as proxy helper")
+	}
+}
 
 // TestFirstProxyTarget pins how a WinINet ProxyServer value is reduced to a bare
 // host:port for the startup reconcile's comparison: a plain value passes through,
