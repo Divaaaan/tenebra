@@ -224,20 +224,11 @@ func runUserProxyAction(action, target string) error {
 	if sid == "S-1-5-18" || sid == "S-1-5-19" || sid == "S-1-5-20" {
 		return errors.New("WinINet proxy helper requires an interactive user")
 	}
-	// A mutex is thread-owned, so pin the goroutine until ReleaseMutex.
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-	name, _ := windows.UTF16PtrFromString(`Global\Tenebra.UserProxy.` + sid)
-	lock, err := windows.CreateMutex(nil, false, name)
-	if err != nil && !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+	release, err := acquireUserProxyLock(sid)
+	if err != nil {
 		return err
 	}
-	defer windows.CloseHandle(lock)
-	result, err := windows.WaitForSingleObject(lock, 5_000)
-	if err != nil || (result != windows.WAIT_OBJECT_0 && result != windows.WAIT_ABANDONED) {
-		return errors.New("user proxy operation is busy")
-	}
-	defer windows.ReleaseMutex(lock)
+	defer release()
 	ops := wininetProxyOperations{}
 	if action == "apply" {
 		return applyUserProxy(ops, target)
