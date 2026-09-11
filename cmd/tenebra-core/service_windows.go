@@ -62,6 +62,10 @@ type coreService struct{}
 func (coreService) Execute(args []string, req <-chan svc.ChangeRequest, status chan<- svc.Status) (svcSpecificEC bool, exitCode uint32) {
 	status <- svc.Status{State: svc.StartPending}
 
+	if err := enableServiceProcessQuery(); err != nil {
+		log.Printf("fatal: service process authentication: %v", err)
+		return false, 1
+	}
 	if err := configureServicePaths(); err != nil {
 		log.Printf("fatal: %v", err)
 		return false, 1
