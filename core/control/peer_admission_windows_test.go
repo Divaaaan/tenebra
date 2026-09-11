@@ -63,11 +63,24 @@ func TestTokenFullAdminRights(t *testing.T) {
 		name                                                 string
 		elevated, restricted, integrity                      uint32
 		errorClass, shortClass                               uint32
+		restrictionResult                                    []byte
+		restrictionPadding                                   byte
 		invalidSID, outsideBuffer, missingIntegrityAttribute bool
 		want                                                 bool
 	}{
 		{name: "full elevated admin", elevated: 1, integrity: 0x3000, want: true},
 		{name: "system integrity", elevated: 1, integrity: 0x4000, want: true},
+		{name: "native one byte unrestricted BOOLEAN", elevated: 1, integrity: 0x3000, restrictionResult: []byte{0}, want: true},
+		{name: "one byte excludes bytes outside returned result", elevated: 1, integrity: 0x3000, restrictionResult: []byte{0}, restrictionPadding: 0xff, want: true},
+		{name: "one byte restricted BOOLEAN", elevated: 1, integrity: 0x3000, restrictionResult: []byte{1}},
+		{name: "one byte noncanonical nonzero BOOLEAN", elevated: 1, integrity: 0x3000, restrictionResult: []byte{0x80}},
+		{name: "four byte restriction in second byte", elevated: 1, integrity: 0x3000, restrictionResult: []byte{0, 1, 0, 0}},
+		{name: "four byte restriction in third byte", elevated: 1, integrity: 0x3000, restrictionResult: []byte{0, 0, 1, 0}},
+		{name: "four byte restriction in fourth byte", elevated: 1, integrity: 0x3000, restrictionResult: []byte{0, 0, 0, 0x80}},
+		{name: "zero byte restriction result", elevated: 1, integrity: 0x3000, restrictionResult: []byte{}},
+		{name: "two byte restriction result", elevated: 1, integrity: 0x3000, restrictionResult: []byte{0, 0}},
+		{name: "three byte restriction result", elevated: 1, integrity: 0x3000, restrictionResult: []byte{0, 0, 0}},
+		{name: "oversize restriction result", elevated: 1, integrity: 0x3000, restrictionResult: []byte{0, 0, 0, 0, 0}},
 		{name: "not elevated", integrity: 0x3000},
 		{name: "restricted elevated token", elevated: 1, restricted: 1, integrity: 0x3000},
 		{name: "low integrity elevated token", elevated: 1, integrity: 0x1000},
@@ -97,6 +110,13 @@ func TestTokenFullAdminRights(t *testing.T) {
 				case windows.TokenHasRestrictions:
 					binary.LittleEndian.PutUint32(buffer, tt.restricted)
 					*out = 4
+					if tt.restrictionResult != nil {
+						for i := range buffer {
+							buffer[i] = tt.restrictionPadding
+						}
+						copy(buffer, tt.restrictionResult)
+						*out = uint32(len(tt.restrictionResult))
+					}
 				case windows.TokenIntegrityLevel:
 					header := int(unsafe.Sizeof(windows.Tokenmandatorylabel{}))
 					if len(buffer) < header+12 {
@@ -122,7 +142,7 @@ func TestTokenFullAdminRights(t *testing.T) {
 					return windows.ERROR_INVALID_PARAMETER
 				}
 				if class == tt.shortClass {
-					*out = 1
+					*out = 2
 				}
 				return nil
 			}

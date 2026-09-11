@@ -176,14 +176,23 @@ func windowsPeerAllowed(peer, self string, admin bool, console consoleUser, warn
 type tokenInformationQuery func(windows.Token, uint32, *byte, uint32, *uint32) error
 
 func tokenHasFullAdminRights(tok windows.Token, query tokenInformationQuery) bool {
-	var elevated, restricted, size uint32
+	var elevated, size uint32
 	if err := query(tok, windows.TokenElevation, (*byte)(unsafe.Pointer(&elevated)), 4, &size); err != nil || size != 4 || elevated == 0 {
 		return false
 	}
 	// Unlike IsTokenRestricted (which only checks restricting SIDs), this also
 	// rejects tokens filtered by removing privileges or disabling groups.
-	if err := query(tok, windows.TokenHasRestrictions, (*byte)(unsafe.Pointer(&restricted)), 4, &size); err != nil || size != 4 || restricted != 0 {
+	// Windows also returns this as a one-byte BOOLEAN, although the documented
+	// form is a DWORD. Only those two sizes are valid; every returned byte must
+	// be zero. Do not read padding beyond the reported result.
+	var restricted [4]byte
+	if err := query(tok, windows.TokenHasRestrictions, &restricted[0], uint32(len(restricted)), &size); err != nil || (size != 1 && size != 4) {
 		return false
+	}
+	for _, b := range restricted[:size] {
+		if b != 0 {
+			return false
+		}
 	}
 	// TOKEN_MANDATORY_LABEL plus a SID fits in 128 bytes (maximum SID: 68).
 	// Keep the SID in the returned buffer and validate its framing before use.
