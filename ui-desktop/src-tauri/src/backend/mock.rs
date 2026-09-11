@@ -72,6 +72,7 @@ impl MockBackend {
                 // The mock plays the part of a core built alongside this app, so
                 // it reports the app's own version — the skew banner stays off in
                 // mock-driven dev/tests unless a test injects a mismatch itself.
+                protection: None,
                 daemon_version: Some(env!("CARGO_PKG_VERSION").into()),
                 split: None,
                 split_apps: None,

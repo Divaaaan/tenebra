@@ -22,4 +22,17 @@ $exe = Join-Path $OutputDirectory 'wire-isolated.exe'
 & rustc --edition 2021 --test $harnessPath -L "dependency=$DependencyDirectory" --extern "serde_json=$($jsonLib.FullName)" --extern "serde=$($serdeLib.FullName)" -o $exe
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $exe --test-threads=1
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+# Also exercise the real State serde bridge, with no Tauri dependency.
+$stateSource = Get-Content -LiteralPath (Join-Path $repoRoot 'ui-desktop/src-tauri/src/backend/mod.rs') -Raw
+$stateStart = $stateSource.IndexOf('use serde::{')
+$nodeStart = $stateSource.LastIndexOf('#[derive(', $stateSource.IndexOf('pub struct Node {'))
+$stateTypes = $stateSource.Substring($stateStart, $nodeStart - $stateStart)
+$stateTests = (Join-Path $repoRoot 'ui-desktop/src-tauri/src/backend/protection_relay_tests.rs').Replace('\', '/')
+$statePath = Join-Path $OutputDirectory 'state-isolated.rs'
+[IO.File]::WriteAllText($statePath, $stateTypes + "`n#[cfg(test)]`n#[path = `"$stateTests`"]`nmod protection_tests;`n")
+$stateExe = Join-Path $OutputDirectory 'state-isolated.exe'
+& rustc --edition 2021 --test $statePath -L "dependency=$DependencyDirectory" --extern "serde_json=$($jsonLib.FullName)" --extern "serde=$($serdeLib.FullName)" -o $stateExe
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& $stateExe --test-threads=1
 exit $LASTEXITCODE

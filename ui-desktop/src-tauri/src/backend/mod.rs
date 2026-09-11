@@ -1,4 +1,4 @@
-﻿//! The boundary the UI talks to.
+//! The boundary the UI talks to.
 //!
 //! Every implementation of the [`Backend`] trait drives the same control
 //! protocol (see `docs/control-protocol.md`); the Tauri command layer in
@@ -23,8 +23,8 @@ pub mod mock;
 pub mod pipe;
 #[cfg(windows)]
 pub(crate) mod pipe_io;
-pub mod sidecar;
 pub(crate) mod service_policy;
+pub mod sidecar;
 #[cfg(test)]
 pub mod testutil;
 pub mod unavailable;
@@ -145,9 +145,24 @@ pub struct Multihop {
     pub exit_id: String,
 }
 
+/// Actual protection evidence from the core, separate from the user's request.
+/// Keep status as a string so a future core status survives this relay unchanged;
+/// the renderer decides how to display unknown statuses conservatively.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProtectionState {
+    pub status: String,
+    pub enforced: bool,
+    pub persistent: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct State {
     pub state: ConnectionState,
+    /// Absent on old cores and synthetic reconnect states: never infer active.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protection: Option<ProtectionState>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1127,6 +1142,7 @@ mod tests {
             node: Some("demo-nl".into()),
             profile: Some("demo-sub".into()),
             routing: Some(RoutingMode::Smart),
+            protection: None,
             daemon_version: Some("0.4.4".into()),
             split: Some(SplitMode::Exclude),
             split_apps: Some(vec!["chrome.exe".into(), "steam.exe".into()]),
@@ -1173,6 +1189,7 @@ mod tests {
             node: None,
             profile: None,
             routing: None,
+            protection: None,
             daemon_version: None,
             split: None,
             split_apps: None,
@@ -1575,3 +1592,7 @@ mod tests {
         assert_eq!(to_value(&node).unwrap()["insecure"], json!(true));
     }
 }
+
+#[cfg(test)]
+#[path = "protection_relay_tests.rs"]
+mod protection_relay_tests;

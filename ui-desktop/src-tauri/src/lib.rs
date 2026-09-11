@@ -1245,6 +1245,7 @@ mod tests {
             node: None,
             profile: None,
             routing: None,
+            protection: None,
             daemon_version: None,
             split: None,
             split_apps: None,

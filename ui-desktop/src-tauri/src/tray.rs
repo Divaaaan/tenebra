@@ -456,6 +456,7 @@ mod tests {
             node: None,
             profile: active_profile.map(Into::into),
             routing: None,
+            protection: None,
             daemon_version: None,
             split: None,
             split_apps: None,
