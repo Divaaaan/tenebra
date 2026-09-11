@@ -1977,10 +1977,15 @@ func (d *Daemon) handleSetDNS(req Request) Response {
 	if !routing.ValidDNSServer(req.DNSDirect) {
 		return newError(req.ID, fmt.Sprintf("set_dns: invalid direct resolver %q", req.DNSDirect))
 	}
+	// Serialize the protection check and preference write with ON/OFF. Otherwise
+	// ON can validate the old encrypted endpoint while this command saves a new
+	// plaintext endpoint based on an earlier unprotected snapshot.
+	d.protectionOp.Lock()
 	if _, required := d.ProtectionDNS(); required {
 		next := d.snapshotRouting()
 		next.DNSDirect = req.DNSDirect
 		if err := protection.ValidateDNS(next.Normalize().DNSDirect); err != nil {
+			d.protectionOp.Unlock()
 			return newError(req.ID, "set_dns: "+err.Error())
 		}
 	}
@@ -2000,6 +2005,7 @@ func (d *Daemon) handleSetDNS(req Request) Response {
 	changed := dnsPrefsDiffer(before, d.routing)
 	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
 	d.mu.Unlock()
+	d.protectionOp.Unlock() // reapplyLive acquires connMu and later protectionOp
 
 	d.persistSettings()
 	if changed {
