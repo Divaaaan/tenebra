@@ -1730,6 +1730,15 @@ func (d *Daemon) handleSetMultihop(req Request) Response {
 		if err := validateMultihopProfile(p, mh); err != nil {
 			return newError(req.ID, "set_multihop: "+err.Error())
 		}
+		// The setting applies to the active tunnel immediately. Validating only
+		// req.Profile could advertise its chain over a different live profile.
+		cur := d.snapshotState()
+		if (cur.State == StateConnected || cur.State == StateConnecting) && cur.Profile != p.ID {
+			liveProfile, ok := d.store.Get(cur.Profile)
+			if !ok || validateMultihopProfile(liveProfile, mh) != nil {
+				return newError(req.ID, "set_multihop: selected chain is incompatible with the current connection")
+			}
+		}
 	}
 
 	d.mu.Lock()

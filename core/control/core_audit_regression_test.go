@@ -386,3 +386,26 @@ func TestCoreAuditHealthWatchSurvivesCancelledQueuedRecovery(t *testing.T) {
 	cancel()
 	<-done
 }
+
+func TestCoreAuditMultihopRejectsChainForAnotherLiveProfile(t *testing.T) {
+	d, r, p := coreAuditDaemon(t)
+	_ = r.Start(context.Background(), nil)
+	d.generation = 1
+	d.setState(State{State: StateConnected, Profile: p.ID, Node: p.Servers[0].ID})
+	nodes := profileNodes(p)
+	nodes[0].Server, nodes[1].Server = "192.0.2.3", "192.0.2.4"
+	other, err := profile.NewProfile("other", profile.SourceManual, "", nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = d.store.Add(other); err != nil {
+		t.Fatal(err)
+	}
+	resp := d.handleSetMultihop(Request{ID: 1, Enabled: true, Profile: other.ID, EntryID: other.Servers[0].ID, ExitID: other.Servers[1].ID})
+	if resp.Ok {
+		t.Error("accepted chain incompatible with the live profile")
+	}
+	if d.multihop.Enabled || d.snapshotState().State != StateConnected || r.starts() != 1 || r.stops() != 0 {
+		t.Error("rejected chain changed current tunnel/state")
+	}
+}
