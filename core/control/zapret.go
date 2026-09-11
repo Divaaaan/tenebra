@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Divaaaan/tenebra/core/dnswire"
+	"github.com/Divaaaan/tenebra/core/protection"
 	"github.com/Divaaaan/tenebra/core/zapret"
 )
 
@@ -278,6 +280,11 @@ func (d *Daemon) excludeNodesFromZapret(dir string) {
 // function was written to replace, and silence about it leaves a user whose
 // nodes are still being desynced with nothing to go on.
 func (d *Daemon) nodeLookups() []zapret.Lookup {
+	if endpoint, required := d.ProtectionDNS(); required {
+		if err := protection.ValidateDNS(endpoint); err != nil {
+			return []zapret.Lookup{func(context.Context, string) ([]net.IP, error) { return nil, err }}
+		}
+	}
 	d.mu.Lock()
 	direct := strings.TrimSpace(d.routing.DNSDirect)
 	d.mu.Unlock()

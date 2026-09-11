@@ -51,16 +51,23 @@ func (d *Daemon) watchTunInterface(ctx context.Context, gen uint64) {
 	if name == "" {
 		return
 	}
+	present := func() bool {
+		if checked, exists := d.protection.TunnelPresent(); checked {
+			return exists
+		}
+		return d.ifacePresent(name)
+	}
 
-	// Wait for it to come up first: reporting "gone" for an interface that has not
-	// appeared yet would turn a slow start into a failure.
-	appeared := false
+	// A protected interface was already observed by VerifyTunnel before Active.
+	// If it vanished before this watcher starts, do not wait and silently give up.
+	appeared, _ := d.protection.TunnelPresent()
+	// Unprotected platforms still wait for their first name-based observation.
 	deadline := time.Now().Add(tunAppearBudget)
-	for time.Now().Before(deadline) {
+	for !appeared && time.Now().Before(deadline) {
 		if !d.isCurrent(gen) || ctx.Err() != nil {
 			return
 		}
-		if d.ifacePresent(name) {
+		if present() {
 			appeared = true
 			break
 		}
@@ -83,7 +90,7 @@ func (d *Daemon) watchTunInterface(ctx context.Context, gen uint64) {
 		if !d.isCurrent(gen) {
 			return // superseded; a newer connection owns the state
 		}
-		if d.ifacePresent(name) {
+		if present() {
 			continue
 		}
 		// Give it one grace beat: an adapter can flicker while the stack
@@ -98,7 +105,7 @@ func (d *Daemon) watchTunInterface(ctx context.Context, gen uint64) {
 			return
 		case <-time.After(grace):
 		}
-		if !d.isCurrent(gen) || d.ifacePresent(name) {
+		if !d.isCurrent(gen) || present() {
 			continue
 		}
 
@@ -106,6 +113,9 @@ func (d *Daemon) watchTunInterface(ctx context.Context, gen uint64) {
 		// Whatever sing-box said before losing its adapter is the only explanation
 		// available, and it is exactly what was missing while this was diagnosed.
 		d.emitSingboxTail()
+		// Confirmed loss invalidates active protection even when Stop fails or
+		// the process never sends a Done event. The persistent block stays owned.
+		d.protection.Interrupted()
 		// Stop the orphan rather than inventing a state here. A process with no
 		// interface carries nothing, and stopping it lands on watchProcess — the
 		// one path that already disarms the system proxy, spends the kill-switch
@@ -113,6 +123,8 @@ func (d *Daemon) watchTunInterface(ctx context.Context, gen uint64) {
 		// how the state ends up disagreeing with reality, which is this bug.
 		if err := d.runner.Stop(); err != nil {
 			d.emitLog(LogError, "could not stop the tunnel process: "+err.Error())
+			cur := d.snapshotState()
+			d.setState(State{State: StateError, Profile: cur.Profile, Node: cur.Node, Error: "tunnel interface disappeared; could not stop engine: " + err.Error()})
 		}
 		return
 	}

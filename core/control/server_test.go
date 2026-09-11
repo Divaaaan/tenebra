@@ -14,6 +14,7 @@ import (
 	"github.com/Divaaaan/tenebra/core/fallback"
 	"github.com/Divaaaan/tenebra/core/model"
 	"github.com/Divaaaan/tenebra/core/profile"
+	"github.com/Divaaaan/tenebra/core/protection"
 )
 
 // harness drives a Server over two pipes with a fake runner, demultiplexing the
@@ -40,6 +41,7 @@ func newHarness(t *testing.T) *harness {
 	}
 	runner := newFakeRunner()
 	d := NewDaemon(store, runner)
+	d.SetProtection(protection.New(&fakeHostProtection{}))
 	// Shrink the fallback-loop timings so tests don't wait out real warmups/budgets.
 	// The fake runner's Probe answers instantly, so a blocked candidate must burn
 	// its whole (tiny) budget before the loop gives up on it — keep the budget

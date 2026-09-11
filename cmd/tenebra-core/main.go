@@ -35,6 +35,8 @@ var pipeMode = flag.Bool("pipe", false, "serve the control protocol on the named
 // daemon's transport without installing one, and what that daemon runs with.
 var socketMode = flag.Bool("socket", false, "serve the control protocol on a unix domain socket instead of stdin/stdout (macOS and Linux only)")
 
+var releaseHostProtection = flag.Bool("release-host-protection", false, "explicitly remove only Tenebra-owned persistent host protection (administrator recovery/uninstall)")
+
 // fileLogTail reads back the trailing lines of the process log when this run
 // writes one to disk — the Windows service sets it to its rotating writer's
 // Tail. It stays nil in the console and sidecar modes, whose diagnostics come
@@ -51,6 +53,13 @@ func main() {
 		return
 	}
 	flag.Parse()
+	if *releaseHostProtection {
+		if err := releaseNativeHostProtection(); err != nil {
+			log.Printf("host protection cleanup: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
 	// The service control manager starts us with no console and no usable
 	// stdio, so the service path must be detected before anything touches
 	// them. Off Windows this is always a no-op.
@@ -116,6 +125,7 @@ func run(usePipe, useSocket bool) error {
 	if err != nil {
 		return err
 	}
+	startProductionConnection(daemon)
 	// Belt-and-suspenders for the system-proxy guard: Serve already calls
 	// daemon.Close() (which clears any armed OS proxy) on a clean or signalled exit,
 	// but a defer here also covers the --pipe/--socket paths and any early return,
@@ -246,16 +256,18 @@ func buildDaemon() (*control.Daemon, error) {
 	} else if cleared {
 		log.Printf("tenebra-core: cleared a stale system proxy left by a previous run")
 	}
-	// Autoconnect: if the preference is armed and a last connect is recorded,
-	// re-issue it now. This is the daemon's own start — shared by the sidecar,
-	// the --pipe console and the Windows service — so with the service the
-	// tunnel comes up with the machine, before anyone logs in or a UI attaches.
-	// The attempt runs in the background and never delays the control plane; a
-	// client connecting mid-attempt simply sees the connecting state.
+	return daemon, nil
+}
+
+// Kept outside buildDaemon so ordinary constructor/unit fixtures never apply
+// native policy or change the process resolver. Recovery precedes autoconnect.
+func startProductionConnection(daemon *control.Daemon) {
+	configureHostProtection(daemon)
+	// Sidecar, --pipe console and service share this one startup attempt. It
+	// runs in the background; clients attaching during it see connecting.
 	if daemon.AutoconnectOnStart() {
 		log.Printf("tenebra-core: autoconnect: reconnecting the last profile")
 	}
-	return daemon, nil
 }
 
 // ruleSetFiles are the RU geodata binaries that decide which resource directory

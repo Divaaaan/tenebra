@@ -11,6 +11,7 @@ import (
 	"github.com/Divaaaan/tenebra/core/fallback"
 	"github.com/Divaaaan/tenebra/core/model"
 	"github.com/Divaaaan/tenebra/core/profile"
+	"github.com/Divaaaan/tenebra/core/protection"
 	"github.com/Divaaaan/tenebra/core/routing"
 	"github.com/Divaaaan/tenebra/core/singbox"
 )
@@ -253,6 +254,14 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 			return State{}, fmt.Errorf("connect: no alternative node to fail over to")
 		}
 	}
+	// Lock down before candidate pings or any process replacement. Validation
+	// above remains a read-only refusal; errors here never start an engine.
+	d.mu.Lock()
+	protectionRouting := d.routing
+	d.mu.Unlock()
+	if err := d.prepareProtection(protectionRouting); err != nil {
+		return State{}, fmt.Errorf("host protection: %w", err)
+	}
 
 	// Choose the candidate ordering. The default is protocol preference (the
 	// anti-DPI strategy). When the request asks for auto AND named no explicit
@@ -438,8 +447,17 @@ func (d *Daemon) handleDisconnect(req Request) Response {
 	// an in-flight relaunch/reconcile: that goroutine, blocked on connMu, wakes to
 	// find the generation moved and yields instead of resurrecting the tunnel.
 	d.connMu.Lock()
-	d.teardown(StateIdle, "", "")
+	cleanupErr := d.teardown(StateIdle, "", "")
+	d.protectionOp.Lock()
+	protectionErr := d.protection.Release()
+	d.protectionOp.Unlock()
 	d.connMu.Unlock()
+	if protectionErr != nil {
+		protectionErr = fmt.Errorf("host protection release: %w", protectionErr)
+	}
+	if err := errors.Join(cleanupErr, protectionErr); err != nil {
+		return newError(req.ID, "disconnect: "+err.Error())
+	}
 	st := d.snapshotState()
 	resp, err := newResult(req.ID, st)
 	if err != nil {
@@ -483,6 +501,7 @@ func (d *Daemon) teardown(newState ConnState, profileID, nodeID string) error {
 	// itself on cancel; Stop is idempotent.
 	_ = d.runner.Stop()
 	d.wg.Wait()
+	d.protection.Interrupted()
 
 	// Clear the OS system proxy AFTER the goroutines have drained — this is the
 	// guard's single busiest chokepoint (every disconnect, hot-swap, connect
@@ -802,6 +821,7 @@ func (d *Daemon) attemptNode(ctx context.Context, loop fallbackLoop, attempt fal
 			// success on the current generation.
 			if err := d.recordSuccess(ctx, loop, attempt, tracker, strat, sel); err != nil {
 				_ = d.runner.Stop()
+				d.protection.Interrupted()
 				if d.isCurrent(loop.gen) {
 					tracker.blockedWithReason(attempt, "local setup failed")
 					d.emitLog(LogError, err.Error())
@@ -860,6 +880,11 @@ func (d *Daemon) attemptNode(ctx context.Context, loop fallbackLoop, attempt fal
 // connecting window. strat is the strategy the node came up under, so a
 // non-default one is surfaced in the snapshot.
 func (d *Daemon) recordSuccess(ctx context.Context, loop fallbackLoop, attempt fallback.Attempt, tracker *attemptTracker, strat fallback.Strategy, sel selectorShape) error {
+	d.protectionOp.Lock()
+	defer d.protectionOp.Unlock()
+	if err := d.activateProtectionLocked(loop.ro, loop.tun); err != nil {
+		return fmt.Errorf("host protection: %w", err)
+	}
 	if loop.tun.IsSystemProxy() {
 		if err := d.armSystemProxy(loop.tun.MixedHostPort()); err != nil {
 			return fmt.Errorf("system proxy setup failed: %w", err)
@@ -898,6 +923,7 @@ func (d *Daemon) recordSuccess(ctx context.Context, loop fallbackLoop, attempt f
 	// Capture the connected instant before publishing it, so the uptime the
 	// relaunch budget reads later is measured from a fixed point.
 	connectedAt := d.now()
+	d.protection.Accepted()
 	d.setState(State{State: StateConnected, Profile: loop.profileID,
 		Node: attempt.NodeID, Routing: d.snapshotState().Routing})
 	// Hand the live connection off to the watcher/poller.
@@ -1084,6 +1110,7 @@ func (d *Daemon) watchProcess(ctx context.Context, gen uint64, profileID, nodeID
 				msg = err.Error()
 			}
 			d.emitLog(LogError, "tunnel process exited: "+msg)
+			d.protection.Interrupted()
 			// The mixed inbound died with the process, so an armed system proxy now
 			// points at nothing — clear it immediately to restore direct connectivity.
 			// A kill-switch relaunch below re-arms it once the tunnel is back
@@ -1121,12 +1148,9 @@ const defaultRelaunchReset = 30 * time.Second
 // state; false means the caller should fall through to the plain error state.
 // uptime is how long the dead tunnel held the connection.
 //
-// Why restart at all: strict_route only holds while sing-box runs — the moment
-// the process dies, its filter rules and the tun route die with it, and traffic
-// would fall back to the physical interface. The honest mitigation the daemon
-// can offer is to put the tunnel (and its filters) back immediately, pinned to
-// the node the user was on. During the gap the OS is unprotected; that window
-// is why this relaunches eagerly rather than waiting for the user.
+// Persistent host protection remains installed through process death and retry
+// exhaustion. Relaunch restores availability on the user's node; it is not the
+// mechanism that blocks direct traffic while the process is absent.
 //
 // The budget: a relaunch that held the tunnel up past relaunchResetAfter proved a
 // recovery, not one more turn of a crash-loop, so its eventual death refunds the
@@ -1454,6 +1478,7 @@ func (d *Daemon) isCurrent(gen uint64) bool {
 
 // setState replaces the connection state and emits a state event reflecting it.
 func (d *Daemon) setState(s State) {
+	s.Protection = d.protection.Snapshot()
 	d.mu.Lock()
 	// Preserve the routing label if the new state didn't set one.
 	if s.Routing == "" {
@@ -1480,16 +1505,17 @@ func (d *Daemon) setState(s State) {
 }
 
 // stateEventBody projects a State into the state event payload (which omits the
-// profile field — the protocol's state event carries state/node/error only).
+// profile field — the protocol carries state/node/error and protection).
 func stateEventBody(s State) stateEvent {
-	return stateEvent{State: s.State, Node: s.Node, Error: s.Error}
+	return stateEvent{State: s.State, Node: s.Node, Error: s.Error, Protection: s.Protection}
 }
 
 // stateEvent is the wire body of a state event.
 type stateEvent struct {
-	State ConnState `json:"state"`
-	Node  string    `json:"node,omitempty"`
-	Error string    `json:"error,omitempty"`
+	State      ConnState        `json:"state"`
+	Node       string           `json:"node,omitempty"`
+	Error      string           `json:"error,omitempty"`
+	Protection protection.State `json:"protection"`
 }
 
 // emitTraffic pushes a traffic counter event to the UI, if an emitter is set.

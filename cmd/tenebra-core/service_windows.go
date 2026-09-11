@@ -71,6 +71,7 @@ func (coreService) Execute(args []string, req <-chan svc.ChangeRequest, status c
 		log.Printf("fatal: %v", err)
 		return false, 1
 	}
+	startProductionConnection(daemon)
 	l, err := control.ListenPipe(control.PipeName)
 	if err != nil {
 		log.Printf("fatal: %v", err)
