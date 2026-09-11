@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/Divaaaan/tenebra/core/protection"
 )
 
 func TestRequestRoundTrip(t *testing.T) {
@@ -61,7 +63,7 @@ func TestDecodeRequestBadJSON(t *testing.T) {
 
 func TestResponseMarshalShape(t *testing.T) {
 	// A success response with data echoes id and ok and carries the data object.
-	resp, err := newResult(7, State{State: StateConnecting, Node: "n3"})
+	resp, err := newResult(7, State{State: StateConnecting, Node: "n3", Protection: protection.State{Status: "off"}})
 	if err != nil {
 		t.Fatalf("newResult: %v", err)
 	}
@@ -70,11 +72,13 @@ func TestResponseMarshalShape(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	got := string(b)
-	// Every empty field drops out except zapret_auto_update, which rides the wire
+	// Protection always carries explicit enforcement and persistence, including
+	// false; a client must never infer protection from a requested setting. Other
+	// empty fields drop out except zapret_auto_update, which rides the wire
 	// even as false: it is the one flag here whose default is on, so a client
 	// meeting an absence has to guess, and guessing "on" turns a user's "stop
 	// updating the bundle" back into "keep updating it" (see State).
-	want := `{"id":7,"ok":true,"data":{"state":"connecting","node":"n3","zapret_auto_update":false}}`
+	want := `{"id":7,"ok":true,"data":{"state":"connecting","node":"n3","protection":{"status":"off","enforced":false,"persistent":false},"zapret_auto_update":false}}`
 	if got != want {
 		t.Errorf("response =\n %s\nwant %s", got, want)
 	}
@@ -102,8 +106,8 @@ func TestMarshalEventMergesFields(t *testing.T) {
 		{
 			name: "state",
 			ev:   EventState,
-			body: stateEvent{State: StateConnected, Node: "n3"},
-			want: `{"event":"state","state":"connected","node":"n3"}`,
+			body: stateEvent{State: StateConnected, Node: "n3", Protection: protection.State{Status: "active", Enforced: true, Persistent: true}},
+			want: `{"event":"state","state":"connected","node":"n3","protection":{"status":"active","enforced":true,"persistent":true}}`,
 		},
 		{
 			name: "traffic",

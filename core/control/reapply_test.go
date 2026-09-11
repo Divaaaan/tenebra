@@ -66,7 +66,7 @@ func TestReapplyMovesToAFreeTunAddress(t *testing.T) {
 
 	h.send(Request{ID: 2, Cmd: CmdSetKillSwitch, On: true})
 	h.await()
-	h.awaitState(StateConnected)
+	h.awaitRestartConnected(2)
 
 	cfgs := h.runner.startCfgs()
 	second := tunAddressOf(t, cfgs[len(cfgs)-1])
@@ -108,7 +108,7 @@ func TestSuccessfulReapplyStaysConnected(t *testing.T) {
 	h.send(Request{ID: 2, Cmd: CmdSetKillSwitch, On: true})
 	h.await()
 
-	again := h.awaitState(StateConnected)
+	again := h.awaitRestartConnected(2)
 	if again["node"] != connected["node"] {
 		t.Errorf("re-apply moved the session to %v, want the same node %v", again["node"], connected["node"])
 	}

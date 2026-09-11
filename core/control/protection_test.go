@@ -284,6 +284,9 @@ func TestHostProtectionLostVerifiedTunDemotesEvenWhenStopFails(t *testing.T) {
 	d.SetProtection(protection.New(f))
 	d.routing.KillSwitch = true
 	d.tunWatchInterval = time.Millisecond
+	// This fake Windows guard verifies a named interface on every test host;
+	// macOS production intentionally leaves its kernel-selected utun name empty.
+	d.tun.InterfaceName = "tenebra-test"
 	d.ifacePresent = func(string) bool { return true } // an identically named replacement is present
 	coreAuditConnect(t, d, p, "")
 	deadline := time.Now().Add(time.Second)
