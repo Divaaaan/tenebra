@@ -157,7 +157,7 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
       let best: ServerRow | null = null;
       let bestRtt = Infinity;
       for (const r of rows) {
-        if (!r.dead && r.rttMs !== null && r.rttMs < bestRtt) {
+        if (!r.dead && !r.stale && r.rttMs !== null && r.rttMs < bestRtt) {
           best = r;
           bestRtt = r.rttMs;
         }
@@ -170,7 +170,7 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
     // stand-in (exact while idle; connected-auto needs the prop).
     const isAuto = auto ?? activeNodeId === null;
 
-    const online = rows.filter((r) => !r.dead).length;
+    const online = rows.filter((r) => !r.dead && !r.stale && r.rttMs !== null).length;
     const insecureCount = rows.filter((r) => r.insecure).length;
     const insecureSummary = t.servers.insecureSummary
       .replace("{n}", String(insecureCount))

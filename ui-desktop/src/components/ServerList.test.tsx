@@ -90,6 +90,19 @@ describe("ServerList", () => {
     ).toBeInTheDocument();
   });
 
+  it("counts only fresh successful TCP measurements", () => {
+    const template = makeRows()[0];
+    const rows = [
+      { ...template, id: "fresh", name: "Fresh", rttMs: 27 },
+      { ...template, id: "unknown", name: "Unmeasured", rttMs: null },
+      { ...template, id: "old", name: "Stale", rttMs: 10, stale: true },
+      { ...template, id: "failed", name: "Failed", rttMs: 0, dead: true },
+    ];
+    renderWithProviders(<ServerList {...baseProps({ rows })} />);
+    expect(screen.getByRole("heading", { name: /Nodes · 1 TCP reachable/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /lowest ping · now fresh/i })).toBeInTheDocument();
+  });
+
   it("filters rows by region chip and back to all", async () => {
     const user = userEvent.setup();
     // The region is controlled by the parent, so re-render with the value the
