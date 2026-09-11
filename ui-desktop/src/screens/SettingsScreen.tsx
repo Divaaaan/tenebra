@@ -567,8 +567,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   // Multihop two-hop chain. Core-owned like the other toggles: off with no
   // selection until the user picks an entry and an exit node. The choices are
   // drawn from the active profile (the connected one, else the first stored) and
-  // sent by stable id; the core resolves them at connect time and falls back to a
-  // single hop for a pair that no longer fits the profile.
+  // sent by stable id; the core rejects a pair that no longer fits the profile.
   const multihopProfileId =
     tenebra.state.profile || tenebra.profiles[0]?.id || "";
   const multihopNodes =
@@ -622,28 +621,24 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   );
 
   function toggleSimpleMode() {
-    setSimpleMode((prev) => {
-      const next = !prev;
-      const value = next ? "true" : "false";
-      localStorage.setItem("tenebra.simpleMode", value);
-      // Same-document writes don't fire `storage` natively (that event is for
-      // *other* tabs), so raise it ourselves for the app shell's listener.
-      window.dispatchEvent(
-        new StorageEvent("storage", {
-          key: "tenebra.simpleMode",
-          newValue: value,
-        }),
-      );
-      return next;
-    });
+    const next = !simpleMode;
+    setSimpleMode(next);
+    const value = next ? "true" : "false";
+    localStorage.setItem("tenebra.simpleMode", value);
+    // Notify from the event handler: React can replay state updaters during
+    // render, when synchronously updating the listening app shell is invalid.
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: "tenebra.simpleMode",
+        newValue: value,
+      }),
+    );
   }
 
   function toggleAutoFastest() {
-    setAutoFastestState((prev) => {
-      const next = !prev;
-      setAutoFastest(next);
-      return next;
-    });
+    const next = !autoFastest;
+    setAutoFastestState(next);
+    setAutoFastest(next);
   }
 
   function toggleAutoInstall() {

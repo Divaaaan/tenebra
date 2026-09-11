@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode, useEffect, useState } from "react";
 
 import { SettingsScreen, pickActiveSection } from "./SettingsScreen";
 import { renderWithProviders } from "../test/renderWithProviders";
@@ -1050,6 +1051,26 @@ describe("SettingsScreen", () => {
   });
 
   describe("simple mode", () => {
+    it("notifies the shell outside render when React replays state updates", async () => {
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      function Shell() {
+        const [mode, setMode] = useState("false");
+        useEffect(() => {
+          const listener = (event: StorageEvent) => {
+            if (event.key === "tenebra.simpleMode") setMode(event.newValue ?? "false");
+          };
+          window.addEventListener("storage", listener);
+          return () => window.removeEventListener("storage", listener);
+        }, []);
+        return <><output data-testid="shell-mode">{mode}</output><SettingsScreen tenebra={makeTenebra()} /></>;
+      }
+      renderWithProviders(<StrictMode><Shell /></StrictMode>);
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("switch", { name: "Simple mode" }));
+      await user.click(screen.getByRole("switch", { name: "Simple mode" }));
+      expect(screen.getByTestId("shell-mode")).toHaveTextContent("false");
+      expect(errors.mock.calls.some((call) => String(call[0]).includes("Cannot update a component"))).toBe(false);
+    });
     function simpleToggle(): HTMLElement {
       const row = screen.getByText("Simple mode").closest(".set-row");
       if (!row) {
