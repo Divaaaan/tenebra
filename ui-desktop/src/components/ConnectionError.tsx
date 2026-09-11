@@ -6,9 +6,9 @@ export function ConnectionError({ error, onReport }: { error: string; onReport: 
   const lower = error.toLowerCase();
   const explanation = lower.includes("all protocols failed") || lower.includes("handshake")
     ? t.errors.protocolFailed
-    : lower.includes("not found") || lower.includes("no nodes")
+    : /\b(profile|node)\b.*(not found|missing|no longer)|no (usable )?nodes/.test(lower)
       ? t.errors.selectionFailed
-      : /pipe|ipc|core.*(down|unreachable)|service|timeout/.test(lower)
+      : /\bpipe\b|\bipc\b|tenebra[- ](core|service)|background service|core.*(down|unreachable)/.test(lower)
         ? t.errors.serviceFailed
         : describeCoreError(error, t) !== t.daemon.commandFailed
           ? describeCoreError(error, t) : t.errors.connectFailed;

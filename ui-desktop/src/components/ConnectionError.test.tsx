@@ -13,3 +13,11 @@ it("explains protocol failure in Russian and preserves the technical detail befo
   fireEvent.click(screen.getByRole("button"));
   expect(report).toHaveBeenCalledTimes(1);
 });
+
+it.each(["dial tcp 192.0.2.1:443: i/o timeout", "engine executable not found"])(
+  "does not blame the service or selected profile without evidence: %s", (error) => {
+    renderWithProviders(<ConnectionError error={error} onReport={() => {}} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Connection failed. Try another node");
+    expect(screen.getByText(error)).toBeInTheDocument();
+  },
+);
