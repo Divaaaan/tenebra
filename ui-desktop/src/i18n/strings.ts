@@ -138,11 +138,24 @@ export interface Strings {
   };
 
   /** Bottom bar: routing segmented control, kill-switch, quick actions. */
+  protection: {
+    active: string;
+    blocked: string;
+    applying: string;
+    off: string;
+    error: string;
+    unavailable: string;
+    legacy: string;
+    unknown: string;
+    lastGuard: string;
+    retry: string;
+    disable: string;
+    disconnect: string;
+  };
   bottom: {
     routing: string;
     killSwitch: string;
-    killBanner: string;
-    /** Tooltip explaining what arming actually does (and costs). */
+    /** Requested preference; actual native evidence is displayed separately. */
     killSwitchHint: string;
     leakCheck: string;
     settings: string;
@@ -884,7 +897,7 @@ const en: Strings = {
   },
   conn: {
     eyebrow: "Tunnel status",
-    subOff: "traffic unprotected · select a node and connect",
+    subOff: "tunnel disconnected · select a node and connect",
     subPending: "establishing tunnel · negotiating · · ·",
     subReconnecting: "node failed · switching to a healthy exit on its own",
     subConnected: "tunnel connected",
@@ -941,20 +954,33 @@ const en: Strings = {
     manualAfterPing: "TCP check failed. Select this node to try connecting manually.",
     noneUsable: "No node carried traffic — connecting anyway, node by node",
   },
+  protection: {
+    active: "Persistent protection is active. The tunnel and traffic guard are verified. Closing the app keeps the guard; Disconnect releases it.",
+    blocked: "Internet traffic is blocked until the tunnel recovers or you explicitly disconnect.",
+    applying: "Applying protection. Waiting for the service to confirm the traffic guard.",
+    off: "Protection is requested, but no traffic guard is installed yet.",
+    error: "Protection could not be confirmed. Retry it or explicitly turn it off to release the block.",
+    unavailable: "This platform does not provide persistent protection. The preference alone cannot block traffic.",
+    legacy: "This service version does not confirm persistent protection. The saved preference is not a guarantee.",
+    unknown: "Current protection is unconfirmed. Waiting for a fresh service status.",
+    lastGuard: "The last confirmed guard was persistent. Current protection is unconfirmed; traffic may remain blocked until recovery or explicit removal.",
+    retry: "Retry protection",
+    disable: "Turn protection off",
+    disconnect: "Disconnect and allow traffic",
+  },
   bottom: {
     routing: "Routing",
     killSwitch: "kill-switch",
-    killBanner: "KILL-SWITCH ARMED · traffic blocked if the tunnel drops",
     killSwitchHint:
-      "Block traffic that tries to bypass the tunnel; if the tunnel dies, restart it. Applies live; connects get rougher while armed.",
+      "Request persistent protection. The status above confirms whether it is installed. Use Turn protection off or Disconnect to release a confirmed block.",
     leakCheck: "leak-check",
     settings: "settings",
     report: "report a problem",
   },
   toast: {
     tunnelUp: "tunnel up",
-    killOn: "kill-switch · on",
-    killOff: "kill-switch · off",
+    killOn: "kill-switch · requested",
+    killOff: "kill-switch request · off",
     route: "route · {mode}",
     profileActive: "active profile · {name}",
     profilePinged: "ping updated · {alive}/{total} alive",
@@ -1064,7 +1090,7 @@ const en: Strings = {
     setupLinkPlaceholder: "https://…",
     bypassOn: "bypass on",
     bypassOff: "bypass off",
-    statusOn: "You're protected",
+    statusOn: "Tunnel connected",
     statusOff: "You're not connected",
     server: "Server",
     auto: "Automatic — fastest",
@@ -1455,7 +1481,7 @@ const ru: Strings = {
   },
   conn: {
     eyebrow: "Статус туннеля",
-    subOff: "трафик не защищён · выберите узел и подключитесь",
+    subOff: "туннель отключён · выберите узел и подключитесь",
     subPending: "поднимаю туннель · согласование · · ·",
     subReconnecting: "узел отказал · сам переключаюсь на рабочий выход",
     subConnected: "туннель подключён",
@@ -1512,20 +1538,33 @@ const ru: Strings = {
     manualAfterPing: "TCP-проверка не прошла. Выберите узел, чтобы попробовать подключиться вручную.",
     noneUsable: "Ни один узел не пропустил трафик — подключаюсь перебором",
   },
+  protection: {
+    active: "Постоянная защита активна. Туннель и блокировка трафика подтверждены. Закрытие приложения сохраняет блокировку; Отключить снимает её.",
+    blocked: "Интернет-трафик заблокирован до восстановления туннеля или явного отключения.",
+    applying: "Применяем защиту. Ожидаем подтверждения блокировки от службы.",
+    off: "Защита запрошена, но блокировка трафика ещё не установлена.",
+    error: "Не удалось подтвердить защиту. Повторите попытку или явно выключите её, чтобы снять блокировку.",
+    unavailable: "На этой платформе постоянная защита недоступна. Одна настройка не блокирует трафик.",
+    legacy: "Эта версия службы не подтверждает постоянную защиту. Сохранённая настройка не гарантирует блокировку.",
+    unknown: "Текущая защита не подтверждена. Ожидаем свежий статус службы.",
+    lastGuard: "Последняя подтверждённая блокировка была постоянной. Текущая защита не подтверждена; трафик может оставаться заблокированным до восстановления или явного снятия.",
+    retry: "Повторить защиту",
+    disable: "Выключить защиту",
+    disconnect: "Отключить и разрешить трафик",
+  },
   bottom: {
     routing: "Маршрут",
     killSwitch: "kill-switch",
-    killBanner: "KILL-SWITCH ВКЛ · трафик блокируется при обрыве туннеля",
     killSwitchHint:
-      "Блокировать трафик в обход туннеля; при падении туннеля — перезапустить его. Применяется сразу; коннект с ним грубее.",
+      "Запросить постоянную защиту. Статус выше подтверждает её применение. Чтобы снять подтверждённую блокировку, выключите защиту или нажмите Отключить.",
     leakCheck: "проверка",
     settings: "настройки",
     report: "сообщить о проблеме",
   },
   toast: {
     tunnelUp: "туннель поднят",
-    killOn: "kill-switch · вкл",
-    killOff: "kill-switch · выкл",
+    killOn: "kill-switch · запрошен",
+    killOff: "kill-switch · запрос снят",
     route: "маршрут · {mode}",
     profileActive: "активный профиль · {name}",
     profilePinged: "пинг обновлён · {alive}/{total} живы",
@@ -1635,7 +1674,7 @@ const ru: Strings = {
     setupLinkPlaceholder: "https://…",
     bypassOn: "обход включён",
     bypassOff: "обход выключен",
-    statusOn: "Вы под защитой",
+    statusOn: "Туннель подключён",
     statusOff: "Вы не подключены",
     server: "Сервер",
     auto: "Автоматически — быстрее всего",

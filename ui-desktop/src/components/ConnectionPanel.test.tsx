@@ -41,7 +41,7 @@ describe("ConnectionPanel", () => {
       expect(screen.getByText("—")).toBeInTheDocument();
       // The off sub-line copy.
       expect(
-        screen.getByText("traffic unprotected · select a node and connect"),
+        screen.getByText("tunnel disconnected · select a node and connect"),
       ).toBeInTheDocument();
     });
   });

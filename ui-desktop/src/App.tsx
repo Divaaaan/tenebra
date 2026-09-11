@@ -1,5 +1,6 @@
 import { ModalLayer } from "./components/ModalLayer";
 import { ConnectionError } from "./components/ConnectionError";
+import { ProtectionStatus } from "./components/ProtectionStatus";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
@@ -702,11 +703,9 @@ export function App() {
     <div className={`app${simpleMode ? " app--simple" : ""}`} data-conn={phase}>
       {!simpleMode && <TopBar activeProfile={metaProfile} onEclipse={playEclipse} />}
 
-      {connected && killSwitch && (
-        <div className="kill-banner" role="status">
-          ⚠ {t.bottom.killBanner}
-        </div>
-      )}
+      <ProtectionStatus state={state} reachable={tenebra.ready && !tenebra.coreError}
+        onRetry={() => tenebra.setKillSwitch(true)} onDisable={() => tenebra.setKillSwitch(false)}
+        onDisconnect={tenebra.disconnect} onError={reportRefusal} />
 
       {tenebra.coreError && !simpleMode && (
         // The core never answered, so nothing on this screen is backed by

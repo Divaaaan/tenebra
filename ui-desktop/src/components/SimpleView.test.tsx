@@ -46,12 +46,12 @@ describe("SimpleView", () => {
     expect(screen.getByText("You're not connected")).toBeInTheDocument();
   });
 
-  it("shows Disconnect and the protected line with the node when connected", () => {
+  it("shows Disconnect and the connected line with the node when connected", () => {
     setup({ phase: "connected", nodeName: "AMS-01" });
     expect(
       screen.getByRole("button", { name: "Disconnect" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("You're protected · AMS-01")).toBeInTheDocument();
+    expect(screen.getByText("Tunnel connected · AMS-01")).toBeInTheDocument();
   });
 
   it.each(["connecting", "health_reconnecting"] as const)("shows Abort during %s", (phase) => {

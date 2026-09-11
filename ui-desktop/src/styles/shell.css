@@ -99,33 +99,31 @@
   color: var(--signal);
 }
 
-/* ── kill-switch banner ── */
-.kill-banner {
-  background: var(--signal);
-  color: var(--on-signal);
-  padding: 6px 22px;
-  font-size: var(--fs-label);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  font-weight: 600;
-  text-align: center;
-  /* Drops in from under the top bar when armed. Neutralised by reduced-motion. */
-  animation: kill-banner-in var(--d-slow) var(--e-out) backwards;
+/* Native protection evidence, separate from the requested toggle. */
+.protection-banner {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-dim);
+  background: var(--surface);
+  font-size: 12px;
 }
-@keyframes kill-banner-in {
-  from {
-    opacity: 0;
-    transform: translateY(-100%);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+.protection-copy { flex: 1; min-width: 0; }
+.protection-copy p { margin: 0; line-height: 1.5; }
+.protection-copy pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.protection-copy details { margin-top: 6px; }
+.protection-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.protection-banner[data-protection="active"] { color: var(--good); }
+.protection-banner[data-protection="blocked"],
+.protection-banner[data-protection="error"] { color: var(--signal); }
+@media (max-width: 720px) {
+  .protection-banner { align-items: flex-start; flex-direction: column; }
 }
-
 /* ── update banner — the update check found a newer release ── */
-/* Quiet by design: a bordered row in the warn tint, not the kill banner's
-   filled alarm. An update is a heads-up, not an incident. The daemon-skew
+/* Quiet by design: a bordered row in the warn tint. The daemon-skew
    banner (a stale privileged daemon behind an updated app) shares these
    classes: same severity, same row. */
 .update-banner {

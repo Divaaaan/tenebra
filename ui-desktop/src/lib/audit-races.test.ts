@@ -45,6 +45,68 @@ it("merges bootstrap metadata without rolling back the latest event phase", asyn
   expect(result.current.state).toMatchObject({ state: "connected", node: "new-node", profile: "p1", kill_switch: true, routing: "global", daemon_version: "0.5.11" });
 });
 
+it("keeps new guard evidence when an older bootstrap snapshot returns", async () => {
+  let resolveStatus!: (s: State) => void;
+  m.status.mockImplementation(() => new Promise((resolve) => { resolveStatus = resolve; }));
+  const { result } = renderHook(() => useTenebra());
+  const protection = { status: "blocked", enforced: true, persistent: true } as const;
+  act(() => m.state!({ state: "error", protection }));
+  await act(async () => resolveStatus({ state: "connected", protection: { ...protection, status: "active" } }));
+  expect(result.current.state.protection).toEqual(protection);
+});
+
+it("holds confidence across service loss and refreshes status when events return", async () => {
+  const guard = { enforced: true, persistent: true };
+  m.status.mockResolvedValue({ state: "connected", protection: { ...guard, status: "active" } });
+  const { result } = renderHook(() => useTenebra());
+  await waitFor(() => expect(result.current.ready).toBe(true));
+  let resolveStatus!: (s: State) => void;
+  m.status.mockImplementation(() => new Promise((resolve) => { resolveStatus = resolve; }));
+  act(() => m.state!({ state: "connecting", error: "Reconnecting to the Tenebra service…" }));
+  expect(result.current.coreError).toContain("Reconnecting");
+  expect(result.current.state.protection?.status).toBe("active"); // Retained, unconfirmed evidence.
+  act(() => m.state!({ state: "error", protection: { ...guard, status: "blocked" } }));
+  expect(m.status).toHaveBeenCalledTimes(2);
+  expect(result.current.coreError).not.toBeNull();
+  // A newer guard change cannot be rolled back by the recovery status.
+  act(() => m.state!({ state: "idle", protection: { enforced: false, persistent: false, status: "off" } }));
+  await act(async () => resolveStatus({ state: "error", protection: { ...guard, status: "blocked" } }));
+  expect(result.current.coreError).toBeNull();
+  expect(result.current.state.protection?.status).toBe("off");
+  expect(result.current.state.state).toBe("idle");
+});
+
+it("does not clear a newer pipe outage from an old in-flight status", async () => {
+  const { result } = renderHook(() => useTenebra());
+  await waitFor(() => expect(result.current.ready).toBe(true));
+  let resolveStatus!: (s: State) => void;
+  m.status.mockImplementation(() => new Promise((resolve) => { resolveStatus = resolve; }));
+  let request!: Promise<void>;
+  act(() => { request = result.current.refreshStatus(); });
+  act(() => m.state!({ state: "error", error: "Lost the connection to the Tenebra service; reconnecting." }));
+  await act(async () => { resolveStatus({ state: "connected" }); await request; });
+  expect(result.current.coreError).toContain("Lost the connection");
+  expect(result.current.state.state).toBe("error");
+});
+
+it("does not turn a lost service's synthetic error into an idle auto-update opportunity", async () => {
+  setAutoInstallUpdates(true);
+  m.status.mockResolvedValue({ state: "connected" });
+  const { result } = renderHook(() => {
+    const tenebra = useTenebra();
+    return useUpdateCheck(tenebra.state.state, tenebra.ready && !tenebra.coreError);
+  });
+  await waitFor(() => expect(result.current.deferred).toBe(true));
+  let resolveStatus!: (s: State) => void;
+  m.status.mockImplementation(() => new Promise((resolve) => { resolveStatus = resolve; }));
+  act(() => m.state!({ state: "error", error: "Lost the connection to the Tenebra service; reconnecting." }));
+  expect(m.installUpdate).not.toHaveBeenCalled();
+  act(() => m.state!({ state: "idle" }));
+  expect(m.installUpdate).not.toHaveBeenCalled();
+  await act(async () => resolveStatus({ state: "idle" }));
+  await waitFor(() => expect(m.installUpdate).toHaveBeenCalledTimes(1));
+});
+
 it("holds automatic and manual installation until daemon status is ready", async () => {
   setAutoInstallUpdates(true);
   let resolveStatus!: (s: State) => void;

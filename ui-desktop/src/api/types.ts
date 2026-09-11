@@ -33,6 +33,14 @@ export type ConnectionMode = "tun" | "system-proxy";
 export type NodeProtocol =
   "vless" | "hysteria2" | "amneziawg" | "shadowsocks" | "trojan" | "vmess";
 
+/** Native guard evidence; the requested kill_switch preference is separate. */
+export interface Protection {
+  status: "off" | "applying" | "blocked" | "active" | "error" | "unavailable";
+  enforced: boolean;
+  persistent: boolean;
+  error?: string;
+}
+
 export interface State {
   state: ConnectionState;
   node?: string;
@@ -51,8 +59,10 @@ export interface State {
   split?: SplitMode;
   /** Normalized executable names the split applies to; omitted when off. */
   split_apps?: string[];
-  /** Whether the kill switch is armed; omitted (treated as off) when it isn't. */
+  /** Requested preference, not proof of installed or active protection. */
   kill_switch?: boolean;
+  /** Omitted by older cores, which cannot confirm persistent protection. */
+  protection?: Protection;
   /**
    * Whether forced TLS ClientHello fragmentation is armed (the DPI-obfuscation
    * override); omitted (treated as off) when it isn't.
@@ -376,6 +386,7 @@ export interface StateEvent {
   state: ConnectionState;
   node?: string;
   error?: string;
+  protection?: Protection;
 }
 
 export interface TrafficEvent {
