@@ -26,6 +26,14 @@ type wfpValue struct {
 	Type  uint32
 	Value uintptr
 }
+
+// pointer reads the pointer member of the SDK's value union without rebuilding
+// a pointer from an integer. Call only for pointer-valued FWP data types; inline
+// UINT8/16/32 remain numbers so Go's GC never scans them as pointers.
+func (v *wfpValue) pointer() unsafe.Pointer {
+	return *(*unsafe.Pointer)(unsafe.Pointer(&v.Value))
+}
+
 type wfpSession struct {
 	Key                 windows.GUID
 	Display             displayData

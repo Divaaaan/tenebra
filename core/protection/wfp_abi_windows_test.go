@@ -42,14 +42,14 @@ func TestWFPMarshalsOnlyScopedPersistentSoftPermits(t *testing.T) {
 		if f.Provider == nil || *f.Provider != providerKey || f.Sublayer != sublayerKey || f.Flags != 1 || f.Context != [2]uint64{} {
 			t.Fatal("wrong filter lifetime/ownership")
 		}
-		got = append(got, filterInfo{f.Key, f.Layer, f.Flags, f.Action.Type, f.Count, *(*uint64)(unsafe.Pointer(f.Weight.Value))})
+		got = append(got, filterInfo{f.Key, f.Layer, f.Flags, f.Action.Type, f.Count, *(*uint64)(f.Weight.pointer())})
 		if f.Count == 0 {
 			return nil
 		}
 		hasNextHop, hasLocal := false, false
 		for _, c := range unsafe.Slice(f.Conditions, f.Count) {
 			if c.Field == fieldUser {
-				blob := (*byteBlob)(unsafe.Pointer(c.Value.Value))
+				blob := (*byteBlob)(c.Value.pointer())
 				if c.Value.Type != 14 || blob.Size != 3 || blob.Data == nil || *blob.Data != 3 {
 					t.Fatal("security descriptor is not an FWP_BYTE_BLOB")
 				}
@@ -57,7 +57,7 @@ func TestWFPMarshalsOnlyScopedPersistentSoftPermits(t *testing.T) {
 			if c.Field == fieldNextHop || c.Field == fieldLocalInterface {
 				hasNextHop = hasNextHop || c.Field == fieldNextHop
 				hasLocal = hasLocal || c.Field == fieldLocalInterface
-				if c.Value.Type != 4 || *(*uint64)(unsafe.Pointer(c.Value.Value)) != 42 {
+				if c.Value.Type != 4 || *(*uint64)(c.Value.pointer()) != 42 {
 					t.Fatal("wrong TUN identity condition")
 				}
 			}

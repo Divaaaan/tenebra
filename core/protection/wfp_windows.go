@@ -150,7 +150,7 @@ func (b *windowsBackend) filtersAtLayer(h uintptr, layer windows.GUID) ([]filter
 			}
 			var weight uint64
 			if f.Weight.Type == 4 && f.Weight.Value != 0 {
-				weight = *(*uint64)(unsafe.Pointer(f.Weight.Value))
+				weight = *(*uint64)(f.Weight.pointer())
 			}
 			out = append(out, filterInfo{f.Key, f.Layer, f.Flags, f.Action.Type, f.Count, weight})
 		}
