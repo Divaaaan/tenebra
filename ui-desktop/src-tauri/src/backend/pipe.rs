@@ -25,47 +25,30 @@
 //!   back well inside the window and never reads as a failure. While
 //!   disconnected, commands fail fast instead of timing out.
 //!
-//! # Why the reader polls
-//!
-//! The pipe handle is opened synchronously (no `FILE_FLAG_OVERLAPPED`), and
-//! Windows serializes I/O on a synchronous file object: a `ReadFile` parked
-//! waiting for data holds the file-object lock and blocks any `WriteFile` on
-//! the same object — including one through a duplicated handle, which shares
-//! it. A thread camping in a blocking read would deadlock every request. So
-//! the reader never blocks in `read`: it asks `PeekNamedPipe` how many bytes
-//! are ready and only reads that fast path, sleeping a short tick otherwise.
-//! Reads then always complete immediately, writes only ever wait out a quick
-//! read, and the tick doubles as a prompt shutdown check. (The overlapped
-//! alternative is a pile of unsafe I/O plumbing for the same result; the Go
-//! side needs go-winio for exactly this reason.)
+//! Reads and writes use separate OVERLAPPED operations on one pipe handle.
+//! Cancellation is shared with WireClient, whose deadline includes queued writes.
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::windows::fs::OpenOptionsExt;
-use std::os::windows::io::AsRawHandle;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use windows_sys::Win32::Foundation::{
-    ERROR_BROKEN_PIPE, ERROR_FILE_NOT_FOUND, ERROR_NO_DATA, ERROR_PIPE_BUSY,
-    ERROR_PIPE_NOT_CONNECTED,
+use super::pipe_io::{authenticate_service, PipeIo, CLIENT_ACCESS};
+use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY};
+use windows_sys::Win32::Storage::FileSystem::{
+    FILE_FLAG_OVERLAPPED, SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT,
 };
-use windows_sys::Win32::Storage::FileSystem::{SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT};
-use windows_sys::Win32::System::Pipes::{PeekNamedPipe, WaitNamedPipeW, NMPWAIT_NOWAIT};
+use windows_sys::Win32::System::Pipes::{WaitNamedPipeW, NMPWAIT_NOWAIT};
 
 use super::wire::{obj, read_loop, WireClient, WireSession};
 use super::{ConnectionState, EventSink, State};
 
 /// The well-known control pipe, mirroring `control.PipeName` on the Go side.
 pub const PIPE_NAME: &str = r"\\.\pipe\tenebra";
-
-/// How often the reader re-peeks an idle pipe (and rechecks shutdown). Events
-/// and responses arrive at most this much late — imperceptible next to the
-/// commands' own latency — and an idle GUI costs one no-op syscall per tick.
-const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// Reconnect backoff: first retry comes quickly (the common loss is a service
 /// restart or a displaced session, both back within a second), then doubles to
@@ -152,6 +135,7 @@ pub fn is_listening(name: &str) -> bool {
 struct Conn {
     reader: Box<dyn Read + Send>,
     writer: Box<dyn Write + Send>,
+    cancel: Arc<dyn Fn() + Send + Sync>,
 }
 
 /// How the supervisor re-establishes a connection. The real implementation
@@ -453,7 +437,7 @@ fn wait_until(stop_rx: &Receiver<()>, stop: &AtomicBool, until: Instant) -> bool
 /// re-sync, and wait the reader out. On return the session is already cleared,
 /// so the supervisor's loss report never races a command onto a dead client.
 fn serve_session(conn: Conn, shared: &Arc<PipeShared>, sink: &Arc<dyn EventSink>) {
-    let client = WireClient::new(conn.writer);
+    let client = WireClient::new_cancellable(conn.writer, conn.cancel);
     *shared.session.lock().unwrap() = Some(Arc::clone(&client));
 
     let reader_client = Arc::clone(&client);
@@ -506,15 +490,15 @@ impl Dial for PipeDialer {
         let absent_wait = std::mem::take(&mut self.absent_wait);
         let file = open_pipe(&self.name, &self.stop, absent_wait)
             .map_err(|e| format!("open {}: {e}", self.name))?;
-        let writer = file
-            .try_clone()
-            .map_err(|e| format!("clone the pipe handle: {e}"))?;
+        if self.name.eq_ignore_ascii_case(PIPE_NAME) {
+            authenticate_service(&file)
+                .map_err(|e| format!("authenticate Tenebra service: {e}"))?;
+        }
+        let (reader, writer, cancel) = PipeIo::pair(file, Arc::clone(&self.stop));
         Ok(Conn {
-            reader: Box::new(PollReader {
-                file,
-                stop: Arc::clone(&self.stop),
-            }),
+            reader: Box::new(reader),
             writer: Box::new(writer),
+            cancel,
         })
     }
 }
@@ -529,16 +513,7 @@ impl Dial for PipeDialer {
 fn open_pipe(name: &str, stop: &Arc<AtomicBool>, absent_wait: Duration) -> io::Result<File> {
     let started = Instant::now();
     loop {
-        let attempt = OpenOptions::new()
-            .read(true)
-            .write(true)
-            // GENERIC_READ|WRITE matches the GRGW the pipe's DACL grants
-            // interactive users. The SQOS flags cap impersonation at
-            // identification: if something else ever squats an instance of the
-            // name (the DACL admits any interactive user), it may learn who we
-            // are but cannot act as us.
-            .custom_flags(SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION)
-            .open(name);
+        let attempt = open_once(name);
         match attempt {
             Err(e)
                 if dial_wait_for(&e, absent_wait)
@@ -550,6 +525,13 @@ fn open_pipe(name: &str, stop: &Arc<AtomicBool>, absent_wait: Duration) -> io::R
             other => return other,
         }
     }
+}
+
+fn open_once(name: &str) -> io::Result<File> {
+    OpenOptions::new()
+        .access_mode(CLIENT_ACCESS)
+        .custom_flags(FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION)
+        .open(name)
 }
 
 /// How long a dial keeps re-attempting after a failure like this one, or `None`
@@ -567,63 +549,53 @@ fn dial_wait_for(e: &io::Error, absent_wait: Duration) -> Option<Duration> {
     }
 }
 
-/// `Read` over the pipe that never parks in `ReadFile` — see the module docs
-/// for why that would deadlock writes. EOF (`Ok(0)`) covers both the peer
-/// closing the pipe and our own shutdown flag, which is exactly the signal
-/// `read_loop` ends on.
-struct PollReader {
-    file: File,
-    stop: Arc<AtomicBool>,
-}
-
-impl Read for PollReader {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        loop {
-            if self.stop.load(Ordering::SeqCst) {
-                return Ok(0);
-            }
-            match pipe_bytes_available(&self.file) {
-                // Data is ready, so this read returns immediately with some of
-                // it; the brief file-object lock is exactly what keeps writers
-                // safe alongside us.
-                Ok(n) if n > 0 => return self.file.read(buf),
-                Ok(_) => thread::sleep(POLL_INTERVAL),
-                Err(e) if pipe_is_gone(&e) => return Ok(0),
-                Err(e) => return Err(e),
-            }
+/// Installer-only read-only handshake. No Tauri, backend supervisor, sidecar,
+/// imports or user store access. Both connection and request share one budget.
+pub fn check_service_readiness(expected: &str) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut last_error = "service has not answered".to_string();
+    while Instant::now() < deadline {
+        let stop = Arc::new(AtomicBool::new(false));
+        let result = (|| {
+            let file = open_once(PIPE_NAME).map_err(|e| e.to_string())?;
+            authenticate_service(&file).map_err(|e| e.to_string())?;
+            let (reader, writer, cancel) = PipeIo::pair(file, stop);
+            let client = WireClient::new_cancellable(writer, cancel);
+            let reader_client = Arc::clone(&client);
+            let reader =
+                thread::spawn(move || read_loop(reader, reader_client, Arc::new(QuietSink)));
+            let reply = client.request_with_timeout(
+                "status",
+                obj([]),
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_secs(3)),
+            );
+            client.close();
+            let _ = reader.join();
+            let state: State = serde_json::from_value(reply?)
+                .map_err(|e| format!("invalid service status: {e}"))?;
+            super::service_policy::verify_version(state.daemon_version.as_deref(), expected)
+        })();
+        match result {
+            Ok(()) => return Ok(()),
+            Err(e) => last_error = e,
         }
+        thread::sleep(Duration::from_millis(100));
     }
+    Err(format!(
+        "Tenebra service did not become ready: {last_error}"
+    ))
 }
 
-/// How many bytes a read could take right now without blocking.
-fn pipe_bytes_available(file: &File) -> io::Result<u32> {
-    let mut available: u32 = 0;
-    // SAFETY: the handle is owned by `file` and outlives the call; a null
-    // buffer with zero length is the documented way to only query availability.
-    let ok = unsafe {
-        PeekNamedPipe(
-            file.as_raw_handle(),
-            std::ptr::null_mut(),
-            0,
-            std::ptr::null_mut(),
-            &mut available,
-            std::ptr::null_mut(),
-        )
-    };
-    if ok == 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(available)
-    }
-}
-
-/// Whether an error from the pipe means the peer is gone (EOF for our
-/// purposes) rather than something being wrong with the call itself.
-fn pipe_is_gone(e: &io::Error) -> bool {
-    matches!(
-        e.raw_os_error().map(|code| code as u32),
-        Some(ERROR_BROKEN_PIPE) | Some(ERROR_PIPE_NOT_CONNECTED) | Some(ERROR_NO_DATA)
-    )
+struct QuietSink;
+impl EventSink for QuietSink {
+    fn state(&self, _: &State) {}
+    fn traffic(&self, _: u64, _: u64, _: u64, _: u64) {}
+    fn log(&self, _: &str, _: &str) {}
+    fn profiles(&self) {}
+    fn attempts(&self, _: &super::AttemptsSnapshot) {}
+    fn pick_progress(&self, _: &super::PickProgress) {}
 }
 
 #[cfg(test)]
@@ -687,6 +659,7 @@ mod tests {
         Conn {
             reader: Box::new(end.reader),
             writer: Box::new(end.writer),
+            cancel: Arc::new(|| {}),
         }
     }
 
@@ -1382,6 +1355,7 @@ mod tests {
     /// that case (FILE_FLAG_FIRST_PIPE_INSTANCE) and the test surfaces it
     /// rather than silently driving the wrong daemon.
     #[test]
+    #[ignore = "requires disposable Windows service VM; never run against a desktop service"]
     fn real_core_serves_the_well_known_pipe() {
         let Some(program) = core_binary() else {
             eprintln!("SKIP: tenebra-core binary not built; see tests/sidecar_e2e.rs");

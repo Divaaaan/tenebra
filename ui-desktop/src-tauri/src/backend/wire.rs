@@ -18,7 +18,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
@@ -42,13 +42,19 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 pub type ReplyResult = Result<Value, String>;
 type Pending = Arc<Mutex<HashMap<u64, Sender<ReplyResult>>>>;
 
+struct Outbound {
+    line: Vec<u8>,
+    deadline: Instant,
+}
+
 /// One live protocol session over some byte stream: the write half plus the
 /// request-correlation state the reader completes. Created per connection; a
 /// client that reconnects builds a fresh one per session.
 pub struct WireClient {
-    /// The stream's write half, guarded so concurrent command calls can't
-    /// interleave two half-written lines.
-    writer: Mutex<Box<dyn Write + Send>>,
+    /// One worker owns the stream; callers never wait on its write lock.
+    writer: mpsc::SyncSender<Outbound>,
+    /// Wakes transport I/O without acquiring the writer's lock.
+    cancel: Arc<dyn Fn() + Send + Sync>,
     /// In-flight requests awaiting a response, keyed by request id.
     pending: Pending,
     /// Monotonic request-id source. Starts at 1 so ids match the protocol's
@@ -58,7 +64,7 @@ pub struct WireClient {
     /// Set once the stream is gone (reader hit EOF/error, or the owner closed
     /// the session); further requests fail fast instead of blocking until the
     /// timeout.
-    closed: AtomicBool,
+    closed: Arc<AtomicBool>,
 }
 
 impl WireClient {
@@ -66,11 +72,56 @@ impl WireClient {
     /// [`read_loop`] with the matching read half for responses and events to
     /// flow.
     pub fn new(writer: impl Write + Send + 'static) -> Arc<Self> {
+        Self::new_cancellable(writer, Arc::new(|| {}))
+    }
+
+    pub fn new_cancellable(
+        mut writer: impl Write + Send + 'static,
+        cancel: Arc<dyn Fn() + Send + Sync>,
+    ) -> Arc<Self> {
+        // Bounded queue: a wedged peer cannot cause unbounded request buffers or
+        // one OS thread per caller. try_send never waits for queue capacity.
+        let (tx, rx) = mpsc::sync_channel::<Outbound>(32);
+        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+        let closed = Arc::new(AtomicBool::new(false));
+        let worker_pending = Arc::clone(&pending);
+        let worker_closed = Arc::clone(&closed);
+        let worker_cancel = Arc::clone(&cancel);
+        let spawned = std::thread::Builder::new()
+            .name("tenebra-wire-writer".into())
+            .spawn(move || {
+                while let Ok(outbound) = rx.recv() {
+                    if worker_closed.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    if Instant::now() >= outbound.deadline {
+                        worker_closed.store(true, Ordering::SeqCst);
+                        worker_cancel();
+                        fail_all_pending(&worker_pending);
+                        break;
+                    }
+                    if writer
+                        .write_all(&outbound.line)
+                        .and_then(|_| writer.flush())
+                        .is_err()
+                    {
+                        worker_closed.store(true, Ordering::SeqCst);
+                        worker_cancel();
+                        fail_all_pending(&worker_pending);
+                        break;
+                    }
+                }
+            });
+        if spawned.is_err() {
+            closed.store(true, Ordering::SeqCst);
+            cancel();
+        }
         Arc::new(Self {
-            writer: Mutex::new(Box::new(writer)),
-            pending: Arc::new(Mutex::new(HashMap::new())),
+            writer: tx,
+            pending,
             next_id: AtomicU64::new(1),
-            closed: AtomicBool::new(false),
+            closed,
+            cancel,
         })
     }
 
@@ -78,7 +129,9 @@ impl WireClient {
     /// Idempotent. The reader calls this on every exit path; owners call it
     /// when tearing a session down so no caller waits out the full timeout.
     pub fn close(&self) {
-        self.closed.store(true, Ordering::SeqCst);
+        if !self.closed.swap(true, Ordering::SeqCst) {
+            (self.cancel)();
+        }
         fail_all_pending(&self.pending);
     }
 
@@ -86,26 +139,38 @@ impl WireClient {
     /// must serialize to a JSON object; the `id` and `cmd` are spliced in. The
     /// returned value is the response's `data` payload (or `null`).
     pub fn request(&self, cmd: &str, params: Value) -> Result<Value, String> {
-        if self.closed.load(Ordering::SeqCst) {
-            return Err("the connection to tenebra-core is closed".into());
-        }
+        self.request_with_timeout(cmd, params, REQUEST_TIMEOUT)
+    }
 
+    /// The deadline includes queueing, writing and response wait. A timeout
+    /// closes this session: a possibly partial frame cannot safely be reused.
+    pub fn request_with_timeout(&self, cmd: &str, params: Value, timeout: Duration) -> ReplyResult {
+        let deadline = Instant::now() + timeout;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let line = build_request(id, cmd, params)?;
-
-        let (tx, rx): (Sender<ReplyResult>, Receiver<ReplyResult>) = mpsc::channel();
-        self.pending.lock().unwrap().insert(id, tx);
-
-        if let Err(e) = self.write_line(&line) {
-            self.pending.lock().unwrap().remove(&id);
-            return Err(e);
+        let (tx, rx) = mpsc::channel();
+        {
+            // Serialize registration with close's drain. Either close sees the
+            // waiter or the waiter sees closed; no insert-after-drain race.
+            let mut pending = self.pending.lock().unwrap();
+            if self.closed.load(Ordering::SeqCst) {
+                return Err("the connection to tenebra-core is closed".into());
+            }
+            pending.insert(id, tx);
         }
-
-        match rx.recv_timeout(REQUEST_TIMEOUT) {
+        if self.writer.try_send(Outbound { line, deadline }).is_err() {
+            self.pending.lock().unwrap().remove(&id);
+            return Err(
+                "tenebra-core request queue is unavailable or full; retry the command".into(),
+            );
+        }
+        match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
             Ok(reply) => reply,
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                self.pending.lock().unwrap().remove(&id);
-                Err(format!("tenebra-core did not respond to {cmd} in time"))
+                self.close();
+                Err(format!(
+                    "tenebra-core did not respond to {cmd} in time; session closed"
+                ))
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 self.pending.lock().unwrap().remove(&id);
@@ -120,13 +185,11 @@ impl WireClient {
         serde_json::from_value(data)
             .map_err(|e| format!("malformed {cmd} response from tenebra-core: {e}"))
     }
+}
 
-    fn write_line(&self, line: &[u8]) -> Result<(), String> {
-        let mut writer = self.writer.lock().unwrap();
-        writer
-            .write_all(line)
-            .and_then(|_| writer.flush())
-            .map_err(|e| format!("failed to send request to tenebra-core: {e}"))
+impl Drop for WireClient {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 
@@ -1620,3 +1683,7 @@ Core version:  0.5.0
         );
     }
 }
+
+#[cfg(test)]
+#[path = "wire_deadline_tests.rs"]
+mod deadline_tests;

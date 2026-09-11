@@ -506,7 +506,24 @@ fn serve_session(conn: Conn, shared: &Arc<UnixShared>, sink: &Arc<dyn EventSink>
         writer,
         wake,
     } = conn;
-    let client = WireClient::new(writer);
+    let cancel_wake = match wake.as_ref().map(UnixStream::try_clone).transpose() {
+        Ok(wake) => wake,
+        Err(error) => {
+            sink.log(
+                "error",
+                &format!("cannot create socket cancellation handle: {error}"),
+            );
+            return;
+        }
+    };
+    let client = WireClient::new_cancellable(
+        writer,
+        Arc::new(move || {
+            if let Some(stream) = &cancel_wake {
+                let _ = stream.shutdown(Shutdown::Both);
+            }
+        }),
+    );
     *shared.session.lock().unwrap() = Some(Arc::clone(&client));
     *shared.wake.lock().unwrap() = wake;
 

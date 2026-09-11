@@ -24,16 +24,42 @@
 ; installer without UI. External binaries are invoked by absolute path — the
 ; installer inherits the invoking user's PATH, which elevation must not trust.
 
-!macro NSIS_HOOK_PREINSTALL
-  ; Stop a service left by a previous version so its binaries can be
-  ; replaced. `net stop` (unlike `sc stop`) waits for the service to report
-  ; stopped; on a first install the query fails and everything is skipped.
-  nsExec::Exec '"$SYSDIR\sc.exe" query tenebra'
+!macro TenebraServiceFailure step
+  DetailPrint "Tenebra service ${step} failed (code $0)."
+  MessageBox MB_ICONSTOP|MB_OK "Tenebra could not ${step} its Windows service (code $0). Installation needs repair.$\r$\nRerun this installer as administrator. Check %ProgramData%\Tenebra\service.log and Windows Event Viewer. Existing profiles are preserved." /SD IDOK
+  SetErrorLevel 1
+  Abort
+!macroend
+
+!macro TenebraRequireSuccess step
+  ${If} $0 != 0
+    !insertmacro TenebraServiceFailure "${step}"
+  ${EndIf}
+!macroend
+
+!macro TenebraStopService
+  ; 1060 means first install. Other query failures (including denied access)
+  ; must stop installation before replacing a live service's files.
+  nsExec::Exec /TIMEOUT=35000 '"$SYSDIR\sc.exe" query tenebra'
   Pop $0
   ${If} $0 = 0
-    nsExec::Exec '"$SYSDIR\net.exe" stop tenebra /y'
+    nsExec::Exec /TIMEOUT=35000 '"$SYSDIR\sc.exe" stop tenebra'
     Pop $0
+    ${If} $0 != 1062
+      !insertmacro TenebraRequireSuccess "stop"
+    ${EndIf}
+    ; sc stop is asynchronous. WaitForStatus uses SCM's numeric state and is
+    ; independent of the localized sc.exe output. No PATH or profile scripts.
+    nsExec::Exec /TIMEOUT=35000 `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "try { (New-Object System.ServiceProcess.ServiceController('tenebra')).WaitForStatus([System.ServiceProcess.ServiceControllerStatus]::Stopped,[TimeSpan]::FromSeconds(30)); exit 0 } catch { exit 1 }"`
+    Pop $0
+    !insertmacro TenebraRequireSuccess "wait for stopped state of"
+  ${ElseIf} $0 != 1060
+    !insertmacro TenebraServiceFailure "query"
   ${EndIf}
+!macroend
+
+!macro NSIS_HOOK_PREINSTALL
+  !insertmacro TenebraStopService
   ; The stopped state can precede the process exit by a moment, and the file
   ; stays locked until then: probe the old binary with an append-mode open
   ; (a write-lock test) before letting the template overwrite it. Bounded so
@@ -51,6 +77,10 @@
       Sleep 500
       IntOp $1 $1 - 1
     ${LoopUntil} $1 < 1
+    ${If} $1 < 1
+      StrCpy $0 "binary still locked"
+      !insertmacro TenebraServiceFailure "replace files for"
+    ${EndIf}
   ${EndIf}
 !macroend
 
@@ -129,28 +159,40 @@
   ; ""..."" on the wire, which CommandLineToArgvW splits at the path's space:
   ; sc then sees binPath= C:\Program and answers with its usage text (1639),
   ; silently, and the service never exists.
-  nsExec::Exec '"$SYSDIR\sc.exe" create tenebra binPath= "\$\"$INSTDIR\tenebra-core.exe\$\"" start= auto DisplayName= "Tenebra"'
+  nsExec::Exec /TIMEOUT=35000 '"$SYSDIR\sc.exe" create tenebra binPath= "\$\"$INSTDIR\tenebra-core.exe\$\"" start= auto DisplayName= "Tenebra"'
   Pop $0
-  nsExec::Exec '"$SYSDIR\sc.exe" config tenebra binPath= "\$\"$INSTDIR\tenebra-core.exe\$\"" start= auto DisplayName= "Tenebra"'
+  ${If} $0 != 1073
+    !insertmacro TenebraRequireSuccess "register"
+  ${EndIf}
+  nsExec::Exec /TIMEOUT=35000 '"$SYSDIR\sc.exe" config tenebra binPath= "\$\"$INSTDIR\tenebra-core.exe\$\"" start= auto obj= LocalSystem DisplayName= "Tenebra"'
   Pop $0
-  nsExec::Exec '"$SYSDIR\sc.exe" description tenebra "Runs the Tenebra VPN tunnel and serves the local control endpoint."'
+  !insertmacro TenebraRequireSuccess "configure"
+  nsExec::Exec /TIMEOUT=35000 '"$SYSDIR\sc.exe" description tenebra "Runs the Tenebra VPN tunnel and serves the local control endpoint."'
   Pop $0
-  ; A failed start is not an installer failure: the service logs the reason
-  ; to %ProgramData%\Tenebra\service.log and start=auto retries at boot.
-  nsExec::Exec '"$SYSDIR\sc.exe" start tenebra'
+  !insertmacro TenebraRequireSuccess "describe"
+  nsExec::Exec /TIMEOUT=35000 '"$SYSDIR\sc.exe" start tenebra'
   Pop $0
+  ${If} $0 != 1056
+    !insertmacro TenebraRequireSuccess "start"
+  ${EndIf}
+  ; This executable has just been installed in the administrator-owned install
+  ; directory. The helper runs BEFORE Tauri initialization: no window, sidecar,
+  ; autostart, updater or imports. It authenticates SCM PID, LocalSystem account and registered image,
+  ; requires RUNNING and a status response matching its compiled-in version.
+  nsExec::Exec /TIMEOUT=35000 '"$INSTDIR\${MAINBINARYNAME}.exe" --service-check'
+  Pop $0
+  !insertmacro TenebraRequireSuccess "verify readiness of"
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
-  ; Stop before the files go away; net stop waits, so tenebra-core.exe is
-  ; deletable when the section runs. During an update ($UpdateMode — the new
-  ; installer runs this uninstaller with /UPDATE before laying its own files)
-  ; the registration is kept: POSTINSTALL re-points and restarts it, and not
-  ; deleting avoids the marked-for-deletion limbo an open SCM handle causes.
-  nsExec::Exec '"$SYSDIR\net.exe" stop tenebra /y'
-  Pop $0
+  ; The same checked stop applies before both update and real uninstall.
+  ; Keep the registration through updates; POSTINSTALL reconfigures it.
+  !insertmacro TenebraStopService
   ${If} $UpdateMode <> 1
-    nsExec::Exec '"$SYSDIR\sc.exe" delete tenebra'
+    nsExec::Exec /TIMEOUT=35000 '"$SYSDIR\sc.exe" delete tenebra'
     Pop $0
+    ${If} $0 != 1060
+      !insertmacro TenebraRequireSuccess "unregister"
+    ${EndIf}
   ${EndIf}
 !macroend

@@ -21,7 +21,10 @@
 pub mod mock;
 #[cfg(windows)]
 pub mod pipe;
+#[cfg(windows)]
+pub(crate) mod pipe_io;
 pub mod sidecar;
+pub(crate) mod service_policy;
 #[cfg(test)]
 pub mod testutil;
 pub mod unavailable;
