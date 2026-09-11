@@ -1233,6 +1233,12 @@ fn update_notice(lang: Lang, version: &str) -> (&'static str, String) {
     }
 }
 
+/// Called by the trusted installed executable before initializing Tauri.
+#[cfg(windows)]
+pub fn check_installed_service() -> Result<(), String> {
+    backend::pipe::check_service_readiness(env!("CARGO_PKG_VERSION"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1548,10 +1554,4 @@ mod tests {
             assert!(body.contains("Tenebra"), "body was {body}");
         }
     }
-}
-
-/// Called by the trusted installed executable before initializing Tauri.
-#[cfg(windows)]
-pub fn check_installed_service() -> Result<(), String> {
-    backend::pipe::check_service_readiness(env!("CARGO_PKG_VERSION"))
 }
