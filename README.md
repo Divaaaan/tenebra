@@ -8,19 +8,19 @@
 [![Platform](https://img.shields.io/badge/platform-Windows_%7C_macOS_%7C_Linux-0e0e0e.svg)](#project-status)
 
 **A cross-platform VPN client built on [sing-box](https://github.com/SagerNet/sing-box).**<br>
-Desktop first — Windows is user-ready; macOS and Linux ship but are for advanced users (see below). The same Go core drives an Android client, in alpha and installed by hand; iOS is a scaffold.
+Desktop first — Windows has an installer-managed service; the current audit candidate still requires native acceptance. macOS and Linux ship for advanced users (see below). The same Go core drives an Android client, in alpha and installed by hand; iOS is a scaffold.
 
 <img src="docs/assets/eclipse.svg" alt="A total eclipse: intercepted noise enters the dark, one clean signal leaves it. In tenebris lux." width="100%">
 
 </div>
 
 > **Project status — early development.** The desktop client is the current
-> focus. The core, the control protocol and the UI are in good shape and well
-> tested, and the Windows tunnel path (wintun + sing-box under the service) is
-> exercised against real servers rather than only in tests — but no automated
-> test stands up a real tunnel on any platform, and the macOS and Linux tunnels
-> have had no privileged live run signed off. Treat this as pre-release: not
-> yet "production-ready",
+> focus. Earlier Windows releases have been exercised against real servers;
+> that evidence does not establish native acceptance of the current audit
+> candidate, including its persistent host guard. The required packet, BFE and
+> reboot gates are [documented here](docs/host-protection-acceptance.md).
+> macOS and Linux have had no privileged live-tunnel run signed off.
+> Treat this as pre-release: not yet "production-ready",
 > and expect things to move around. See
 > [Project status](#project-status) for the honest breakdown.
 
@@ -82,9 +82,12 @@ Everything below is implemented in this repo today (the UI features are desktop)
   minimized to the tray), single-instance, live traffic graphs, light/dark themes,
   and English / Russian UI.
 
-The kill-switch (drop proxied traffic instead of leaking when the tunnel drops) is a
-UI toggle — best-effort by design, with the exact guarantee described in the
-[changelog](CHANGELOG.md); LAN bypass is a core routing option.
+The v0.5.11 kill switch was best-effort; its behavior is recorded in the
+[changelog](CHANGELOG.md). The current Windows audit candidate adds persistent
+host protection, with desired settings separate from confirmed policy state.
+Its engine/service-death and reboot guarantees still require
+[native acceptance](docs/host-protection-acceptance.md); they are not established
+by unit tests or prior-release tunnel runs. LAN bypass remains a routing option.
 
 ## DPI bypass
 
@@ -175,7 +178,7 @@ get one:
 | Go core (parsing, profiles, routing, config gen, fallback, leak logic) | Implemented, unit-tested, no third-party deps |
 | Control protocol (core ↔ UI) | Implemented; covered by Go tests **and** a real-binary e2e |
 | Desktop UI (Tauri 2 + React) | Implemented: all screens, reactive tray, notifications, deep links, autostart, i18n, themes |
-| Windows tunnel (wintun + sing-box) | Implemented — a background **service** runs the tunnel, so the app connects without an elevated GUI; installer sets it up, the in-app updater refreshes both app and service |
+| Windows tunnel (wintun + sing-box) | A background **service** owns the tunnel; installer/update code coordinates app and service. The current audit candidate still needs standard-user installer, live-tunnel and [host-protection acceptance](docs/host-protection-acceptance.md). INC-01 remains open; cause unknown. |
 | macOS tunnel (utun + sing-box) | Builds and runs — universal `.app`/DMG — but see the **macOS note** below: it needs a hand-installed root daemon and is not yet a click-to-run product. No live-tunnel sign-off yet |
 | Linux tunnel (`/dev/net/tun` + sing-box) | Builds and runs — a root **systemd service** owns the tunnel, installed by an Arch package or a `sudo` script; see the **Linux note** below. No live-tunnel sign-off yet |
 | Android (`VpnService` + libbox) | **Alpha, hand-installed** — a Kotlin / Compose client in [`ui-android/`](ui-android/README.md) builds and runs on a device: subscription import, node list with latency badges, an AUTO exit, switching the live exit without a reconnect, connect-on-boot, a Quick Settings tile, in-app logs and crash reports. Routing is *Global* only and there is no DPI bypass. CI builds a debug APK; a tagged release carries a signed one only once the signing key is in CI secrets |
@@ -205,8 +208,8 @@ The click-to-run macOS path — a signed, notarized build with an `SMAppService`
 daemon bundled inside the app (so it installs and updates like the Windows
 service) — needs an Apple Developer ID and is **planned, not done**. Until then,
 use the DMG only if you're comfortable running the install script yourself.
-**Windows users are unaffected** — the Windows installer sets up the service and
-the updater keeps everything current automatically.
+Windows uses an installer-managed service; the current audit candidate's
+installation and update path still requires [delivery acceptance](docs/delivery-acceptance.md).
 
 ### Linux note — the tunnel needs a root service
 
