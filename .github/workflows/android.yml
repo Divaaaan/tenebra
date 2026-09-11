@@ -59,6 +59,10 @@ jobs:
           java-version: '17'
       # The SDK + build-tools Gradle needs to assemble the APK.
       - uses: android-actions/setup-android@v4
+        with:
+          # Gradle installs the required platform/build-tools. Avoid the obsolete
+          # SDK Tools archive pulled in by the action's default "tools" package.
+          packages: platform-tools
       # The NDK gomobile needs to bind BOTH .aars. Pinned to r28 (what the
       # sing-box porting notes target); the generic SDK setup does not pin an NDK.
       - uses: nttld/setup-ndk@v1
@@ -171,6 +175,8 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
       - uses: nttld/setup-ndk@v1
         id: ndk
         with:
