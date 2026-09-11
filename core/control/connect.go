@@ -778,6 +778,15 @@ func (d *Daemon) attemptNode(ctx context.Context, loop fallbackLoop, attempt fal
 				_ = d.runner.Stop()
 				return nodeSuperseded, ""
 			}
+			var local interface{ LocalSetupFailure() bool }
+			if errors.As(err, &local) && local.LocalSetupFailure() {
+				_ = d.runner.Stop()
+				msg := "local tunnel setup failed: " + err.Error()
+				tracker.blockedWithReason(attempt, "local setup failed")
+				d.emitLog(LogError, msg)
+				d.setState(State{State: StateError, Profile: loop.profileID, Error: msg, Routing: d.snapshotState().Routing})
+				return nodeLocalFailure, ""
+			}
 			d.emitLog(LogWarn, fmt.Sprintf("connect: sing-box would not start for %s: %v", who, err))
 			return nodeFailed, ""
 		}
