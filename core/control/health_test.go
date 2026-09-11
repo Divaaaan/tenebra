@@ -202,12 +202,19 @@ func TestHealthWatchStopsOnDisconnect(t *testing.T) {
 func TestHealthWatchYieldsToUserCommand(t *testing.T) {
 	h := newHarness(t)
 	p := seedMultiProto(t, h)
+	// This fixture exercises reconnect arbitration. Live exit probes must fail;
+	// otherwise the watchdog successfully switches exits and honours the shared
+	// production cooldown instead of reaching the reconnect barrier promptly.
+	h.runner.failAllVia()
 
 	probe := &scriptedProbe{verdict: func(int) error { return errors.New("probe: node down") }}
 	h.tuneHealth(5*time.Millisecond, 100*time.Millisecond, 3, probe.fn)
 
 	parked := make(chan struct{})
 	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unpark := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unpark()
 	var once sync.Once
 	h.daemon.beforeReconnect = func() {
 		once.Do(func() { close(parked) })
@@ -219,7 +226,11 @@ func TestHealthWatchYieldsToUserCommand(t *testing.T) {
 	h.awaitState(StateConnected)
 
 	// The watchdog trips and the failover reconnect parks before claiming connMu.
-	<-parked
+	select {
+	case <-parked:
+	case <-time.After(3 * time.Second):
+		t.Fatal("watchdog did not reach the reconnect barrier")
+	}
 	starts := h.runner.starts()
 
 	// The user disconnects while the failover is parked.
@@ -228,7 +239,7 @@ func TestHealthWatchYieldsToUserCommand(t *testing.T) {
 	h.awaitState(StateIdle)
 
 	// Release the failover: it must see the bumped generation and yield.
-	close(release)
+	unpark()
 	time.Sleep(50 * time.Millisecond) // give the goroutine a chance to (wrongly) act
 	if got := h.runner.starts(); got != starts {
 		t.Errorf("failover started a tunnel over the user's disconnect (starts %d -> %d)", starts, got)
