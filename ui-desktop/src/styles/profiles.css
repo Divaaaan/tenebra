@@ -399,6 +399,8 @@
 }
 .prof-modal {
   width: min(520px, 100%);
+  max-height: calc(100dvh - 2 * var(--sp-5));
+  overflow-y: auto;
   background: var(--bg);
   border: var(--bw) solid var(--line-2);
   padding: var(--sp-6);

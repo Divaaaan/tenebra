@@ -1,3 +1,4 @@
+import { ModalLayer } from "./ModalLayer";
 import { useEffect, useRef } from "react";
 
 import { useI18n } from "../i18n/I18nContext";
@@ -49,7 +50,7 @@ export function TunConflictConfirm({
   }, [onCancel]);
 
   return (
-    <div
+    <ModalLayer onClose={onCancel}
       className={`prof-modal-scrim${leaving ? " is-leaving" : ""}`}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onCancel();
@@ -82,6 +83,6 @@ export function TunConflictConfirm({
           </button>
         </div>
       </div>
-    </div>
+    </ModalLayer>
   );
 }

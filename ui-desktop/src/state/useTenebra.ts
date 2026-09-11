@@ -349,9 +349,14 @@ export function useTenebra(): Tenebra {
         if (!active) {
           return;
         }
-        if (!sawStateEvent) {
-          applySnapshot(initialState);
-        }
+        setState((prev) => sawStateEvent
+          ? foldSnapshot(prev, {
+              ...initialState,
+              state: prev.state,
+              node: prev.node,
+              error: prev.error,
+            })
+          : foldSnapshot(prev, initialState));
         setProfiles(initialProfiles);
         setCoreError(null);
         setReady(true);

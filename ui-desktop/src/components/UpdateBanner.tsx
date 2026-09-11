@@ -13,6 +13,7 @@ interface UpdateBannerProps {
   progress: number | null;
   onInstall: () => void;
   onDismiss: () => void;
+  waitingForStatus?: boolean;
 }
 
 // One-line strip under the top bar offering the release the update check found.
@@ -27,6 +28,7 @@ export function UpdateBanner({
   progress,
   onInstall,
   onDismiss,
+  waitingForStatus = false,
 }: UpdateBannerProps) {
   const { t } = useI18n();
 
@@ -34,7 +36,7 @@ export function UpdateBanner({
     ? progress == null
       ? t.update.downloading
       : `${t.update.downloading} ${progress}%`
-    : deferred
+    : waitingForStatus ? t.update.waitingForStatus : deferred
       ? t.update.deferred
       : t.update.available.replace("{version}", version);
 
@@ -46,7 +48,7 @@ export function UpdateBanner({
           type="button"
           className="update-banner-install"
           onClick={onInstall}
-          disabled={installing}
+          disabled={installing || waitingForStatus}
         >
           ▶ {deferred ? t.update.installNow : t.update.install}
         </button>

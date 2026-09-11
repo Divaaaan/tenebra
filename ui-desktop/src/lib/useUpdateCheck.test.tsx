@@ -55,7 +55,7 @@ describe("useUpdateCheck", () => {
     vi.mocked(inAppUpdatesSupported).mockResolvedValue(false);
     vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
 
-    const { result } = renderHook(() => useUpdateCheck("idle"));
+    const { result } = renderHook(() => useUpdateCheck("idle", true));
 
     await waitFor(() => expect(inAppUpdatesSupported).toHaveBeenCalled());
     expect(checkForUpdate).not.toHaveBeenCalled();
@@ -66,7 +66,7 @@ describe("useUpdateCheck", () => {
   it("surfaces the found version for the banner", async () => {
     vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
 
-    const { result } = renderHook(() => useUpdateCheck("idle"));
+    const { result } = renderHook(() => useUpdateCheck("idle", true));
 
     await waitFor(() => expect(result.current.available).toBe("9.9.9"));
     // Auto-install is off by default, so nothing may install on its own.
@@ -76,7 +76,7 @@ describe("useUpdateCheck", () => {
   it("shows nothing when already on the latest version", async () => {
     vi.mocked(checkForUpdate).mockResolvedValue(null);
 
-    const { result } = renderHook(() => useUpdateCheck("idle"));
+    const { result } = renderHook(() => useUpdateCheck("idle", true));
 
     await waitFor(() => expect(checkForUpdate).toHaveBeenCalled());
     expect(result.current.available).toBeNull();
@@ -85,7 +85,7 @@ describe("useUpdateCheck", () => {
   it("swallows a failed check so an offline launch stays silent", async () => {
     vi.mocked(checkForUpdate).mockRejectedValue(new Error("offline"));
 
-    const { result } = renderHook(() => useUpdateCheck("idle"));
+    const { result } = renderHook(() => useUpdateCheck("idle", true));
 
     await waitFor(() => expect(checkForUpdate).toHaveBeenCalled());
     expect(result.current.available).toBeNull();
@@ -98,7 +98,7 @@ describe("useUpdateCheck", () => {
     // StrictMode replays the mount effect (setup → cleanup → setup); the hook
     // must not fire a second check — with auto-install on that would race two
     // installs of the same release.
-    const { result, rerender } = renderHook(() => useUpdateCheck("idle"), {
+    const { result, rerender } = renderHook(() => useUpdateCheck("idle", true), {
       wrapper: StrictMode,
     });
 
@@ -110,7 +110,7 @@ describe("useUpdateCheck", () => {
   it("hides the banner on dismiss without persisting anything", async () => {
     vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
 
-    const { result } = renderHook(() => useUpdateCheck("idle"));
+    const { result } = renderHook(() => useUpdateCheck("idle", true));
     await waitFor(() => expect(result.current.available).toBe("9.9.9"));
 
     act(() => result.current.dismiss());
@@ -135,7 +135,7 @@ describe("useUpdateCheck", () => {
       return new Promise<void>(() => {});
     });
 
-    const { result } = renderHook(() => useUpdateCheck("idle"));
+    const { result } = renderHook(() => useUpdateCheck("idle", true));
     await waitFor(() => expect(result.current.available).toBe("9.9.9"));
 
     act(() => result.current.install());
@@ -151,7 +151,7 @@ describe("useUpdateCheck", () => {
     vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
     vi.mocked(installUpdate).mockRejectedValue(new Error("disk full"));
 
-    const { result } = renderHook(() => useUpdateCheck("idle"));
+    const { result } = renderHook(() => useUpdateCheck("idle", true));
     await waitFor(() => expect(result.current.available).toBe("9.9.9"));
 
     act(() => result.current.install());
@@ -167,7 +167,7 @@ describe("useUpdateCheck", () => {
     vi.mocked(checkForUpdate).mockResolvedValue(update);
     vi.mocked(installUpdate).mockResolvedValue();
 
-    const { result } = renderHook(() => useUpdateCheck("idle"));
+    const { result } = renderHook(() => useUpdateCheck("idle", true));
 
     // The silent path passes no progress callback — there is no banner to feed.
     await waitFor(() => expect(installUpdate).toHaveBeenCalledWith(update));
@@ -179,7 +179,7 @@ describe("useUpdateCheck", () => {
     vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
     vi.mocked(installUpdate).mockRejectedValue(new Error("network down"));
 
-    const { result } = renderHook(() => useUpdateCheck("idle"));
+    const { result } = renderHook(() => useUpdateCheck("idle", true));
 
     // A failed silent install must leave the update discoverable by hand.
     await waitFor(() => expect(result.current.available).toBe("9.9.9"));
@@ -194,7 +194,7 @@ describe("useUpdateCheck", () => {
       vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
       vi.mocked(installUpdate).mockResolvedValue();
 
-      const { result } = renderHook(() => useUpdateCheck("connected"));
+      const { result } = renderHook(() => useUpdateCheck("connected", true));
 
       // The banner surfaces in its deferred state instead of installing.
       await waitFor(() => expect(result.current.deferred).toBe(true));
@@ -208,7 +208,7 @@ describe("useUpdateCheck", () => {
       vi.mocked(installUpdate).mockResolvedValue();
 
       const { result, rerender } = renderHook(
-        ({ phase }: { phase: ConnectionState }) => useUpdateCheck(phase),
+        ({ phase }: { phase: ConnectionState }) => useUpdateCheck(phase, true),
         { initialProps: { phase: "connected" as ConnectionState } },
       );
 
@@ -226,7 +226,7 @@ describe("useUpdateCheck", () => {
       vi.mocked(installUpdate).mockResolvedValue();
 
       const { result, rerender } = renderHook(
-        ({ phase }: { phase: ConnectionState }) => useUpdateCheck(phase),
+        ({ phase }: { phase: ConnectionState }) => useUpdateCheck(phase, true),
         { initialProps: { phase: "connected" as ConnectionState } },
       );
 
@@ -243,7 +243,7 @@ describe("useUpdateCheck", () => {
       vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
       vi.mocked(installUpdate).mockResolvedValue();
 
-      const { result } = renderHook(() => useUpdateCheck("connected"));
+      const { result } = renderHook(() => useUpdateCheck("connected", true));
       await waitFor(() => expect(result.current.available).toBe("9.9.9"));
 
       // The banner action opens the confirm rather than cutting the tunnel.
@@ -261,7 +261,7 @@ describe("useUpdateCheck", () => {
       vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
       vi.mocked(installUpdate).mockResolvedValue();
 
-      const { result } = renderHook(() => useUpdateCheck("connected"));
+      const { result } = renderHook(() => useUpdateCheck("connected", true));
       await waitFor(() => expect(result.current.available).toBe("9.9.9"));
 
       act(() => result.current.install());
@@ -279,7 +279,7 @@ describe("useUpdateCheck", () => {
       vi.mocked(checkForUpdate).mockResolvedValue(update);
       vi.mocked(installUpdate).mockResolvedValue();
 
-      const { result } = renderHook(() => useUpdateCheck("idle"));
+      const { result } = renderHook(() => useUpdateCheck("idle", true));
       await waitFor(() => expect(result.current.available).toBe("9.9.9"));
 
       act(() => result.current.install());
@@ -316,7 +316,7 @@ describe("useUpdateCheck", () => {
     it("checks again once the interval has passed", async () => {
       vi.mocked(checkForUpdate).mockResolvedValue(null);
 
-      renderHook(() => useUpdateCheck("idle"));
+      renderHook(() => useUpdateCheck("idle", true));
 
       await beat();
       expect(checkForUpdate).toHaveBeenCalledTimes(1);
@@ -328,7 +328,7 @@ describe("useUpdateCheck", () => {
     it("leaves the release host alone in between", async () => {
       vi.mocked(checkForUpdate).mockResolvedValue(null);
 
-      renderHook(() => useUpdateCheck("idle"));
+      renderHook(() => useUpdateCheck("idle", true));
       await beat();
 
       // Every beat in the interval asks the clock and finds nothing to do; the
@@ -340,7 +340,7 @@ describe("useUpdateCheck", () => {
     it("checks on the first beat after a long sleep", async () => {
       vi.mocked(checkForUpdate).mockResolvedValue(null);
 
-      renderHook(() => useUpdateCheck("idle"));
+      renderHook(() => useUpdateCheck("idle", true));
       await beat();
       expect(checkForUpdate).toHaveBeenCalledTimes(1);
 
@@ -363,7 +363,7 @@ describe("useUpdateCheck", () => {
         return Promise.resolve(null);
       });
 
-      renderHook(() => useUpdateCheck("idle"));
+      renderHook(() => useUpdateCheck("idle", true));
       await beat();
       expect(asked).toEqual(["stable"]);
 
@@ -379,7 +379,7 @@ describe("useUpdateCheck", () => {
       vi.mocked(inAppUpdatesSupported).mockResolvedValue(false);
       vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
 
-      const { result } = renderHook(() => useUpdateCheck("idle"));
+      const { result } = renderHook(() => useUpdateCheck("idle", true));
       await beat();
       await beat(24 * 60 * 60 * 1000);
 
@@ -393,7 +393,7 @@ describe("useUpdateCheck", () => {
       vi.mocked(checkForUpdate).mockResolvedValueOnce(null);
       vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate("0.5.6"));
 
-      const { result } = renderHook(() => useUpdateCheck("idle"));
+      const { result } = renderHook(() => useUpdateCheck("idle", true));
       await beat();
       expect(result.current.available).toBeNull();
 
@@ -413,7 +413,7 @@ describe("useUpdateCheck", () => {
       vi.mocked(installUpdate).mockResolvedValue();
 
       const { result, rerender } = renderHook(
-        ({ phase }: { phase: ConnectionState }) => useUpdateCheck(phase),
+        ({ phase }: { phase: ConnectionState }) => useUpdateCheck(phase, true),
         { initialProps: { phase: "connected" as ConnectionState } },
       );
 
@@ -440,7 +440,7 @@ describe("useUpdateCheck", () => {
     it("does not re-offer a release the user already put off", async () => {
       vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate("0.5.6"));
 
-      const { result } = renderHook(() => useUpdateCheck("idle"));
+      const { result } = renderHook(() => useUpdateCheck("idle", true));
       await beat();
       act(() => result.current.dismiss());
       expect(result.current.available).toBeNull();
@@ -457,7 +457,7 @@ describe("useUpdateCheck", () => {
       it("says nothing about the first failure", async () => {
         vi.mocked(checkForUpdate).mockRejectedValue(new Error("offline"));
 
-        const { result } = renderHook(() => useUpdateCheck("idle"));
+        const { result } = renderHook(() => useUpdateCheck("idle", true));
         await beat();
 
         // An offline launch still looks exactly like an up-to-date one.
@@ -468,7 +468,7 @@ describe("useUpdateCheck", () => {
       it("surfaces the third failure in a row", async () => {
         vi.mocked(checkForUpdate).mockRejectedValue(new Error("offline"));
 
-        const { result } = renderHook(() => useUpdateCheck("idle"));
+        const { result } = renderHook(() => useUpdateCheck("idle", true));
         await beat();
         await beat(UPDATE_CHECK_INTERVAL_MS);
         expect(result.current.stalled).toBe(false);
@@ -484,7 +484,7 @@ describe("useUpdateCheck", () => {
         localStorage.setItem("tenebra.updateFailures", "2");
         vi.mocked(checkForUpdate).mockRejectedValue(new Error("offline"));
 
-        const { result } = renderHook(() => useUpdateCheck("idle"));
+        const { result } = renderHook(() => useUpdateCheck("idle", true));
         await beat();
 
         expect(result.current.stalled).toBe(true);
@@ -494,7 +494,7 @@ describe("useUpdateCheck", () => {
         localStorage.setItem("tenebra.updateFailures", "4");
         vi.mocked(checkForUpdate).mockResolvedValue(null);
 
-        const { result } = renderHook(() => useUpdateCheck("idle"));
+        const { result } = renderHook(() => useUpdateCheck("idle", true));
         await beat();
 
         expect(result.current.stalled).toBe(false);
@@ -506,7 +506,7 @@ describe("useUpdateCheck", () => {
         vi.mocked(checkForUpdate).mockRejectedValueOnce(new Error("offline"));
         vi.mocked(checkForUpdate).mockResolvedValue(null);
 
-        const { result } = renderHook(() => useUpdateCheck("idle"));
+        const { result } = renderHook(() => useUpdateCheck("idle", true));
         await beat();
         expect(result.current.stalled).toBe(true);
         expect(checkForUpdate).toHaveBeenCalledTimes(1);
@@ -526,7 +526,7 @@ describe("useUpdateCheck", () => {
         localStorage.setItem("tenebra.updateFailures", "3");
         vi.mocked(checkForUpdate).mockRejectedValue(new Error("offline"));
 
-        const { result } = renderHook(() => useUpdateCheck("idle"));
+        const { result } = renderHook(() => useUpdateCheck("idle", true));
         await beat();
         expect(result.current.stalled).toBe(true);
 
@@ -553,7 +553,7 @@ describe("useUpdateCheck", () => {
     it("offers the toast for a release that is waiting on the user", async () => {
       vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate("0.5.6"));
 
-      renderHook(() => useUpdateCheck("idle"));
+      renderHook(() => useUpdateCheck("idle", true));
 
       await waitFor(() =>
         expect(notifyUpdateAvailable).toHaveBeenCalledWith("0.5.6"),
@@ -567,7 +567,7 @@ describe("useUpdateCheck", () => {
       // the toast would go missing on whichever platform reports it differently.
       vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate("0.5.6"));
 
-      const { result } = renderHook(() => useUpdateCheck("idle"));
+      const { result } = renderHook(() => useUpdateCheck("idle", true));
 
       await waitFor(() => expect(result.current.available).toBe("0.5.6"));
       expect(notifyUpdateAvailable).toHaveBeenCalledWith("0.5.6");
@@ -578,7 +578,7 @@ describe("useUpdateCheck", () => {
       vi.setSystemTime(new Date("2026-08-24T12:00:00Z"));
       vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate("0.5.6"));
 
-      renderHook(() => useUpdateCheck("idle"));
+      renderHook(() => useUpdateCheck("idle", true));
       await act(async () => {
         await vi.advanceTimersByTimeAsync(0);
       });
@@ -596,7 +596,7 @@ describe("useUpdateCheck", () => {
       vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate("0.5.6"));
       vi.mocked(installUpdate).mockResolvedValue();
 
-      renderHook(() => useUpdateCheck("idle"));
+      renderHook(() => useUpdateCheck("idle", true));
 
       await waitFor(() => expect(installUpdate).toHaveBeenCalled());
       expect(notifyUpdateAvailable).not.toHaveBeenCalled();

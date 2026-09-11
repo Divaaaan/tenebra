@@ -655,3 +655,18 @@
 .overlay-panel:has(.set-shell) .overlay-close {
   display: none;
 }
+
+.set-nav-group {
+  margin: 14px 18px 6px;
+  color: var(--text-dim);
+  font-size: var(--fs-label);
+  line-height: 1.5;
+}
+.set-nav-group:first-child { margin-top: 0; }
+@media (max-width: 600px) {
+  .set-shell { grid-template-columns: minmax(110px, 32%) minmax(0, 1fr); height: calc(100dvh - 40px); }
+  .set-nav-title { font-size: var(--fs-brand); padding-inline: 10px; }
+  .set-nav-group { margin-inline: 10px; }
+  .set-row { flex-wrap: wrap; }
+  .set-main { min-width: 0; }
+}

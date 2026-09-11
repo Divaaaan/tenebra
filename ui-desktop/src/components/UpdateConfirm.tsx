@@ -1,3 +1,4 @@
+import { ModalLayer } from "./ModalLayer";
 import { useEffect, useRef } from "react";
 
 import { useI18n } from "../i18n/I18nContext";
@@ -46,7 +47,7 @@ export function UpdateConfirm({
   }, [onCancel]);
 
   return (
-    <div
+    <ModalLayer onClose={onCancel}
       className={`prof-modal-scrim${leaving ? " is-leaving" : ""}`}
       onMouseDown={(e) => {
         // A click on the scrim (not the card) cancels — the safe default.
@@ -84,6 +85,6 @@ export function UpdateConfirm({
           </button>
         </div>
       </div>
-    </div>
+    </ModalLayer>
   );
 }

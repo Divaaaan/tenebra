@@ -132,6 +132,8 @@ export interface Strings {
      * connect is still being attempted, because it is — the core's fallback walk
      * runs anyway, and a refusal would be a worse answer than a slow connect.
      */
+    pingStale: string;
+    manualAfterPing: string;
     noneUsable: string;
   };
 
@@ -186,6 +188,7 @@ export interface Strings {
 
   /** Update banner shown when a scheduled check finds a newer release. */
   update: {
+    waitingForStatus: string;
     /** "{version}" interpolated by the caller. */
     available: string;
     install: string;
@@ -470,6 +473,10 @@ export interface Strings {
   };
 
   settings: {
+    groupTraffic: string;
+    groupAdvanced: string;
+    groupHelp: string;
+    groupApp: string;
     title: string;
     routing: string;
     routingSmart: string;
@@ -830,6 +837,13 @@ export interface Strings {
   };
 
   errors: {
+    probeFailed: string;
+    connectFailed: string;
+    protocolFailed: string;
+    serviceFailed: string;
+    selectionFailed: string;
+    details: string;
+
     generic: string;
     nameRequired: string;
     urlRequired: string;
@@ -873,7 +887,7 @@ const en: Strings = {
     subOff: "traffic unprotected · select a node and connect",
     subPending: "establishing tunnel · negotiating · · ·",
     subReconnecting: "node failed · switching to a healthy exit on its own",
-    subConnected: "no logs",
+    subConnected: "tunnel connected",
     wordChecking: "Measuring…",
     subChecking: "probing every node · finding one that carries traffic",
     measuring: "MEASURING",
@@ -923,6 +937,8 @@ const en: Strings = {
     insecureSummary:
       "{n} of {m} nodes skip TLS verification — on-path interception possible",
     checking: "Checking which nodes actually work…",
+    pingStale: "stale",
+    manualAfterPing: "TCP check failed. Select this node to try connecting manually.",
     noneUsable: "No node carried traffic — connecting anyway, node by node",
   },
   bottom: {
@@ -952,6 +968,7 @@ const en: Strings = {
     dismiss: "Dismiss",
   },
   update: {
+    waitingForStatus: "Update ready — waiting for the background service status.",
     available: "Version {version} is available",
     install: "Update",
     later: "Later",
@@ -1114,6 +1131,10 @@ const en: Strings = {
     },
   },
   settings: {
+    groupTraffic: "Where traffic goes",
+    groupAdvanced: "Advanced connection",
+    groupHelp: "Recovery and help",
+    groupApp: "App and updates",
     title: "Settings",
     routing: "Routing",
     routingSmart: "Smart",
@@ -1222,7 +1243,7 @@ const en: Strings = {
       "Game clients and launchers connect directly: no tunnel latency on a match, and no exit-address change for anti-cheat to flag. Game servers see your real IP address.",
     presetVoiceDirect: "Real-time UDP skips the tunnel",
     presetVoiceDirectHint:
-      "UDP ports 50000-65535 connect directly — measured here at 9ms against 239ms through the tunnel. This range carries voice chat, browser calls and torrents, so whoever is on the other end sees your real IP address.",
+      "UDP ports 50000-65535 connect directly. Latency depends on your network and destination. This range carries voice chat, browser calls and torrents, so whoever is on the other end sees your real IP address.",
     rules: "Custom rules",
     rulesHint:
       "Send specific domains direct or through the tunnel, on top of the routing above.",
@@ -1385,6 +1406,13 @@ const en: Strings = {
     ms: "ms",
   },
   errors: {
+    probeFailed: "The node check could not run. Trying a normal connection; you can also choose a node manually.",
+    connectFailed: "Connection failed. Try another node or open the diagnostic report below.",
+    protocolFailed: "The server protocols could not establish a tunnel. Refresh the subscription and try another node; the report keeps the failure details.",
+    serviceFailed: "The background service did not accept the connection. Check the service status, restart Tenebra and retry.",
+    selectionFailed: "The selected profile or node is no longer available. Refresh the subscription and choose a current node.",
+    details: "Technical details",
+
     generic: "Something went wrong.",
     nameRequired: "Enter a name.",
     urlRequired: "Enter a subscription URL.",
@@ -1430,7 +1458,7 @@ const ru: Strings = {
     subOff: "трафик не защищён · выберите узел и подключитесь",
     subPending: "поднимаю туннель · согласование · · ·",
     subReconnecting: "узел отказал · сам переключаюсь на рабочий выход",
-    subConnected: "без логов",
+    subConnected: "туннель подключён",
     wordChecking: "Замеряю…",
     subChecking: "проверяю каждый узел · ищу тот, через который идёт трафик",
     measuring: "ЗАМЕР",
@@ -1480,6 +1508,8 @@ const ru: Strings = {
     insecureSummary:
       "{n} из {m} узлов без проверки TLS — возможен перехват трафика",
     checking: "Проверяю, какие узлы реально работают…",
+    pingStale: "устарело",
+    manualAfterPing: "TCP-проверка не прошла. Выберите узел, чтобы попробовать подключиться вручную.",
     noneUsable: "Ни один узел не пропустил трафик — подключаюсь перебором",
   },
   bottom: {
@@ -1509,6 +1539,7 @@ const ru: Strings = {
     dismiss: "Закрыть",
   },
   update: {
+    waitingForStatus: "Обновление готово — ожидаю состояние фоновой службы.",
     available: "Доступна версия {version}",
     install: "Обновить",
     later: "Позже",
@@ -1672,6 +1703,10 @@ const ru: Strings = {
     },
   },
   settings: {
+    groupTraffic: "Куда идёт трафик",
+    groupAdvanced: "Параметры соединения",
+    groupHelp: "Восстановление и помощь",
+    groupApp: "Приложение и обновления",
     title: "Настройки",
     routing: "Маршрутизация",
     routingSmart: "Умная",
@@ -1780,7 +1815,7 @@ const ru: Strings = {
       "Игровые клиенты и лаунчеры подключаются напрямую: нет задержки туннеля в матче и нет смены адреса, на которую реагирует анти-чит. Игровые серверы видят ваш реальный IP.",
     presetVoiceDirect: "Realtime-UDP мимо туннеля",
     presetVoiceDirectHint:
-      "UDP-порты 50000-65535 идут напрямую — здесь это 9 мс против 239 мс через туннель. В этом диапазоне живут голосовые чаты, звонки в браузере и торренты, так что собеседник видит ваш реальный IP.",
+      "UDP-порты 50000-65535 идут напрямую. Задержка зависит от вашей сети и адресата. В этом диапазоне живут голосовые чаты, звонки в браузере и торренты, так что собеседник видит ваш реальный IP.",
     rules: "Свои правила",
     rulesHint:
       "Направляйте отдельные домены напрямую или через туннель, поверх маршрутизации выше.",
@@ -1943,6 +1978,13 @@ const ru: Strings = {
     ms: "мс",
   },
   errors: {
+    probeFailed: "Проверка узлов не выполнилась. Пробую обычное подключение; узел также можно выбрать вручную.",
+    connectFailed: "Подключиться не удалось. Попробуйте другой узел или откройте отчёт диагностики ниже.",
+    protocolFailed: "Протоколы сервера не смогли установить туннель. Обновите подписку и попробуйте другой узел; подробности отказа сохранены в отчёте.",
+    serviceFailed: "Фоновая служба не приняла подключение. Проверьте её состояние, перезапустите Tenebra и повторите попытку.",
+    selectionFailed: "Выбранный профиль или узел больше недоступен. Обновите подписку и выберите актуальный узел.",
+    details: "Технические подробности",
+
     generic: "Что-то пошло не так.",
     nameRequired: "Введите название.",
     urlRequired: "Введите ссылку подписки.",

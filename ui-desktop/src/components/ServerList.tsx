@@ -19,6 +19,7 @@ export interface ServerRow {
   rttMs: number | null;
   /** Probe came back failed. */
   dead: boolean;
+  stale?: boolean;
   /** TLS certificate verification is off (skip-cert-verify) on this node. */
   insecure: boolean;
 }
@@ -352,11 +353,11 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
                   className={`srv-row${active ? " active" : ""}${s.dead ? " is-dead" : ""}`}
                   style={{ animationDelay: staggerDelay(i) }}
                   role="button"
-                  tabIndex={s.dead ? -1 : 0}
-                  aria-disabled={s.dead}
-                  onClick={() => !s.dead && onSelectNode(s.id)}
+                  tabIndex={0}
+                  title={s.dead ? t.servers.manualAfterPing : undefined}
+                  onClick={() => onSelectNode(s.id)}
                   onKeyDown={(e) => {
-                    if (!s.dead && (e.key === "Enter" || e.key === " ")) {
+                    if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
                       onSelectNode(s.id);
                     }
@@ -390,7 +391,7 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
                     </span>
                   )}
                   <div className={`srv-ping${pingCls}`}>
-                    {s.dead
+                    {s.stale ? t.servers.pingStale : s.dead
                       ? t.servers.down
                       : s.rttMs !== null
                         ? `${s.rttMs} ${t.units.ms}`

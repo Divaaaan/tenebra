@@ -25,7 +25,8 @@ describe("useNodeCheck", () => {
 
     let picked: string | null = null;
     await act(async () => {
-      picked = await result.current.run("p1");
+      const outcome = await result.current.run("p1");
+      picked = outcome.kind === "checked" ? outcome.best : null;
     });
 
     expect(picked).toBe("n2");
@@ -43,7 +44,8 @@ describe("useNodeCheck", () => {
 
     let picked: string | null = "unset";
     await act(async () => {
-      picked = await result.current.run("p1");
+      const outcome = await result.current.run("p1");
+      picked = outcome.kind === "checked" ? outcome.best : null;
     });
 
     expect(picked).toBeNull();
@@ -72,7 +74,7 @@ describe("useNodeCheck", () => {
     const { result } = renderHook(() => useNodeCheck());
 
     await act(async () => {
-      await result.current.run("p1");
+      expect(await result.current.run("p1")).toEqual({ kind: "failed", error: "core is down" });
     });
 
     await waitFor(() => expect(result.current.error).toBe("core is down"));

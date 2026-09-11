@@ -89,7 +89,7 @@ export interface UpdatePrompt {
   dismissStalled: () => void;
 }
 
-export function useUpdateCheck(phase: ConnectionState): UpdatePrompt {
+export function useUpdateCheck(phase: ConnectionState, ready: boolean): UpdatePrompt {
   const [update, setUpdate] = useState<Update | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [installing, setInstalling] = useState(false);
@@ -106,6 +106,8 @@ export function useUpdateCheck(phase: ConnectionState): UpdatePrompt {
   // callbacks read it fresh without re-subscribing on every transition.
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
+  const readyRef = useRef(ready);
+  readyRef.current = ready;
 
   // Kick off the download → install → relaunch. Shared by every route into an
   // install: the silent auto path, the deferred auto-fire, and both manual
@@ -113,6 +115,7 @@ export function useUpdateCheck(phase: ConnectionState): UpdatePrompt {
   // its downloading state.
   const installingRef = useRef(false);
   const runInstall = useCallback((target: Update) => {
+    if (!readyRef.current || installingRef.current) return;
     setConfirming(false);
     setDeferred(false);
     setInstalling(true);
@@ -203,12 +206,15 @@ export function useUpdateCheck(phase: ConnectionState): UpdatePrompt {
       setDismissed(false);
       autoFired.current = false;
       if (getAutoInstallUpdates()) {
-        if (!tunnelBusy(phaseRef.current)) {
+        if (readyRef.current && !tunnelBusy(phaseRef.current)) {
           try {
+            installingRef.current = true;
+            autoFired.current = true;
             // Nothing is riding the tunnel — apply it silently and relaunch.
             await installUpdate(found);
             return;
           } catch {
+            installingRef.current = false;
             // The silent install failed; fall back to the banner so the update
             // stays discoverable (and retryable) by hand.
           }
@@ -256,18 +262,34 @@ export function useUpdateCheck(phase: ConnectionState): UpdatePrompt {
   // including across StrictMode's replay — and a manual install (which clears
   // `deferred`) stands it down.
   useEffect(() => {
+    const disarm = () => {
+      if (!getAutoInstallUpdates()) setDeferred(false);
+    };
+    window.addEventListener("tenebra:auto-install", disarm);
+    window.addEventListener("storage", disarm);
+    return () => {
+      window.removeEventListener("tenebra:auto-install", disarm);
+      window.removeEventListener("storage", disarm);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!deferred || !update || autoFired.current) {
       return;
     }
-    if (tunnelBusy(phase)) {
+    if (!getAutoInstallUpdates()) {
+      setDeferred(false);
+      return;
+    }
+    if (!ready || tunnelBusy(phase)) {
       return;
     }
     autoFired.current = true;
     runInstall(update);
-  }, [deferred, update, phase, runInstall]);
+  }, [deferred, update, phase, ready, runInstall]);
 
   const install = useCallback(() => {
-    if (!update || installing) {
+    if (!update || installing || !readyRef.current) {
       return;
     }
     // A live tunnel: installing relaunches the app and drops the VPN, so get an
@@ -280,7 +302,7 @@ export function useUpdateCheck(phase: ConnectionState): UpdatePrompt {
   }, [update, installing, runInstall]);
 
   const confirmInstall = useCallback(() => {
-    if (!update || installing) {
+    if (!update || installing || !readyRef.current) {
       return;
     }
     runInstall(update);

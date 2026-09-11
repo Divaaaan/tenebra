@@ -227,10 +227,10 @@ describe("App simple mode", () => {
   // instantly and then carries nothing is exactly what auto-select used to pick.
   it("connects to the node the check picked, not to auto", async () => {
     mocks.checkNodes.mockResolvedValue({
-      best: "n-alive",
+      best: "n1",
       results: [
         {
-          node: "n-alive",
+          node: "n1",
           targets: [
             { target: "https://a.example/204", stage: "ok", rttMs: 120 },
           ],
@@ -244,7 +244,7 @@ describe("App simple mode", () => {
 
     await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
     expect(mocks.checkNodes).toHaveBeenCalledWith("p1");
-    expect(mocks.connect.mock.calls[0][1]).toBe("n-alive");
+    expect(mocks.connect.mock.calls[0][1]).toBe("n1");
   });
 
   // With nothing usable the connect must still be attempted — the core's

@@ -358,7 +358,7 @@
 }
 .overlay-body {
   padding: var(--sp-2);
-  max-height: calc(720px - 72px);
+  max-height: calc(100dvh - 72px);
   overflow-y: auto;
 }
 
@@ -398,4 +398,31 @@
   background: var(--surface-2);
   border: var(--bw) solid var(--line);
   border-radius: var(--radius);
+}
+/* Keep first launch on one import task; the footer still exposes help. */
+.app:not(.app--simple) > .setup {
+  flex: 1;
+  display: grid;
+  align-content: center;
+  width: min(720px, 100%);
+  margin-inline: auto;
+}
+.connection-error {
+  flex: none;
+  padding: 12px 22px;
+  border-bottom: 1px solid var(--signal);
+  background: var(--signal-faint);
+  font-size: var(--fs-data);
+  max-height: 35dvh;
+  overflow: auto;
+}
+.connection-error p { margin: 0 0 8px; line-height: 1.6; }
+.connection-error summary { cursor: pointer; color: var(--text-dim); margin-bottom: 8px; }
+.connection-error pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  .app { overflow-y: auto; }
+  .app-body { display: flex; flex-direction: column; flex: 1 0 auto; }
+  .app-bottom { flex-wrap: wrap; gap: 12px; }
+  .overlay { padding: 12px; }
+  .overlay-body { max-height: calc(100dvh - 24px); }
 }

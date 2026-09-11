@@ -73,7 +73,7 @@ describe("DeepLinkConfirm", () => {
   it("declines when the scrim behind the card is clicked", () => {
     const onConfirm = vi.fn();
     const onCancel = vi.fn();
-    const { container } = renderWithProviders(
+    renderWithProviders(
       <DeepLinkConfirm
         profile="p1"
         onConfirm={onConfirm}
@@ -81,7 +81,7 @@ describe("DeepLinkConfirm", () => {
       />,
     );
 
-    const scrim = container.querySelector(".prof-modal-scrim");
+    const scrim = document.querySelector(".prof-modal-scrim");
     expect(scrim).not.toBeNull();
     fireEvent.mouseDown(scrim as Element);
     expect(onCancel).toHaveBeenCalledTimes(1);

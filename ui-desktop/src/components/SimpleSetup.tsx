@@ -1,3 +1,4 @@
+import { importErrorMessage } from "../lib/importError";
 import { useState } from "react";
 
 import { useI18n } from "../i18n/I18nContext";
@@ -40,7 +41,7 @@ export function SimpleSetup({ hasProfile, onSubscribe }: SimpleSetupProps) {
     try {
       await fn();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(importErrorMessage(e, t));
     } finally {
       setBusy(false);
     }
@@ -71,10 +72,11 @@ export function SimpleSetup({ hasProfile, onSubscribe }: SimpleSetupProps) {
             <button
               type="button"
               className="setup-go"
+              aria-label={t.profiles.import.title}
               disabled={busy || url.trim() === ""}
               onClick={() => void run(() => onSubscribe(url.trim()))}
             >
-              →
+              {t.profiles.import.title}
             </button>
           </div>
         </div>

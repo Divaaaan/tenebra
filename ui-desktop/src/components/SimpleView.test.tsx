@@ -54,8 +54,8 @@ describe("SimpleView", () => {
     expect(screen.getByText("You're protected · AMS-01")).toBeInTheDocument();
   });
 
-  it("shows Abort while connecting", () => {
-    setup({ phase: "connecting" });
+  it.each(["connecting", "health_reconnecting"] as const)("shows Abort during %s", (phase) => {
+    setup({ phase });
     expect(screen.getByRole("button", { name: "ABORT" })).toBeInTheDocument();
   });
 
@@ -70,7 +70,7 @@ describe("SimpleView", () => {
     // instead of telling them to go and import one elsewhere — the setup step
     // IS the empty state.
     setup({ profiles: [], nodes: [] });
-    expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
     expect(
       screen.getByLabelText("Paste your subscription link"),
     ).toBeInTheDocument();

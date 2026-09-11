@@ -105,7 +105,7 @@ export function SimpleView({
   }
 
   const connected = phase === "connected";
-  const pending = phase === "connecting";
+  const pending = phase === "connecting" || phase === "health_reconnecting";
   const hasProfile = profiles.length > 0;
 
   const buttonLabel = connected
@@ -166,14 +166,14 @@ export function SimpleView({
           </p>
         )}
 
-        <button
+        {(hasProfile || connected || pending) && <button
           type="button"
           className={`simple-btn${connected ? " on" : ""}${pending ? " pending" : ""}`}
           onClick={onPrimary}
           disabled={busy || (!connected && !pending && !hasProfile)}
         >
           {buttonLabel}
-        </button>
+        </button>}
 
         {/* What "connected" actually bought: video, voice and game latency,
             measured. The status word alone leaves a user watching a spinning

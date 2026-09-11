@@ -138,15 +138,15 @@ describe("ServerList", () => {
     expect(onQuery).toHaveBeenCalledWith("x");
   });
 
-  it("marks a dead row aria-disabled and does not select it on click", async () => {
+  it("keeps failed TCP results visible and permits manual selection", async () => {
     const onSelectNode = vi.fn();
     const user = userEvent.setup();
     renderWithProviders(<ServerList {...baseProps({ onSelectNode })} />);
 
     const deadRow = screen.getByText("US-NYC-01").closest('[role="button"]')!;
-    expect(deadRow).toHaveAttribute("aria-disabled", "true");
+    expect(deadRow).toHaveAttribute("tabindex", "0");
     await user.click(deadRow);
-    expect(onSelectNode).not.toHaveBeenCalled();
+    expect(onSelectNode).toHaveBeenCalledWith("n-nyc");
 
     // A live row does select.
     const liveRow = screen.getByText("DE-FRA-01").closest('[role="button"]')!;
