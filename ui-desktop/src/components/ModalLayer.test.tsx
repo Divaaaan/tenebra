@@ -5,6 +5,23 @@ import { UpdateConfirm } from "./UpdateConfirm";
 import { ModalLayer } from "./ModalLayer";
 import { renderWithProviders } from "../test/renderWithProviders";
 
+it("skips controls hidden by responsive CSS when entering and wrapping focus", () => {
+  renderWithProviders(<ModalLayer onClose={() => {}} role="dialog" aria-label="Responsive settings">
+    <button style={{ display: "none" }}>Mobile close</button>
+    <div style={{ display: "none" }}><button>Hidden parent</button></div>
+    <button>First visible</button>
+    <button>Last visible</button>
+    <button style={{ visibility: "hidden" }}>Hidden last</button>
+  </ModalLayer>);
+  const first = screen.getByRole("button", { name: "First visible" });
+  const last = screen.getByRole("button", { name: "Last visible" });
+  expect(first).toHaveFocus();
+  fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
+  expect(last).toHaveFocus();
+  fireEvent.keyDown(last, { key: "Tab" });
+  expect(first).toHaveFocus();
+});
+
 it("enters the dialog, contains Tab, makes the background inert and restores focus", () => {
   function Example() {
     const [open, setOpen] = useState(false);

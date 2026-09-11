@@ -22,7 +22,17 @@ export function ModalLayer({ onClose, children, ...props }: HTMLAttributes<HTMLD
       el.setAttribute("inert", "");
     }
     const controls = () => [...element.querySelectorAll<HTMLElement>(focusable)]
-      .filter((el) => !el.closest('[inert], [hidden], [aria-hidden="true"]'));
+      .filter((el) => {
+        if (el.closest('[inert], [hidden], [aria-hidden="true"]')) return false;
+        // Responsive close buttons and whole panels can be hidden by CSS,
+        // without a hidden attribute. Focusing one leaves the browser on BODY.
+        for (let node: HTMLElement | null = el; node; node = node.parentElement) {
+          const style = getComputedStyle(node);
+          if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return false;
+          if (node === element) break;
+        }
+        return true;
+      });
     const focusFirst = () => (controls()[0] ?? element).focus();
     focusFirst();
     const isTop = () => layers[layers.length - 1] === element;
