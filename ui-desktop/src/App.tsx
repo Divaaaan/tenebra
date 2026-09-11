@@ -30,7 +30,7 @@ import { useTenebra } from "./state/useTenebra";
 import { useI18n } from "./i18n/I18nContext";
 import { describeCoreError, isTunConflict } from "./i18n/strings";
 import { pushToast } from "./lib/toast";
-import type { RoutingMode, State } from "./api";
+import type { Profile, RoutingMode, State } from "./api";
 import {
   api,
   onDeepLink,
@@ -116,6 +116,7 @@ export function App() {
    * instead of an untitled entry: they pasted a link, not a name, and asking
    * for one would be a step for nothing.
    */
+  const pendingSimpleImport = useRef<{ url: string; profile: Profile } | null>(null);
   const handleSimpleSubscribe = useCallback(async (url: string) => {
     let name = "VPN";
     try {
@@ -124,8 +125,22 @@ export function App() {
       // Not a URL the parser likes — the core will reject it with a better
       // message than anything guessed here.
     }
-    await api.importSubscription(url, name);
-  }, []);
+    // Import does not emit a profiles event. Retain its result when the refresh
+    // fails, so retrying the same link does not create a second subscription.
+    const imported = pendingSimpleImport.current?.url === url
+      ? pendingSimpleImport.current.profile
+      : await api.importSubscription(url, name);
+    pendingSimpleImport.current = { url, profile: imported };
+    try {
+      await tenebra.refreshProfiles();
+    } catch {
+      throw new Error("subscription_refresh_pending");
+    }
+    setSelectedProfileId(imported.id);
+    setSelectedNodeId("");
+    pendingSimpleImport.current = null;
+    pushToast(t.toast.profileImported.replace("{name}", imported.name));
+  }, [tenebra.refreshProfiles, t]);
 
   // Simple mode: the Settings toggle writes `tenebra.simpleMode`; we mirror it here
   // and swap the whole shell for SimpleView when it's on. A cross-window write
@@ -701,7 +716,11 @@ export function App() {
   // eclipse easter egg still rides along; the console/toast layers do too.
   return (
     <div className={`app${simpleMode ? " app--simple" : ""}`} data-conn={phase}>
-      {!simpleMode && <TopBar activeProfile={metaProfile} onEclipse={playEclipse} />}
+      {!simpleMode && <TopBar activeProfile={metaProfile} onEclipse={playEclipse}
+        onSimpleMode={() => {
+          localStorage.setItem(SIMPLE_MODE_KEY, "true");
+          window.dispatchEvent(new CustomEvent("tenebra:simple-mode"));
+        }} />}
 
       <ProtectionStatus state={state} reachable={tenebra.ready && !tenebra.coreError}
         onRetry={() => tenebra.setKillSwitch(true)} onDisable={() => tenebra.setKillSwitch(false)}
@@ -771,6 +790,9 @@ export function App() {
         <SimpleView
           phase={phase}
           busy={busy}
+          checkingServers={nodeCheck.checking}
+          ready={tenebra.ready}
+          protectionBlocked={tenebra.ready && !tenebra.coreError && phase !== "connected" && state.protection?.status === "blocked" && state.protection.enforced && state.protection.persistent}
           onPrimary={handlePrimary}
           nodeName={displayedNode?.name ?? ""}
           profiles={profiles}
@@ -788,6 +810,8 @@ export function App() {
           serviceChecks={services.checks}
           serviceChecking={services.checking}
           onReportProblem={problem.open}
+          onManageProfiles={() => setOverlay("profiles")}
+          onSettings={() => setOverlay("settings")}
           reportNudge={nudge}
         />
       ) : (<>

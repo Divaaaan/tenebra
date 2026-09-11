@@ -163,7 +163,7 @@ describe("App simple mode", () => {
     ).not.toBeInTheDocument();
     // The minimal picker and its automatic option are present.
     expect(
-      screen.getByRole("option", { name: "Automatic — fastest" }),
+      screen.getByRole("option", { name: "Automatic selection" }),
     ).toBeInTheDocument();
   });
 

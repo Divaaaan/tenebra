@@ -12,6 +12,7 @@ export function importErrorMessage(err: unknown, t: Strings): string {
       ? (err as { message: unknown }).message
       : err;
   const msg = String(raw ?? "").toLowerCase();
+  if (msg === "subscription_refresh_pending") return t.simple.refreshFailed;
 
   // Couldn't reach the host at all — DNS, refused, timeout, TLS. This is the
   // common case behind a subscription domain that a provider is blocking.

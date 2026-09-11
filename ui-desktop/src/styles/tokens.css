@@ -23,6 +23,9 @@
     system-ui, sans-serif;
   --mono: "Departure Mono", "JetBrains Mono Variable", "JetBrains Mono",
     "IBM Plex Mono", ui-monospace, monospace;
+  /* Native UI lettering keeps long Russian labels readable; mono stays for data. */
+  --ui: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont,
+    sans-serif;
 
   /* ---- TYPE · scale (px) ---- */
   --fs-word: 52px; /* connection status word          (display) */

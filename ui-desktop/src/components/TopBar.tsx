@@ -26,6 +26,7 @@ interface TopBarProps {
   activeProfile: Profile | null;
   /** Fired when the wordmark is tapped {@link ECLIPSE_TAPS} times — plays the eclipse. */
   onEclipse: () => void;
+  onSimpleMode?: () => void;
 }
 
 /**
@@ -34,7 +35,7 @@ interface TopBarProps {
  * user-info (Tenebra has no account/plan/device model, so the meta reflects the
  * subscription itself). Falls back to a quiet "no subscription".
  */
-export function TopBar({ activeProfile, onEclipse }: TopBarProps) {
+export function TopBar({ activeProfile, onEclipse, onSimpleMode }: TopBarProps) {
   const { t, lang } = useI18n();
 
   // Two hidden tap counters, one per egg. Count and reset timer ride refs (no
@@ -123,6 +124,7 @@ export function TopBar({ activeProfile, onEclipse }: TopBarProps) {
           </span>
         </div>
         <div className="app-acct">
+          {onSimpleMode && <button type="button" className="topbar-mode" onClick={onSimpleMode}>{t.simple.mode}</button>}
           {activeProfile ? (
             <>
               <span className="b">{activeProfile.name}</span>

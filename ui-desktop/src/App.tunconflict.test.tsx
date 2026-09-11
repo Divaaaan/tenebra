@@ -186,7 +186,7 @@ describe("App tun-conflict override", () => {
     fireEvent.click(primaryButton());
     await screen.findByRole("alertdialog");
     // Mid-question the button is held down — that part was never the bug.
-    expect(primaryButton()).toBeDisabled();
+    expect(screen.getByRole("button", { name: en.simple.preparing })).toBeDisabled();
 
     fireEvent.click(
       screen.getByRole("button", { name: en.daemon.tunConflictOverrideCancel }),

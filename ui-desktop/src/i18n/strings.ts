@@ -379,6 +379,26 @@ export interface Strings {
    * words are reused from `home`/`state`.
    */
   simple: {
+    mode: string;
+    welcome: string;
+    welcomeHint: string;
+    linkHelp: string;
+    importing: string;
+    refreshFailed: string;
+    subscription: string;
+    manage: string;
+    autoHint: string;
+    changeHint: string;
+    noNodes: string;
+    checkingServers: string;
+    preparing: string;
+    serviceStarting: string;
+    serviceUnavailable: string;
+    serviceHelp: string;
+    trafficBlocked: string;
+    blockedHint: string;
+    details: string;
+    checksTitle: string;
     /** The only setup step: paste the subscription link. */
     setupLink: string;
     setupLinkPlaceholder: string;
@@ -1086,6 +1106,26 @@ const en: Strings = {
     sessionTraffic: "This session",
   },
   simple: {
+    mode: "Simple view",
+    welcome: "Start with your subscription",
+    welcomeHint: "Add your subscription, then choose a server and connect.",
+    linkHelp: "Use the subscription link from your VPN provider. Tenebra does not issue subscriptions.",
+    importing: "Adding subscription…",
+    refreshFailed: "Your subscription was saved, but its server list could not be loaded. Try again to refresh the list.",
+    subscription: "Subscription",
+    manage: "Manage subscriptions",
+    autoHint: "Tenebra will check the servers when you connect. You can also choose one yourself.",
+    changeHint: "Choosing another server changes the current connection. A different subscription applies to your next connection.",
+    noNodes: "This subscription has no servers. Open subscriptions to refresh it or add another one.",
+    checkingServers: "Checking servers…",
+    preparing: "Preparing connection…",
+    serviceStarting: "Starting Tenebra…",
+    serviceUnavailable: "Service unavailable",
+    serviceHelp: "Wait for the service to reconnect. If this continues, open Settings or report the problem.",
+    trafficBlocked: "Internet traffic blocked",
+    blockedHint: "Connect to the VPN, or explicitly release the block using the action above.",
+    details: "Connection details",
+    checksTitle: "Connection checks",
     setupLink: "Paste your subscription link",
     setupLinkPlaceholder: "https://…",
     bypassOn: "bypass on",
@@ -1093,7 +1133,7 @@ const en: Strings = {
     statusOn: "Tunnel connected",
     statusOff: "You're not connected",
     server: "Server",
-    auto: "Automatic — fastest",
+    auto: "Automatic selection",
     noProfile: "Import a subscription to get started.",
     advanced: "Advanced view",
   },
@@ -1669,15 +1709,35 @@ const ru: Strings = {
     sessionTraffic: "За сессию",
   },
   simple: {
+    mode: "Простой режим",
+    welcome: "Начнём с подписки",
+    welcomeHint: "Добавьте подписку, затем выберите сервер и подключитесь.",
+    linkHelp: "Ссылка находится у вашего VPN-провайдера. Tenebra не выдаёт подписки.",
+    importing: "Добавляем подписку…",
+    refreshFailed: "Подписка сохранена, но список серверов не загрузился. Повторите действие, чтобы обновить список.",
+    subscription: "Подписка",
+    manage: "Управление подписками",
+    autoHint: "Tenebra проверит серверы при подключении. При желании можно выбрать сервер вручную.",
+    changeHint: "Другой сервер применяется к текущему соединению. Другая подписка — при следующем подключении.",
+    noNodes: "В подписке нет серверов. Откройте подписки, чтобы обновить её или добавить другую.",
+    checkingServers: "Проверяем серверы…",
+    preparing: "Готовим подключение…",
+    serviceStarting: "Запускаем Tenebra…",
+    serviceUnavailable: "Служба недоступна",
+    serviceHelp: "Дождитесь восстановления связи со службой. Если это не помогает, откройте настройки или сообщите о проблеме.",
+    trafficBlocked: "Интернет заблокирован",
+    blockedHint: "Подключитесь к VPN или снимите блокировку кнопкой выше.",
+    details: "Сведения о подключении",
+    checksTitle: "Проверка подключения",
     /** The only setup step: paste the subscription link. */
-    setupLink: "Вставь ссылку на подписку",
+    setupLink: "Ссылка на подписку",
     setupLinkPlaceholder: "https://…",
     bypassOn: "обход включён",
     bypassOff: "обход выключен",
     statusOn: "Туннель подключён",
     statusOff: "Вы не подключены",
     server: "Сервер",
-    auto: "Автоматически — быстрее всего",
+    auto: "Автоматический выбор",
     noProfile: "Импортируйте подписку, чтобы начать.",
     advanced: "Расширенный режим",
   },

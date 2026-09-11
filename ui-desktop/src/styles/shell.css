@@ -390,20 +390,13 @@
    a modal blocking it. It removes itself once the subscription is in, so a
    returning user never sees it. */
 .app > .setup {
-  width: auto;
-  margin: 0 var(--sp-5) var(--sp-3);
-  padding: var(--sp-3) var(--sp-4);
-  background: var(--surface-2);
-  border: var(--bw) solid var(--line);
-  border-radius: var(--radius);
+  width: min(560px, calc(100% - 48px));
+  margin: auto;
+  padding: 32px 0;
 }
 /* Keep first launch on one import task; the footer still exposes help. */
 .app:not(.app--simple) > .setup {
-  flex: 1;
-  display: grid;
-  align-content: center;
-  width: min(720px, 100%);
-  margin-inline: auto;
+  flex: none;
 }
 .connection-error {
   flex: none;

@@ -1,434 +1,153 @@
-/* ── simple mode ──
-   The one-button screen that replaces the full shell for non-technical users. A
-   centred column with more air than the shell: a quiet wordmark, the big status
-   word (reusing the shell's live-dot vocabulary and its blink-pending / breathe
-   keyframes), one large primary control, and a minimal server picker. Same tokens,
-   same accent discipline — just far less on screen. */
-
+/* Daily-use view: a connection control beside its destination. The wordmark,
+   orange action and measured status retain Tenebra's identity; readable native
+   lettering replaces the technical shell's tracked mono labels. */
 .simple {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  font-family: var(--ui);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.app--simple::before { display: none; }
+.simple-header {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: center;
-  gap: var(--sp-8);
-  padding: var(--sp-8) var(--sp-6);
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 28px;
+  border-bottom: 1px solid var(--line);
+}
+.simple-brand { display: flex; align-items: center; gap: 7px; font: 700 21px var(--display); }
+.simple-brand .bracket { color: var(--signal); font-weight: 400; }
+.simple-mode { margin-left: 12px; font: 13px var(--ui); color: var(--text-dim); }
+.simple-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 38px 32px;
   overflow-y: auto;
 }
-
-.simple-brand {
-  font-family: var(--display);
-  font-weight: 700;
-  font-size: var(--fs-brand);
-  letter-spacing: 0.01em;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--text);
-}
-.simple-brand .bracket {
-  color: var(--text-dim);
-  font-weight: 500;
-}
-
-.simple-core {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--sp-5);
-  text-align: center;
-}
-
-.simple-word {
-  font-family: var(--display);
-  font-size: var(--fs-word);
-  font-weight: 700;
-  letter-spacing: var(--track-word);
-  line-height: 1;
-  text-transform: uppercase;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  color: var(--word-off);
-  /* Same hero step as the shell's status word: one product, one pace. */
-  transition: color var(--d-hero) var(--e-move);
-}
-.simple-word .simple-ind {
-  width: 16px;
-  height: 16px;
-  flex: none;
-  display: inline-block;
-  transition:
-    background-color var(--d-hero) var(--e-move),
-    border-color var(--d-hero) var(--e-move);
-}
-
-.simple-word.idle {
-  color: var(--word-off);
-}
-.simple-word.idle .simple-ind {
-  border: var(--bw-emphasis) solid var(--text-dim-2);
-}
-
-.simple-word.connecting,
-.simple-word.health_reconnecting {
-  color: var(--word-pending);
-}
-.simple-word.connecting .simple-ind,
-.simple-word.health_reconnecting .simple-ind {
-  background: var(--word-pending);
-  animation: blink-pending 1s steps(2) infinite;
-}
-
-.simple-word.connected {
-  color: var(--word-on);
-}
-.simple-word.connected .simple-ind {
-  background: var(--word-on);
-  animation: breathe 2.2s ease-in-out infinite;
-}
-
-.simple-word.error {
-  color: var(--signal);
-}
-.simple-word.error .simple-ind {
-  background: var(--signal);
-}
-
-.simple-sub {
-  font-family: var(--mono);
-  font-size: var(--fs-body);
-  letter-spacing: var(--track-body);
-  color: var(--text-dim);
-}
-
-/* ── primary control ── */
-.simple-btn {
-  font-family: var(--mono);
-  font-size: var(--fs-sku); /* 22px — larger than the shell's connect CTA */
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  font-weight: 600;
-  padding: 20px 56px;
-  min-width: 300px;
-  max-width: 100%;
-  border: var(--bw-emphasis) solid var(--signal);
-  color: var(--signal);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--sp-2);
-  transition:
-    background-color var(--d-base) var(--e-out),
-    color var(--d-base) var(--e-out),
-    border-color var(--d-base) var(--e-out),
-    opacity var(--d-base) var(--e-out),
-    transform var(--d-micro) var(--e-out);
-}
-/* Idle / error: fill on hover. Scoped away from the on/pending variants. */
-.simple-btn:not(.on):not(.pending):hover {
-  background: var(--signal);
-  color: var(--on-signal);
-}
-.simple-btn:active:not(:disabled) {
-  transform: scale(0.96);
-}
-.simple-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.simple-btn.on {
-  border-color: var(--text-dim-2);
-  color: var(--text-dim);
-}
-.simple-btn.on:hover {
-  border-color: var(--signal);
-  color: var(--signal);
-}
-.simple-btn.pending {
-  border-color: var(--warn-soft);
-  color: var(--warn-soft);
-}
-.simple-btn.pending:hover {
-  border-color: var(--signal);
-  color: var(--signal);
-}
-
-/* ── server picker ── */
-.simple-pick {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-4);
-  width: min(360px, 100%);
-}
-.simple-field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-}
-.simple-field-lab {
-  font-size: var(--fs-label);
-  letter-spacing: var(--track-cap);
-  text-transform: uppercase;
-  color: var(--text-dim);
-  text-align: center;
-}
-.simple-select {
-  font-family: var(--mono);
-  font-size: var(--fs-body);
-  letter-spacing: var(--track-body);
-  color: var(--text);
-  background: var(--bg);
-  border: var(--bw) solid var(--line-2);
-  padding: 12px 14px;
-  text-align: center;
-  text-align-last: center;
-  cursor: pointer;
-  transition:
-    border-color var(--t-fast),
-    color var(--t-fast);
-}
-.simple-select:hover {
-  border-color: var(--text-dim);
-}
-.simple-select:disabled {
-  color: var(--text-dim);
-  cursor: default;
-}
-.simple-empty {
-  font-family: var(--mono);
-  font-size: var(--fs-body);
-  letter-spacing: var(--track-body);
-  color: var(--text-dim);
-  text-align: center;
-}
-
-/* ── escape hatch ──
-   A quiet way back to the full shell. Simple mode hides Settings, so this is the
-   only exit; kept deliberately understated so it never competes with the primary
-   control, yet stays reachable — and focus-visible for keyboard users. */
-.simple-advanced {
-  font-family: var(--mono);
-  font-size: var(--fs-label);
-  letter-spacing: var(--track-cap);
-  text-transform: uppercase;
-  color: var(--text-dim-2);
-  padding: var(--sp-2) var(--sp-3);
-  transition:
-    color var(--t-fast),
-    transform var(--d-micro) var(--e-out);
-}
-.simple-advanced:active {
-  transform: scale(0.96);
-}
-.simple-advanced:hover {
-  color: var(--text);
-}
-
-/* No core behind the window. It sits above the status word on purpose: the word
-   below it says "disconnected", and read on its own that is a calm lie. */
-.simple-core-down {
-  max-width: min(460px, 100%);
-  margin: 0 0 var(--sp-3);
-  color: var(--signal);
-  font-family: var(--mono);
-  font-size: var(--fs-meta);
-  text-align: center;
-}
-
-/* ── first-run setup ───────────────────────────────────────────────────── */
-
-/*
- * The one thing a new user supplies, on the same screen as the button. It
- * disappears the moment it is satisfied — a finished step left on screen is
- * clutter, and clutter is exactly what this view exists to avoid.
- */
-
-.setup {
+.simple-layout {
   display: grid;
-  gap: var(--sp-4);
-  width: min(460px, 100%);
-  margin-top: var(--sp-5);
-  animation: ui-rise var(--d-slow) var(--e-out) backwards;
-}
-
-.setup .setup-step {
-  animation: ui-rise var(--d-slow) var(--e-out) backwards;
-}
-
-.setup-step {
-  display: grid;
-  gap: var(--sp-3);
-  align-items: start;
-}
-
-.setup-body {
-  display: grid;
-  gap: var(--sp-2);
-  min-width: 0;
-}
-
-.setup-title {
-  color: var(--text);
-  font-family: var(--mono);
-  font-size: var(--fs-meta);
-  letter-spacing: var(--track-label);
-}
-
-.setup-row {
-  display: flex;
-  gap: var(--sp-2);
-}
-
-.setup-input {
-  flex: 1;
-  min-width: 0;
-  padding: var(--sp-2) var(--sp-3);
-  color: var(--text);
-  background: var(--surface-2);
-  border: var(--bw) solid var(--line-2);
-  border-radius: var(--radius);
-  font-family: var(--mono);
-  font-size: var(--fs-meta);
-  transition: border-color var(--t-base);
-}
-
-.setup-input:focus {
-  border-color: var(--signal);
-  outline: none;
-}
-
-.setup-go {
-  padding: 0 var(--sp-4);
-  color: var(--on-signal);
-  background: var(--signal);
-  border: 0;
-  border-radius: var(--radius);
-  font-family: var(--mono);
-  cursor: pointer;
-  transition:
-    opacity var(--t-base),
-    transform var(--d-micro) var(--e-out);
-}
-
-.setup-go:active:not(:disabled) {
-  transform: scale(0.96);
-}
-
-.setup-go:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-
-/* The post-connect checks. Three lines, each with the latency it measured: for
-   voice and games the difference between "works" and "works at 240ms" is the
-   entire reason the routing is split, so a bare tick would drop the fact worth
-   showing. */
-.svc-checks {
-  display: grid;
-  gap: var(--sp-1);
-  margin: var(--sp-4) 0 0;
-  padding: 0;
-  list-style: none;
-  font-family: var(--mono);
-  font-size: var(--fs-meta);
-}
-
-.svc-check {
-  display: grid;
-  grid-template-columns: 1.2em 1fr auto;
-  gap: var(--sp-2);
-  align-items: baseline;
-  color: var(--text-dim);
-  /* Three answers to the question the user actually pressed connect for. They
-     arrive together, so they cascade — on the chunk beat, because each is meant
-     to be read, not skimmed as a row of a table. */
-  animation: ui-rise var(--d-slow) var(--e-out) backwards;
-}
-.svc-check:nth-child(2) {
-  animation-delay: var(--stagger-chunk);
-}
-.svc-check:nth-child(3) {
-  animation-delay: calc(var(--stagger-chunk) * 2);
-}
-
-.svc-check.is-ok .svc-mark {
-  color: var(--signal);
-}
-
-.svc-check.is-bad {
-  color: var(--text);
-}
-
-.svc-check.is-bad .svc-mark,
-.svc-check.is-bad .svc-rtt {
-  color: var(--danger, #e5484d);
-}
-
-.svc-rtt {
-  font-variant-numeric: tabular-nums;
-}
-
-.setup-error {
-  margin: 0;
-  color: var(--signal);
-  font-family: var(--mono);
-  font-size: var(--fs-meta);
-}
-
-/* ── bypass status ─────────────────────────────────────────────────────── */
-
-/* Named, not just flagged: which bypass is running is the useful fact, since
-   they behave differently and the app chose one by measurement. Dimmed, and with
-   an unlit dot, when a bundle is installed and nothing is running it. */
-.simple-bypass {
-  display: flex;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 360px);
   align-items: center;
-  gap: var(--sp-2);
-  margin: var(--sp-2) 0 0;
-  color: var(--good);
-  font-family: var(--mono);
-  font-size: var(--fs-meta);
+  width: min(900px, 100%);
+  margin: auto;
+  gap: 48px;
 }
+.simple-core { display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; min-width: 0; }
+.simple-word { font: 600 clamp(28px, 3.5vw, 42px)/1.15 var(--ui); letter-spacing: -0.035em; overflow-wrap: anywhere; }
+.simple-word.connected { color: var(--word-on); }
+.simple-word.error, .simple-word.unavailable { color: var(--signal); }
+.simple-word.connecting, .simple-word.health_reconnecting { color: var(--word-pending); }
+.simple-sub { color: var(--text-dim); max-width: 38ch; overflow-wrap: anywhere; }
 
-/* Installed, nothing running it. Muted rather than absent: "there is a bundle
-   and it is switched off" is a different fact from "there is no bundle", and the
-   screen has to be able to say both. */
-.simple-bypass.is-off {
-  color: var(--text-dim);
+/* One button, including its visible verb. No perpetual idle animation. */
+.simple-btn { display: flex; flex-direction: column; align-items: center; gap: 25px; margin: 30px 0 14px; padding: 10px 26px; border-radius: 14px; max-width: 100%; }
+.simple-power {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--signal);
+  color: var(--signal);
+  box-shadow: inset 0 0 0 8px var(--bg);
+  transition: background-color var(--t-base), border-color var(--t-base), transform var(--t-base);
 }
+.simple-power::before { content: ""; position: absolute; inset: -12px; border-radius: 50%; border: 1px solid var(--line-2); }
+.simple-button-label { color: var(--signal); font-size: 18px; font-weight: 600; line-height: 1.4; }
+.simple-btn:hover:not(:disabled) .simple-power { background: var(--signal-faint); transform: translateY(-2px); }
+.simple-btn:active:not(:disabled) .simple-power { transform: scale(0.97); }
+.simple-btn.on .simple-power { color: var(--good); border-color: var(--good); }
+.simple-btn.on .simple-button-label { color: var(--text-dim); }
+.simple-btn.on:hover:not(:disabled) .simple-power { background: var(--surface-2); }
+.simple-btn.pending .simple-power { color: var(--warn-soft); border-color: var(--warn-soft); }
+.simple-btn.pending .simple-power::before { border-top-color: var(--warn-soft); animation: simple-working 1.8s linear infinite; }
+.simple-btn:disabled { cursor: default; }
+.simple-btn:disabled:not(.pending) .simple-power { color: var(--text-dim); border-color: var(--line-2); }
+.simple-btn:disabled .simple-button-label { color: var(--text-dim); }
+@keyframes simple-working { to { transform: rotate(360deg); } }
 
-.simple-bypass-dot {
-  width: 0.5em;
-  height: 0.5em;
-  background: currentColor;
-  border-radius: var(--radius-max);
-  animation: bypass-pulse 2.4s ease-in-out infinite;
+.simple-pick { min-width: 0; border-left: 1px solid var(--line-2); padding: 8px 0 8px 36px; }
+.simple-section-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 16px; margin-bottom: 14px; }
+.simple-section-head h2, .simple-checks h2 { font-size: 14px; font-weight: 500; color: var(--text-dim); }
+.simple-profile-name { font-size: 23px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+.simple-subscription-meta { display: flex; flex-direction: column; gap: 3px; margin-top: 10px; color: var(--text-dim); font-size: 13px; }
+.simple-field { display: flex; flex-direction: column; gap: 8px; }
+.simple-server-field { margin-top: 28px; }
+.simple-field-lab { font-size: 14px; font-weight: 500; color: var(--text); }
+.simple-select { width: 100%; min-width: 0; min-height: 46px; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--surface); color: var(--text); cursor: pointer; font: 15px var(--ui); text-overflow: ellipsis; }
+.simple-select:hover:not(:disabled) { border-color: var(--text-dim); }
+.simple-select:disabled { color: var(--text-dim); cursor: default; }
+.simple-hint { margin-top: 12px; font-size: 14px; line-height: 1.6; color: var(--text-dim); }
+.simple-hint.is-empty { color: var(--text); padding-left: 12px; border-left: 2px solid var(--signal); }
+.simple-details { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 14px; color: var(--text-dim); font-size: 13px; }
+.simple-details summary { cursor: pointer; padding-block: 5px; }
+.simple-bypass { display: flex; align-items: center; gap: 8px; margin-top: 12px; color: var(--good); }
+.simple-bypass.is-off { color: var(--text-dim); }
+.simple-bypass-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.simple-strategy { margin-top: 6px; font: 12px/1.6 var(--mono); overflow-wrap: anywhere; user-select: text; }
+.simple-checks { width: min(300px, 100%); text-align: left; border-top: 1px solid var(--line); padding-top: 16px; }
+.simple-foot { flex: none; display: flex; justify-content: center; flex-wrap: wrap; gap: 8px 28px; padding: 12px 24px; border-top: 1px solid var(--line); }
+.simple-link, .topbar-mode { display: inline-flex; align-items: center; min-height: 36px; color: var(--text-dim); font: 14px/1.4 var(--ui); border-radius: 5px; }
+.simple-link:hover, .topbar-mode:hover { color: var(--text); text-decoration: underline; text-underline-offset: 4px; }
+.simple-section-head .simple-link { font-size: 13px; }
+.topbar-mode { padding: 0 12px; border: 1px solid var(--line-2); }
+.simple-core-down { width: min(900px, 100%); margin: 0 auto; padding: 14px 18px; border: 1px solid var(--signal); border-radius: 8px; color: var(--signal); background: var(--signal-faint); font-size: 14px; }
+.simple-wait { width: min(520px, 100%); margin: auto; }
+.simple-wait h1 { font-size: 30px; font-weight: 600; margin-bottom: 16px; }
+.simple-wait p { color: var(--text-dim); line-height: 1.7; }
+.app--simple > .protection-banner, .app--simple > .connection-error { font-family: var(--ui); font-size: 14px; line-height: 1.5; }
+.app--simple > .protection-banner .prof-ghost { padding: 6px 10px; min-height: 36px; border: 1px solid currentColor; border-radius: 6px; font: 14px/1.5 var(--ui); letter-spacing: normal; text-transform: none; }
+
+/* The same first-run form is used in both views. */
+.setup { display: grid; gap: 28px; width: min(540px, 100%); font-family: var(--ui); }
+.simple-content > .setup { margin: auto; }
+.setup-intro h1 { font: 600 clamp(26px, 3.5vw, 36px)/1.2 var(--ui); letter-spacing: -0.03em; margin-bottom: 14px; }
+.setup-intro > p { color: var(--text-dim); font-size: 16px; line-height: 1.65; max-width: 48ch; }
+.setup-body { display: grid; gap: 10px; min-width: 0; }
+.setup-title { color: var(--text); font-size: 14px; font-weight: 600; }
+.setup-row { display: flex; align-items: stretch; gap: 10px; }
+.setup-input { flex: 1; min-width: 0; min-height: 48px; padding: 12px 14px; color: var(--text); background: var(--surface); border: 1px solid var(--line-2); border-radius: 8px; font: 15px var(--ui); }
+.setup-input:focus { border-color: var(--signal); }
+.setup-input[aria-invalid="true"] { border-color: var(--signal); }
+.setup-go { display: inline-flex; align-items: center; justify-content: center; padding: 12px 20px; min-height: 48px; border-radius: 8px; color: var(--on-signal); background: var(--signal); font: 600 15px var(--ui); text-align: center; }
+.setup-go:disabled { background: var(--surface-2); color: var(--text-dim); cursor: default; }
+.setup-help { color: var(--text-dim); font-size: 13px; line-height: 1.6; }
+.setup-error { margin: 0; color: var(--signal); font-size: 14px; line-height: 1.6; }
+
+/* Shared measured service results; failures never get a success-coloured RTT. */
+.svc-checks { display: grid; gap: 8px; margin: 12px 0 0; padding: 0; list-style: none; font-family: var(--mono); font-size: var(--fs-meta); }
+.svc-check { display: grid; grid-template-columns: 1.2em 1fr auto; gap: 8px; align-items: baseline; color: var(--text-dim); }
+.svc-check.is-ok .svc-mark { color: var(--good); }
+.svc-check.is-bad { color: var(--text); }
+.svc-check.is-bad .svc-mark, .svc-check.is-bad .svc-rtt { color: var(--danger, #e5484d); }
+.svc-rtt { font-variant-numeric: tabular-nums; }
+.simple .svc-checks { font: 14px var(--ui); }
+
+@media (max-width: 760px) {
+  .simple-header { padding: 14px 20px; }
+  .simple-mode { display: none; }
+  .simple-content { padding: 28px 22px; }
+  .simple-layout { grid-template-columns: minmax(0, 1fr); gap: 28px; max-width: 460px; }
+  .simple-pick { padding: 24px 0 0; border-left: 0; border-top: 1px solid var(--line-2); }
+  .simple-btn { margin-top: 16px; }
+  .simple-power { width: 106px; height: 106px; }
 }
-
-/* Nothing is live, so nothing pulses. */
-.simple-bypass.is-off .simple-bypass-dot {
-  animation: none;
-  opacity: 0.55;
+@media (max-width: 460px) {
+  .setup-row { flex-direction: column; }
+  .simple-header { gap: 4px 12px; }
+  .simple-link { font-size: 13px; }
 }
-
-/* Slow and shallow: it says "live" without competing with the status word. */
-@keyframes bypass-pulse {
-  0%,
-  100% {
-    opacity: 0.45;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .setup,
-  .setup .setup-step,
-  .svc-check,
-  .simple-bypass-dot {
-    animation: none;
-  }
+  .simple-power, .simple-power::before { animation: none !important; transition: none; }
 }
