@@ -102,13 +102,13 @@ export function BottomBar({
             unless it had crashed *and* the user had opted into crash reports,
             which is not how most things break. */}
         <button type="button" className="act" onClick={onReportProblem}>
-          ▶ {t.bottom.report}
+          {t.bottom.report}
         </button>
         <button type="button" className="act" onClick={onLeakCheck}>
-          ▶ {t.bottom.leakCheck}
+          {t.bottom.leakCheck}
         </button>
         <button type="button" className="act" onClick={onSettings}>
-          ▶ {t.bottom.settings}
+          {t.bottom.settings}
         </button>
       </div>
     </div>

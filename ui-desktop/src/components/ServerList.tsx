@@ -39,6 +39,7 @@ interface ServerListProps {
   onSelectNode: (id: string) => void;
   onAddSubscription: () => void;
   pinging: boolean;
+  disabled?: boolean;
   /**
    * OPTIONAL — for the orchestrator to wire from App. True when the exit is
    * auto-picked (no node pinned by hand): the AUTO row then carries the active
@@ -105,6 +106,7 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
       onSelectNode,
       onAddSubscription,
       pinging,
+      disabled = false,
       auto,
       onSelectAuto,
     },
@@ -216,6 +218,7 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
                     key={p.id}
                     role="tab"
                     aria-selected={p.id === selectedProfileId}
+                    disabled={disabled}
                     className={`chip${p.id === selectedProfileId ? " on" : ""}`}
                     onClick={() => onSelectProfile(p.id)}
                   >
@@ -235,8 +238,10 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
 
           <div className="srv-title">
             <h2>
-              {t.servers.title} · {online} {t.servers.online}
-              {pinging && <span className="srv-pinging"> · …</span>}
+              {t.servers.title}
+              <span className="srv-reachability">{online} {t.servers.online}
+                {pinging && <span className="srv-pinging"> · …</span>}
+              </span>
             </h2>
             <div className="count">
               {t.servers.showing} <b>{visible.length}</b>
@@ -258,6 +263,7 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
                 type="button"
                 key={labelKey}
                 className={`chip${region === key ? " on" : ""}`}
+                aria-pressed={region === key}
                 onClick={() => onRegion(key)}
               >
                 {t.servers[REGION_LABELS[labelKey]]}
@@ -267,7 +273,7 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
 
           <div className="srv-search">
             <span className="prompt" aria-hidden="true">
-              &gt;
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none"><circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" strokeWidth="1.5"/><path d="m13 13 4 4" stroke="currentColor" strokeWidth="1.5"/></svg>
             </span>
             <input
               ref={setSearchRef}
@@ -289,10 +295,12 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
             <div
               className={`srv-auto${isAuto ? " on" : ""}`}
               role="button"
-              tabIndex={0}
+              tabIndex={disabled ? -1 : 0}
+              aria-disabled={disabled}
               aria-pressed={isAuto}
-              onClick={() => onSelectAuto?.()}
+              onClick={() => { if (!disabled) onSelectAuto?.(); }}
               onKeyDown={(e) => {
+                if (disabled) return;
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
                   onSelectAuto?.();
@@ -353,10 +361,13 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
                   className={`srv-row${active ? " active" : ""}${s.dead ? " is-dead" : ""}`}
                   style={{ animationDelay: staggerDelay(i) }}
                   role="button"
-                  tabIndex={0}
+                  tabIndex={disabled ? -1 : 0}
+                  aria-disabled={disabled}
+                  aria-pressed={active}
                   title={s.dead ? t.servers.manualAfterPing : undefined}
-                  onClick={() => onSelectNode(s.id)}
+                  onClick={() => { if (!disabled) onSelectNode(s.id); }}
                   onKeyDown={(e) => {
+                    if (disabled) return;
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
                       onSelectNode(s.id);

@@ -1,4 +1,4 @@
-import type { DeepLinkAction, PingResult } from "./api";
+import type { DeepLinkAction, PingResult, State } from "./api";
 import { createElement } from 'react';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -6,6 +6,7 @@ import { App } from './App.tsx';
 import { renderWithProviders } from './test/renderWithProviders.tsx';
 
 const m = vi.hoisted(() => ({
+  ready: true, coreError: null as string | null,
   checkNodes: vi.fn(), importSubscription: vi.fn(), refreshProfiles: vi.fn(),
   updateAvailable: null as string | null, updateConfirm: false, confirmUpdate: vi.fn(),
   connect: vi.fn(), disconnect: vi.fn(), onDeepLink: vi.fn(), deep: null as ((e: DeepLinkAction) => void) | null, pings: new Map<string, PingResult>(),
@@ -15,7 +16,7 @@ const m = vi.hoisted(() => ({
   ]
 }));
 vi.mock('./state/useTenebra.ts', () => ({
-  useTenebra: () => ({ ready: true, state: {state:'idle',daemon_version:'0.5.11',crash_reports_asked:true}, profiles: m.profiles,
+  useTenebra: () => ({ ready: m.ready, coreError: m.coreError, state: {state:'idle',daemon_version:'0.5.11',crash_reports_asked:true} as State, profiles: m.profiles,
     traffic: {up:0,down:0,upRate:0,downRate:0},logs:[],attempts:null,pickProgress:null,
     connect:m.connect,disconnect:m.disconnect,refreshProfiles:m.refreshProfiles }),
 }));
@@ -33,6 +34,7 @@ vi.mock('./lib/useUpdateCheck.ts', () => ({
 }));
 beforeEach(() => {
   localStorage.clear();
+  m.ready = true; m.coreError = null;
   m.deep = null;
   m.updateAvailable = null; m.updateConfirm = false;
   m.checkNodes.mockResolvedValue({best:"",results:[]});
@@ -52,6 +54,43 @@ it('keeps failed ping unknown and permits a deliberate manual selection', async 
   expect(row).toHaveClass('is-dead');
   expect(document.querySelector('.cur-rtt')).toBeNull();
   expect(document.querySelectorAll('.cur-meta .ping-scale-bar.on.good')).toHaveLength(0);
+});
+
+it.each([['0', false, null], ['0', true, 'service lost'], ['1', false, null], ['1', true, 'service lost']] as const)(
+  'blocks keyboard Connect as well as the button in mode %s with ready=%s error=%s', async (mode, ready, error) => {
+    localStorage.setItem('tenebra.simpleMode', mode);
+    m.ready = ready; m.coreError = error;
+    renderWithProviders(createElement(App));
+    await screen.findAllByText('Node A');
+    expect(screen.getByRole('button', {name: /^(▶\s*)?Connect$/})).toBeDisabled();
+    await act(async () => { fireEvent.keyDown(document.body, {key:' ',code:'Space'}); });
+    expect(m.checkNodes).not.toHaveBeenCalled();
+    expect(m.connect).not.toHaveBeenCalled();
+  },
+);
+
+it.each(['0','1'])('blocks keyboard Connect for a saved subscription without nodes in mode %s', async (mode) => {
+  localStorage.setItem('tenebra.simpleMode',mode);
+  const saved = m.profiles;
+  m.profiles = saved.map(p => ({...p,nodes:[]}));
+  try {
+    renderWithProviders(createElement(App));
+    await act(async () => {});
+    expect(screen.getByRole('button',{name:/^(▶\s*)?Connect$/})).toBeDisabled();
+    await act(async () => { fireEvent.keyDown(document.body,{key:' ',code:'Space'}); });
+    expect(m.checkNodes).not.toHaveBeenCalled();
+    expect(m.connect).not.toHaveBeenCalled();
+  } finally { m.profiles = saved; }
+});
+
+it('waits for the service before asking a new full-mode user to import', async () => {
+  const saved = m.profiles;
+  m.profiles = []; m.ready = false;
+  try {
+    renderWithProviders(createElement(App));
+    expect(screen.getByRole('heading',{name:'Starting Tenebra…'})).toBeInTheDocument();
+    expect(screen.queryByRole('textbox',{name:/subscription link/i})).toBeNull();
+  } finally { m.profiles = saved; }
 });
 afterEach(() => cleanup());
 

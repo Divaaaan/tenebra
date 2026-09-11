@@ -27,6 +27,21 @@ function baseProps(overrides: Partial<Parameters<typeof ConnectionPanel>[0]> = {
 }
 
 describe("ConnectionPanel", () => {
+  it("clears stale connected information when the service is unavailable but preserves Disconnect", () => {
+    const {container} = renderWithProviders(<ConnectionPanel {...baseProps({phase:"connected",coreUnreachable:true,exitServer:"203.0.113.7"})} />);
+    expect(screen.getByRole("heading",{name:"Service unavailable"})).toBeInTheDocument();
+    expect(screen.queryByText("203.0.113.7")).toBeNull();
+    expect(container.querySelector(".cur-rtt")).toBeNull();
+    expect(screen.getByRole("button",{name:/Disconnect/})).toBeEnabled();
+  });
+
+  it("keeps Abort available during service loss and shows a confirmed block as its own state", () => {
+    const view = renderWithProviders(<ConnectionPanel {...baseProps({phase:"connecting",coreUnreachable:true})} />);
+    expect(screen.getByRole("button",{name:/ABORT/})).toBeEnabled();
+    view.rerender(<ConnectionPanel {...baseProps({protectionBlocked:true})} />);
+    expect(screen.getByRole("heading",{name:"Internet traffic blocked"})).toBeInTheDocument();
+    expect(screen.queryByText("tunnel disconnected · select a node and connect")).toBeNull();
+  });
   describe("idle", () => {
     it("shows the disconnected status, a Connect label and dimmed stats", () => {
       renderWithProviders(<ConnectionPanel {...baseProps({ phase: "idle" })} />);
@@ -321,6 +336,15 @@ describe("ConnectionPanel", () => {
         { seq: 1, protocol: "vless", node: "n1", status: "trying", last_good: false },
       ],
     };
+
+    it("removes the successful fallback as soon as the service becomes unavailable", () => {
+      const ok: AttemptsEvent = {outcome:"ok",items:[{seq:1,protocol:"vless",node:"n1",status:"ok",last_good:false}]};
+      const view = renderWithProviders(<ConnectionPanel {...baseProps({phase:"connected",attempts:ok})} />);
+      expect(screen.getByText("Protocol fallback")).toBeInTheDocument();
+      view.rerender(<ConnectionPanel {...baseProps({phase:"connected",attempts:ok,coreUnreachable:true})} />);
+      expect(screen.queryByText("Protocol fallback")).toBeNull();
+      expect(screen.getByRole("heading",{name:"Service unavailable"})).toBeInTheDocument();
+    });
 
     it("replaces the node card with the fallback walk while connecting", () => {
       renderWithProviders(

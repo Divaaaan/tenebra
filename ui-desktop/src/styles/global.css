@@ -14,7 +14,7 @@ body,
 }
 
 body {
-  font-family: var(--mono);
+  font-family: var(--ui);
   font-size: var(--fs-body);
   line-height: 1.45;
   color: var(--text);
@@ -37,6 +37,7 @@ p {
 
 button {
   all: unset;
+  box-sizing: border-box;
   cursor: pointer;
 }
 
@@ -54,9 +55,9 @@ textarea {
   user-select: text;
 }
 
-/* Spec-sheet focus ring: a hard 1px signal outline, no halo, no radius. */
+/* Keyboard focus stays visible against both themes and every surface. */
 :focus-visible {
-  outline: var(--bw) solid var(--signal);
+  outline: 2px solid var(--signal);
   outline-offset: 2px;
 }
 

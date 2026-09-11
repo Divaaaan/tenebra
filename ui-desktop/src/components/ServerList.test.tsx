@@ -1,6 +1,6 @@
 import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { act, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ServerList, type ServerRow } from "./ServerList";
@@ -62,6 +62,21 @@ function baseProps(overrides: Partial<Parameters<typeof ServerList>[0]> = {}) {
   };
 }
 
+it("blocks selecting a node or AUTO during a pending operation", () => {
+  const onSelectAuto = vi.fn();
+  const props = baseProps({disabled:true,onSelectAuto});
+  renderWithProviders(<ServerList {...props} />);
+  const row = screen.getByRole("button",{name:/DE-FRA-01 frankfurt/});
+  const auto = screen.getByRole("button",{name:/lowest ping/});
+  for(const control of [row,auto]) {
+    expect(control).toHaveAttribute("aria-disabled","true");
+    fireEvent.click(control);
+    fireEvent.keyDown(control,{key:"Enter"});
+  }
+  expect(props.onSelectNode).not.toHaveBeenCalled();
+  expect(onSelectAuto).not.toHaveBeenCalled();
+});
+
 describe("ServerList", () => {
   it("renders one row per ServerRow with code, city and protocol tag", () => {
     renderWithProviders(<ServerList {...baseProps()} />);
@@ -82,7 +97,7 @@ describe("ServerList", () => {
 
     // A TCP response describes reachability, not a verified VPN handshake.
     expect(
-      screen.getByRole("heading", { name: /Nodes · 2 TCP reachable/ }),
+      screen.getByRole("heading", { name: /Nodes\s+2 TCP reachable/ }),
     ).toBeInTheDocument();
     // All three rows are visible with no filter → "showing 3".
     expect(
@@ -99,7 +114,7 @@ describe("ServerList", () => {
       { ...template, id: "failed", name: "Failed", rttMs: 0, dead: true },
     ];
     renderWithProviders(<ServerList {...baseProps({ rows })} />);
-    expect(screen.getByRole("heading", { name: /Nodes · 1 TCP reachable/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Nodes\s+1 TCP reachable/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /lowest ping · now fresh/i })).toBeInTheDocument();
   });
 

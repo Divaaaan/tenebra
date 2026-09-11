@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import type { AttemptsEvent, ConnectionState, RoutingMode } from "../api";
 import { useI18n } from "../i18n/I18nContext";
 import { formatBytes } from "../lib/format";
-import { useScrambledText } from "../lib/useScrambledText";
 import type { TrafficHistory } from "../lib/useTrafficHistory";
 import { FallbackPanel } from "./FallbackPanel";
 import { PingScale } from "./PingScale";
@@ -11,6 +10,9 @@ import { TrafficChart } from "./TrafficChart";
 
 interface ConnectionPanelProps {
   phase: ConnectionState;
+  ready?: boolean;
+  coreUnreachable?: boolean;
+  protectionBlocked?: boolean;
   /** Active/selected node display code (the node's own name). */
   nodeCode: string;
   /** Derived location subtitle; "" hides the line. */
@@ -114,6 +116,9 @@ function useOkHold(attempts: AttemptsEvent | null | undefined): boolean {
 
 export function ConnectionPanel({
   phase,
+  ready = true,
+  coreUnreachable = false,
+  protectionBlocked = false,
   nodeCode,
   nodeCity,
   exitServer,
@@ -135,7 +140,8 @@ export function ConnectionPanel({
   onChange,
 }: ConnectionPanelProps) {
   const { t } = useI18n();
-  const connected = phase === "connected";
+  const unavailable = !ready || coreUnreachable;
+  const connected = phase === "connected" && !unavailable;
   const pending = phase === "connecting";
   // The automatic health-failover recovery: the core is reconnecting to a
   // healthy node on its own after the active one degraded. It runs the same
@@ -152,18 +158,19 @@ export function ConnectionPanel({
   // A pseudo-phase: it drives the status-word class and the rail exactly the way
   // a real phase does, so measuring is one more stop on the same road rather
   // than a separate widget bolted beside it.
-  const displayPhase = measuring ? "checking" : phase;
+  const displayPhase = unavailable ? "unavailable" : protectionBlocked && !inFlight && !measuring ? "blocked" : measuring ? "checking" : phase;
   const working = measuring || inFlight;
 
-  const word = measuring ? t.conn.wordChecking : t.state[phase];
-  const displayWord = useScrambledText(word);
-  const buttonLabel = connected
-    ? `▢ ${t.home.disconnect}`
+  const word = coreUnreachable ? t.simple.serviceUnavailable : !ready ? t.simple.serviceStarting
+    : protectionBlocked && !inFlight && !measuring ? t.simple.trafficBlocked
+      : measuring ? t.conn.wordChecking : t.state[phase];
+  const buttonLabel = phase === "connected"
+    ? t.home.disconnect
     : inFlight
-      ? `· · · ${t.conn.abort}`
+      ? t.conn.abort
       : measuring
-        ? `· · · ${t.conn.measuring}`
-        : `▶ ${t.home.connect}`;
+        ? t.conn.measuring
+        : t.home.connect;
 
   const routeName =
     routing === "global"
@@ -174,10 +181,10 @@ export function ConnectionPanel({
 
   // A bare integer ping feeds the strength meter; "—" (no probe) shows neither
   // the meter nor a value — honest over decorative.
-  const pingValue = /^\d+$/.test(ping) ? Number(ping) : null;
+  const pingValue = !unavailable && /^\d+$/.test(ping) ? Number(ping) : null;
 
   const okHold = useOkHold(attempts);
-  const showFallback = shouldShowFallback(attempts, phase, okHold);
+  const showFallback = !unavailable && shouldShowFallback(attempts, phase, okHold);
 
   // The "change" affordance broadcasts a focus-search intent the server-list pane
   // listens for, so the two panes stay decoupled; the onChange callback is kept
@@ -187,7 +194,11 @@ export function ConnectionPanel({
     onChange();
   };
 
-  const subLine = measuring ? (
+  const subLine = unavailable ? (
+    <span>{t.simple.serviceHelp}</span>
+  ) : protectionBlocked && !inFlight && !measuring ? (
+    <span>{t.simple.blockedHint}</span>
+  ) : measuring ? (
     // Say what the seconds are being spent on. "Connecting…" would be a lie —
     // nothing is being connected yet — and silence was what made the wait read
     // as a hang.
@@ -227,12 +238,12 @@ export function ConnectionPanel({
               </span>
             )}
           </div>
-          <div className={`conn-word ${displayPhase}`}>
+          <h1 className={`conn-word ${displayPhase}`}>
             <span className="ind" aria-hidden="true" />
             <span className="conn-word-text" aria-live="polite">
-              {displayWord}
+              {word}
             </span>
-          </div>
+          </h1>
           {/* Always mounted: the track is a hairline rule, and only the runner
               comes and goes. Mounting the rail with the work shifted everything
               under it by 4px at the exact moment the status changed. */}
@@ -256,9 +267,12 @@ export function ConnectionPanel({
             type="button"
             className={`connect-btn${connected ? " on" : ""}${pending ? " pending" : ""}${reconnecting ? " reconnecting" : ""}${measuring ? " checking" : ""}`}
             onClick={onPrimary}
-            disabled={disabled}
+            disabled={disabled || (unavailable && phase !== "connected" && !inFlight)}
             aria-busy={working || undefined}
           >
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M12 2v10M6 5.5a9 9 0 1 0 12 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            </svg>
             {buttonLabel}
           </button>
           <span className="key-hint" aria-hidden="true">
@@ -270,18 +284,6 @@ export function ConnectionPanel({
           <FallbackPanel attempts={attempts} resolveNodeName={resolveNodeName} />
         ) : (
           <div className="cur-server">
-            <span className="tick tl" aria-hidden="true">
-              +
-            </span>
-            <span className="tick tr" aria-hidden="true">
-              +
-            </span>
-            <span className="tick bl" aria-hidden="true">
-              +
-            </span>
-            <span className="tick br" aria-hidden="true">
-              +
-            </span>
             <div className="cur-head">
               <span className="node">{nodeCode || "—"}</span>
               {auto && <span className="auto-chip">{t.conn.autoTag}</span>}
@@ -301,7 +303,7 @@ export function ConnectionPanel({
               )}
             </div>
             <button type="button" className="swap" onClick={handleChange}>
-              ▶ {t.conn.change}
+              {t.conn.change}
             </button>
           </div>
         )}

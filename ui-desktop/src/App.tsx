@@ -368,13 +368,14 @@ export function App() {
   // unreachable, which leaves the list empty) was swallowed in silence.
   // Disabling it is the smallest honest fix and matches SimpleView, which has
   // always gated its own button on having a profile.
-  const canPrimary =
+  const canPrimary = !busy && !nodeCheck.checking && (
     connected ||
     phase === "connecting" ||
     phase === "health_reconnecting" ||
-    selectedProfileId !== null;
+    (tenebra.ready && !tenebra.coreError && selectedProfileId !== null && nodes.length > 0));
 
   // All entrances share validation, refusal reporting and the one override prompt.
+  const selectionLocked = !tenebra.ready || !!tenebra.coreError || busy || nodeCheck.checking || phase === "connecting" || phase === "health_reconnecting";
   const connectSafely = useCallback(async (profileId: string, node?: string, auto?: boolean): Promise<State | null> => {
     if (connectingRef.current) return null;
     connectingRef.current = true;
@@ -403,7 +404,7 @@ export function App() {
   }, [profiles, tenebra, askTunOverride, t]);
 
   const handlePrimary = useCallback(() => {
-    if (busy) return;
+    if (!canPrimary) return;
     setBusy(true);
     setConnectError(null);
     void (async () => {
@@ -430,10 +431,11 @@ export function App() {
         pushToast(describeCoreError(e, t));
       } finally { setBusy(false); }
     })();
-  }, [busy, connected, phase, tenebra, selectedProfileId, selectedNodeId, nodes, nodeCheck, connectSafely, t]);
+  }, [canPrimary, connected, phase, tenebra, selectedProfileId, selectedNodeId, nodes, nodeCheck, connectSafely, t]);
 
   const handleSelectNode = useCallback(
     (id: string) => {
+      if (selectionLocked) return;
       setSelectedNodeId(id);
       if (!connected || !selectedProfileId) return;
       // Change the exit on a live tunnel. The core steers the running sing-box
@@ -457,7 +459,7 @@ export function App() {
         })
         .catch(() => {});
     },
-    [connected, selectedProfileId, selectedProfile, connectSafely, t],
+    [selectionLocked, connected, selectedProfileId, selectedProfile, connectSafely, t],
   );
 
   const handleSelectProfile = useCallback((id: string) => {
@@ -469,12 +471,13 @@ export function App() {
   // already connected, re-handshake straight away onto the fastest node, the
   // node-click counterpart for auto.
   const handleSelectAuto = useCallback(() => {
+    if (selectionLocked) return;
     setSelectedNodeId("");
     if (connected && selectedProfileId) {
       void connectSafely(selectedProfileId, undefined, getAutoFastest())
         .catch(() => {});
     }
-  }, [connected, selectedProfileId, connectSafely]);
+  }, [selectionLocked, connected, selectedProfileId, connectSafely]);
 
   const handleSetRouting = useCallback(
     (mode: RoutingMode) => {
@@ -822,13 +825,20 @@ export function App() {
           somewhere else. The strip removes itself the moment it is done, so it
           costs a returning user nothing. */}
       <SimpleSetup
-        hasProfile={profiles.length > 0}
+        hasProfile={profiles.length > 0 || !tenebra.ready || !!tenebra.coreError}
         onSubscribe={handleSimpleSubscribe}
       />
+      {profiles.length === 0 && (!tenebra.ready || tenebra.coreError) && <section className="app-starting" role="status">
+        <h1>{tenebra.coreError ? t.simple.serviceUnavailable : t.simple.serviceStarting}</h1>
+        <p>{t.simple.serviceHelp}</p>
+      </section>}
 
       {(profiles.length > 0 || connected || phase === "connecting" || phase === "health_reconnecting") && <div className="app-body">
         <ConnectionPanel
           phase={phase}
+          ready={tenebra.ready}
+          coreUnreachable={!!tenebra.coreError}
+          protectionBlocked={tenebra.ready && !tenebra.coreError && phase !== "connected" && state.protection?.status === "blocked" && state.protection.enforced && state.protection.persistent}
           routing={state.routing ?? "smart"}
           auto={!selectedNodeId}
           attempts={tenebra.attempts}
@@ -869,6 +879,7 @@ export function App() {
           onSelectNode={handleSelectNode}
           onAddSubscription={() => setOverlay("profiles")}
           pinging={pings.pinging}
+          disabled={selectionLocked}
         />
       </div>}
 
@@ -880,7 +891,7 @@ export function App() {
         onLeakCheck={() => setOverlay("logs")}
         onSettings={() => setOverlay("settings")}
         onReportProblem={problem.open}
-        bypassInstalled={bypassInstalled}
+        bypassInstalled={tenebra.ready && !tenebra.coreError && bypassInstalled}
         bypassOn={bypassOn}
         bypassStrategy={bypassStrategy}
       />
