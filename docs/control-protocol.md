@@ -127,44 +127,57 @@ always serves the well-known name. (The unix transport is symmetric here
 instead: both ends honour `TENEBRA_SOCKET`.)
 
 The GUI dials with `SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION`, capping
-impersonation at identification: an instance-squatter admitted by the DACL
-(see below) could learn who the client is, but cannot act as it.
+impersonation at identification. A server that receives a connection cannot
+use that connection to impersonate the client with greater authority.
 
 ### Pipe security
 
 The pipe is created with the SDDL
-`D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)`, admitting exactly three
-identities:
+`D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x120083;;;IU)`. Its transport DACL admits
+three identities:
 
 - **SYSTEM** — the service itself;
 - **Administrators** — elevated processes;
-- **INTERACTIVE** — any locally logged-in user. This is what lets the
-  unprivileged GUI drive the privileged service, and it is the same trust
-  decision Tailscale's LocalAPI pipe makes on Windows.
+- **INTERACTIVE** — locally logged-in users can open a client connection.
+  The exact client mask grants read/write data, read attributes, read control
+  and synchronization. It excludes `FILE_CREATE_PIPE_INSTANCE`, security
+  modification and generic-write access.
+
+Transport access is followed by peer authentication. The service reads the
+kernel-reported client PID and token. It admits its own account, the current
+console user, or a fully elevated administrator. Administrative admission
+requires enabled Administrators membership, elevation, High integrity or
+above, and no token restrictions; a deny-only or filtered membership does not
+qualify. This lets an installer elevated as another account reach the service
+while the ordinary console user remains logged in. Failed peer identity
+lookups are rejected; an ordinary non-console user is rejected as well.
 
 The honest limits of that model:
 
-- the tunnel is machine-wide, and so is control over it: *any* interactive
-  local user — not just the one who started the GUI — can drive the tunnel,
-  see its state and events, and take the session over. On a genuinely
-  multi-user machine that is a real sharing of control, not an oversight.
+- the tunnel is machine-wide; the current console user can control it and
+  inspect its state even if another user originally started it. Fully elevated
+  administrators already administer the service and are also admitted.
 - processes of the same user are not defended against each other; same-user
   malware already owns the session.
-- remote (network-logon) callers never carry the INTERACTIVE SID, so reaching
-  the pipe remotely requires administrator credentials — a caller that already
-  administers the machine.
+- the listener rejects remote pipe clients; the local interactive grant is
+  not remote network access.
 
 Driving the tunnel is where that trust stops. The commands that hand the daemon
 executable code need more than admission — see
 [Commands that need the daemon's own authority](#commands-that-need-the-daemons-own-authority).
 
-The listener claims the name with `FILE_FLAG_FIRST_PIPE_INSTANCE`, so if
-something else already holds it the service fails loudly at start instead of
-silently sharing the name. That flag does not stop an *already-admitted*
-identity from adding instances to the bound name later (on pipes,
-`GENERIC_WRITE` implies `FILE_CREATE_PIPE_INSTANCE`) — which is another face
-of the same trust statement: interactive users are trusted with this control
-surface.
+The listener claims the name exclusively for its first instance. A preexisting
+pipe name makes service startup fail. The interactive ACE also prevents an
+ordinary client from adding competing instances after startup: its mask does
+not include `FILE_CREATE_PIPE_INSTANCE` (`0x4`), which generic write would grant.
+The GUI requests the same minimal mask rather than `GENERIC_READ|GENERIC_WRITE`.
+
+Before sending IPC payload, the GUI additionally verifies the connected pipe's
+server PID against the running LocalSystem own-process service, its registered
+and actual executable paths, and a repeated PID/status check while retaining
+the process handle. The service grants ordinary interactive users only the
+process metadata-query right needed for this check; see
+[Windows service authentication](windows-service-authentication.md).
 
 ### Unix-socket security
 
@@ -176,11 +189,12 @@ accepted connection is authenticated from credentials the kernel attached to
 it, which the peer cannot forge or change after connecting: `LOCAL_PEERCRED` on
 macOS, `SO_PEERCRED` on Linux.
 
-The policy those credentials feed is shared with Windows, which resolves the
-caller's SID instead: a peer is admitted if it is the daemon's own account
+The base policy those credentials feed is shared with Windows, which resolves
+the caller's SID instead: a peer is admitted if it is the daemon's own account
 (root, so an elevated same-account helper is not locked out) or the user of the
 interactive session. That is narrower than the historical "any local user" the
-pipe DACL still grants, and it is where the two platforms differ in what
+pipe DACL grants at the transport layer. Windows additionally admits the fully
+elevated administrators described above. The two Unix platforms differ in what
 "interactive session" means:
 
 - macOS reads the owner of `/dev/console`, which the window server chowns to
