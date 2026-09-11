@@ -349,16 +349,17 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 		remember:      remember,
 		requestedNode: requestedNode,
 	}
+	// Publish the initial phase before the worker can finish, so a fast result
+	// cannot be followed by a stale Connecting event. The caller holds connMu
+	// through this publication and the launch, excluding a concurrent teardown.
+	st := State{State: StateConnecting, Profile: p.ID, Routing: string(ro.Mode)}
+	d.setState(st)
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
 		d.runFallback(runCtx, loop)
 	}()
 
-	// connect reports connecting immediately; connected/error arrive later as
-	// state events from the loop.
-	st := State{State: StateConnecting, Profile: p.ID, Routing: string(ro.Mode)}
-	d.setState(st)
 	return d.snapshotState(), nil
 }
 
