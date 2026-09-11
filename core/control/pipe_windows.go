@@ -22,12 +22,14 @@ const PipeName = `\\.\pipe\tenebra`
 //	IU (INTERACTIVE)      - any locally logged-in user, which is what lets the
 //	                        unprivileged GUI drive the privileged service.
 //
-// GRGW (generic read/write) is what winio and every stock pipe client request
-// when dialling, so narrowing the client rights further would lock the GUI
-// out. Network logons never carry the INTERACTIVE SID, so a remote caller
-// needs administrator credentials to reach the pipe at all. See
-// docs/control-protocol.md for the security model and its honest limits.
-const pipeSecurityDescriptor = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)"
+// The interactive ACE grants only read/write data, read attributes, read control
+// and synchronize (0x120083). GENERIC_WRITE also includes the 0x4 server-instance
+// creation bit, so it would let an interactive client create a competing server.
+// Clients must request this exact access mask rather than GENERIC_READ/WRITE.
+// Network logons never carry INTERACTIVE; authenticated peer checks still run
+// after accept. See docs/control-protocol.md for the complete trust model.
+const pipeClientAccess uint32 = 0x120083
+const pipeSecurityDescriptor = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x120083;;;IU)"
 
 // ListenPipe opens the named pipe listener the control protocol is served on.
 // name is PipeName in production; tests pass unique names so parallel runs

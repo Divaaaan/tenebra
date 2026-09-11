@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
 )
 
@@ -56,7 +55,7 @@ func TestAuthorizePeerAllowsSelfOverPipe(t *testing.T) {
 		accepted <- c
 	}()
 	timeout := 3 * time.Second
-	client, err := winio.DialPipe(name, &timeout)
+	client, err := dialTestPipe(name, &timeout)
 	if err != nil {
 		t.Fatalf("DialPipe(%s): %v", name, err)
 	}
