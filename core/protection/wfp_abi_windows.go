@@ -142,9 +142,12 @@ func num(n uintptr) nativeArg   { return nativeArg{value: n} }
 
 type nativeCall func(string, ...nativeArg) error
 
+// Lazy construction performs no native call. Reuse the loaded module instead
+// of accumulating a LoadLibrary reference for each filter operation.
+var wfpDLL = windows.NewLazySystemDLL("fwpuclnt.dll")
+
 func callWFP(name string, args ...nativeArg) error {
-	dll := windows.NewLazySystemDLL("fwpuclnt.dll")
-	proc := dll.NewProc(name)
+	proc := wfpDLL.NewProc(name)
 	if err := proc.Find(); err != nil {
 		return err
 	}
