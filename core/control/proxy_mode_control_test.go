@@ -153,23 +153,33 @@ func TestSetProxyModeLiveHotSwapArmsAndDisarms(t *testing.T) {
 	// mixed inbound and arms the OS proxy once the swapped tunnel comes up.
 	h.send(Request{ID: 2, Cmd: CmdSetProxyMode, ProxyMode: "system-proxy"})
 	h.await()
-	h.waitStarts(2)
-	h.awaitLogContains("system proxy: OS now routing")
-	if f.enables() != 1 {
-		t.Errorf("enables = %d after swap to system-proxy, want 1", f.enables())
+	h.awaitRestartConnected(2)
+	if f.enables() != 1 || f.disables() != 0 || f.lastHostPort() != "127.0.0.1:2080" {
+		t.Errorf("proxy after swap: enables=%d restores=%d target=%q, want 1/0/127.0.0.1:2080", f.enables(), f.disables(), f.lastHostPort())
+	}
+	h.daemon.mu.Lock()
+	applied := h.daemon.proxyArmed && h.daemon.proxyApplied
+	h.daemon.mu.Unlock()
+	if !applied {
+		t.Error("connected system-proxy mode has no confirmed proxy ownership")
 	}
 	if got := firstInboundType(t, lastCfg(t, h)); got != "mixed" {
 		t.Errorf("hot-swapped inbound type = %q, want mixed", got)
 	}
 
-	// Switch back to tun while connected: the teardown clears the OS proxy before
-	// the tun tunnel comes up.
+	// Switch back to tun while connected: the teardown restores the previous
+	// proxy settings exactly once before the tun tunnel comes up.
 	h.send(Request{ID: 3, Cmd: CmdSetProxyMode, ProxyMode: "tun"})
 	h.await()
-	h.waitStarts(3)
-	h.awaitLogContains("system proxy: cleared")
-	if f.disables() < 1 {
-		t.Errorf("switching back to tun did not clear the proxy (disables=%d)", f.disables())
+	h.awaitRestartConnected(3)
+	if f.enables() != 1 || f.disables() != 1 {
+		t.Errorf("proxy after restoring tun: enables=%d restores=%d, want 1/1", f.enables(), f.disables())
+	}
+	h.daemon.mu.Lock()
+	pending := h.daemon.proxyArmed || h.daemon.proxyApplied || h.daemon.proxyTarget != ""
+	h.daemon.mu.Unlock()
+	if pending {
+		t.Error("successful proxy restore retained ownership")
 	}
 	if got := firstInboundType(t, lastCfg(t, h)); got != "tun" {
 		t.Errorf("swapped-back inbound type = %q, want tun", got)

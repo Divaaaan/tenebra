@@ -127,7 +127,9 @@ func TestTunWatchLeavesAHealthyTunnelAlone(t *testing.T) {
 // absent one is normal and must not be read as a dead tunnel.
 func TestTunWatchInertInSystemProxyMode(t *testing.T) {
 	h := newHarness(t)
-	h.daemon.ifacePresent = func(string) bool { return false }
+	f := h.useFakeProxy()
+	var looks atomic.Int32
+	h.daemon.ifacePresent = func(string) bool { looks.Add(1); return false }
 	h.daemon.tunWatchInterval = 20 * time.Millisecond
 	h.daemon.mu.Lock()
 	h.daemon.tun.Mode = singbox.ModeSystemProxy
@@ -137,10 +139,17 @@ func TestTunWatchInertInSystemProxyMode(t *testing.T) {
 	h.send(Request{ID: 1, Cmd: CmdConnect, Profile: p.ID})
 	h.await()
 	h.awaitState(StateConnected)
+	beforeStops := h.runner.stops()
+	if f.enables() != 1 || f.lastHostPort() != "127.0.0.1:2080" {
+		t.Fatalf("system proxy was not applied before connected: enables=%d target=%q", f.enables(), f.lastHostPort())
+	}
 
 	time.Sleep(300 * time.Millisecond)
 	if got := h.daemon.snapshotState().State; got != StateConnected {
 		t.Errorf("state = %q in system-proxy mode, want connected", got)
+	}
+	if looks.Load() != 0 || h.runner.stops() != beforeStops || f.disables() != 0 {
+		t.Errorf("proxy-mode watch was not inert: lookups=%d stops=%d (before=%d) proxy restores=%d", looks.Load(), h.runner.stops(), beforeStops, f.disables())
 	}
 }
 
