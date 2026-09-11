@@ -12,6 +12,8 @@ type memoryUserProxy struct {
 	failWrite  int
 	failSave   bool
 	failDelete bool
+	saves      int
+	failSaveAt int
 }
 
 func (m *memoryUserProxy) Read() (userProxySettings, error) { return m.settings, nil }
@@ -26,11 +28,53 @@ func (m *memoryUserProxy) Write(s userProxySettings) error {
 }
 func (m *memoryUserProxy) Load() (*userProxyLease, error) { return m.lease, nil }
 func (m *memoryUserProxy) Save(l userProxyLease) error {
-	if m.failSave {
+	m.saves++
+	if m.failSave || m.saves == m.failSaveAt {
 		return errors.New("snapshot unavailable")
 	}
 	m.lease = &l
 	return nil
+}
+
+func TestUserProxyPreservesExternalReturnToOriginalServer(t *testing.T) {
+	before := userProxySettings{Flags: 9, Server: "corp.example:8080", PAC: "https://config.example/old.pac"}
+	m := &memoryUserProxy{settings: before}
+	if err := applyUserProxy(m, "127.0.0.1:2080"); err != nil {
+		t.Fatal(err)
+	}
+	changed := userProxySettings{Flags: 3, Server: before.Server, Bypass: "intranet"}
+	m.settings = changed
+	if err := restoreUserProxy(m); err != nil {
+		t.Fatal(err)
+	}
+	if m.settings != changed || m.lease != nil {
+		t.Fatalf("cleanup overwrote later corporate configuration: got %+v, want %+v", m.settings, changed)
+	}
+}
+
+func TestUserProxyConfirmationFailureRollsBack(t *testing.T) {
+	before := userProxySettings{Flags: 9, PAC: "https://config.example/proxy.pac"}
+	m := &memoryUserProxy{settings: before, failSaveAt: 2}
+	if err := applyUserProxy(m, "127.0.0.1:2080"); err == nil {
+		t.Fatal("accepted an apply without durable confirmation")
+	}
+	if m.settings != before || m.lease != nil {
+		t.Fatal("failed confirmation did not restore the original configuration")
+	}
+}
+
+func TestUserProxyUnconfirmedAmbiguousOriginalServerIsPreserved(t *testing.T) {
+	before := userProxySettings{Flags: 9, Server: "corp.example:8080", PAC: "https://config.example/old.pac"}
+	applied := userProxySettings{Flags: 3, Server: "127.0.0.1:2080", Bypass: "localhost;127.0.0.1;[::1]"}
+	changed := applied
+	changed.Server = before.Server
+	m := &memoryUserProxy{settings: changed, lease: &userProxyLease{Version: 1, Before: before, Applied: applied}}
+	if err := restoreUserProxy(m); err == nil {
+		t.Fatal("ambiguous partial write/external switch should retain cleanup for repair")
+	}
+	if m.settings != changed || m.lease == nil || m.writes != 0 {
+		t.Fatal("ambiguous state was changed or ownership discarded")
+	}
 }
 func (m *memoryUserProxy) Delete() error {
 	if m.failDelete {

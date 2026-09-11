@@ -17,9 +17,10 @@ type userProxySettings struct {
 }
 
 type userProxyLease struct {
-	Version int               `json:"version"`
-	Before  userProxySettings `json:"before"`
-	Applied userProxySettings `json:"applied"`
+	Version   int               `json:"version"`
+	Before    userProxySettings `json:"before"`
+	Applied   userProxySettings `json:"applied"`
+	Confirmed bool              `json:"confirmed,omitempty"`
 }
 
 type userProxyOperations interface {
@@ -54,6 +55,13 @@ func applyUserProxy(o userProxyOperations, target string) error {
 			return err
 		}
 		if lease.Version == 1 && lease.Applied.Server == target && current == lease.Applied {
+			if !lease.Confirmed {
+				confirmed := *lease
+				confirmed.Confirmed = true
+				if err := o.Save(confirmed); err != nil {
+					return fmt.Errorf("confirm existing user proxy snapshot: %w", err)
+				}
+			}
 			return nil
 		}
 		if err := restoreUserProxy(o); err != nil {
@@ -65,7 +73,8 @@ func applyUserProxy(o userProxyOperations, target string) error {
 		return fmt.Errorf("read user proxy: %w", err)
 	}
 	want := userProxySettings{Flags: 3, Server: target, Bypass: "localhost;127.0.0.1;[::1]"}
-	if err := o.Save(userProxyLease{Version: 1, Before: before, Applied: want}); err != nil {
+	newLease := userProxyLease{Version: 1, Before: before, Applied: want}
+	if err := o.Save(newLease); err != nil {
 		return fmt.Errorf("save user proxy rollback snapshot: %w", err)
 	}
 	if err := o.Write(want); err != nil {
@@ -77,6 +86,12 @@ func applyUserProxy(o userProxyOperations, target string) error {
 			err = errors.New("user proxy settings did not take effect")
 		}
 		return errors.Join(err, restoreUserProxy(o))
+	}
+	// Persist successful readback before reporting success. Recovery can then
+	// distinguish a later switch back to Before.Server from a partial apply.
+	newLease.Confirmed = true
+	if err := o.Save(newLease); err != nil {
+		return errors.Join(fmt.Errorf("confirm user proxy snapshot: %w", err), restoreUserProxy(o))
 	}
 	return nil
 }
@@ -98,8 +113,14 @@ func restoreUserProxy(o userProxyOperations) error {
 	}
 	// A different server is an explicit subsequent user/tool change. Do not
 	// restore old flags/PAC over that newer configuration.
-	if current.Server != lease.Applied.Server && current.Server != lease.Before.Server {
-		return o.Delete()
+	if current.Server != lease.Applied.Server {
+		if lease.Confirmed || current == lease.Before || current.Server != lease.Before.Server {
+			return o.Delete()
+		}
+		// With an unconfirmed/crashed apply, a mix of old and new settings
+		// at the old server could be a partial option write or a later user
+		// edit. There is no evidence to safely undo it automatically.
+		return errors.New("ambiguous user proxy snapshot; previous server has changed settings, automatic restore refused")
 	}
 	want := current
 	// Restore only fields still equal to our write. This also rolls back a
