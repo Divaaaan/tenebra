@@ -23,6 +23,7 @@ pub mod mock;
 pub mod pipe;
 #[cfg(windows)]
 pub(crate) mod pipe_io;
+#[cfg(any(windows, test))]
 pub(crate) mod service_policy;
 pub mod sidecar;
 #[cfg(test)]

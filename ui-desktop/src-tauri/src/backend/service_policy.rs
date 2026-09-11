@@ -11,6 +11,7 @@ pub fn verify_version(actual: Option<&str>, expected: &str) -> Result<(), String
 }
 
 // Installer registrations contain one quoted absolute executable and no args.
+#[cfg(windows)]
 pub fn registered_image(command: &str) -> Option<&str> {
     let image = command.strip_prefix('"')?.strip_suffix('"')?;
     if image.contains('"') || !std::path::Path::new(image).is_absolute() {

@@ -13,7 +13,7 @@ mod tray;
 mod update_channel;
 
 use std::sync::{Arc, Mutex};
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(target_os = "linux", all(windows, test)))]
 use std::time::{Duration, Instant};
 
 use serde_json::json;
@@ -302,7 +302,7 @@ fn watch_for_a_late_daemon(path: String, sink: Arc<dyn EventSink>) {
 /// reporting whether it ever did. Split out from the watch thread so its
 /// schedule — look first, then wait, and always look at least once — can be
 /// tested without a real pipe, a real socket, or real seconds.
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(target_os = "linux", all(windows, test)))]
 fn await_probe(mut probe: impl FnMut() -> bool, tick: Duration, window: Duration) -> bool {
     let deadline = Instant::now() + window;
     loop {

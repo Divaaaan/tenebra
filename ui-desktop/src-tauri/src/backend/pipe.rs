@@ -42,6 +42,7 @@ use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY};
 use windows_sys::Win32::Storage::FileSystem::{
     FILE_FLAG_OVERLAPPED, SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT,
 };
+#[cfg(test)]
 use windows_sys::Win32::System::Pipes::{WaitNamedPipeW, NMPWAIT_NOWAIT};
 
 use super::wire::{obj, read_loop, WireClient, WireSession};
@@ -124,6 +125,7 @@ fn name_from(value: Option<&str>) -> Option<String> {
 /// instance is momentarily taken — it is between accepting a client and creating
 /// the next instance — reads as absent. Callers should treat `false` as "not
 /// this instant" and look again, never as "there is no service on this machine".
+#[cfg(test)]
 pub fn is_listening(name: &str) -> bool {
     let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
     // SAFETY: `wide` is a valid NUL-terminated wide string that outlives the
