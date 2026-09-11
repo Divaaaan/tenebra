@@ -1,101 +1,117 @@
-/* Logs + leak-check overlay — spec-sheet: a monospace console and a titled
-   leak-check readout. Sharp borders, one accent, near-zero motion. The host
-   overlay owns the ✕ close and the body padding; the screen leaves headroom up
-   top so the title clears that control. */
+/* Diagnostics use readable verdicts and a separate monospace console.
+   Screen spacing matches subscription management inside the shared overlay. */
 
 .log-screen {
   display: flex;
   flex-direction: column;
-  padding: 24px 24px 22px;
+  padding: 30px 28px 28px;
+  font-family: var(--ui);
+  line-height: 1.5;
+  min-width: 0;
 }
 
 /* ── shared eyebrow (matches the connection pane) ── */
 .log-eyebrow {
-  font-family: var(--mono);
-  font-size: var(--fs-label);
-  letter-spacing: var(--track-cap);
-  text-transform: uppercase;
+  font-family: var(--ui);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--text-dim);
 }
 
 /* ── header: title + leak-check CTA ── */
 .log-head {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: var(--sp-4);
-  padding-bottom: var(--sp-5);
+  padding-bottom: 20px;
   border-bottom: var(--bw) solid var(--line);
+  flex-wrap: wrap;
+  padding-right: 20px;
 }
 .log-head-titles {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 6px;
   min-width: 0;
 }
 .log-title {
-  font-family: var(--display);
-  font-size: var(--fs-sku);
-  font-weight: 600;
-  letter-spacing: var(--track-sku);
-  line-height: 1;
-  text-transform: uppercase;
+  font-family: var(--ui);
+  font-size: 26px;
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-transform: none;
+  overflow-wrap: anywhere;
 }
 
 /* ── primary button (leak-check) ── */
 .log-btn-primary {
   flex: none;
-  font-family: var(--mono);
-  font-size: var(--fs-body);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+  font-family: var(--ui);
+  font-size: 14px;
+  letter-spacing: 0;
+  text-transform: none;
   font-weight: 600;
-  padding: 13px 28px;
-  border: var(--bw-emphasis) solid var(--signal);
-  color: var(--signal);
+  padding: 9px 18px;
+  border: var(--bw) solid var(--signal);
+  color: var(--on-signal);
   transition:
     background-color var(--t-base),
     color var(--t-base),
     transform var(--d-micro) var(--e-out);
+  min-height: 38px;
+  max-width: 100%;
+  border-radius: 9px;
+  background: var(--signal);
+  line-height: 1.4;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 .log-btn-primary:active:not(:disabled) {
-  transform: scale(0.96);
+  transform: translateY(1px);
 }
-.log-btn-primary:hover {
-  background: var(--signal);
+.log-btn-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--signal) 88%, var(--text));
   color: var(--on-signal);
 }
 .log-btn-primary:disabled {
-  border-color: var(--text-dim-2);
-  color: var(--text-dim);
+  border-color: var(--line);
+  color: var(--text-dim-2);
   cursor: default;
-}
-.log-btn-primary:disabled:hover {
-  background: transparent;
-  color: var(--text-dim);
+  background: var(--surface-2);
 }
 
 /* ── ghost button (clear) ── */
 .log-btn-ghost {
   flex: none;
-  font-family: var(--mono);
-  font-size: var(--fs-label);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  padding: 5px 11px;
+  font-family: var(--ui);
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 7px 12px;
   border: var(--bw) solid var(--line);
-  color: var(--text-dim);
+  color: var(--text);
   transition:
     color var(--t-fast),
     border-color var(--t-fast),
     transform var(--d-micro) var(--e-out);
+  min-height: 34px;
+  max-width: 100%;
+  border-radius: 8px;
+  background: var(--surface);
+  line-height: 1.4;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 .log-btn-ghost:active:not(:disabled) {
-  transform: scale(0.96);
+  transform: translateY(1px);
 }
-.log-btn-ghost:hover {
+.log-btn-ghost:hover:not(:disabled) {
   color: var(--text);
-  border-color: var(--text-dim);
+  border-color: var(--line-2);
+  background: var(--surface-2);
 }
 .log-btn-ghost:disabled {
   opacity: 0.45;
@@ -116,6 +132,7 @@
   background: var(--line);
   overflow: hidden;
   margin-top: var(--sp-5);
+  border-radius: 2px;
 }
 .log-rail-run {
   position: absolute;
@@ -140,12 +157,13 @@
   }
 }
 
-/* ── leak-check readout: titled spec-sheet block, one verdict per row ── */
+/* ── leak-check readout: one verdict per row ── */
 .log-spec {
   border: var(--bw) solid var(--line);
   margin-top: var(--sp-5);
   /* A considered entrance when the finding lands; neutralised by reduced-motion. */
-  animation: ui-rise var(--d-slow) var(--e-out) backwards;
+  border-radius: 10px;
+  background: var(--surface);
 }
 .log-spec-row {
   padding: 18px 20px;
@@ -170,16 +188,18 @@
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: var(--sp-4);
+  gap: 8px 16px;
+  flex-wrap: wrap;
 }
 
 /* The raw verdict word (ok / warn / leak / …), coloured to match the tone. */
 .log-verdict {
-  font-family: var(--mono);
-  font-size: var(--fs-label);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
+  font-family: var(--ui);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--text-dim);
+  font-weight: 600;
 }
 .log-verdict--good {
   color: var(--good);
@@ -189,45 +209,49 @@
 }
 
 .log-spec-line {
-  font-family: var(--mono);
-  font-size: var(--fs-data);
-  letter-spacing: var(--track-body);
+  font-family: var(--ui);
+  font-size: 14px;
+  letter-spacing: 0;
   color: var(--text);
-  line-height: 1.5;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 .log-spec-detail {
-  font-family: var(--mono);
-  font-size: var(--fs-meta);
-  letter-spacing: var(--track-body);
+  font-family: var(--ui);
+  font-size: 13px;
+  letter-spacing: 0;
   color: var(--text-dim);
-  line-height: 1.5;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 /* ── labelled fact rows (public IP, exit, resolvers) ── */
 .log-facts {
   margin: 0;
   display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: var(--sp-1) var(--sp-4);
+  grid-template-columns: minmax(90px, 30%) minmax(0, 1fr);
+  gap: 6px 16px;
 }
 .log-fact {
   display: contents;
 }
 .log-fact dt {
-  font-family: var(--mono);
-  font-size: var(--fs-label);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
+  font-family: var(--ui);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--text-dim);
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .log-fact dd {
   margin: 0;
   font-family: var(--mono);
-  font-size: var(--fs-data);
-  letter-spacing: var(--track-body);
+  font-size: 12px;
+  letter-spacing: 0;
   color: var(--text);
-  word-break: break-all;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
 }
 .log-fact-note {
   color: var(--text-dim);
@@ -238,54 +262,63 @@
   margin-top: var(--sp-6);
   display: flex;
   flex-direction: column;
+  background: var(--surface);
+  border: var(--bw) solid var(--line);
+  border-radius: 10px;
+  min-width: 0;
 }
 .log-console-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--sp-4);
-  padding-bottom: var(--sp-3);
+  gap: 12px;
   border-bottom: var(--bw) solid var(--line);
+  padding: 12px 14px;
+  flex-wrap: wrap;
 }
 /* Copy + clear sit together on the right; the eyebrow keeps the left. */
 .log-console-actions {
   display: flex;
   align-items: center;
-  gap: var(--sp-3);
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .log-console {
-  border: var(--bw) solid var(--line);
-  border-top: none;
-  max-height: 320px;
-  overflow-y: auto;
+  border: 0;
+  max-height: min(320px, 45dvh);
   font-variant-numeric: tabular-nums;
   user-select: text;
+  min-height: 144px;
+  overflow: auto;
+  border-radius: 0 0 10px 10px;
+  overscroll-behavior: contain;
 }
 
 .log-empty {
-  padding: 18px 16px;
-  font-family: var(--mono);
-  font-size: var(--fs-data);
-  letter-spacing: var(--track-body);
+  padding: 24px 16px;
+  font-family: var(--ui);
+  font-size: 13px;
+  letter-spacing: 0;
   color: var(--text-dim-2);
+  line-height: 1.6;
 }
 
 .log-row {
   display: grid;
-  grid-template-columns: max-content max-content 1fr;
-  gap: var(--sp-4);
-  padding: 4px 16px;
+  grid-template-columns: max-content max-content minmax(0, 1fr);
+  gap: 12px;
+  padding: 5px 14px;
   font-family: var(--mono);
-  font-size: var(--fs-data);
-  letter-spacing: var(--track-body);
-  line-height: 1.5;
+  font-size: 12px;
+  letter-spacing: 0;
+  line-height: 1.6;
 }
 .log-row:first-child {
-  padding-top: 10px;
+  padding-top: 12px;
 }
 .log-row:last-child {
-  padding-bottom: 10px;
+  padding-bottom: 12px;
 }
 
 .log-time {
@@ -299,7 +332,7 @@
    soft amber heads-up, error claims the lone accent. */
 .log-lvl {
   text-transform: uppercase;
-  letter-spacing: var(--track-label);
+  letter-spacing: 0;
   white-space: nowrap;
   min-width: 38px;
 }
@@ -319,5 +352,42 @@
 .log-msg {
   color: var(--text);
   min-width: 0;
-  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.log-spec-row:first-child {
+  border-top-left-radius: 9px;
+}
+.log-spec-row:last-child {
+  border-bottom-left-radius: 9px;
+}
+.log-console-head .log-eyebrow {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.log-screen :where(button, a):focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+}
+
+@media (max-width: 700px) {
+  .log-screen {
+    padding: 26px 18px 22px;
+  }
+  .log-title {
+    font-size: 24px;
+  }
+  .log-spec-row {
+    padding: 16px;
+  }
+}
+@media (max-width: 480px) {
+  .log-row {
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 2px 12px;
+  }
+  .log-msg {
+    grid-column: 1 / -1;
+  }
 }
