@@ -106,6 +106,7 @@ func TestSwitchFallsBackToReconnectWhenTheSelectorRefuses(t *testing.T) {
 
 	h.runner.mu.Lock()
 	h.runner.selectErr = errSelectRefused
+	h.runner.selectErrThroughStart = 1 // restart restores the selector API
 	h.runner.mu.Unlock()
 
 	h.send(Request{ID: 2, Cmd: CmdConnect, Profile: p.ID, Node: "hy2-id"})

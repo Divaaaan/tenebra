@@ -211,6 +211,21 @@ func (d *Daemon) logConnectPlan(p profile.Profile, m *fallback.Machine, explicit
 // reconnecting the one it just abandoned. It is ignored for an explicit-node
 // connect (the user pinned that exact exit) and when empty.
 func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNode string, auto, remember bool, avoid string) (State, error) {
+	d.mu.Lock()
+	mh := d.multihop
+	d.mu.Unlock()
+	if err := validateMultihopProfile(p, mh); err != nil {
+		return State{}, err
+	}
+	requestedNode := explicitNode
+	if mh.Enabled {
+		// A chain has one effective exit. Use it for the attempt, state, last-good
+		// and leak check, while keeping the user's original connect intent.
+		if avoid == mh.ExitID {
+			return State{}, fmt.Errorf("connect: multihop has no alternative exit; select another chain")
+		}
+		explicitNode = mh.ExitID
+	}
 	// Build the fallback candidates. An explicit node request collapses the walk
 	// to that single node: the user asked for a specific exit, so we honour it and
 	// do not silently wander to another protocol behind their back. Without an
@@ -275,7 +290,6 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 	d.mu.Lock()
 	ro := d.routing
 	tun := d.tun
-	mh := d.multihop
 	d.mu.Unlock()
 
 	nodes := profileNodes(p)
@@ -283,8 +297,7 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 	tags := serverTags(p)
 	// Resolve the multihop selection (server IDs) into the builder-facing outbound
 	// tags now that the profile's tag map is in hand, so every per-candidate config
-	// this loop builds carries the same chain. An unresolvable pair (a node that
-	// vanished, or one the builder won't render) leaves ro untouched — a single hop.
+	// this loop builds carries the same chain, validated before any teardown.
 	ro = resolveMultihop(ro, mh, tags)
 	// Say it out loud when smart mode is about to run without its geodata. The
 	// connect still succeeds — the geo rules are simply not emitted and everything
@@ -325,7 +338,7 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 		tun:           tun,
 		machine:       m,
 		remember:      remember,
-		requestedNode: explicitNode,
+		requestedNode: requestedNode,
 	}
 	d.wg.Add(1)
 	go func() {
@@ -911,8 +924,8 @@ func (d *Daemon) probeUntilUp(ctx context.Context, gen uint64, wantTag string) (
 	// not name — and then the probe measures one exit while the state reports
 	// another. Pinning the selector to this config's default closes that, at the
 	// cost of one loopback call. It is retried alongside the probe because the API
-	// may not be listening yet, and it is best-effort: a runner that cannot select
-	// is the runner whose probe is about to fail anyway.
+	// may not be listening yet. A successful probe is meaningful only after this
+	// pin succeeds; an unconfirmed selector may still carry a cached old exit.
 	pinned := wantTag == ""
 
 	for {
@@ -932,6 +945,16 @@ func (d *Daemon) probeUntilUp(ctx context.Context, gen uint64, wantTag string) (
 			pinErr := d.runner.Select(pinCtx, proxySelectorTag, wantTag)
 			cancelPin()
 			pinned = pinErr == nil
+			if !pinned {
+				select {
+				case <-budget.Done():
+					return false, false
+				case <-done:
+					return false, false
+				case <-time.After(d.probeRetry):
+					continue
+				}
+			}
 		}
 
 		probeCtx, cancelProbe := context.WithTimeout(budget, d.probeTimeout)

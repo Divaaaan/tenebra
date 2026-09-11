@@ -124,10 +124,11 @@ func TestHealthWatchReconnectsWhenTheExitCannotBeSteered(t *testing.T) {
 		t.Fatalf("initial connect landed on %v, want vless-id", c["node"])
 	}
 
-	// From here the clash API refuses every selection, so the live switch is not
-	// available and the watchdog must still get the user off the degraded exit.
+	// The current process refuses selections; a restarted API recovers. A
+	// permanently failing selector must never reach Connected, even after restart.
 	h.runner.mu.Lock()
 	h.runner.selectErr = errSelectRefused
+	h.runner.selectErrThroughStart = 1
 	h.runner.mu.Unlock()
 
 	if hr := h.awaitState(StateHealthReconnecting); hr["node"] != "vless-id" {

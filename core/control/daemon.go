@@ -1362,6 +1362,17 @@ func (d *Daemon) refreshProfile(ctx context.Context, p profile.Profile) (profile
 	before := p
 	p.Servers = rebuilt.Servers
 	p.UpdatedAt = rebuilt.UpdatedAt
+	// Keep the last valid profile if this refresh removes an enabled hop. The
+	// refresh command returns the error, and background refresh logs it; neither
+	// may replace a promised chain with a silently downgraded next connection.
+	d.mu.Lock()
+	mh := d.multihop
+	d.mu.Unlock()
+	if mh.Enabled && (hasServer(before, mh.EntryID) || hasServer(before, mh.ExitID)) {
+		if err := validateMultihopProfile(p, mh); err != nil {
+			return profile.Profile{}, false, fmt.Errorf("refresh refused: %w", err)
+		}
+	}
 	// Only refresh traffic/expiry when this response actually carries a user-info
 	// header. A refresh that returns the node list but no Subscription-Userinfo
 	// (some panels send it only intermittently) must preserve the known quota and
@@ -1696,7 +1707,7 @@ func (d *Daemon) handleSetTLSFragment(req Request) Response {
 // so a bad pick is rejected whole rather than half-applied; disabling ignores the
 // IDs but keeps them recorded so the UI can re-enable the last pick. The IDs are
 // resolved to outbound tags against the connecting profile later (resolveMultihop),
-// so a selection that no longer resolves simply degrades to a single hop.
+// and revalidated on connect and subscription refresh.
 func (d *Daemon) handleSetMultihop(req Request) Response {
 	mh := model.Multihop{Enabled: req.Enabled, EntryID: req.EntryID, ExitID: req.ExitID}
 	if mh.Enabled {
@@ -1715,6 +1726,9 @@ func (d *Daemon) handleSetMultihop(req Request) Response {
 		}
 		if !hasServer(p, mh.ExitID) {
 			return newError(req.ID, "set_multihop: exit node not in profile")
+		}
+		if err := validateMultihopProfile(p, mh); err != nil {
+			return newError(req.ID, "set_multihop: "+err.Error())
 		}
 	}
 
@@ -1747,24 +1761,30 @@ func hasServer(p profile.Profile, id string) bool {
 	return false
 }
 
+func validateMultihopProfile(p profile.Profile, mh model.Multihop) error {
+	if !mh.Enabled {
+		return nil
+	}
+	if !mh.Valid() {
+		return fmt.Errorf("multihop: entry and exit must name distinct nodes")
+	}
+	if !hasServer(p, mh.EntryID) || !hasServer(p, mh.ExitID) {
+		return fmt.Errorf("multihop: selected entry or exit is no longer in this profile")
+	}
+	tags := serverTags(p)
+	return singbox.ValidateMultihop(profileNodes(p), tags[mh.EntryID], tags[mh.ExitID])
+}
+
 // resolveMultihop folds a stored multihop selection (server IDs) into the routing
 // options the builder consumes (outbound tags), using the tag map the connecting
 // profile produces (serverTags). It engages only for a valid, distinct pair whose
-// IDs both resolve to a tag the builder will actually emit; anything else leaves
-// the options untouched so the build degrades to a normal single hop rather than
-// carrying a dangling detour. tags maps a server ID to its outbound tag.
+// IDs both resolve to a tag the builder will actually emit. Validation happens
+// before connect; even an invalid enabled selection remains enabled here so the
+// builder rejects it. tags maps a server ID to its outbound tag.
 func resolveMultihop(ro routing.Options, mh model.Multihop, tags map[string]string) routing.Options {
-	if !mh.Valid() {
-		return ro
-	}
-	entryTag := tags[mh.EntryID]
-	exitTag := tags[mh.ExitID]
-	if entryTag == "" || exitTag == "" || entryTag == exitTag {
-		return ro
-	}
-	ro.Multihop = true
-	ro.MultihopEntry = entryTag
-	ro.MultihopExit = exitTag
+	ro.Multihop = mh.Enabled
+	ro.MultihopEntry = tags[mh.EntryID]
+	ro.MultihopExit = tags[mh.ExitID]
 	return ro
 }
 
