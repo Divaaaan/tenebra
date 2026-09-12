@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/Divaaaan/tenebra/core/profile"
-	"github.com/Divaaaan/tenebra/core/protection"
 )
 
 // A fake engine does not isolate the daemon's other OS adapters. In particular,
@@ -20,7 +19,6 @@ import (
 func newUnitTestDaemon(store *profile.Store, runner Runner) *Daemon {
 	d := NewDaemon(store, runner)
 	d.proxy = &fakeProxyController{}
-	d.SetProtection(protection.New(&fakeHostProtection{}))
 	return d
 }
 
