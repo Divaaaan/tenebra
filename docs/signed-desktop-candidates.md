@@ -119,6 +119,15 @@ with a JSON inputs file so quoting preserves the acceptance text. Promotion
 redownloads the exact accepted artifact and repeats provenance, signatures,
 all file hashes and acceptance checks before any release mutation.
 
+Promotion also queries the actual current `main` ref and GitHub Latest release.
+The ref must still match the accepted source. Latest must be an older stable
+version, absent, or this same owned release. A newer, prerelease, malformed or
+foreign equal-version Latest fails closed. These checks run again immediately
+before the publication PATCH and before completing the channel update. Actions
+reruns keep historical GITHUB_SHA values; those values alone are insufficient.
+The shared release concurrency serializes these workflows; an unrelated manual
+release mutation outside that lock is not an atomic GitHub compare-and-swap.
+
 It persists a draft ownership marker binding the candidate, artifact, source,
 run and acceptance digests, then creates the immutable stable tag at that same
 source SHA. No build or re-sign operation occurs. It uploads the accepted files
