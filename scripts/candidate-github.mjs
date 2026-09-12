@@ -23,9 +23,9 @@ export function safeArchiveNames(text) {
 }
 function http(token) {
   demand(typeof token==='string' && token.length>0,'GitHub token required');
-  async function call(url,{method='GET',body,octet=false,limit=20*1024**2}={}) {
+  async function call(url,{method='GET',body,octet=false,accept=octet?'application/octet-stream':'application/vnd.github+json',limit=20*1024**2}={}) {
     demand(url.startsWith(base+'/') || url.startsWith(`https://uploads.github.com/repos/${repo}/`),'unexpected GitHub request destination');
-    const response=await fetch(url,{method,headers:{Authorization:`Bearer ${token}`,Accept:octet?'application/octet-stream':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28',...(body?{'Content-Type':Buffer.isBuffer(body)?'application/octet-stream':'application/json'}:{})},body:body?(Buffer.isBuffer(body)?body:JSON.stringify(body)):undefined,signal:AbortSignal.timeout(180000)});
+    const response=await fetch(url,{method,headers:{Authorization:`Bearer ${token}`,Accept:accept,'X-GitHub-Api-Version':'2022-11-28',...(body?{'Content-Type':Buffer.isBuffer(body)?'application/octet-stream':'application/json'}:{})},body:body?(Buffer.isBuffer(body)?body:JSON.stringify(body)):undefined,signal:AbortSignal.timeout(180000)});
     if(!response.ok)throw Object.assign(Error(`GitHub ${method} operation failed (HTTP ${response.status})`),{status:response.status});
     demand(Number(response.headers.get('content-length')??0)<=limit,'GitHub response exceeds size bound');
     const chunks=[];let size=0;
@@ -38,7 +38,9 @@ export async function acquireCandidate(a,pubkey,token) {
   demand(positive(a.prepareRunId) && positive(a.prepareAttempt) && positive(a.artifactId) && /^[a-f0-9]{40}$/.test(a.sourceSha) && /^[a-f0-9]{64}$/.test(a.artifactSha256),'explicit acquisition pins required');
   const call=http(token),run=await call(`${base}/actions/runs/${a.prepareRunId}`);verifyPrepareRun(run,a);
   const asset=await call(`${base}/actions/artifacts/${a.artifactId}`);verifyArtifact(asset,a);
-  const archive=await call(`${base}/actions/artifacts/${a.artifactId}/zip`,{octet:true,limit:2*1024**3});
+  // Actions negotiates its archive redirect through the JSON API media type;
+  // the redirected response is still binary. Release assets use octet-stream.
+  const archive=await call(`${base}/actions/artifacts/${a.artifactId}/zip`,{octet:true,accept:'application/vnd.github+json',limit:2*1024**3});
   demand(sha256(archive)===a.artifactSha256,'downloaded ZIP SHA differs');
   const temporary=mkdtempSync(join(tmpdir(),'tenebra-candidate-')),zip=join(temporary,'candidate.zip');
   const files=new Map();
