@@ -2,7 +2,7 @@
 // access: callers supply downloaded bytes and an explicit acceptance receipt.
 import { createHash, createPublicKey, verify } from 'node:crypto';
 import { verifyBuildInfo } from './verify-core-build.mjs';
-import { validateManifest } from './release-lifecycle.mjs';
+import { validateManifest, compareVersions } from './release-lifecycle.mjs';
 
 export const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 export const jsonBytes = value => Buffer.from(JSON.stringify(value, null, 2) + '\n');
@@ -38,6 +38,14 @@ export function verifyUpdaterSignature(bytes, encoded, encodedKey) {
 }
 export function assertPrepareIdentity({ event, ref, sha:actual, sourceSha, repo, expectedRepo='Divaaaan/tenebra' }) {
   requireValue(event === 'workflow_dispatch' && ref === 'refs/heads/main' && repo === expectedRepo && expectedRepo === 'Divaaaan/tenebra' && commit(sourceSha) && actual === sourceSha, 'signing requires exact main workflow dispatch commit'); return true;
+}
+export function assertStablePromotionState(candidate,main,latest,ownedReleaseId=null) {
+  requireValue(main?.type==='commit' && main.sha===candidate.sourceSha,'live main differs from accepted source; prepare a new candidate');
+  if(latest===null)return true;
+  requireValue(positive(latest?.id) && latest.draft===false && latest.prerelease===false && typeof latest.tag_name==='string' && latest.tag_name.startsWith('v') && stable(latest.tag_name.slice(1)),'unexpected GitHub Latest stable release');
+  const order=compareVersions(latest.tag_name.slice(1),candidate.version);
+  requireValue(order<0 || (order===0 && latest.id===ownedReleaseId),'GitHub Latest is newer or is not this owned release; never roll stable back');
+  return true;
 }
 export const buildReports = {
   'core-buildinfo-windows.json':['windows','amd64'],
@@ -105,6 +113,7 @@ export async function promoteCandidate({candidate,files,acceptance,artifact,cont
     return state;
   }
   let state=own(await api.getState(tag));
+  await api.assertPublicationReady(state.release?.id??null);
   // Persist ownership BEFORE separately creating the immutable tag. A timeout
   // after either write can then be reconciled on the next identical request.
   if(!state.release){await api.createDraft(tag,candidate.sourceSha,promotionId);state=own(await api.getState(tag));}

@@ -23,6 +23,8 @@ test('publication adapter preserves candidate-bound notes and refuses body chang
   const candidate={version:'0.6.0',sourceSha:source,files:[{name:'release-notes.md',sha256:sha256(notes)}]};
   const mutations=[];let release;
   t.mock.method(globalThis,'fetch',async(url,options)=>{
+    if(url.endsWith('/git/ref/heads/main'))return new Response(JSON.stringify({object:{type:'commit',sha:source}}));
+    if(url.endsWith('/releases/latest'))return new Response(JSON.stringify({id:11,tag_name:'v0.5.11',draft:false,prerelease:false}));
     if(url.endsWith('/releases')&&options.method==='POST'){
       mutations.push('draft');release={...JSON.parse(options.body),id:42,assets:[]};return new Response(JSON.stringify(release));
     }
@@ -50,4 +52,18 @@ test('publication adapter leaves incomplete starter asset intact and fails close
   });
   await assert.rejects(()=>publisher('test-token',candidate,notes).verifyUploaded(42,new Map([['file.exe',Buffer.from('bytes')]]),{partial:true,promotionId}),/incomplete/);
   assert.deepEqual(methods,['GET','GET']);
+});
+
+for(const changed of ['newer-latest','advanced-main'])test(`publication rechecks ${changed} immediately before making a draft Latest`,async t=>{
+  const notes=Buffer.from('# Tenebra 0.6.0\n\nNotes.\n'),promotionId='c'.repeat(64),writes=[];
+  const candidate={version:'0.6.0',sourceSha:source,files:[{name:'release-notes.md',sha256:sha256(notes)}]};
+  t.mock.method(globalThis,'fetch',async(url,options)=>{
+    if(options.method!=='GET'){writes.push(options.method);return new Response('{}');}
+    if(url.endsWith('/git/ref/heads/main'))return new Response(JSON.stringify({object:{type:'commit',sha:changed==='advanced-main'?'d'.repeat(40):source}}));
+    if(url.endsWith('/releases/latest'))return new Response(JSON.stringify({id:99,tag_name:changed==='newer-latest'?'v0.6.1':'v0.5.11',draft:false,prerelease:false}));
+    if(url.endsWith('/git/ref/tags/v0.6.0'))return new Response(JSON.stringify({object:{type:'commit',sha:source}}));
+    if(url.endsWith('/releases/42'))return new Response(JSON.stringify({id:42,tag_name:'v0.6.0',prerelease:false,draft:true,body:`<!-- tenebra-promotion-sha256:${promotionId} -->\n${notes}`,assets:[]}));
+    throw Error('unexpected request');
+  });
+  await assert.rejects(()=>publisher('test-token',candidate,notes).publish(42,'v0.6.0',promotionId));assert.deepEqual(writes,[]);
 });

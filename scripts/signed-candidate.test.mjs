@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign, createHash } from 'node:crypto';
-import { verifyUpdaterSignature, makeCandidate, verifyCandidate, verifyAcceptance, assertPrepareIdentity, promoteCandidate } from './signed-candidate.mjs';
+import { verifyUpdaterSignature, makeCandidate, verifyCandidate, verifyAcceptance, assertPrepareIdentity, promoteCandidate, assertStablePromotionState } from './signed-candidate.mjs';
 
 const sha = b => createHash('sha256').update(b).digest('hex');
 const { privateKey, publicKey } = generateKeyPairSync('ed25519');
@@ -74,6 +74,7 @@ function promotionFixture() {
   const f=fixture(),effects=[],uploaded=new Map(),state={tag:null,release:null};let failure=null;
   const fail=stage=>{if(failure===stage){failure=null;throw Error('injected '+stage);}};
   const api={
+    assertPublicationReady:async()=>{},
     getState:async()=>structuredClone(state),
     createDraft:async(tag,commit,promotionId)=>{state.release={id:42,isDraft:true,promotionId};effects.push('draft');fail('after-draft');return structuredClone(state.release);},
     createTag:async(tag,commit)=>{state.tag={type:'commit',sha:commit};effects.push('tag');fail('after-tag');},
@@ -84,6 +85,20 @@ function promotionFixture() {
   };
   return {f,api,effects,uploaded,state,setFailure:stage=>{failure=stage;},run:()=>promoteCandidate({...f,api,artifact:{artifactId:456,artifactSha256:'d'.repeat(64),manifestSha256:f.acceptance.manifestSha256}})};
 }
+test('stable promotion requires live main and cannot replace newer, unexpected or foreign equal Latest',()=>{
+  const candidate={version:'0.6.0',sourceSha},main={type:'commit',sha:sourceSha};
+  const old={id:11,tag_name:'v0.5.11',draft:false,prerelease:false};
+  assert.equal(assertStablePromotionState(candidate,main,null),true);
+  assert.equal(assertStablePromotionState(candidate,main,old),true);
+  assert.equal(assertStablePromotionState(candidate,main,{...old,id:42,tag_name:'v0.6.0'},42),true);
+  for(const latest of [{...old,tag_name:'v0.6.1'},{...old,tag_name:'v0.6.0'},{...old,tag_name:'v0.6.0-beta.1'},{...old,tag_name:'other'},{...old,draft:true},{...old,prerelease:true},undefined])assert.throws(()=>assertStablePromotionState(candidate,main,latest,42));
+  assert.throws(()=>assertStablePromotionState(candidate,{...main,sha:'f'.repeat(40)},old));
+});
+test('old completed promotion retry cannot mutate anything after a newer release becomes Latest',async()=>{
+  const p=promotionFixture();await p.run();const count=p.effects.length;
+  p.api.assertPublicationReady=async()=>assertStablePromotionState(p.f.candidate,{type:'commit',sha:sourceSha},{id:99,tag_name:'v0.6.1',draft:false,prerelease:false},42);
+  await assert.rejects(p.run);assert.equal(p.effects.length,count);
+});
 test('unknown existing tag or draft fails without mutation',async()=>{
   for(const state of [{tag:{type:'commit',sha:sourceSha},release:null},{tag:null,release:{id:42,isDraft:true,promotionId:'0'.repeat(64)}},{tag:{type:'commit',sha:'f'.repeat(40)},release:{id:42,isDraft:false,promotionId:'0'.repeat(64)}}]){const p=promotionFixture();Object.assign(p.state,state);await assert.rejects(p.run);assert.deepEqual(p.effects,[]);}
 });

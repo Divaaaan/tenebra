@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { sha256, jsonBytes, verifyCandidate, promoteCandidate, assertPrepareIdentity, releaseNotes } from './signed-candidate.mjs';
+import { sha256, jsonBytes, verifyCandidate, promoteCandidate, assertPrepareIdentity, releaseNotes, assertStablePromotionState } from './signed-candidate.mjs';
 import { publishCompleteRelease } from './release-lifecycle.mjs';
 import { githubReleaseApi } from './release-api.mjs';
 const repo='Divaaaan/tenebra', base=`https://api.github.com/repos/${repo}`;
@@ -67,16 +67,22 @@ export function publisher(token,candidate,notesBytes) {
   async function readTag(){try{return (await call(`${base}/git/ref/tags/${tag}`)).object;}catch(e){if(e.status===404)return null;throw e;}}
   async function assertTag(allowMissing=false){const ref=await readTag();demand((!ref&&allowMissing)||(ref?.type==='commit'&&ref.sha===candidate.sourceSha),'stable tag changed or disappeared');}
   async function ownedRelease(id,promotionId){const r=await call(`${base}/releases/${id}`);demand(r.id===id&&r.tag_name===tag&&r.prerelease===false&&marker(r)===promotionId&&r.body===body(promotionId),'promotion ownership or release notes changed');return r;}
+  async function assertPublicationReady(ownedReleaseId=null){
+    const main=(await call(`${base}/git/ref/heads/main`)).object;
+    let latest;try{latest=await call(`${base}/releases/latest`);}catch(e){if(e.status!==404)throw e;latest=null;}
+    assertStablePromotionState(candidate,main,latest,ownedReleaseId);
+  }
   async function checkAsset(asset,bytes){demand(positive(asset.id)&&asset.state==='uploaded'&&asset.size===bytes.length,'existing asset is incomplete or has another size');const actual=await call(`${base}/releases/assets/${asset.id}`,{octet:true,limit:bytes.length});demand(sha256(actual)===sha256(bytes),'existing bytes differ; never overwrite');}
   return {
+    assertPublicationReady,
     async getState(name){
       let releases=[],complete=false;
       for(let page=1;page<=10;page++){const list=await call(`${base}/releases?per_page=100&page=${page}`);releases.push(...list.filter(r=>r.tag_name===name));if(list.length<100){complete=true;break;}}
       demand(complete&&releases.length<=1,'release listing is incomplete or ambiguous');
       const r=releases[0];return {tag:await readTag(),release:r?{id:r.id,isDraft:r.draft,promotionId:marker(r)}:null};
     },
-    async createTag(name,source){await call(`${base}/git/refs`,{method:'POST',body:{ref:`refs/tags/${name}`,sha:source}});},
-    async createDraft(name,source,promotionId){return call(`${base}/releases`,{method:'POST',body:{tag_name:name,target_commitish:source,name:`Tenebra ${name}`,draft:true,prerelease:false,body:body(promotionId)}});},
+    async createTag(name,source){await assertPublicationReady();await call(`${base}/git/refs`,{method:'POST',body:{ref:`refs/tags/${name}`,sha:source}});},
+    async createDraft(name,source,promotionId){await assertPublicationReady();return call(`${base}/releases`,{method:'POST',body:{tag_name:name,target_commitish:source,name:`Tenebra ${name}`,draft:true,prerelease:false,body:body(promotionId)}});},
     async ensureAsset(id,name,bytes,promotionId){
       await assertTag();const release=await ownedRelease(id,promotionId);demand(release.draft===true,'cannot add assets to a public release');
       const existing=release.assets.filter(a=>a.name===name);demand(existing.length<=1,'duplicate release asset');
@@ -89,8 +95,8 @@ export function publisher(token,candidate,notesBytes) {
       demand((partial||release.assets.length===files.size)&&new Set(release.assets.map(a=>a.name)).size===release.assets.length&&release.assets.every(a=>files.has(a.name)),'release asset set changed');
       for(const asset of release.assets)await checkAsset(asset,files.get(asset.name));
     },
-    async publish(id,name,promotionId){await assertTag();const release=await ownedRelease(id,promotionId);if(release.draft)await call(`${base}/releases/${id}`,{method:'PATCH',body:{draft:false,prerelease:false,make_latest:'true'}});},
-    async updateChannel(name){await assertTag();delete process.env.GH_TOKEN;await publishCompleteRelease({tag:name,repo,api:githubReleaseApi(repo,name)});},
+    async publish(id,name,promotionId){await assertTag();const release=await ownedRelease(id,promotionId);await assertPublicationReady(id);if(release.draft)await call(`${base}/releases/${id}`,{method:'PATCH',body:{draft:false,prerelease:false,make_latest:'true'}});},
+    async updateChannel(name){await assertTag();const state=await this.getState(name);await assertPublicationReady(state.release?.id??null);delete process.env.GH_TOKEN;await publishCompleteRelease({tag:name,repo,api:githubReleaseApi(repo,name)});},
   };
 }
 if(process.argv[1] && import.meta.url===pathToFileURL(process.argv[1]).href) {
