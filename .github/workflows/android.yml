@@ -244,6 +244,10 @@ jobs:
       - name: Attach the APK to the GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          # Android may finish before the desktop draft gate. It must never
+          # publish the shared release or bypass a native-acceptance hold.
+          draft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: ${{ steps.sign.outputs.apk }}
           fail_on_unmatched_files: true
         env:

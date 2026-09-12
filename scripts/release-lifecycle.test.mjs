@@ -109,3 +109,39 @@ test('mismatched updater signature fails before publication', async () => {
   await assert.rejects(run(f.api), /signature differs/);
   assert.deepEqual(f.events, []); assert.equal(f.channel().sha, 'old-sha');
 });
+
+test('prepare-only verifies and completes a stable draft without public or channel operations', async () => {
+  const f = fixture('0.6.0');
+  f.api.readChannel = async () => { throw new Error('prepare must not read the public channel'); };
+  const result = await lifecycle.publishCompleteRelease({ tag: 'v0.6.0', repo: 'owner/repo', api: f.api, prepareOnly: true });
+  assert.deepEqual(result, { prepared: true, switched: false });
+  assert.deepEqual(f.events, ['legacy']);
+  assert.equal(f.release.isDraft, true);
+  assert.equal(f.channel().sha, 'old-sha');
+});
+
+test('prepare-only preserves prerelease channel and refuses an already public release', async () => {
+  const f = fixture();
+  await lifecycle.publishCompleteRelease({ tag: `v${version}`, repo: 'owner/repo', api: f.api, prepareOnly: true });
+  assert.deepEqual(f.events, []);
+  f.release.isDraft = false;
+  await assert.rejects(lifecycle.publishCompleteRelease({ tag: `v${version}`, repo: 'owner/repo', api: f.api, prepareOnly: true }), /already public/);
+  assert.deepEqual(f.events, []);
+});
+
+test('prepare-only does not bypass any asset, manifest or signature gate', async () => {
+  for (const change of [
+    f => f.release.assets.pop(),
+    f => f.release.assets[0].state = 'starter',
+    f => f.release.assets[0].size = 0,
+    f => f.release.isPrerelease = true,
+    f => { f.api.readManifest = async () => ({ version: '0.5.11', platforms: {} }); },
+    f => { f.api.readAssetText = async () => 'wrong-signature'; },
+  ]) {
+    const f = fixture('0.6.0'); change(f);
+    await assert.rejects(lifecycle.publishCompleteRelease({ tag: 'v0.6.0', repo: 'owner/repo', api: f.api, prepareOnly: true }));
+    assert.deepEqual(f.events, []);
+    assert.equal(f.release.isDraft, true);
+    assert.equal(f.channel().sha, 'old-sha');
+  }
+});

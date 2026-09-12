@@ -105,13 +105,13 @@ function stepNamed(text, name) {
 
 test("only the final release job can publish either updater channel", () => {
   const releaseJobs = jobs(workflow("release.yml"));
-  const publishers = [...releaseJobs].filter(([, body]) => steps(body).some(s => /run:.*publish-release\.mjs/.test(s)));
+  const publishers = [...releaseJobs].filter(([, body]) => steps(body).some(s => /\bnode\s+\.github\/scripts\/publish-release\.mjs\b/.test(s)));
   assert.deepEqual(publishers.map(([name]) => name), ["publish"]);
   const required = /needs:\s*\[([^\]]+)\]/.exec(releaseJobs.get("publish"))?.[1].split(',').map(s => s.trim());
   assert.deepEqual(new Set(required), new Set(['windows', 'macos', 'linux', 'arch-package']));
   for (const [name, body] of releaseJobs) {
     if (name === 'publish') continue;
-    for (const step of steps(body)) assert.doesNotMatch(step, /run:.*publish-(?:beta-manifest|release)\.mjs/, name);
+    for (const step of steps(body)) assert.doesNotMatch(step, /\bnode\s+(?:\.github\/)?scripts\/publish-(?:beta-manifest|release)\.mjs\b/, name);
   }
 });
 
@@ -161,6 +161,21 @@ test("no tauri job publishes the release before the assets are complete", () => 
   for (const d of drafts) {
     assert.equal(d, "releaseDraft: true");
   }
+});
+
+test('Android attaches only to a draft and retains the tag channel', () => {
+  const attach = stepNamed(workflow('android.yml'), 'Attach the APK to the GitHub release');
+  assert.match(attach, /draft: true/);
+  assert.match(attach, /prerelease: \$\{\{ contains\(github\.ref_name, '-'\) \}\}/);
+});
+
+test('release hold runs the same final gate in explicit prepare-only mode', () => {
+  const publish = jobs(workflow('release.yml')).get('publish');
+  assert.match(publish, /TENEBRA_RELEASE_HOLD: \$\{\{ vars\.TENEBRA_RELEASE_HOLD \}\}/);
+  assert.match(publish, /if \[ "\$TENEBRA_RELEASE_HOLD" = "true" \]; then/);
+  assert.match(publish, /node \.github\/scripts\/publish-release\.mjs "\$GITHUB_REF_NAME" --prepare-only/);
+  assert.match(publish, /else\s+node \.github\/scripts\/publish-release\.mjs "\$GITHUB_REF_NAME"\s+fi/);
+  assert.doesNotMatch(publish, /^ {4}if:/m, 'hold must not skip asset verification');
 });
 
 test("a final job publishes the draft only after every build job", () => {

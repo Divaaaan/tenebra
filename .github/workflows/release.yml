@@ -443,10 +443,18 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-      - name: Verify every expected asset landed, then publish
+      - name: Verify every expected asset landed, then prepare or publish
         env:
           # gh authenticates with GITHUB_TOKEN; the script reads the repository
           # from GITHUB_REPOSITORY, which the runner always sets, and hands it to
           # gh explicitly rather than letting gh work it out from git.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node .github/scripts/publish-release.mjs "$GITHUB_REF_NAME"
+          TENEBRA_RELEASE_HOLD: ${{ vars.TENEBRA_RELEASE_HOLD }}
+        run: |
+          set -eu
+          if [ "$TENEBRA_RELEASE_HOLD" = "true" ]; then
+            node .github/scripts/publish-release.mjs "$GITHUB_REF_NAME" --prepare-only
+            echo "Release held as a verified draft for native acceptance." >> "$GITHUB_STEP_SUMMARY"
+          else
+            node .github/scripts/publish-release.mjs "$GITHUB_REF_NAME"
+          fi

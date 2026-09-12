@@ -16,7 +16,9 @@
 // release a draft and fails the run. A draft is one click away from being
 // published by hand, which is the recoverable direction to fail in.
 //
-//   node .github/scripts/publish-release.mjs <tag>
+//   node .github/scripts/publish-release.mjs <tag> [--prepare-only]
+// prepare-only runs the same completeness and signature gates and stages the
+// stable legacy manifest, leaving publication and both live channels untouched.
 //
 // Authenticates through gh via GITHUB_TOKEN and reads the repository from
 // GITHUB_REPOSITORY. The Android APK is deliberately not in the expected set:
@@ -79,13 +81,25 @@ export function missingAssets(expected, attached) {
   );
 }
 
+export function parsePublishArgs(args) {
+  const [tag, mode] = args;
+  if (!tag?.startsWith('v') || args.length > 2 || (mode !== undefined && mode !== '--prepare-only')) {
+    throw new Error('usage: publish-release.mjs <tag> [--prepare-only]');
+  }
+  return { tag, prepareOnly: mode === '--prepare-only' };
+}
+
 async function main() {
-  const [tag] = process.argv.slice(2);
+  const { tag, prepareOnly } = parsePublishArgs(process.argv.slice(2));
   const repo = process.env.GITHUB_REPOSITORY;
   if (!tag || !repo) throw new Error('usage: GITHUB_REPOSITORY=owner/repo node .github/scripts/publish-release.mjs <tag>');
   const { publishCompleteRelease } = await import('../../scripts/release-lifecycle.mjs');
   const { githubReleaseApi } = await import('../../scripts/release-api.mjs');
-  const result = await publishCompleteRelease({ tag, repo, api: githubReleaseApi(repo, tag) });
+  const result = await publishCompleteRelease({ tag, repo, api: githubReleaseApi(repo, tag), prepareOnly });
+  if (result.prepared) {
+    console.log(`publish-release: ${tag} verified and held as a draft; native acceptance required before publication`);
+    return;
+  }
   console.log(`publish-release: ${tag} complete and public; beta ${result.switched ? 'updated atomically' : 'already at this or a newer version'}`);
 }
 

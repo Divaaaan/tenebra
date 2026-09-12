@@ -49,11 +49,12 @@ export function validateManifest(manifest, { tag, repo, assets }) {
   return [...urls];
 }
 
-export async function publishCompleteRelease({ tag, repo, api }) {
+export async function publishCompleteRelease({ tag, repo, api, prepareOnly = false }) {
   if (!tag.startsWith('v')) throw new Error('release tag must start with v');
   const version = tag.slice(1); semver(version);
   const prerelease = Boolean(semver(version).pre);
   const release = await api.getRelease(tag);
+  if (prepareOnly && !release.isDraft) throw new Error('release is already public; cannot prepare a draft');
   if (release.isPrerelease !== prerelease) throw new Error('release channel disagrees with tag');
   // Legacy beta is staged only on a stable draft, after every platform job.
   const expected = expectedAssets({ version, prerelease }).filter(a => a.want !== 'beta.json');
@@ -69,6 +70,9 @@ export async function publishCompleteRelease({ tag, repo, api }) {
     }
   }
   if (!prerelease && release.isDraft) await api.seedLegacyBeta(tag, manifest);
+  // A held release has the same complete signed assets and stable legacy
+  // manifest, but remains private until the exact installer is accepted.
+  if (prepareOnly) return { prepared: true, switched: false };
   if (release.isDraft) await api.publish(tag);
   const visible = await api.getRelease(tag);
   if (visible.isDraft) throw new Error('release is still a draft; beta pointer preserved');
