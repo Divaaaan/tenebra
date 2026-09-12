@@ -17,7 +17,7 @@ pkgname=tenebra
 # has to name a tag that exists — scripts/set-version.mjs rewrites this line along
 # with the desktop manifests and the Go core, which is what keeps the two in step.
 # Do not edit it by hand.
-pkgver=0.5.11
+pkgver=0.6.0
 pkgrel=1
 pkgdesc="VPN client built on sing-box: a privileged core daemon and a desktop UI"
 arch=('x86_64')
@@ -78,8 +78,15 @@ _geositecommit=02b7bc85184c7fa94ccdfe9a35b7f4a169b28b4d
 # blocks sing-box startup for ~10s). They are pinned to immutable commits rather
 # than the rolling `rule-set` branch, which is regenerated daily and would drift
 # out from under the checksums.
+_source_fragment="tag=v${pkgver}"
+# Signed candidate builds have no stable tag yet. Accept only an immutable
+# full commit, retaining the historical tag path for normal makepkg/release.
+if [[ -n ${TENEBRA_SOURCE_COMMIT:-} ]]; then
+  [[ $TENEBRA_SOURCE_COMMIT =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid source commit' >&2; exit 1; }
+  _source_fragment="commit=${TENEBRA_SOURCE_COMMIT}"
+fi
 source=(
-  "git+${url}.git#tag=v${pkgver}"
+  "git+${url}.git#${_source_fragment}"
   "sing-box-${_singboxver}-linux-amd64.tar.gz::https://github.com/SagerNet/sing-box/releases/download/v${_singboxver}/sing-box-${_singboxver}-linux-amd64.tar.gz"
   "geoip-ru-${_geoipcommit}.srs::https://raw.githubusercontent.com/SagerNet/sing-geoip/${_geoipcommit}/geoip-ru.srs"
   "geosite-ru-${_geositecommit}.srs::https://raw.githubusercontent.com/SagerNet/sing-geosite/${_geositecommit}/geosite-category-ru.srs"
@@ -98,6 +105,9 @@ sha256sums=(
 
 prepare() {
   cd "${pkgname}"
+  if [[ -n ${TENEBRA_SOURCE_COMMIT:-} ]]; then
+    [[ $(git rev-parse HEAD) == "$TENEBRA_SOURCE_COMMIT" ]] || { echo 'Source checkout differs' >&2; return 1; }
+  fi
 
   # Fetch every dependency up front so build() does no network I/O, and keep the
   # caches inside $srcdir instead of the packager's home.
@@ -113,6 +123,10 @@ prepare() {
 
 build() {
   cd "${pkgname}"
+  # Use exactly the patch tested by CI; the system Go only bootstraps it.
+  export GOTOOLCHAIN="go$(cat .go-version)"
+  go version
+
 
   export GOPATH="${srcdir}/gopath"
   # Arch's Go packaging template builds with cgo and an external linker, which
@@ -126,6 +140,7 @@ build() {
   # go.mod mid-build, and -modcacherw leaves the module cache deletable.
   export GOFLAGS="-trimpath -mod=readonly -modcacherw -buildmode=pie"
   go build -o build/tenebra-core ./cmd/tenebra-core
+  node scripts/verify-core-build.mjs build/tenebra-core linux amd64 build/core-buildinfo.json
 
   # Tauri resolves an externalBin sidecar by target triple at build time, so the
   # core has to exist under that name even though the packaged app never spawns

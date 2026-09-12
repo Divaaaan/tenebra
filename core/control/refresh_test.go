@@ -55,7 +55,7 @@ func daemonWithFetch(t *testing.T, f *fakeFetch) (*Daemon, *profile.Store) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	d := NewDaemon(store, newFakeRunner())
+	d := newUnitTestDaemon(store, newFakeRunner())
 	d.fetch = f.fetch
 	return d, store
 }

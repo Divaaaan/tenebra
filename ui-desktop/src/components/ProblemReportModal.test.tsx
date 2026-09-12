@@ -112,12 +112,12 @@ describe("ProblemReportModal", () => {
   });
 
   it("closes on Escape and on a scrim click, like the app's other overlays", () => {
-    const { props, container } = setup();
+    const { props } = setup();
 
     fireEvent.keyDown(window, { key: "Escape" });
     expect(props.onClose).toHaveBeenCalledTimes(1);
 
-    const scrim = container.querySelector(".prof-modal-scrim");
+    const scrim = document.querySelector(".prof-modal-scrim");
     fireEvent.mouseDown(scrim as Element);
     expect(props.onClose).toHaveBeenCalledTimes(2);
   });

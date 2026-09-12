@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Divaaaan/tenebra/core/dnswire"
+	"github.com/Divaaaan/tenebra/core/protection"
 	"github.com/Divaaaan/tenebra/core/zapret"
 )
 
@@ -278,6 +280,11 @@ func (d *Daemon) excludeNodesFromZapret(dir string) {
 // function was written to replace, and silence about it leaves a user whose
 // nodes are still being desynced with nothing to go on.
 func (d *Daemon) nodeLookups() []zapret.Lookup {
+	if endpoint, required := d.ProtectionDNS(); required {
+		if err := protection.ValidateDNS(endpoint); err != nil {
+			return []zapret.Lookup{func(context.Context, string) ([]net.IP, error) { return nil, err }}
+		}
+	}
 	d.mu.Lock()
 	direct := strings.TrimSpace(d.routing.DNSDirect)
 	d.mu.Unlock()
@@ -1033,9 +1040,8 @@ func (d *Daemon) autoStartZapret(ctx context.Context, tunnelUp bool) bool {
 	// Asked here rather than in each caller: both automatic raises funnel through
 	// this function, so a switch obeyed at this point cannot be forgotten by the
 	// next path that wants a bypass up. Read before the bypass lock, because this
-	// is a decision NOT to run and nothing the lock protects can change it —
-	// queueing it behind a probe run of several minutes would only delay the
-	// answer the connect is waiting on.
+	// is a fast refusal; re-check after taking the lock because OFF may win while
+	// this automatic raise waits behind another operation.
 	if d.zapretSwitchedOff() {
 		// Debug, for the same reason the missing-bundle branch below is: the caller
 		// states at info where the censored services ended up, and this only adds
@@ -1055,6 +1061,10 @@ func (d *Daemon) autoStartZapret(ctx context.Context, tunnelUp bool) bool {
 		return false
 	}
 	defer d.zapretOpMu.Unlock()
+	if d.zapretSwitchedOff() {
+		d.emitDebug("zapret: the switch was turned off while waiting — leaving the bypass down")
+		return false
+	}
 
 	dir := filepath.Join(d.store.Dir(), zapretDirName)
 	entries, err := os.ReadDir(dir)

@@ -14,7 +14,7 @@ wire format, [control-protocol.md](control-protocol.md). This document is the
 | [Rust](https://rustup.rs/) (stable) | latest stable | the Tauri desktop shell |
 | PowerShell | Windows built-in / [PS 7+](https://github.com/PowerShell/PowerShell) | `scripts/fetch-resources.ps1` |
 
-CI builds the core on Go 1.26 and the desktop bundle with Node 24, so those are
+CI builds the core on the exact Go patch in `.go-version` (currently 1.26.8) and the desktop bundle with Node 24, so those are
 known-good; the minimums above are what `go.mod` and the front end actually
 require. The desktop app builds for **Windows, macOS and Linux** (this guide is
 written from the Windows side; the platform-specific parts are in
@@ -435,3 +435,12 @@ For contributors deciding where to dig in, the honest open items:
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for how to pick something up and propose
 a change.
+
+
+### Windows service development and delivery
+
+Release builds use the authenticated per-machine service exclusively. For a
+standalone development core, set `TENEBRA_PIPE=off` with a debug build. A missing
+service now leaves the GUI unavailable with repair instructions; it never opens
+a different profile store. Installer and beta channel acceptance are documented
+in [delivery acceptance](delivery-acceptance.md).

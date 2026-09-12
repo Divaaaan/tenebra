@@ -106,6 +106,7 @@ func TestSwitchFallsBackToReconnectWhenTheSelectorRefuses(t *testing.T) {
 
 	h.runner.mu.Lock()
 	h.runner.selectErr = errSelectRefused
+	h.runner.selectErrThroughStart = 1 // restart restores the selector API
 	h.runner.mu.Unlock()
 
 	h.send(Request{ID: 2, Cmd: CmdConnect, Profile: p.ID, Node: "hy2-id"})
@@ -183,7 +184,7 @@ func TestLiveSwitchTargetRefusesWhatTheRunningConfigCannotReach(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	d := NewDaemon(store, newFakeRunner())
+	d := newUnitTestDaemon(store, newFakeRunner())
 	d.generation = 7
 	d.state = State{State: StateConnected, Profile: "prof", Node: "a"}
 	d.live = &liveConfig{
@@ -224,7 +225,7 @@ func switchDaemon(t *testing.T, nodeID string) *Daemon {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	d := NewDaemon(store, newFakeRunner())
+	d := newUnitTestDaemon(store, newFakeRunner())
 	d.generation = 1
 	d.state = State{State: StateConnected, Profile: "prof", Node: nodeID}
 	d.live = &liveConfig{

@@ -103,6 +103,33 @@ function stepNamed(text, name) {
   return found[0];
 }
 
+test("only the final release job can publish either updater channel", () => {
+  const releaseJobs = jobs(workflow("release.yml"));
+  const publishers = [...releaseJobs].filter(([, body]) => steps(body).some(s => /\bnode\s+\.github\/scripts\/publish-release\.mjs\b/.test(s)));
+  assert.deepEqual(publishers.map(([name]) => name), ["publish"]);
+  const required = /needs:\s*\[([^\]]+)\]/.exec(releaseJobs.get("publish"))?.[1].split(',').map(s => s.trim());
+  assert.deepEqual(new Set(required), new Set(['windows', 'macos', 'linux', 'arch-package']));
+  for (const [name, body] of releaseJobs) {
+    if (name === 'publish') continue;
+    for (const step of steps(body)) assert.doesNotMatch(step, /\bnode\s+(?:\.github\/)?scripts\/publish-(?:beta-manifest|release)\.mjs\b/, name);
+  }
+});
+
+test("every Go setup resolves one exact committed patch", () => {
+  const expected = readFileSync(new URL('../../.go-version', import.meta.url), 'utf8').trim();
+  assert.match(expected, /^\d+\.\d+\.\d+$/);
+  let checked = 0;
+  for (const { name, text } of allWorkflows()) {
+    for (const step of steps(text).filter(s => /uses: actions\/setup-go@/.test(s))) {
+      const file = /go-version-file:\s*['"]?([^'"\s]+)/.exec(step)?.[1];
+      assert.equal(file, '.go-version', name);
+      assert.doesNotMatch(step, /go-version:/, name);
+      checked++;
+    }
+  }
+  assert.ok(checked >= 3);
+});
+
 test("the Arch attach step names the repository instead of asking git", () => {
   // The build step chowns the checkout to `builder` so makepkg can run, and this
   // step runs as root: gh's own repository resolution shells out to git, git
@@ -134,6 +161,37 @@ test("no tauri job publishes the release before the assets are complete", () => 
   for (const d of drafts) {
     assert.equal(d, "releaseDraft: true");
   }
+});
+
+test('Android can only upload its signed APK to an existing release', () => {
+  const attach = stepNamed(workflow('android.yml'), 'Attach the APK to the GitHub release');
+  assert.match(attach, /APK_PATH: \$\{\{ steps\.sign\.outputs\.apk \}\}/);
+  assert.match(attach, /node scripts\/attach-android-release\.mjs "\$GITHUB_REF_NAME" "\$APK_PATH"/);
+  assert.match(attach, /timeout-minutes: 33/);
+  assert.doesNotMatch(attach, /softprops|draft:|releaseDraft:|prerelease:|release (?:create|edit)/);
+});
+
+test('release hold runs the same final gate in explicit prepare-only mode', () => {
+  const publish = jobs(workflow('release.yml')).get('publish');
+  assert.match(publish, /TENEBRA_RELEASE_HOLD: \$\{\{ vars\.TENEBRA_RELEASE_HOLD \}\}/);
+  assert.match(publish, /if \[ "\$TENEBRA_RELEASE_HOLD" = "true" \]; then/);
+  assert.match(publish, /node \.github\/scripts\/publish-release\.mjs "\$GITHUB_REF_NAME" --prepare-only/);
+  assert.match(publish, /else\s+node \.github\/scripts\/publish-release\.mjs "\$GITHUB_REF_NAME"\s+fi/);
+  assert.doesNotMatch(publish, /^ {4}if:/m, 'hold must not skip asset verification');
+});
+
+test('explicit Android release hold stops both tag jobs and reports the missing APK without affecting debug', () => {
+  const android = jobs(workflow('android.yml'));
+  for (const job of ['release-gate', 'release']) {
+    assert.match(android.get(job), /if: \$\{\{ startsWith\(github\.ref, 'refs\/tags\/'\) && vars\.TENEBRA_ANDROID_RELEASE_HOLD != 'true' \}\}/);
+  }
+  const held = android.get('release-held');
+  assert.ok(held, 'an intentionally held release must be visible in the run');
+  assert.match(held, /if: \$\{\{ startsWith\(github\.ref, 'refs\/tags\/'\) && vars\.TENEBRA_ANDROID_RELEASE_HOLD == 'true' \}\}/);
+  assert.match(held, /GITHUB_STEP_SUMMARY/);
+  assert.match(held, /No APK was built, signed, or attached/);
+  assert.doesNotMatch(held, /secrets\.|contents: write|uses:|release upload|publish-release/);
+  assert.doesNotMatch(android.get('debug'), /TENEBRA_ANDROID_RELEASE_HOLD/);
 });
 
 test("a final job publishes the draft only after every build job", () => {

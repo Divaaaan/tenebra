@@ -1,9 +1,10 @@
+import { ModalLayer } from "../components/ModalLayer";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, type PingResult, type Profile } from "../api";
 import type { Tenebra } from "../state/useTenebra";
 import { useI18n } from "../i18n/I18nContext";
-import type { Strings } from "../i18n/strings";
+import { describeCoreError, type Strings } from "../i18n/strings";
 import { formatDate, formatExpiry, formatTrafficUsage } from "../lib/format";
 import { pushToast } from "../lib/toast";
 import { ClipboardError, readClipboardText } from "../lib/clipboard";
@@ -35,6 +36,7 @@ interface ProfilesScreenProps {
    * still runs, it just leaves the overlay up.
    */
   onConnected?: () => void;
+  onConnect?: (profile: string, node?: string) => Promise<import("../api").State | null>;
 }
 
 export function ProfilesScreen({
@@ -44,6 +46,7 @@ export function ProfilesScreen({
   initialImport = null,
   onImportConsumed,
   onConnected,
+  onConnect,
 }: ProfilesScreenProps) {
   const { t } = useI18n();
   const { profiles, state } = tenebra;
@@ -141,6 +144,7 @@ export function ProfilesScreen({
               onArmRemove={() => armRemove(profile.id)}
               onDisarmRemove={disarmRemove}
               onConnected={onConnected}
+              onConnect={onConnect}
             />
           ))}
         </ul>
@@ -176,6 +180,7 @@ interface ProfileCardProps {
   onDisarmRemove: () => void;
   /** Ask the shell to dismiss the overlay after a connect started from here. */
   onConnected?: () => void;
+  onConnect?: (profile: string, node?: string) => Promise<import("../api").State | null>;
 }
 
 // Calendar-day tone for the expiry readout, mirroring the day math in
@@ -216,6 +221,7 @@ function ProfileCard({
   onArmRemove,
   onDisarmRemove,
   onConnected,
+  onConnect,
 }: ProfileCardProps) {
   const { t, lang } = useI18n();
   const [expanded, setExpanded] = useState(false);
@@ -270,13 +276,18 @@ function ProfileCard({
   async function connectNode(nodeId?: string) {
     setBusy(true);
     try {
-      await tenebra.connect(profile.id, nodeId);
+      if (onConnect) {
+        if (!(await onConnect(profile.id, nodeId))) return;
+      } else {
+        await tenebra.connect(profile.id, nodeId);
+      }
+      onSelect();
       // A card connect is a "go": hand the overlay back so the main panel and the
       // fallback walk are in view. The "tunnel up" toast is raised by the shell
       // on the state transition, so it isn't duplicated here.
       onConnected?.();
-    } catch {
-      // The state stream surfaces the failure.
+    } catch (e) {
+      pushToast(describeCoreError(e, t));
     } finally {
       setBusy(false);
     }
@@ -712,7 +723,7 @@ function ImportDialog({ tenebra, onClose, initialUrl }: ImportDialogProps) {
   };
 
   return (
-    <div
+    <ModalLayer onClose={onClose}
       className="prof-modal-scrim"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) {
@@ -919,6 +930,6 @@ function ImportDialog({ tenebra, onClose, initialUrl }: ImportDialogProps) {
           )}
         </div>
       </div>
-    </div>
+    </ModalLayer>
   );
 }

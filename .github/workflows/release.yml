@@ -8,6 +8,15 @@ on:
 permissions:
   contents: write
 
+# Channel commits use optimistic concurrency as well; serializing publish runs
+# prevents older overlapping platform jobs from racing release visibility.
+concurrency:
+  group: tenebra-release
+  cancel-in-progress: false
+
+env:
+  GOTOOLCHAIN: local
+
 jobs:
   # Gate the release on the full CI suite so a tag can never point at an
   # untested commit: the signed build below only runs once these pass.
@@ -29,7 +38,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.26'
+          go-version-file: '.go-version'
           cache: false
       - uses: actions/setup-node@v6
         with:
@@ -39,6 +48,13 @@ jobs:
         run: powershell -ExecutionPolicy Bypass -File scripts/fetch-resources.ps1
       - name: Build core sidecar
         run: go build -o ui-desktop/src-tauri/binaries/tenebra-core-x86_64-pc-windows-msvc.exe ./cmd/tenebra-core
+      - name: Verify and retain Windows core build evidence
+        run: node scripts/verify-core-build.mjs ui-desktop/src-tauri/binaries/tenebra-core-x86_64-pc-windows-msvc.exe windows amd64 core-buildinfo-windows.json
+      - uses: actions/upload-artifact@v6
+        with:
+          name: core-buildinfo-windows
+          path: core-buildinfo-windows.json
+          if-no-files-found: error
       - name: Install front-end dependencies
         working-directory: ui-desktop
         run: npm ci
@@ -109,15 +125,6 @@ jobs:
             Updates are delivered in-app and verified against the project's
             minisign key before they install (on macOS the updater refreshes the
             app, not the hand-installed daemon).
-      - name: Publish the beta channel manifest
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # tauri-action published latest.json on this release; mirror it to
-        # beta.json on whichever release backs /releases/latest/download/ so beta
-        # clients pick up this build (a prerelease, or a newer stable) while
-        # stable clients keep reading latest.json untouched.
-        run: node scripts/publish-beta-manifest.mjs "$GITHUB_REF_NAME" "${{ steps.channel.outputs.prerelease }}"
   macos:
     # Runs after the Windows job on purpose: both jobs upload assets to the same
     # tag release and tauri-action merges its platform entries into the release's
@@ -130,7 +137,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.26'
+          go-version-file: '.go-version'
           cache: false
       - uses: actions/setup-node@v6
         with:
@@ -156,8 +163,15 @@ jobs:
           mkdir -p "$bins"
           GOOS=darwin GOARCH=arm64 go build -o "$bins/tenebra-core-aarch64-apple-darwin" ./cmd/tenebra-core
           GOOS=darwin GOARCH=amd64 go build -o "$bins/tenebra-core-x86_64-apple-darwin" ./cmd/tenebra-core
+          node scripts/verify-core-build.mjs "$bins/tenebra-core-aarch64-apple-darwin" darwin arm64 core-buildinfo-macos-arm64.json
+          node scripts/verify-core-build.mjs "$bins/tenebra-core-x86_64-apple-darwin" darwin amd64 core-buildinfo-macos-amd64.json
           lipo -create "$bins/tenebra-core-aarch64-apple-darwin" "$bins/tenebra-core-x86_64-apple-darwin" \
             -output "$bins/tenebra-core-universal-apple-darwin"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: core-buildinfo-macos
+          path: core-buildinfo-macos-*.json
+          if-no-files-found: error
       - name: Install front-end dependencies
         working-directory: ui-desktop
         run: npm ci
@@ -217,14 +231,6 @@ jobs:
             Updates are delivered in-app and verified against the project's
             minisign key before they install (on macOS the updater refreshes the
             app, not the hand-installed daemon).
-      - name: Publish the beta channel manifest
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # Re-run after the macOS assets land so beta.json mirrors the final
-        # latest.json carrying both platforms; the Windows job already published
-        # a Windows-only interim copy, which this overwrite supersedes.
-        run: node scripts/publish-beta-manifest.mjs "$GITHUB_REF_NAME" "${{ steps.channel.outputs.prerelease }}"
   linux:
     # Third in the chain for the same reason macOS is second: all three jobs
     # upload to one release and tauri-action merges its platform entries into
@@ -240,7 +246,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.26'
+          go-version-file: '.go-version'
           cache: false
       - uses: actions/setup-node@v6
         with:
@@ -256,6 +262,13 @@ jobs:
         run: bash scripts/fetch-resources.sh --arch amd64
       - name: Build core sidecar
         run: go build -o ui-desktop/src-tauri/binaries/tenebra-core-x86_64-unknown-linux-gnu ./cmd/tenebra-core
+      - name: Verify Linux core build evidence
+        run: node scripts/verify-core-build.mjs ui-desktop/src-tauri/binaries/tenebra-core-x86_64-unknown-linux-gnu linux amd64 core-buildinfo-linux.json
+      - uses: actions/upload-artifact@v6
+        with:
+          name: core-buildinfo-linux
+          path: core-buildinfo-linux.json
+          if-no-files-found: error
       - name: Install front-end dependencies
         working-directory: ui-desktop
         run: npm ci
@@ -317,13 +330,6 @@ jobs:
             Updates are delivered in-app and verified against the project's
             minisign key before they install (on macOS the updater refreshes the
             app, not the hand-installed daemon).
-      - name: Publish the beta channel manifest
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # Final overwrite of beta.json, now that latest.json carries all three
-        # platforms; the Windows and macOS jobs published interim copies.
-        run: node scripts/publish-beta-manifest.mjs "$GITHUB_REF_NAME" "${{ steps.channel.outputs.prerelease }}"
   arch-package:
     # Builds the pacman package the Arch users actually want, so they do not have
     # to run makepkg themselves. It is a separate job from the Tauri bundles
@@ -437,10 +443,18 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-      - name: Verify every expected asset landed, then publish
+      - name: Verify every expected asset landed, then prepare or publish
         env:
           # gh authenticates with GITHUB_TOKEN; the script reads the repository
           # from GITHUB_REPOSITORY, which the runner always sets, and hands it to
           # gh explicitly rather than letting gh work it out from git.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node .github/scripts/publish-release.mjs "$GITHUB_REF_NAME"
+          TENEBRA_RELEASE_HOLD: ${{ vars.TENEBRA_RELEASE_HOLD }}
+        run: |
+          set -eu
+          if [ "$TENEBRA_RELEASE_HOLD" = "true" ]; then
+            node .github/scripts/publish-release.mjs "$GITHUB_REF_NAME" --prepare-only
+            echo "Release held as a verified draft for native acceptance." >> "$GITHUB_STEP_SUMMARY"
+          else
+            node .github/scripts/publish-release.mjs "$GITHUB_REF_NAME"
+          fi

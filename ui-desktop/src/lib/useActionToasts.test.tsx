@@ -58,7 +58,7 @@ describe("useActionToasts", () => {
     expect(messages).toEqual(["tunnel up · EX-01 · hysteria2"]);
   });
 
-  it("announces the kill switch arming and disarming", () => {
+  it("announces the requested kill switch preference separately from native guard evidence", () => {
     const base: ConnectedNode = { name: "EX-01", protocol: "vless" };
     const { messages, rerender } = setup({
       state: { ready: true, phase: "connected", killSwitch: false, routing: "smart" },
@@ -74,7 +74,7 @@ describe("useActionToasts", () => {
       node: base,
     });
 
-    expect(messages).toEqual(["kill-switch · on", "kill-switch · off"]);
+    expect(messages).toEqual(["kill-switch · requested", "kill-switch request · off"]);
   });
 
   it("announces a routing change with a lowercased mode", () => {

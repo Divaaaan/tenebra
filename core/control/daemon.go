@@ -19,6 +19,7 @@ import (
 	"github.com/Divaaaan/tenebra/core/model"
 	"github.com/Divaaaan/tenebra/core/nodecheck"
 	"github.com/Divaaaan/tenebra/core/profile"
+	"github.com/Divaaaan/tenebra/core/protection"
 	"github.com/Divaaaan/tenebra/core/routing"
 	"github.com/Divaaaan/tenebra/core/singbox"
 	"github.com/Divaaaan/tenebra/core/subscription"
@@ -97,8 +98,10 @@ const defaultClientWriteTimeout = 30 * time.Second
 // lifecycle also spawns goroutines (traffic poll, process watch) that mutate
 // state, so every field touched from more than one goroutine is guarded by mu.
 type Daemon struct {
-	store  *profile.Store
-	runner Runner
+	store        *profile.Store
+	runner       Runner
+	protection   *protection.Guard
+	protectionOp sync.Mutex // serializes desired-setting changes with apply/activate
 
 	// proxy applies and clears the OS-wide system proxy for ModeSystemProxy. It is
 	// set once at construction (realSystemProxy in production, a fake in tests) and
@@ -190,10 +193,13 @@ type Daemon struct {
 	routing      routing.Options
 	state        State
 	tun          singbox.TunOptions
-	// proxyArmed records whether the daemon currently has the OS system proxy
-	// pointed at our mixed inbound, so disarmSystemProxy clears it exactly once and
-	// never touches a proxy we didn't set. Guarded by mu.
-	proxyArmed bool
+	// proxyMu serializes apply/rollback; the fields below are also protected by mu
+	// when inspected with the rest of the daemon state. Armed means cleanup is
+	// owed, including a partial apply. Applied is true only after confirmed success.
+	proxyMu      sync.Mutex
+	proxyArmed   bool
+	proxyApplied bool
+	proxyTarget  string
 
 	// emit is set by the server via SetEmitter before serving; the daemon calls
 	// it to publish state/traffic/log events. Guarded by mu.
@@ -496,9 +502,10 @@ type Daemon struct {
 // with the stack pinned explicitly so the reported state always names it.
 func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 	d := &Daemon{
-		store:  store,
-		runner: runner,
-		proxy:  realSystemProxy{},
+		store:      store,
+		runner:     runner,
+		proxy:      newSystemProxyController(),
+		protection: protection.New(nil),
 		// Only UnblockServices ships on, and the split is by direction rather than
 		// by convenience. It pins censored domains *to* the tunnel ahead of the geo
 		// rule, which is what stops YouTube from being sent direct because
@@ -1014,8 +1021,10 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 // snapshotState returns a copy of the current state under lock.
 func (d *Daemon) snapshotState() State {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.state
+	s := d.state
+	d.mu.Unlock()
+	s.Protection = d.protection.Snapshot()
+	return s
 }
 
 // snapshotRouting returns a copy of the live routing options under lock. The
@@ -1359,6 +1368,17 @@ func (d *Daemon) refreshProfile(ctx context.Context, p profile.Profile) (profile
 	before := p
 	p.Servers = rebuilt.Servers
 	p.UpdatedAt = rebuilt.UpdatedAt
+	// Keep the last valid profile if this refresh removes an enabled hop. The
+	// refresh command returns the error, and background refresh logs it; neither
+	// may replace a promised chain with a silently downgraded next connection.
+	d.mu.Lock()
+	mh := d.multihop
+	d.mu.Unlock()
+	if mh.Enabled && (hasServer(before, mh.EntryID) || hasServer(before, mh.ExitID)) {
+		if err := validateMultihopProfile(p, mh); err != nil {
+			return profile.Profile{}, false, fmt.Errorf("refresh refused: %w", err)
+		}
+	}
 	// Only refresh traffic/expiry when this response actually carries a user-info
 	// header. A refresh that returns the node list but no Subscription-Userinfo
 	// (some panels send it only intermittently) must preserve the known quota and
@@ -1636,18 +1656,38 @@ func sameStrings(a, b []string) bool {
 // persisted, and — unlike set_routing/set_split — applied to a live tunnel in
 // place: the daemon rebuilds the config for the node it is already on and
 // hot-swaps the sing-box process (see reapplyLive), so arming doesn't wait for
-// the user to reconnect. Armed means strict_route on the tun (sing-box installs
-// filter rules that drop any packet trying to escape the tunnel) plus an
-// automatic relaunch if the tunnel process itself dies (see watchProcess).
+// the user to reconnect. The preference alone does not claim enforcement:
+// State.Protection reports the independent persistent guard's actual result.
 func (d *Daemon) handleSetKillSwitch(req Request) Response {
+	d.protectionOp.Lock()
+	before := d.protection.Snapshot()
 	d.mu.Lock()
 	changed := d.routing.KillSwitch != req.On
 	d.routing.KillSwitch = req.On
 	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
 	d.mu.Unlock()
+	var protectionErr error
+	if !req.On {
+		// Retry even if the desired value is already OFF: an earlier removal may
+		// have failed after settings were saved. Only explicit commands release.
+		protectionErr = d.protection.Release()
+	} else if !d.protection.LegacyEngineOnly() {
+		cur := d.snapshotState()
+		if (changed || before.Status != "active") && (cur.State == StateConnected || cur.State == StateConnecting || cur.Protection.Enforced || before.Status == "error") {
+			if err := protection.ValidateDNS(d.snapshotRouting().Normalize().DNSDirect); err != nil {
+				protectionErr = d.protection.Reject(err)
+			} else {
+				protectionErr = d.protection.Prepare()
+			}
+		}
+	}
+	d.protectionOp.Unlock()
 
 	d.persistSettings()
-	if changed {
+	if protectionErr != nil {
+		return newError(req.ID, "host protection: "+protectionErr.Error())
+	}
+	if changed || before.Status == "error" {
 		d.reapplyLive()
 	}
 
@@ -1693,7 +1733,7 @@ func (d *Daemon) handleSetTLSFragment(req Request) Response {
 // so a bad pick is rejected whole rather than half-applied; disabling ignores the
 // IDs but keeps them recorded so the UI can re-enable the last pick. The IDs are
 // resolved to outbound tags against the connecting profile later (resolveMultihop),
-// so a selection that no longer resolves simply degrades to a single hop.
+// and revalidated on connect and subscription refresh.
 func (d *Daemon) handleSetMultihop(req Request) Response {
 	mh := model.Multihop{Enabled: req.Enabled, EntryID: req.EntryID, ExitID: req.ExitID}
 	if mh.Enabled {
@@ -1712,6 +1752,18 @@ func (d *Daemon) handleSetMultihop(req Request) Response {
 		}
 		if !hasServer(p, mh.ExitID) {
 			return newError(req.ID, "set_multihop: exit node not in profile")
+		}
+		if err := validateMultihopProfile(p, mh); err != nil {
+			return newError(req.ID, "set_multihop: "+err.Error())
+		}
+		// The setting applies to the active tunnel immediately. Validating only
+		// req.Profile could advertise its chain over a different live profile.
+		cur := d.snapshotState()
+		if (cur.State == StateConnected || cur.State == StateConnecting) && cur.Profile != p.ID {
+			liveProfile, ok := d.store.Get(cur.Profile)
+			if !ok || validateMultihopProfile(liveProfile, mh) != nil {
+				return newError(req.ID, "set_multihop: selected chain is incompatible with the current connection")
+			}
 		}
 	}
 
@@ -1744,24 +1796,30 @@ func hasServer(p profile.Profile, id string) bool {
 	return false
 }
 
+func validateMultihopProfile(p profile.Profile, mh model.Multihop) error {
+	if !mh.Enabled {
+		return nil
+	}
+	if !mh.Valid() {
+		return fmt.Errorf("multihop: entry and exit must name distinct nodes")
+	}
+	if !hasServer(p, mh.EntryID) || !hasServer(p, mh.ExitID) {
+		return fmt.Errorf("multihop: selected entry or exit is no longer in this profile")
+	}
+	tags := serverTags(p)
+	return singbox.ValidateMultihop(profileNodes(p), tags[mh.EntryID], tags[mh.ExitID])
+}
+
 // resolveMultihop folds a stored multihop selection (server IDs) into the routing
 // options the builder consumes (outbound tags), using the tag map the connecting
 // profile produces (serverTags). It engages only for a valid, distinct pair whose
-// IDs both resolve to a tag the builder will actually emit; anything else leaves
-// the options untouched so the build degrades to a normal single hop rather than
-// carrying a dangling detour. tags maps a server ID to its outbound tag.
+// IDs both resolve to a tag the builder will actually emit. Validation happens
+// before connect; even an invalid enabled selection remains enabled here so the
+// builder rejects it. tags maps a server ID to its outbound tag.
 func resolveMultihop(ro routing.Options, mh model.Multihop, tags map[string]string) routing.Options {
-	if !mh.Valid() {
-		return ro
-	}
-	entryTag := tags[mh.EntryID]
-	exitTag := tags[mh.ExitID]
-	if entryTag == "" || exitTag == "" || entryTag == exitTag {
-		return ro
-	}
-	ro.Multihop = true
-	ro.MultihopEntry = entryTag
-	ro.MultihopExit = exitTag
+	ro.Multihop = mh.Enabled
+	ro.MultihopEntry = tags[mh.EntryID]
+	ro.MultihopExit = tags[mh.ExitID]
 	return ro
 }
 
@@ -1919,6 +1977,18 @@ func (d *Daemon) handleSetDNS(req Request) Response {
 	if !routing.ValidDNSServer(req.DNSDirect) {
 		return newError(req.ID, fmt.Sprintf("set_dns: invalid direct resolver %q", req.DNSDirect))
 	}
+	// Serialize the protection check and preference write with ON/OFF. Otherwise
+	// ON can validate the old encrypted endpoint while this command saves a new
+	// plaintext endpoint based on an earlier unprotected snapshot.
+	d.protectionOp.Lock()
+	if _, required := d.ProtectionDNS(); required {
+		next := d.snapshotRouting()
+		next.DNSDirect = req.DNSDirect
+		if err := protection.ValidateDNS(next.Normalize().DNSDirect); err != nil {
+			d.protectionOp.Unlock()
+			return newError(req.ID, "set_dns: "+err.Error())
+		}
+	}
 
 	d.mu.Lock()
 	// d.routing is always kept normalized, so "before" already holds the effective
@@ -1935,6 +2005,7 @@ func (d *Daemon) handleSetDNS(req Request) Response {
 	changed := dnsPrefsDiffer(before, d.routing)
 	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
 	d.mu.Unlock()
+	d.protectionOp.Unlock() // reapplyLive acquires connMu and later protectionOp
 
 	d.persistSettings()
 	if changed {

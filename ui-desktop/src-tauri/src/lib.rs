@@ -13,7 +13,7 @@ mod tray;
 mod update_channel;
 
 use std::sync::{Arc, Mutex};
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(target_os = "linux", all(windows, test)))]
 use std::time::{Duration, Instant};
 
 use serde_json::json;
@@ -162,52 +162,12 @@ impl EventSink for TauriSink {
 }
 
 // =============================================================================
-// Backend selection.
-//
-// The ONE place a transport is chosen, tried in order:
-//
-//  1. TENEBRA_MOCK=1 forces the in-process demo fake (UI work without the
-//     core, or when the sidecar binary isn't built). Read by value, so an
-//     explicit `0`/`off`/`false`/`no` — or an empty one — is not a request
-//     for it; see mock_requested.
-//  2. On Windows, if a core is already listening on the control pipe (the
-//     installed service, or `tenebra-core --pipe` in a console), attach to it.
-//     The tunnel then outlives this process and the GUI needs no elevation.
-//     TENEBRA_PIPE renames the pipe or (`off`) skips it — see
-//     backend::pipe::configured_name.
-//  2'. On macOS and Linux, the same probe over the daemon's unix socket
-//     (`/var/run/tenebra.sock` and `/run/tenebra.sock` respectively): if the
-//     root daemon — the macOS LaunchDaemon, the Linux systemd service — is
-//     listening, attach. TENEBRA_SOCKET renames the path or (`off`) skips it —
-//     see backend::unix::configured_path.
-//  3. Otherwise spawn the `tenebra-core` sidecar and own it — today's default
-//     and the development path.
-//
-// If the sidecar cannot be located or will not spawn (e.g. the binary is
-// missing), we log and fall back to `backend::unavailable`, which refuses every
-// command with that reason. It used to fall back to the demo mock, and that was
-// a lie the user had no way to see through: the window filled with invented
-// profiles, a connect that "succeeded" on a timer, and a bypass reporting fake
-// strategies — an app telling someone their traffic is protected while nothing
-// at all is running. The refusal surfaces in the UI as "the core cannot be
-// reached, retrying", which is what happened. Every choice implements the same
-// `Backend` trait and is logged on the UI's own log channel, so nothing else in
-// this file or the front end changes.
-//
-// The choice is made once and kept for the life of the process (the front end
-// holds no notion of a transport, and a live sidecar tunnel cannot be handed to
-// the service mid-run), which makes step 3 a consequential place to land by
-// accident: an app-owned core keeps its profiles in the per-user store, so a
-// user whose profiles live in the service's machine store sees an empty list
-// and a Connect button that appears to do nothing. Two things guard against
-// arriving there by mistake rather than by configuration: the dial itself waits
-// out a service that is merely still starting (backend::pipe, and
-// backend::unix where the platform warrants it), and the fallback is reported
-// at warn with a plain description of what changed. Where a listener can be
-// probed without displacing whoever holds it — Windows via WaitNamedPipeW,
-// Linux via /proc/net/unix — we then keep watching for a while and say so if
-// the service turns up late, so a user in that state is told a restart is all
-// it takes. macOS has no such probe, so there the warning stands alone.
+// Backend selection. Explicit mock mode is reserved for UI development.
+// Windows release builds always attach to the authenticated machine service;
+// debug builds can opt into their own sidecar with TENEBRA_PIPE=off. A failed
+// service connection preserves the machine profile store and offers repair.
+// Unix builds attach to their root daemon where available, with the existing
+// explicit/logged development-sidecar path. Missing bundled binaries fail closed.
 // =============================================================================
 fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
     if mock_requested(std::env::var("TENEBRA_MOCK").ok().as_deref()) {
@@ -215,31 +175,26 @@ fn make_backend(app: &AppHandle, sink: Arc<dyn EventSink>) -> Arc<dyn Backend> {
     }
 
     #[cfg(windows)]
-    if let Some(name) = backend::pipe::configured_name() {
-        match backend::pipe::PipeBackend::connect(&name, Arc::clone(&sink)) {
-            Ok(backend) => {
-                sink.log(
-                    "info",
-                    &format!("attached to the Tenebra service on {name}"),
-                );
-                return Arc::new(backend);
-            }
-            // Falling through to the sidecar is a working configuration (it is
-            // the development path), but on an installed machine it is a
-            // downgrade the user never asked for and cannot see from the UI, so
-            // it is reported as a warning that names the consequences rather
-            // than as a note about spawning a process.
-            Err(e) => {
-                sink.log(
-                    "warn",
-                    &format!(
-                        "could not reach the Tenebra service on {name} ({e}); \
-                         running this app's own core instead — profiles saved by the service \
-                         are not visible here, and connecting in tun mode needs \
-                         administrator rights"
-                    ),
-                );
-                watch_for_a_late_service(name, Arc::clone(&sink));
+    {
+        let override_value = std::env::var("TENEBRA_PIPE").ok();
+        let explicit_sidecar = backend::service_policy::allow_windows_sidecar(
+            cfg!(debug_assertions),
+            override_value.as_deref(),
+        );
+        if !explicit_sidecar {
+            // Release builds always use the authenticated machine service.
+            // Development may explicitly select an alternate pipe.
+            let name = if cfg!(debug_assertions) {
+                backend::pipe::configured_name().unwrap_or_else(|| backend::pipe::PIPE_NAME.into())
+            } else {
+                backend::pipe::PIPE_NAME.into()
+            };
+            match backend::pipe::PipeBackend::connect(&name, Arc::clone(&sink)) {
+                Ok(service) => return Arc::new(service),
+                Err(e) => return no_core(&sink, format!(
+                    "Tenebra service is unavailable ({e}). Start the Tenebra service in Windows Services, \
+                     then restart the app. If that fails, rerun the Tenebra installer as administrator \
+                     and inspect %ProgramData%\\Tenebra\\service.log. Your service profiles remain in their original store.")),
             }
         }
     }
@@ -308,49 +263,14 @@ fn no_core(sink: &Arc<dyn EventSink>, reason: String) -> Arc<dyn Backend> {
 /// should not carry a polling thread for the life of the process. The tick is
 /// deliberately lazy; nothing here depends on catching the transition promptly,
 /// only on catching it at all.
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(target_os = "linux")]
 const LATE_SERVICE_WATCH: Duration = Duration::from_secs(60);
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(target_os = "linux")]
 const LATE_SERVICE_TICK: Duration = Duration::from_secs(2);
-
-/// Watch for a service that comes up after this app already committed to its own
-/// core, and say so once if it does.
-///
-/// This app cannot promote itself onto the service mid-run: the sidecar it
-/// spawned may be carrying a live tunnel, and dropping that to attach elsewhere
-/// would take the user's connection down without being asked. What it can do is
-/// stop the state from being silent — a relaunch is all it takes, and the user
-/// has no way to know that from a UI that simply shows no profiles. The watch
-/// lives on its own thread, ends with [`LATE_SERVICE_WATCH`], and probes without
-/// dialing (see [`backend::pipe::is_listening`]) so it never displaces the
-/// session of whatever client the service is actually serving.
-#[cfg(windows)]
-fn watch_for_a_late_service(name: String, sink: Arc<dyn EventSink>) {
-    // A thread that cannot be spawned costs the user nothing but this notice.
-    let _ = std::thread::Builder::new()
-        .name("tenebra-service-watch".into())
-        .spawn(move || {
-            let appeared = await_probe(
-                || backend::pipe::is_listening(&name),
-                LATE_SERVICE_TICK,
-                LATE_SERVICE_WATCH,
-            );
-            if appeared {
-                sink.log(
-                    "warn",
-                    &format!(
-                        "the Tenebra service is listening on {name} now, but this session is \
-                         already running the app's own core; restart Tenebra to control the \
-                         service and see the profiles saved there"
-                    ),
-                );
-            }
-        });
-}
 
 /// Watch for a daemon that comes up after this app already committed to its own
 /// core, and say so once if it does. The Linux half of
-/// [`watch_for_a_late_service`], for the same reason and with the same limits;
+/// the Windows service startup check, for the same reason and with the same limits;
 /// it probes the kernel's socket table rather than dialing (see
 /// [`backend::unix::is_listening`]), so it never displaces the session of
 /// whatever client the daemon is actually serving.
@@ -382,7 +302,7 @@ fn watch_for_a_late_daemon(path: String, sink: Arc<dyn EventSink>) {
 /// reporting whether it ever did. Split out from the watch thread so its
 /// schedule — look first, then wait, and always look at least once — can be
 /// tested without a real pipe, a real socket, or real seconds.
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(target_os = "linux", all(windows, test)))]
 fn await_probe(mut probe: impl FnMut() -> bool, tick: Duration, window: Duration) -> bool {
     let deadline = Instant::now() + window;
     loop {
@@ -1313,6 +1233,12 @@ fn update_notice(lang: Lang, version: &str) -> (&'static str, String) {
     }
 }
 
+/// Called by the trusted installed executable before initializing Tauri.
+#[cfg(windows)]
+pub fn check_installed_service() -> Result<(), String> {
+    backend::pipe::check_service_readiness(env!("CARGO_PKG_VERSION"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1325,6 +1251,7 @@ mod tests {
             node: None,
             profile: None,
             routing: None,
+            protection: None,
             daemon_version: None,
             split: None,
             split_apps: None,

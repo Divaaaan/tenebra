@@ -269,22 +269,32 @@ func (d *Daemon) emitSwitchAttempt(gen uint64, profileID, nodeID string) {
 	})
 }
 
-// autoSwitchAway moves the tunnel off a degraded exit onto one that is measurably
-// working, without a reconnect. It reports whether it took ownership; false leaves
-// the caller to fall back to the reconnect-based failover.
+type autoSwitchResult int
+
+const (
+	autoSwitchReconnect autoSwitchResult = iota
+	autoSwitchSucceeded
+	autoSwitchSuppressed
+)
+
+// autoSwitchAway distinguishes an unavailable live switch from a policy refusal.
+// Only the former permits reconnect-based recovery.
 //
 // It is the automatic counterpart of a user tapping another node, and it is gated
 // by the hysteresis in allowAutoSwitch: the tunnel must be steerable, the daemon
 // must not have moved the exit too recently or too often, and the candidate must
 // pass a real measurement before anything moves.
-func (d *Daemon) autoSwitchAway(ctx context.Context, gen uint64, profileID, degraded string) bool {
+func (d *Daemon) autoSwitchAway(ctx context.Context, gen uint64, profileID, degraded string) autoSwitchResult {
+	if !d.allowAutoRecovery(gen, profileID, degraded) {
+		return autoSwitchSuppressed
+	}
 	if !d.allowAutoSwitch(gen, profileID, degraded) {
-		return false
+		return autoSwitchReconnect
 	}
 
 	target, ok := d.scanForExit(ctx, profileID, degraded)
 	if !ok {
-		return false
+		return autoSwitchReconnect
 	}
 
 	// TryLock, not Lock. This runs on the health watchdog's goroutine, which
@@ -295,20 +305,20 @@ func (d *Daemon) autoSwitchAway(ctx context.Context, gen uint64, profileID, degr
 	// miss simply falls through to the reconnect-based failover, which needs no
 	// lock of its own (see startConnectIfCurrent).
 	if !d.connMu.TryLock() {
-		return false
+		return autoSwitchReconnect
 	}
 	defer d.connMu.Unlock()
 	// The generation is re-checked under connMu for the same reason every
 	// off-command connect re-checks it: a user command may have landed while the
 	// scan ran, and it wins.
-	if !d.isCurrent(gen) {
-		return false
+	if !d.allowAutoRecovery(gen, profileID, degraded) || d.liveNode("") != degraded {
+		return autoSwitchSuppressed
 	}
 	if !d.switchNode(ctx, profileID, target, "the previous exit stopped carrying traffic", false) {
-		return false
+		return autoSwitchReconnect
 	}
 	d.recordAutoSwitch()
-	return true
+	return autoSwitchSucceeded
 }
 
 // allowAutoSwitch is the hysteresis gate. It marks the degraded node so nothing
@@ -318,6 +328,17 @@ func (d *Daemon) autoSwitchAway(ctx context.Context, gen uint64, profileID, degr
 // about restraint rather than capability are logged once, because a user whose
 // exit is degraded and is NOT being moved deserves to know that is a decision.
 func (d *Daemon) allowAutoSwitch(gen uint64, profileID, degraded string) bool {
+	if !d.allowAutoRecovery(gen, profileID, degraded) {
+		return false
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.live != nil && d.live.gen == gen && d.live.profileID == profileID
+}
+
+// allowAutoRecovery applies one cooldown and window budget to live switches and
+// full health reconnects. Capability is deliberately outside this policy gate.
+func (d *Daemon) allowAutoRecovery(gen uint64, profileID, degraded string) bool {
 	now := d.now()
 
 	d.mu.Lock()
@@ -327,7 +348,7 @@ func (d *Daemon) allowAutoSwitch(gen uint64, profileID, degraded string) bool {
 	if degraded != "" {
 		d.degradedAt[degraded] = now
 	}
-	steerable := d.live != nil && d.live.gen == gen && d.live.gen == d.generation && d.live.profileID == profileID
+	current := d.generation == gen && d.state.Profile == profileID && d.state.State == StateConnected && d.autoFailover
 	// Only the switches inside the window count, so a quiet session recovers its
 	// full budget without anything having to reset it.
 	recent := d.autoSwitches[:0:0]
@@ -344,7 +365,7 @@ func (d *Daemon) allowAutoSwitch(gen uint64, profileID, degraded string) bool {
 	}
 	d.mu.Unlock()
 
-	if !steerable {
+	if !current {
 		return false
 	}
 	if spent > 0 && sinceLast < d.autoSwitchCooldown {

@@ -1,3 +1,4 @@
+import { ModalLayer } from "./ModalLayer";
 import { useEffect, useRef } from "react";
 
 import { useI18n } from "../i18n/I18nContext";
@@ -49,7 +50,7 @@ export function DeepLinkConfirm({
   }, [onCancel]);
 
   return (
-    <div
+    <ModalLayer onClose={onCancel}
       className={`prof-modal-scrim${leaving ? " is-leaving" : ""}`}
       onMouseDown={(e) => {
         // A click on the scrim (not the card) declines — the safe default.
@@ -86,6 +87,6 @@ export function DeepLinkConfirm({
           </button>
         </div>
       </div>
-    </div>
+    </ModalLayer>
   );
 }

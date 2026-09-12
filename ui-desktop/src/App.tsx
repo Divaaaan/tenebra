@@ -1,3 +1,6 @@
+import { ModalLayer } from "./components/ModalLayer";
+import { ConnectionError } from "./components/ConnectionError";
+import { ProtectionStatus } from "./components/ProtectionStatus";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
@@ -27,7 +30,7 @@ import { useTenebra } from "./state/useTenebra";
 import { useI18n } from "./i18n/I18nContext";
 import { describeCoreError, isTunConflict } from "./i18n/strings";
 import { pushToast } from "./lib/toast";
-import type { RoutingMode } from "./api";
+import type { Profile, RoutingMode, State } from "./api";
 import {
   api,
   onDeepLink,
@@ -85,6 +88,8 @@ export function App() {
   const [query, setQuery] = useState("");
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [busy, setBusy] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
+  const connectingRef = useRef(false);
 
   /**
    * The bypass, as the core reports it — never as this session remembers it.
@@ -111,6 +116,7 @@ export function App() {
    * instead of an untitled entry: they pasted a link, not a name, and asking
    * for one would be a step for nothing.
    */
+  const pendingSimpleImport = useRef<{ url: string; profile: Profile } | null>(null);
   const handleSimpleSubscribe = useCallback(async (url: string) => {
     let name = "VPN";
     try {
@@ -119,8 +125,22 @@ export function App() {
       // Not a URL the parser likes — the core will reject it with a better
       // message than anything guessed here.
     }
-    await api.importSubscription(url, name);
-  }, []);
+    // Import does not emit a profiles event. Retain its result when the refresh
+    // fails, so retrying the same link does not create a second subscription.
+    const imported = pendingSimpleImport.current?.url === url
+      ? pendingSimpleImport.current.profile
+      : await api.importSubscription(url, name);
+    pendingSimpleImport.current = { url, profile: imported };
+    try {
+      await tenebra.refreshProfiles();
+    } catch {
+      throw new Error("subscription_refresh_pending");
+    }
+    setSelectedProfileId(imported.id);
+    setSelectedNodeId("");
+    pendingSimpleImport.current = null;
+    pushToast(t.toast.profileImported.replace("{name}", imported.name));
+  }, [tenebra.refreshProfiles, t]);
 
   // Simple mode: the Settings toggle writes `tenebra.simpleMode`; we mirror it here
   // and swap the whole shell for SimpleView when it's on. A cross-window write
@@ -194,7 +214,7 @@ export function App() {
   // state (the live `phase`): a relaunch would drop an active VPN, so
   // auto-install waits for the tunnel to go down and a manual install while it
   // is up asks first.
-  const update = useUpdateCheck(phase);
+  const update = useUpdateCheck(phase, tenebra.ready && !tenebra.coreError);
 
   // Daemon build vs app build, latched from state snapshots. A skew means the
   // privileged daemon predates this UI — nothing the app installs itself
@@ -217,7 +237,9 @@ export function App() {
   // nothing. The crash path above needs both a consent and a crash file, which
   // together describe almost none of the ways this app actually disappoints
   // someone — a bypass that stopped carrying video leaves neither.
-  const problem = useProblemReport(state.daemon_version, tenebra.logs);
+  const problem = useProblemReport(state.daemon_version, connectError
+    ? [...tenebra.logs, { id: -1, at: new Date(), level: "error", msg: `connect request: ${connectError}` }]
+    : tenebra.logs);
 
   // The core-owned controls the shell drives directly. Their drawn position is
   // the state the daemon echoes back, so a refused command leaves the control
@@ -256,6 +278,10 @@ export function App() {
     () => profiles.find((p) => p.id === selectedProfileId) ?? null,
     [profiles, selectedProfileId],
   );
+  useEffect(() => {
+    if (selectedNodeId && !selectedProfile?.nodes.some((n) => n.id === selectedNodeId)) setSelectedNodeId("");
+  }, [selectedProfile, selectedNodeId]);
+
   const connectedProfile = useMemo(
     () => profiles.find((p) => p.id === state.profile) ?? null,
     [profiles, state.profile],
@@ -270,7 +296,7 @@ export function App() {
   const nodeCheck = useNodeCheck();
   // And, once connected, whether the three things the user came for actually
   // work: video, voice, game latency.
-  const services = useServiceChecks(phase);
+  const services = useServiceChecks(phase, `${state.profile ?? ""}:${state.node ?? ""}`);
   // The one thing this app says first. Video failing its check twice running is
   // worth interrupting over: it is what most people connected for, and the last
   // time it broke for everyone nobody said a word for four days.
@@ -291,12 +317,13 @@ export function App() {
           city: loc.label,
           region: loc.region,
           protocol: n.protocol,
-          rttMs: probe ? probe.rttMs : null,
-          dead: probe ? !probe.ok : false,
+          rttMs: probe?.ok && !pings.stale ? probe.rttMs : null,
+          stale: !!probe && pings.stale,
+          dead: probe && !pings.stale ? !probe.ok : false,
           insecure: n.insecure ?? false,
         };
       }),
-    [nodes, pings.results],
+    [nodes, pings.results, pings.stale],
   );
 
   // Lowest-ping live node, used as the auto target and the idle "current node".
@@ -319,7 +346,8 @@ export function App() {
     : (selectedProfile?.nodes.find((n) => n.id === targetNodeId) ?? null);
 
   const liveNodeId = connected ? state.node : targetNodeId;
-  const livePing = liveNodeId ? pings.results.get(liveNodeId)?.rttMs : undefined;
+  const liveProbe = liveNodeId ? pings.results.get(liveNodeId) : undefined;
+  const livePing = liveProbe?.ok && !pings.stale ? liveProbe.rttMs : undefined;
 
   // Confirm the App-level actions the user takes (reaching connected, arming the
   // kill switch, changing routing) with a toast. The initial status load is
@@ -340,96 +368,74 @@ export function App() {
   // unreachable, which leaves the list empty) was swallowed in silence.
   // Disabling it is the smallest honest fix and matches SimpleView, which has
   // always gated its own button on having a profile.
-  const canPrimary =
+  const canPrimary = !busy && !nodeCheck.checking && (
     connected ||
     phase === "connecting" ||
     phase === "health_reconnecting" ||
-    selectedProfileId !== null;
+    (tenebra.ready && !tenebra.coreError && selectedProfileId !== null && nodes.length > 0));
+
+  // All entrances share validation, refusal reporting and the one override prompt.
+  const selectionLocked = !tenebra.ready || !!tenebra.coreError || busy || nodeCheck.checking || phase === "connecting" || phase === "health_reconnecting";
+  const connectSafely = useCallback(async (profileId: string, node?: string, auto?: boolean): Promise<State | null> => {
+    if (connectingRef.current) return null;
+    connectingRef.current = true;
+    setBusy(true);
+    setConnectError(null);
+    try {
+      const profile = profiles.find((p) => p.id === profileId);
+      if (!profile) throw new Error("profile not found");
+      if (node && !profile.nodes.some((n) => n.id === node)) throw new Error("node not found in profile");
+      try {
+        return await tenebra.connect(profileId, node, auto);
+      } catch (e) {
+        if (!isTunConflict(e)) throw e;
+        pushToast(describeCoreError(e, t));
+        if (!(await askTunOverride())) return null;
+        return await tenebra.connect(profileId, node, auto, true);
+      }
+    } catch (e) {
+      setConnectError(e instanceof Error ? e.message : String(e));
+      pushToast(describeCoreError(e, t));
+      return null;
+    } finally {
+      connectingRef.current = false;
+      setBusy(false);
+    }
+  }, [profiles, tenebra, askTunOverride, t]);
 
   const handlePrimary = useCallback(() => {
-    if (busy) return;
+    if (!canPrimary) return;
     setBusy(true);
+    setConnectError(null);
     void (async () => {
       try {
-        if (
-          connected ||
-          phase === "connecting" ||
-          phase === "health_reconnecting"
-        ) {
-          // A click during an auto-recovery aborts it too, rather than racing a
-          // fresh connect against the watchdog's in-flight reconnect.
+        if (connected || phase === "connecting" || phase === "health_reconnecting") {
           await tenebra.disconnect();
         } else if (selectedProfileId) {
-          // No explicit node → let the core choose. The persisted "auto-select
-          // fastest" preference decides between ping-ranked and protocol-fallback
-          // order; it is read fresh (like autoconnect) so a Settings toggle takes
-          // effect on the next connect without prop-threading. When a node is
-          // selected, auto is moot — the core honours the explicit exit.
-          let node = selectedNodeId || undefined;
+          // Validate against the current profile even if a refresh removed the pin.
+          let node = nodes.some((n) => n.id === selectedNodeId) ? selectedNodeId : undefined;
           let auto = node ? undefined : getAutoFastest();
-
-          // Before letting latency decide, find out what actually carries
-          // traffic. A node whose proxy handshake has stopped answering still
-          // completes a TCP dial instantly, so it reads as the *fastest* node and
-          // wins a latency-ranked pick while every request through it hangs —
-          // which is precisely how a working-looking connect left the user with
-          // no internet. Measuring first costs seconds; picking blind costs the
-          // session.
           if (!node) {
-            const best = await nodeCheck.run(selectedProfileId);
-            if (best) {
-              node = best;
+            const outcome = await nodeCheck.run(selectedProfileId);
+            if (outcome.kind === "checked" && outcome.best) {
+              node = outcome.best;
               auto = undefined;
             } else {
-              // Nothing passed. Say so — and still try: the core's fallback walk
-              // tries nodes in turn and may get through where a one-shot probe
-              // did not, and refusing to connect at all would be a worse answer
-              // than a slow one.
-              pushToast(t.servers.noneUsable);
+              pushToast(outcome.kind === "failed" ? t.errors.probeFailed : t.servers.noneUsable);
             }
           }
-          try {
-            await tenebra.connect(selectedProfileId, node, auto);
-          } catch (e) {
-            // The guard refuses to raise our tun while another VPN owns the
-            // default route. That refusal is correct by default — two tunnels
-            // routing everything leave the machine offline — but it must not be
-            // a dead end: the user is the only one who knows whether the other
-            // tunnel overlaps, so ask, and honour the answer for this connect
-            // only.
-            if (!isTunConflict(e)) throw e;
-            // Name the refusal before asking: the prompt is a yes/no, this line
-            // is the reason and the fix (turn the other tunnel off).
-            pushToast(describeCoreError(e, t));
-            // Declining is an answer, not a second failure. Rethrowing here sent
-            // the same error to the outer catch, which said the very same line
-            // again — one refusal, two identical toasts.
-            if (!(await askTunOverride())) return;
-            await tenebra.connect(selectedProfileId, node, auto, true);
-          }
+          await connectSafely(selectedProfileId, node, auto);
         }
       } catch (e) {
-        // Say why nothing happened. A refused connect leaves the button exactly
-        // where it was, and swallowing the reason (the old behaviour) turned
-        // every refusal — a guard, a vanished node, a core that will not answer —
-        // into "the button does not work", which is unanswerable from the outside.
+        setConnectError(e instanceof Error ? e.message : String(e));
         pushToast(describeCoreError(e, t));
-      } finally {
-        setBusy(false);
-      }
+      } finally { setBusy(false); }
     })();
-  }, [
-    busy,
-    connected,
-    phase,
-    tenebra,
-    selectedProfileId,
-    selectedNodeId,
-    askTunOverride,
-  ]);
+  }, [canPrimary, connected, phase, tenebra, selectedProfileId, selectedNodeId, nodes, nodeCheck, connectSafely, t]);
 
   const handleSelectNode = useCallback(
     (id: string) => {
+      if (selectionLocked) return;
       setSelectedNodeId(id);
       if (!connected || !selectedProfileId) return;
       // Change the exit on a live tunnel. The core steers the running sing-box
@@ -439,9 +445,9 @@ export function App() {
       // nothing was reconnected, `connecting` means it is coming back up. Say so,
       // rather than showing the same "reconnecting" for both and teaching the user
       // that changing exits costs them their session.
-      void tenebra
-        .connect(selectedProfileId, id)
+      void connectSafely(selectedProfileId, id)
         .then((st) => {
+          if (!st) return;
           const name =
             selectedProfile?.nodes.find((n) => n.id === id)?.name ?? id;
           pushToast(
@@ -453,7 +459,7 @@ export function App() {
         })
         .catch(() => {});
     },
-    [connected, selectedProfileId, selectedProfile, tenebra, t],
+    [selectionLocked, connected, selectedProfileId, selectedProfile, connectSafely, t],
   );
 
   const handleSelectProfile = useCallback((id: string) => {
@@ -465,13 +471,13 @@ export function App() {
   // already connected, re-handshake straight away onto the fastest node, the
   // node-click counterpart for auto.
   const handleSelectAuto = useCallback(() => {
+    if (selectionLocked) return;
     setSelectedNodeId("");
     if (connected && selectedProfileId) {
-      void tenebra
-        .connect(selectedProfileId, undefined, getAutoFastest())
+      void connectSafely(selectedProfileId, undefined, getAutoFastest())
         .catch(() => {});
     }
-  }, [connected, selectedProfileId, tenebra]);
+  }, [selectionLocked, connected, selectedProfileId, connectSafely]);
 
   const handleSetRouting = useCallback(
     (mode: RoutingMode) => {
@@ -632,13 +638,12 @@ export function App() {
   // profile appears, honouring the fastest-node preference like a manual connect.
   useEffect(() => {
     if (!pendingConnect || !tenebra.ready) return;
-    if (!profiles.some((p) => p.id === pendingConnect)) return;
     const id = pendingConnect;
     setPendingConnect(null);
     setSelectedProfileId(id);
     setSelectedNodeId("");
-    void tenebra.connect(id, undefined, getAutoFastest()).catch(() => {});
-  }, [pendingConnect, tenebra, profiles]);
+    void connectSafely(id, undefined, getAutoFastest());
+  }, [pendingConnect, tenebra, profiles, connectSafely]);
 
   // Deep links (tenebra://). Links the app was launched with (cold start) are
   // drained once on mount; links opened while it runs arrive as events. Both go
@@ -712,50 +717,19 @@ export function App() {
   // Simple mode: one calm screen instead of the full shell. It reads the same
   // connection state and shares the same actions, so the two never disagree. The
   // eclipse easter egg still rides along; the console/toast layers do too.
-  if (simpleMode) {
-    return (
-      <div className="app app--simple" data-conn={phase}>
-        <SimpleView
-          phase={phase}
-          busy={busy}
-          onPrimary={handlePrimary}
-          nodeName={displayedNode?.name ?? ""}
-          profiles={profiles}
-          selectedProfileId={selectedProfileId}
-          onSelectProfile={handleSelectProfile}
-          nodes={nodes}
-          selectedNodeId={selectedNodeId}
-          onSelectNode={handleSelectNode}
-          onSelectAuto={handleSelectAuto}
-          bypassInstalled={bypassInstalled}
-          bypassOn={bypassOn}
-          bypassStrategy={bypassStrategy}
-          coreUnreachable={tenebra.coreError != null}
-          onSubscribe={handleSimpleSubscribe}
-          serviceChecks={services.checks}
-          serviceChecking={services.checking}
-          onReportProblem={problem.open}
-          reportNudge={nudge}
-        />
-        {tunConflictPrompt}
-        {problemReport}
-        <EclipseOverlay active={eclipse} onDone={endEclipse} />
-        <ToastHost />
-      </div>
-    );
-  }
-
   return (
-    <div className="app" data-conn={phase}>
-      <TopBar activeProfile={metaProfile} onEclipse={playEclipse} />
+    <div className={`app${simpleMode ? " app--simple" : ""}`} data-conn={phase}>
+      {!simpleMode && <TopBar activeProfile={metaProfile} onEclipse={playEclipse}
+        onSimpleMode={() => {
+          localStorage.setItem(SIMPLE_MODE_KEY, "true");
+          window.dispatchEvent(new CustomEvent("tenebra:simple-mode"));
+        }} />}
 
-      {connected && killSwitch && (
-        <div className="kill-banner" role="status">
-          ⚠ {t.bottom.killBanner}
-        </div>
-      )}
+      <ProtectionStatus state={state} reachable={tenebra.ready && !tenebra.coreError}
+        onRetry={() => tenebra.setKillSwitch(true)} onDisable={() => tenebra.setKillSwitch(false)}
+        onDisconnect={tenebra.disconnect} onError={reportRefusal} />
 
-      {tenebra.coreError && (
+      {tenebra.coreError && !simpleMode && (
         // The core never answered, so nothing on this screen is backed by
         // anything: no profiles, no real state, every action doomed. Say it in
         // the banner strip the update and skew notices already use (no new
@@ -771,6 +745,7 @@ export function App() {
           installing={update.installing}
           deferred={update.deferred}
           progress={update.progress}
+          waitingForStatus={!tenebra.ready || !!tenebra.coreError}
           onInstall={update.install}
           onDismiss={update.dismiss}
         />
@@ -813,6 +788,36 @@ export function App() {
         />
       )}
 
+      {(connectError || (phase === "error" && state.error)) && <ConnectionError error={connectError || state.error || ""} onReport={problem.open} />}
+      {simpleMode ? (
+        <SimpleView
+          phase={phase}
+          busy={busy}
+          checkingServers={nodeCheck.checking}
+          ready={tenebra.ready}
+          protectionBlocked={tenebra.ready && !tenebra.coreError && phase !== "connected" && state.protection?.status === "blocked" && state.protection.enforced && state.protection.persistent}
+          onPrimary={handlePrimary}
+          nodeName={displayedNode?.name ?? ""}
+          profiles={profiles}
+          selectedProfileId={selectedProfileId}
+          onSelectProfile={handleSelectProfile}
+          nodes={nodes}
+          selectedNodeId={selectedNodeId}
+          onSelectNode={handleSelectNode}
+          onSelectAuto={handleSelectAuto}
+          bypassInstalled={bypassInstalled}
+          bypassOn={bypassOn}
+          bypassStrategy={bypassStrategy}
+          coreUnreachable={tenebra.coreError != null}
+          onSubscribe={handleSimpleSubscribe}
+          serviceChecks={services.checks}
+          serviceChecking={services.checking}
+          onReportProblem={problem.open}
+          onManageProfiles={() => setOverlay("profiles")}
+          onSettings={() => setOverlay("settings")}
+          reportNudge={nudge}
+        />
+      ) : (<>
       {nudge}
 
       {/* The one setup step lives on the main screen, not behind a menu: what a
@@ -820,13 +825,20 @@ export function App() {
           somewhere else. The strip removes itself the moment it is done, so it
           costs a returning user nothing. */}
       <SimpleSetup
-        hasProfile={profiles.length > 0}
+        hasProfile={profiles.length > 0 || !tenebra.ready || !!tenebra.coreError}
         onSubscribe={handleSimpleSubscribe}
       />
+      {profiles.length === 0 && (!tenebra.ready || tenebra.coreError) && <section className="app-starting" role="status">
+        <h1>{tenebra.coreError ? t.simple.serviceUnavailable : t.simple.serviceStarting}</h1>
+        <p>{t.simple.serviceHelp}</p>
+      </section>}
 
-      <div className="app-body">
+      {(profiles.length > 0 || connected || phase === "connecting" || phase === "health_reconnecting") && <div className="app-body">
         <ConnectionPanel
           phase={phase}
+          ready={tenebra.ready}
+          coreUnreachable={!!tenebra.coreError}
+          protectionBlocked={tenebra.ready && !tenebra.coreError && phase !== "connected" && state.protection?.status === "blocked" && state.protection.enforced && state.protection.persistent}
           routing={state.routing ?? "smart"}
           auto={!selectedNodeId}
           attempts={tenebra.attempts}
@@ -844,7 +856,7 @@ export function App() {
           history={history}
           cumulativeDown={traffic.down}
           cumulativeUp={traffic.up}
-          errorMsg={state.error}
+          errorMsg={phase === "error" ? undefined : state.error}
           checking={nodeCheck.checking}
           onPrimary={handlePrimary}
           disabled={!canPrimary}
@@ -867,8 +879,9 @@ export function App() {
           onSelectNode={handleSelectNode}
           onAddSubscription={() => setOverlay("profiles")}
           pinging={pings.pinging}
+          disabled={selectionLocked}
         />
-      </div>
+      </div>}
 
       <BottomBar
         routing={state.routing ?? "smart"}
@@ -878,16 +891,19 @@ export function App() {
         onLeakCheck={() => setOverlay("logs")}
         onSettings={() => setOverlay("settings")}
         onReportProblem={problem.open}
-        bypassInstalled={bypassInstalled}
+        bypassInstalled={tenebra.ready && !tenebra.coreError && bypassInstalled}
         bypassOn={bypassOn}
         bypassStrategy={bypassStrategy}
       />
 
+      </>)}
+
       {overlayShown.value && (
-        <div
+        <ModalLayer onClose={() => setOverlay(null)}
           className={`overlay${overlayShown.leaving ? " is-leaving" : ""}`}
           role="dialog"
           aria-modal="true"
+          aria-label={overlayShown.value === "profiles" ? t.profiles.title : overlayShown.value === "settings" ? t.settings.title : t.logs.title}
           onClick={(e) => {
             if (e.target === e.currentTarget) setOverlay(null);
           }}
@@ -908,7 +924,8 @@ export function App() {
                 <ProfilesScreen
                   tenebra={tenebra}
                   selectedProfileId={selectedProfileId}
-                  onSelectProfile={setSelectedProfileId}
+                  onSelectProfile={handleSelectProfile}
+                  onConnect={connectSafely}
                   initialImport={importPreset}
                   onImportConsumed={clearImportPreset}
                   onConnected={() => setOverlay(null)}
@@ -920,7 +937,7 @@ export function App() {
               {overlayShown.value === "logs" && <LogsScreen tenebra={tenebra} />}
             </div>
           </div>
-        </div>
+        </ModalLayer>
       )}
 
       {connectRequestShown.value && (

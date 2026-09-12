@@ -56,11 +56,11 @@ describe("TunConflictConfirm", () => {
   it("declines when the scrim behind the card is clicked", () => {
     const onConfirm = vi.fn();
     const onCancel = vi.fn();
-    const { container } = renderWithProviders(
+    renderWithProviders(
       <TunConflictConfirm onConfirm={onConfirm} onCancel={onCancel} />,
     );
 
-    const scrim = container.querySelector(".prof-modal-scrim");
+    const scrim = document.querySelector(".prof-modal-scrim");
     expect(scrim).not.toBeNull();
     fireEvent.mouseDown(scrim as Element);
     expect(onCancel).toHaveBeenCalledTimes(1);

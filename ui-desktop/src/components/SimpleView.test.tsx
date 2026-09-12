@@ -46,16 +46,16 @@ describe("SimpleView", () => {
     expect(screen.getByText("You're not connected")).toBeInTheDocument();
   });
 
-  it("shows Disconnect and the protected line with the node when connected", () => {
+  it("shows Disconnect and the connected line with the node when connected", () => {
     setup({ phase: "connected", nodeName: "AMS-01" });
     expect(
       screen.getByRole("button", { name: "Disconnect" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("You're protected · AMS-01")).toBeInTheDocument();
+    expect(screen.getByText("Tunnel connected · AMS-01")).toBeInTheDocument();
   });
 
-  it("shows Abort while connecting", () => {
-    setup({ phase: "connecting" });
+  it.each(["connecting", "health_reconnecting"] as const)("shows Abort during %s", (phase) => {
+    setup({ phase });
     expect(screen.getByRole("button", { name: "ABORT" })).toBeInTheDocument();
   });
 
@@ -70,7 +70,7 @@ describe("SimpleView", () => {
     // instead of telling them to go and import one elsewhere — the setup step
     // IS the empty state.
     setup({ profiles: [], nodes: [] });
-    expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
     expect(
       screen.getByLabelText("Paste your subscription link"),
     ).toBeInTheDocument();
@@ -141,7 +141,49 @@ describe("SimpleView", () => {
 
   it("disables the button while a primary action is in flight", () => {
     setup({ busy: true });
+    expect(screen.getByRole("button", { name: "Preparing connection…" })).toBeDisabled();
+  });
+
+  it("names the server check and locks selections while it runs", () => {
+    setup({ checkingServers: true, profiles: [makeProfile({ id: "p1", nodes }), makeProfile({ id: "p2", nodes })] });
+    expect(screen.getByRole("heading", { name: "Checking servers…" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Checking servers…" })).toBeDisabled();
+    for (const picker of screen.getAllByRole("combobox")) expect(picker).toBeDisabled();
+  });
+
+  it("keeps reconnecting selections locked even between API responses", () => {
+    setup({ phase: "health_reconnecting", busy: false });
+    expect(screen.getByRole("combobox", { name: "Server" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "ABORT" })).toBeEnabled();
+  });
+
+  it("gives an empty subscription a recovery path instead of a dead Connect", () => {
+    const manage = vi.fn();
+    setup({ nodes: [], onManageProfiles: manage });
+    expect(screen.getByText(/This subscription has no servers/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Manage subscriptions" }));
+    expect(manage).toHaveBeenCalledOnce();
+  });
+
+  it("does not ask for a new subscription while the service is still loading", () => {
+    setup({ ready: false, profiles: [], nodes: [] });
+    expect(screen.getByRole("heading", { name: "Starting Tenebra…" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
+  it("suppresses stale connected reassurance after losing the service", () => {
+    setup({ phase: "connected", coreUnreachable: true, nodeName: "AMS-01" });
+    expect(screen.queryByText("Tunnel connected · AMS-01")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Service unavailable" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Disconnect" })).toBeEnabled();
+  });
+
+  it("shows a confirmed traffic block instead of an ordinary idle state", () => {
+    setup({ protectionBlocked: true });
+    expect(screen.getByRole("heading", { name: "Internet traffic blocked" })).toBeInTheDocument();
+    expect(screen.queryByText("You're not connected")).toBeNull();
+    expect(screen.getByRole("button", { name: "Connect" })).toBeEnabled();
   });
 
   it("pins a node when one is picked", () => {
@@ -165,7 +207,7 @@ describe("SimpleView", () => {
   it("omits the profile picker for a single subscription", () => {
     setup();
     expect(
-      screen.queryByRole("combobox", { name: /profile/i }),
+      screen.queryByRole("combobox", { name: /subscription/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -176,7 +218,7 @@ describe("SimpleView", () => {
         makeProfile({ id: "p2", name: "Globex", nodes }),
       ],
     });
-    const picker = screen.getByRole("combobox", { name: /profile/i });
+    const picker = screen.getByRole("combobox", { name: /subscription/i });
     fireEvent.change(picker, { target: { value: "p2" } });
     expect(props.onSelectProfile).toHaveBeenCalledWith("p2");
   });

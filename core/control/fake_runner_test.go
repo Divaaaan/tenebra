@@ -75,6 +75,9 @@ type fakeRunner struct {
 	// cannot steer, which must degrade to a full reconnect.
 	selects   []selectCall
 	selectErr error
+	// Positive limits selectErr to the first N processes, allowing tests to model
+	// a broken live API that recovers after the process is restarted.
+	selectErrThroughStart int
 
 	// viaDelays and viaErrs script ProbeVia per outbound tag: a tag present in
 	// viaErrs fails, otherwise the delay from viaDelays (or viaDefault) is
@@ -176,6 +179,9 @@ func (f *fakeRunner) Select(ctx context.Context, group, tag string) error {
 	f.mu.Lock()
 	f.selects = append(f.selects, selectCall{group: group, tag: tag})
 	err := f.selectErr
+	if f.selectErrThroughStart > 0 && f.startN > f.selectErrThroughStart {
+		err = nil
+	}
 	f.mu.Unlock()
 	if cerr := ctx.Err(); cerr != nil {
 		return cerr

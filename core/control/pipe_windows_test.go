@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"sync"
 	"testing"
@@ -19,6 +20,12 @@ import (
 // the production pipe or with a parallel test process.
 func testPipeName() string {
 	return fmt.Sprintf(`\\.\pipe\tenebra-test-%d-%d`, os.Getpid(), time.Now().UnixNano())
+}
+
+func dialTestPipe(name string, timeout *time.Duration) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	return winio.DialPipeAccessImpLevel(ctx, name, pipeClientAccess, winio.PipeImpLevelIdentification)
 }
 
 // requirePipeAccess skips the test when the current token holds none of the
@@ -91,7 +98,7 @@ func (h *pipeHarness) awaitDone() error {
 func (h *pipeHarness) dial() *lineClient {
 	h.t.Helper()
 	timeout := 3 * time.Second
-	conn, err := winio.DialPipe(h.name, &timeout)
+	conn, err := dialTestPipe(h.name, &timeout)
 	if err != nil {
 		h.t.Fatalf("DialPipe(%s): %v", h.name, err)
 	}
@@ -242,7 +249,7 @@ func TestPipeStalledClientDoesNotBlockTheListener(t *testing.T) {
 	h.daemon.clientWriteTimeout = 200 * time.Millisecond
 
 	timeout := 3 * time.Second
-	a, err := winio.DialPipe(h.name, &timeout)
+	a, err := dialTestPipe(h.name, &timeout)
 	if err != nil {
 		t.Fatalf("DialPipe: %v", err)
 	}

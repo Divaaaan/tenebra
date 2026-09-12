@@ -189,13 +189,13 @@ describe("App bootstrap", () => {
   });
 
   describe("primary button", () => {
-    it("is disabled while there is no profile to connect to", async () => {
+    it("shows the import task before offering a connection", async () => {
       renderWithProviders(<App />);
 
       // handlePrimary has no branch for a null profile, so a live-looking
       // button here is a button that silently eats the click. SimpleView
       // already disables its own for exactly this reason.
-      await waitFor(() => expect(primaryButton()).toBeDisabled());
+      await waitFor(() => expect(screen.queryByRole("button", { name: /^(▶\s*)?Connect$/ })).toBeNull());
     });
 
     it("is live once a profile has loaded", async () => {

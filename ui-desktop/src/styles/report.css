@@ -14,21 +14,23 @@
 .problem-report-lead {
   margin: 0;
   color: var(--text-dim);
-  font-family: var(--mono);
-  font-size: var(--fs-meta);
-  line-height: 1.5;
+  font-family: var(--ui);
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .problem-report-steps {
   margin: 0;
-  padding-left: var(--sp-5);
+  padding-left: 22px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  color: var(--text-dim-2);
-  font-family: var(--mono);
-  font-size: var(--fs-meta);
-  line-height: 1.5;
+  gap: 6px;
+  color: var(--text-dim);
+  font-family: var(--ui);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 /* Where the untrimmed copy lives, or that the core went quiet. Long paths wrap
@@ -36,10 +38,10 @@
 .problem-report-note {
   margin: 0;
   color: var(--text-dim-2);
-  font-family: var(--mono);
-  font-size: var(--fs-meta);
-  line-height: 1.5;
-  word-break: break-word;
+  font-family: var(--ui);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 /* Half a report is still a report — but say so in the colour the app uses for
@@ -56,34 +58,51 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--sp-4);
-  padding: var(--sp-2) 22px;
+  gap: 10px;
+  padding: 12px 24px;
   border-bottom: var(--bw) solid var(--line);
-  font-size: var(--fs-label);
+  font-size: 13px;
+  flex-wrap: wrap;
+  font-family: var(--ui);
+  line-height: 1.5;
 }
 .report-nudge-text {
   color: var(--warn-soft);
+  flex: 1 1 260px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .report-nudge-actions {
   display: flex;
   align-items: center;
-  gap: var(--sp-4);
+  gap: 8px;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  max-width: 100%;
 }
 .report-nudge-actions button {
   display: inline-flex;
   gap: 6px;
-  white-space: nowrap;
+  white-space: normal;
   color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  text-transform: none;
+  letter-spacing: 0;
   transition: color var(--t-fast);
+  align-items: center;
+  font-family: var(--ui);
+  font-size: 13px;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: var(--bw) solid transparent;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
 }
 .report-nudge-actions .report-nudge-primary {
   color: var(--signal);
 }
 .report-nudge-actions button:hover {
   color: var(--signal);
+  background: var(--surface-2);
 }
 
 /* In simple mode it sits under the service checks rather than in a banner strip
@@ -95,6 +114,7 @@
   flex-wrap: wrap;
   justify-content: center;
   text-align: center;
+  border-radius: 8px;
 }
 
 /* ── simple mode's footer row ──
@@ -106,4 +126,14 @@
   justify-content: center;
   gap: var(--sp-4);
   flex-wrap: wrap;
+}
+
+.report-nudge-actions button:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+}
+@media (max-width: 700px) {
+  .report-nudge {
+    padding: 12px 18px;
+  }
 }

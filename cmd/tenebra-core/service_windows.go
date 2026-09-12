@@ -62,6 +62,10 @@ type coreService struct{}
 func (coreService) Execute(args []string, req <-chan svc.ChangeRequest, status chan<- svc.Status) (svcSpecificEC bool, exitCode uint32) {
 	status <- svc.Status{State: svc.StartPending}
 
+	if err := enableServiceProcessQuery(); err != nil {
+		log.Printf("fatal: service process authentication: %v", err)
+		return false, 1
+	}
 	if err := configureServicePaths(); err != nil {
 		log.Printf("fatal: %v", err)
 		return false, 1
@@ -71,6 +75,7 @@ func (coreService) Execute(args []string, req <-chan svc.ChangeRequest, status c
 		log.Printf("fatal: %v", err)
 		return false, 1
 	}
+	startProductionConnection(daemon)
 	l, err := control.ListenPipe(control.PipeName)
 	if err != nil {
 		log.Printf("fatal: %v", err)
@@ -86,7 +91,7 @@ func (coreService) Execute(args []string, req <-chan svc.ChangeRequest, status c
 	// missing on every ordinary Windows install: see startBackgroundJobs.
 	startBackgroundJobs(ctx, daemon)
 
-	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
+	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown | svc.AcceptSessionChange}
 
 	for {
 		select {
@@ -100,6 +105,8 @@ func (coreService) Execute(args []string, req <-chan svc.ChangeRequest, status c
 			switch c.Cmd {
 			case svc.Interrogate:
 				status <- c.CurrentStatus
+			case svc.SessionChange:
+				go daemon.ReconcileSystemProxyWhenIdle()
 			case svc.Stop, svc.Shutdown:
 				// The teardown stops sing-box and waits for the connection
 				// goroutines to drain; give the SCM an explicit budget for that

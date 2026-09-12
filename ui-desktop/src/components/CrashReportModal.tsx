@@ -1,3 +1,4 @@
+import { ModalLayer } from "./ModalLayer";
 import { useEffect, useRef, useState } from "react";
 
 import { useI18n } from "../i18n/I18nContext";
@@ -49,7 +50,7 @@ export function CrashReportModal({
   }
 
   return (
-    <div
+    <ModalLayer onClose={onClose}
       className={`prof-modal-scrim${leaving ? " is-leaving" : ""}`}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
@@ -79,6 +80,6 @@ export function CrashReportModal({
           </button>
         </div>
       </div>
-    </div>
+    </ModalLayer>
   );
 }

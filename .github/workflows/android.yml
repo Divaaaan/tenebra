@@ -36,6 +36,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  GOTOOLCHAIN: local
+
 jobs:
   debug:
     # Every Android-relevant push/PR (path-filtered above). Tag pushes skip this
@@ -48,7 +51,7 @@ jobs:
         with:
           # >= the sing-box v1.13.14 floor (go 1.24.7) and the same version the
           # rest of CI pins, so every job builds the Go core with one toolchain.
-          go-version: '1.26'
+          go-version-file: '.go-version'
           cache: false
       - uses: actions/setup-java@v4
         with:
@@ -56,6 +59,10 @@ jobs:
           java-version: '17'
       # The SDK + build-tools Gradle needs to assemble the APK.
       - uses: android-actions/setup-android@v4
+        with:
+          # Gradle installs the required platform/build-tools. Avoid the obsolete
+          # SDK Tools archive pulled in by the action's default "tools" package.
+          packages: platform-tools
       # The NDK gomobile needs to bind BOTH .aars. Pinned to r28 (what the
       # sing-box porting notes target); the generic SDK setup does not pin an NDK.
       - uses: nttld/setup-ndk@v1
@@ -117,6 +124,22 @@ jobs:
           path: ui-android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
+  release-held:
+    # A desktop-only release may deliberately omit Android. The explicit hold
+    # does not apply to debug builds and is reported instead of a fake APK pass.
+    if: ${{ startsWith(github.ref, 'refs/tags/') && vars.TENEBRA_ANDROID_RELEASE_HOLD == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report the Android release hold
+        run: |
+          set -eu
+          echo "::notice::Android release is intentionally held for $GITHUB_REF_NAME."
+          {
+            echo "## Android release intentionally held: $GITHUB_REF_NAME"
+            echo "TENEBRA_ANDROID_RELEASE_HOLD=true. No APK was built, signed, or attached."
+            echo "Desktop release validation continues separately; Android debug builds are unaffected."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   release-gate:
     # A v* tag drives the desktop release too, and Android can only join it if
     # the release signing secrets exist. This job used to resolve them into a
@@ -127,7 +150,7 @@ jobs:
     # signed is a failed Android release, so say so out loud. This is its own
     # workflow run — a red job here does not touch the desktop release — and the
     # day the secrets are added it arms itself.
-    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    if: ${{ startsWith(github.ref, 'refs/tags/') && vars.TENEBRA_ANDROID_RELEASE_HOLD != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Require the release signing key
@@ -153,21 +176,26 @@ jobs:
     # release. The desktop release.yml publishes to this same tag's release; this
     # job only adds the APK asset and never rewrites the release body.
     needs: release-gate
-    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    if: ${{ startsWith(github.ref, 'refs/tags/') && vars.TENEBRA_ANDROID_RELEASE_HOLD != 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.26'
+          go-version-file: '.go-version'
           cache: false
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
       - uses: nttld/setup-ndk@v1
         id: ndk
         with:
@@ -233,9 +261,10 @@ jobs:
           "${build_tools}apksigner" verify --verbose "$signed"
           echo "apk=$signed" >> "$GITHUB_OUTPUT"
       - name: Attach the APK to the GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ steps.sign.outputs.apk }}
-          fail_on_unmatched_files: true
+        # Wait at most 30 minutes for desktop to create the release, then only
+        # upload an asset. No metadata update can race desktop publication.
+        timeout-minutes: 33
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APK_PATH: ${{ steps.sign.outputs.apk }}
+        run: node scripts/attach-android-release.mjs "$GITHUB_REF_NAME" "$APK_PATH"

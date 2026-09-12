@@ -3,8 +3,10 @@
 package control
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -12,8 +14,9 @@ import (
 // authorizePeer decides whether the just-accepted named-pipe peer may drive the
 // daemon, and whether it holds the daemon's own authority (see peerPrivileged).
 // It resolves the connecting process's user SID and administrative membership
-// and runs the shared policies against the console user's SID (see peer_auth.go
-// for the trust rationale).
+// and admits a fully elevated administrator or the shared self/console policy.
+// In particular, an installer elevated with another account must still reach
+// the LocalSystem service while the ordinary desktop user remains logged in.
 //
 // A conn whose peer cannot be identified is REFUSED. The production listener
 // only ever yields winio pipe conns, whose client process is always resolvable,
@@ -31,7 +34,7 @@ func (d *Daemon) authorizePeer(conn net.Conn) (allowed, privileged bool) {
 		// check below still governs. Empty never matches a real peer SID.
 		self = ""
 	}
-	if !peerAllowed(sid, self, consoleUserSID, func(msg string) {
+	if !windowsPeerAllowed(sid, self, admin, consoleUserSID, func(msg string) {
 		d.emitLog(LogWarn, msg)
 	}) {
 		return false, false
@@ -80,20 +83,20 @@ func processIdentity(pid uint32) (sid string, admin, ok bool) {
 	return tu.User.Sid.String(), tokenIsAdmin(tok), true
 }
 
-// tokenIsAdmin reports whether tok carries BUILTIN\Administrators as an ENABLED
-// group.
+// tokenIsAdmin reports whether tok has unrestricted, elevated administrative
+// authority at High integrity or above, including enabled Administrators.
 //
 // The group list is walked directly rather than asking CheckTokenMembership,
 // for two reasons. CheckTokenMembership wants an impersonation token, which
 // would mean duplicating a token opened from someone else's process; and the
-// attribute check is exactly the distinction that matters here. A UAC-filtered
+// attribute check distinguishes the group memberships. A UAC-filtered
 // token — what every non-elevated process of an administrator runs with — still
 // LISTS Administrators, but marks it SE_GROUP_USE_FOR_DENY_ONLY with
 // SE_GROUP_ENABLED cleared. Treating that as administrative would hand the
 // service's authority to any process the user launched by double-clicking it,
 // which is the escalation this check exists to stop; the elevated half of the
 // same account, obtained through the UAC prompt, has the group enabled and
-// passes.
+// passes, provided the token has not been restricted or lowered in integrity.
 //
 // A token whose groups can't be read is not administrative as far as this
 // answers: the caller then falls back on the peer==self shortcut, which is
@@ -107,16 +110,16 @@ func tokenIsAdmin(tok windows.Token) bool {
 	if err != nil {
 		return false
 	}
-	return groupEnabled(groups.AllGroups(), admins)
+	return groupEnabled(groups.AllGroups(), admins) && tokenHasFullAdminRights(tok, windows.GetTokenInformation)
 }
 
 // groupEnabled reports whether want appears in groups as an ENABLED membership.
-// It is the whole of the deny-only distinction tokenIsAdmin rests on, split out
+// It enforces the deny-only distinction tokenIsAdmin rests on, split out
 // so it can be tested against a group list a test builds by hand — a real
 // UAC-filtered token cannot be minted inside a test process.
 func groupEnabled(groups []windows.SIDAndAttributes, want *windows.SID) bool {
 	for _, g := range groups {
-		if g.Attributes&windows.SE_GROUP_ENABLED == 0 {
+		if g.Sid == nil || g.Attributes&windows.SE_GROUP_ENABLED == 0 || g.Attributes&windows.SE_GROUP_USE_FOR_DENY_ONLY != 0 {
 			continue
 		}
 		if windows.EqualSid(g.Sid, want) {
@@ -158,4 +161,59 @@ func consoleUserSID() (string, error) {
 		return "", err
 	}
 	return tu.User.Sid.String(), nil
+}
+
+func windowsPeerAllowed(peer, self string, admin bool, console consoleUser, warn func(string)) bool {
+	// Full administrators already control this service. Requiring them also to
+	// own the console session breaks over-the-shoulder UAC and unattended setup.
+	// A failed identity lookup must never turn an admin claim into admission.
+	if peer != "" && admin {
+		return true
+	}
+	return peerAllowed(peer, self, console, warn)
+}
+
+type tokenInformationQuery func(windows.Token, uint32, *byte, uint32, *uint32) error
+
+func tokenHasFullAdminRights(tok windows.Token, query tokenInformationQuery) bool {
+	var elevated, size uint32
+	if err := query(tok, windows.TokenElevation, (*byte)(unsafe.Pointer(&elevated)), 4, &size); err != nil || size != 4 || elevated == 0 {
+		return false
+	}
+	// Unlike IsTokenRestricted (which only checks restricting SIDs), this also
+	// rejects tokens filtered by removing privileges or disabling groups.
+	// Windows also returns this as a one-byte BOOLEAN, although the documented
+	// form is a DWORD. Only those two sizes are valid; every returned byte must
+	// be zero. Do not read padding beyond the reported result.
+	var restricted [4]byte
+	if err := query(tok, windows.TokenHasRestrictions, &restricted[0], uint32(len(restricted)), &size); err != nil || (size != 1 && size != 4) {
+		return false
+	}
+	for _, b := range restricted[:size] {
+		if b != 0 {
+			return false
+		}
+	}
+	// TOKEN_MANDATORY_LABEL plus a SID fits in 128 bytes (maximum SID: 68).
+	// Keep the SID in the returned buffer and validate its framing before use.
+	var buffer [128]byte
+	header := uintptr(unsafe.Sizeof(windows.Tokenmandatorylabel{}))
+	if err := query(tok, windows.TokenIntegrityLevel, &buffer[0], uint32(len(buffer)), &size); err != nil || uintptr(size) < header+12 || size > uint32(len(buffer)) {
+		return false
+	}
+	label := (*windows.Tokenmandatorylabel)(unsafe.Pointer(&buffer[0]))
+	start := uintptr(unsafe.Pointer(&buffer[0]))
+	ptr := uintptr(unsafe.Pointer(label.Label.Sid))
+	if label.Label.Attributes&windows.SE_GROUP_INTEGRITY == 0 || ptr < start+header || ptr-start > uintptr(size)-12 {
+		return false
+	}
+	// Integrity labels use revision 1, exactly one RID, and authority 16.
+	// Reading from buffer rather than dereferencing the returned pointer keeps
+	// malformed or truncated results fail-closed.
+	sid := buffer[ptr-start : ptr-start+12]
+	if sid[0] != 1 || sid[1] != 1 || sid[2] != 0 || sid[3] != 0 || sid[4] != 0 || sid[5] != 0 || sid[6] != 0 || sid[7] != 16 {
+		return false
+	}
+	const highIntegrityRID = 0x3000
+	return binary.LittleEndian.Uint32(sid[8:]) >= highIntegrityRID
 }

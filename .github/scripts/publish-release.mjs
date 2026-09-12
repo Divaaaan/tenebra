@@ -16,14 +16,15 @@
 // release a draft and fails the run. A draft is one click away from being
 // published by hand, which is the recoverable direction to fail in.
 //
-//   node .github/scripts/publish-release.mjs <tag>
+//   node .github/scripts/publish-release.mjs <tag> [--prepare-only]
+// prepare-only runs the same completeness and signature gates and stages the
+// stable legacy manifest, leaving publication and both live channels untouched.
 //
 // Authenticates through gh via GITHUB_TOKEN and reads the repository from
 // GITHUB_REPOSITORY. The Android APK is deliberately not in the expected set:
 // it is built by a separate workflow (.github/workflows/android.yml) on its own
 // schedule, and that workflow answers for itself when it cannot produce one.
 
-import { execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 function escapeRegExp(s) {
@@ -80,70 +81,31 @@ export function missingAssets(expected, attached) {
   );
 }
 
-/** The release for `tag`, looked up in a way that also finds it while a draft. */
-function fetchRelease(repo, tag) {
-  // gh falls back to a list-and-match when the by-tag endpoint 404s, which is
-  // what it does for a draft: GitHub only exposes drafts by id.
-  const out = execFileSync(
-    "gh",
-    ["release", "view", tag, "--repo", repo, "--json", "isDraft,isPrerelease,assets"],
-    { encoding: "utf8" },
-  );
-  return JSON.parse(out);
+export function parsePublishArgs(args) {
+  const [tag, mode] = args;
+  if (!tag?.startsWith('v') || args.length > 2 || (mode !== undefined && mode !== '--prepare-only')) {
+    throw new Error('usage: publish-release.mjs <tag> [--prepare-only]');
+  }
+  return { tag, prepareOnly: mode === '--prepare-only' };
 }
 
-function main() {
-  const [tag] = process.argv.slice(2);
-  if (!tag) {
-    console.error("usage: node .github/scripts/publish-release.mjs <tag>");
-    process.exit(1);
-  }
+async function main() {
+  const { tag, prepareOnly } = parsePublishArgs(process.argv.slice(2));
   const repo = process.env.GITHUB_REPOSITORY;
-  if (!repo) {
-    console.error("publish-release: GITHUB_REPOSITORY is not set");
-    process.exit(1);
-  }
-
-  const version = tag.replace(/^v/, "");
-  // Same rule the build jobs resolve the channel with: a SemVer prerelease
-  // suffix marks the release prerelease.
-  const prerelease = tag.includes("-");
-
-  const release = fetchRelease(repo, tag);
-  const attached = release.assets.map((a) => a.name).sort();
-  const missing = missingAssets(expectedAssets({ version, prerelease }), attached);
-
-  if (missing.length > 0) {
-    console.error(
-      `publish-release: ${tag} is missing ${missing.length} expected asset(s); leaving it a draft`,
-    );
-    for (const asset of missing) {
-      console.error(`  missing: ${asset.label} (${asset.want})`);
-    }
-    console.error(`  attached: ${attached.join(", ") || "(nothing)"}`);
-    process.exit(1);
-  }
-
-  if (!release.isDraft) {
-    // A re-run of a release that already went out: the set is complete, so
-    // there is nothing to publish and nothing to complain about.
-    console.log(
-      `publish-release: ${tag} is already published, with all ${attached.length} expected assets`,
-    );
+  if (!tag || !repo) throw new Error('usage: GITHUB_REPOSITORY=owner/repo node .github/scripts/publish-release.mjs <tag>');
+  const { publishCompleteRelease } = await import('../../scripts/release-lifecycle.mjs');
+  const { githubReleaseApi } = await import('../../scripts/release-api.mjs');
+  const result = await publishCompleteRelease({ tag, repo, api: githubReleaseApi(repo, tag), prepareOnly });
+  if (result.prepared) {
+    console.log(`publish-release: ${tag} verified and held as a draft; native acceptance required before publication`);
     return;
   }
-
-  execFileSync("gh", ["release", "edit", tag, "--repo", repo, "--draft=false"], {
-    stdio: "inherit",
-  });
-  console.log(
-    `publish-release: ${tag} published with ${attached.length} assets: ${attached.join(", ")}`,
-  );
+  console.log(`publish-release: ${tag} complete and public; beta ${result.switched ? 'updated atomically' : 'already at this or a newer version'}`);
 }
 
 // Run only when invoked as a script, so the pure helpers can be unit-tested.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main();
+  main().catch(error => { console.error(error.message); process.exitCode = 1; });
 }
 
 // Referenced by the test runner without triggering main().

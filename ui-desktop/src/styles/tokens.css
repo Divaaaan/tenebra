@@ -1,197 +1,98 @@
-/* Design tokens — the single source for colour, type, space, and motion.
-
-   "Spec-sheet" identity: the UI reads like a network status panel or a man page,
-   not a consumer app. Near-black canvas, exactly one orange accent, mono type
-   everywhere, sharp corners, no shadows. Motion is rationed the same way colour
-   is: nothing moves for decoration, but what does move moves on one scale and
-   one set of curves, so the panel reads as a single instrument. Dark is the canonical
-   theme and lives on :root, so a missing data-theme still renders the intent.
-   Light is an inverted spec-sheet on paper — the only thing that flips is colour;
-   space, geometry, type and motion are shared.
-
-   Colour discipline: --signal is the only accent and is rationed (active,
-   interactive, warning). --good (green) appears ONLY for connected/protected.
-   If everything is signal, nothing is. */
-
+/* Tenebra: graphite surfaces, an orange action accent, readable native UI.
+   Display lettering belongs to the wordmark; mono is reserved for technical data.
+   Both themes share geometry. Motion tokens remain stable for existing controls. */
 :root {
-  /* ---- TYPE · families --------------------------------------------------
-     Canonical (licensed) primaries first; the bundled @fontsource-variable
-     fallbacks (loaded in main.tsx, self-hosted — never a CDN) take over when
-     the licensed faces are absent. Display is Latin-only; Russian copy always
-     rides the mono face. */
-  --display: "PP Neue Machina", "Space Grotesk Variable", "Space Grotesk",
-    system-ui, sans-serif;
-  --mono: "Departure Mono", "JetBrains Mono Variable", "JetBrains Mono",
-    "IBM Plex Mono", ui-monospace, monospace;
-
-  /* ---- TYPE · scale (px) ---- */
-  --fs-word: 52px; /* connection status word          (display) */
-  --fs-kpi: 26px; /* stat value                       (display) */
-  --fs-sku: 22px; /* current-node code                (display) */
-  --fs-brand: 17px; /* brand wordmark                 (display) */
-  --fs-body: 13px; /* node row code / default body    (mono)    */
-  --fs-data: 12px; /* dense table data                (mono)    */
-  --fs-meta: 11px; /* labels, chips, buttons          (mono)    */
-  --fs-label: 10px; /* section labels, tiny meta      (mono)    */
-
-  /* ---- TYPE · tracking ---- */
-  --track-word: -0.03em; /* the big status word */
-  --track-kpi: -0.02em; /* stat values */
-  --track-sku: -0.01em; /* node codes */
-  --track-body: 0.04em; /* mono body / data */
-  --track-label: 0.12em; /* uppercase labels */
-  --track-cap: 0.18em; /* most-tracked section headers */
-
-  /* ---- SPACING · 4px base ---- */
+  --display: "PP Neue Machina", "Space Grotesk Variable", "Space Grotesk", system-ui, sans-serif;
+  --mono: "Departure Mono", "JetBrains Mono Variable", "JetBrains Mono", "IBM Plex Mono", ui-monospace, monospace;
+  --ui: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+  --fs-word: 34px;
+  --fs-kpi: 24px;
+  --fs-sku: 20px;
+  --fs-brand: 21px;
+  --fs-body: 14px;
+  --fs-data: 12px;
+  --fs-meta: 13px;
+  --fs-label: 12px;
+  --track-word: -0.035em;
+  --track-kpi: -0.02em;
+  --track-sku: -0.01em;
+  --track-body: 0;
+  --track-label: 0;
+  --track-cap: 0;
   --sp-1: 4px;
   --sp-2: 8px;
   --sp-3: 12px;
-  --sp-4: 16px; /* minimum gap between elements */
+  --sp-4: 16px;
   --sp-5: 22px;
-  --sp-6: 28px; /* card / pane padding */
-  --sp-7: 32px; /* grid gutters */
+  --sp-6: 28px;
+  --sp-7: 32px;
   --sp-8: 36px;
-
-  /* ---- GEOMETRY ---- */
-  --radius: 0px; /* sharp corners, everywhere */
-  --radius-max: 2px; /* the absolute maximum, rarely used */
-  --bw: 1px; /* default border weight */
-  --bw-emphasis: 2px; /* connect button / warning border */
-
-  /* ---- MOTION · durations ----------------------------------------------
-     Five steps, and nothing between them. The old sheet mixed 80/100/160/180/
-     200/220/240/260ms with `linear` and bare `ease`, which is why state changes
-     read as a set of unrelated twitches rather than one machine moving. Pick the
-     step by what is moving, never by taste:
-
-       micro  a press, a 2px nudge — felt, not watched
-       fast   colour / border on hover, chips, quiet labels
-       base   a control changing state: fill, row background, a toggle
-       slow   something arriving or leaving: panels, list rows, cards
-       hero   the 52px status word and its indicator — the one thing on screen
-              the user is actually waiting on
-
-     Every duration is neutralised by the reduced-motion rule in global.css. */
+  --radius: 8px;
+  --radius-max: 12px;
+  --bw: 1px;
+  --bw-emphasis: 2px;
   --d-micro: 90ms;
   --d-fast: 130ms;
   --d-base: 190ms;
   --d-slow: 260ms;
   --d-hero: 420ms;
-
-  /* ---- MOTION · curves ----
-     Three, with a job each. Nothing in this UI uses `linear` (which reads as a
-     machine dragging something) or bare `ease` (the browser default, which reads
-     as nothing at all) — except the two infinite sweeps, where a constant rate is
-     the honest one: a runner that eases would claim progress it has not made.
-
-       out   things arriving and settling — fast off the mark, long tail
-       in    things leaving — slow off the mark, gone quickly; the eye is
-             already moving to what replaces them
-       move  something travelling between two states it owns (loops, pulses) */
   --e-out: cubic-bezier(0.2, 0, 0, 1);
   --e-in: cubic-bezier(0.4, 0, 1, 1);
   --e-move: cubic-bezier(0.65, 0, 0.35, 1);
-
-  /* Two composite duration+curve pairs, for the common single-property
-     transition: `transition: color var(--t-fast)`. Each is exactly one <time>
-     and one <easing-function>, and that is the whole contract — NEVER pair two
-     of them in one shorthand. The sheet used to write
-     `animation: x var(--t-base) var(--t-enter)`, which expands to two easing
-     functions; CSS then drops the entire declaration, and a dozen animations
-     across this app had simply never run. There are deliberately no composite
-     tokens for the longer steps: those are all used in `animation`, where the
-     duration and the curve sit in different slots anyway, so spelling them
-     `var(--d-slow) var(--e-out)` removes the temptation to nest. */
-  --t-fast: var(--d-fast) var(--e-out); /* chip colour / border */
-  --t-base: var(--d-base) var(--e-out); /* button fill / row background */
-
-  /* Two stagger steps, because the two cases are not the same thing. Rows of a
-     list want a grain, not a queue — the cascade should read as one gesture that
-     happens to have a direction. A handful of semantic blocks (the steps of a
-     hint, the sections of a settings pane) can afford a longer beat, because the
-     eye is meant to land on each in turn. */
-  --stagger: 24ms; /* list rows, chips, imported items */
-  --stagger-chunk: 60ms; /* a few semantic blocks, read in order */
-
-  /* Status-word tints. The 52px hero word in pure --good/--text reads harsh, so
-     it's softened (desaturated toward the text colour). Defined in terms of the
-     theme vars below, so it adapts to dark and light on its own. The dot matches
-     the word; error stays the hard --signal — that one is meant to alarm. */
-  --word-on: color-mix(in srgb, var(--good) 58%, var(--text) 42%);
-  --word-off: color-mix(in srgb, var(--text) 50%, var(--text-dim) 50%);
-  --word-pending: color-mix(in srgb, var(--warn-soft) 60%, var(--text) 40%);
-
-  /* A flag the renderer reads to decide whether to run JS-driven motion. CSS
-     owns the media query; JS reads the computed value. Default: on. */
+  --t-fast: var(--d-fast) var(--e-out);
+  --t-base: var(--d-base) var(--e-out);
+  --stagger: 24ms;
+  --stagger-chunk: 60ms;
+  --word-on: color-mix(in srgb, var(--good) 75%, var(--text) 25%);
+  --word-off: var(--text);
+  --word-pending: color-mix(in srgb, var(--warn-soft) 75%, var(--text) 25%);
   --motion-ok: 1;
 }
-
-/* ---- DARK · canonical spec-sheet -------------------------------------- */
-:root,
-:root[data-theme="dark"] {
+:root, :root[data-theme="dark"] {
   color-scheme: dark;
-
-  --bg: #0e0e0e; /* near-black, never pure #000 */
-  --surface: #161616; /* hovered rows */
-  --surface-2: #1e1e1e; /* active / selected row */
-  --text: #f4f4f0; /* off-white, never pure white */
-  --text-dim: #8c8c88; /* labels, metadata */
-  --text-dim-2: #5a5a57; /* deepest dim, idle / ghost */
-  --line: #2a2a2a; /* default 1px borders, dividers */
-  --line-2: #3a3a3a; /* brighter rule, window outline */
-
-  --signal: #ff3d00; /* THE accent */
-  --signal-soft: rgba(255, 61, 0, 0.18); /* fan fill / wash */
-  --signal-faint: rgba(255, 61, 0, 0.08); /* warn-row background */
-  --good: #00e676; /* connected / protected only */
-  --warn-soft: #ffb300; /* heads-up, not critical */
-  --on-signal: #0e0e0e; /* text on a filled --signal surface */
-  --scrim: rgba(0, 0, 0, 0.62); /* dim layer behind overlays / modals */
-
-  /* Derived status washes — barely-there row / selection tints (each its accent
-     at 4–5% alpha). Kept as named tokens so every zone paints the trying / ok
-     attempt rows, the selected radio, and the active settings-nav item from one
-     source. The RGB tracks the theme accent; only that flips on light. */
-  --row-trying-bg: rgba(255, 179, 0, 0.04); /* "trying" attempt row (warn) */
-  --row-ok-bg: rgba(0, 230, 118, 0.04); /* "ok" attempt row (good) */
-  --radio-selected-bg: rgba(255, 61, 0, 0.04); /* selected radio row */
-  --nav-active-bg: rgba(255, 61, 0, 0.05); /* active settings-nav item */
-
-  /* Grain over the canvas — a touch of texture so flat panels don't read as
-     dead space. Off on light. */
-  --grain-opacity: 0.04;
+  --bg: #13171b;
+  --surface: #1b2127;
+  --surface-2: #252d35;
+  --text: #edf1f4;
+  --text-dim: #adb8c3;
+  --text-dim-2: #95a2af;
+  --line: #303943;
+  --line-2: #465360;
+  --signal: #ff704a;
+  --signal-soft: rgba(255, 112, 74, 0.18);
+  --signal-faint: rgba(255, 112, 74, 0.08);
+  --good: #5bd9a2;
+  --warn-soft: #f5c36a;
+  --danger: #ff7d83;
+  --on-signal: #151a20;
+  --scrim: rgba(7, 11, 16, 0.72);
+  --row-trying-bg: rgba(245, 195, 106, 0.06);
+  --row-ok-bg: rgba(91, 217, 162, 0.06);
+  --radio-selected-bg: rgba(255, 112, 74, 0.06);
+  --nav-active-bg: rgba(255, 112, 74, 0.08);
+  --grain-opacity: 0;
 }
-
-/* ---- LIGHT · inverted spec-sheet on paper ----------------------------- */
 :root[data-theme="light"] {
   color-scheme: light;
-
-  --bg: #f3f2ec; /* paper */
-  --surface: #eae8df; /* hovered rows */
-  --surface-2: #e0ddd2; /* active / selected row */
-  --text: #161412; /* black ink */
-  --text-dim: #6b6760; /* labels, metadata */
-  --text-dim-2: #9a958b; /* deepest dim */
-  --line: #d5d1c5; /* dividers */
-  --line-2: #c2bdb0; /* brighter rule */
-
-  /* Full orange on paper screams; a calmer burnt orange holds the accent. */
-  --signal: #c8380c;
-  --signal-soft: rgba(200, 56, 12, 0.16);
-  --signal-faint: rgba(200, 56, 12, 0.07);
-  --good: #1f8a4c;
-  --warn-soft: #b8780a;
-  --on-signal: #f3f2ec;
-
-  /* A 62% black scrim reads as a hole punched in the paper; ink at a lighter
-     weight dims without going murky. */
-  --scrim: rgba(22, 20, 18, 0.4);
-
-  /* Same derived washes on paper — theme accent RGB, matching alphas. */
-  --row-trying-bg: rgba(184, 120, 10, 0.04); /* "trying" attempt row (warn) */
-  --row-ok-bg: rgba(31, 138, 76, 0.04); /* "ok" attempt row (good) */
-  --radio-selected-bg: rgba(200, 56, 12, 0.04); /* selected radio row */
-  --nav-active-bg: rgba(200, 56, 12, 0.05); /* active settings-nav item */
-
+  --bg: #f5f7f9;
+  --surface: #ffffff;
+  --surface-2: #e9eef3;
+  --text: #18212b;
+  --text-dim: #526273;
+  --text-dim-2: #607183;
+  --line: #d7dfe7;
+  --line-2: #bcc8d4;
+  --signal: #b93c20;
+  --signal-soft: rgba(185, 60, 32, 0.16);
+  --signal-faint: rgba(185, 60, 32, 0.06);
+  --good: #19734c;
+  --warn-soft: #8b5c0a;
+  --danger: #ba2634;
+  --on-signal: #ffffff;
+  --scrim: rgba(19, 30, 42, 0.34);
+  --row-trying-bg: rgba(139, 92, 10, 0.05);
+  --row-ok-bg: rgba(25, 115, 76, 0.05);
+  --radio-selected-bg: rgba(185, 60, 32, 0.05);
+  --nav-active-bg: rgba(185, 60, 32, 0.06);
   --grain-opacity: 0;
 }

@@ -89,7 +89,7 @@ func newTestDaemon(t *testing.T) (*Daemon, *fakeRunner) {
 		t.Fatalf("open store: %v", err)
 	}
 	runner := newFakeRunner()
-	d := NewDaemon(store, runner)
+	d := newUnitTestDaemon(store, runner)
 	d.probeWarmup = time.Millisecond
 	d.probeRetry = time.Millisecond
 	d.probeTimeout = 200 * time.Millisecond

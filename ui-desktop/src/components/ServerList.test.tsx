@@ -1,6 +1,6 @@
 import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { act, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ServerList, type ServerRow } from "./ServerList";
@@ -62,6 +62,21 @@ function baseProps(overrides: Partial<Parameters<typeof ServerList>[0]> = {}) {
   };
 }
 
+it("blocks selecting a node or AUTO during a pending operation", () => {
+  const onSelectAuto = vi.fn();
+  const props = baseProps({disabled:true,onSelectAuto});
+  renderWithProviders(<ServerList {...props} />);
+  const row = screen.getByRole("button",{name:/DE-FRA-01 frankfurt/});
+  const auto = screen.getByRole("button",{name:/lowest ping/});
+  for(const control of [row,auto]) {
+    expect(control).toHaveAttribute("aria-disabled","true");
+    fireEvent.click(control);
+    fireEvent.keyDown(control,{key:"Enter"});
+  }
+  expect(props.onSelectNode).not.toHaveBeenCalled();
+  expect(onSelectAuto).not.toHaveBeenCalled();
+});
+
 describe("ServerList", () => {
   it("renders one row per ServerRow with code, city and protocol tag", () => {
     renderWithProviders(<ServerList {...baseProps()} />);
@@ -80,14 +95,27 @@ describe("ServerList", () => {
   it("reflects online and showing counts", () => {
     renderWithProviders(<ServerList {...baseProps()} />);
 
-    // Two of three rows are live → the heading reads "Nodes · 2 online".
+    // A TCP response describes reachability, not a verified VPN handshake.
     expect(
-      screen.getByRole("heading", { name: /Nodes · 2 online/ }),
+      screen.getByRole("heading", { name: /Nodes\s+2 TCP reachable/ }),
     ).toBeInTheDocument();
     // All three rows are visible with no filter → "showing 3".
     expect(
       screen.getByText((_, el) => el?.textContent === "showing 3"),
     ).toBeInTheDocument();
+  });
+
+  it("counts only fresh successful TCP measurements", () => {
+    const template = makeRows()[0];
+    const rows = [
+      { ...template, id: "fresh", name: "Fresh", rttMs: 27 },
+      { ...template, id: "unknown", name: "Unmeasured", rttMs: null },
+      { ...template, id: "old", name: "Stale", rttMs: 10, stale: true },
+      { ...template, id: "failed", name: "Failed", rttMs: 0, dead: true },
+    ];
+    renderWithProviders(<ServerList {...baseProps({ rows })} />);
+    expect(screen.getByRole("heading", { name: /Nodes\s+1 TCP reachable/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /lowest ping · now fresh/i })).toBeInTheDocument();
   });
 
   it("filters rows by region chip and back to all", async () => {
@@ -138,15 +166,15 @@ describe("ServerList", () => {
     expect(onQuery).toHaveBeenCalledWith("x");
   });
 
-  it("marks a dead row aria-disabled and does not select it on click", async () => {
+  it("keeps failed TCP results visible and permits manual selection", async () => {
     const onSelectNode = vi.fn();
     const user = userEvent.setup();
     renderWithProviders(<ServerList {...baseProps({ onSelectNode })} />);
 
     const deadRow = screen.getByText("US-NYC-01").closest('[role="button"]')!;
-    expect(deadRow).toHaveAttribute("aria-disabled", "true");
+    expect(deadRow).toHaveAttribute("tabindex", "0");
     await user.click(deadRow);
-    expect(onSelectNode).not.toHaveBeenCalled();
+    expect(onSelectNode).toHaveBeenCalledWith("n-nyc");
 
     // A live row does select.
     const liveRow = screen.getByText("DE-FRA-01").closest('[role="button"]')!;

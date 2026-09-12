@@ -118,7 +118,14 @@ func New() *Runner {
 // spawned; the tunnel coming up (or failing) is observed through Done. Starting
 // while a process is already running is rejected — the caller is expected to
 // Stop first.
-func (r *Runner) Start(ctx context.Context, configJSON []byte) error {
+func (r *Runner) Start(ctx context.Context, configJSON []byte) (startErr error) {
+	// A missing binary/driver, temp-file failure or denied process/job setup is
+	// local to this installation. Trying other servers cannot repair it.
+	defer func() {
+		if startErr != nil {
+			startErr = localStartError{startErr}
+		}
+	}()
 	bin, err := r.resolveSingbox()
 	if err != nil {
 		return err
@@ -156,13 +163,17 @@ func (r *Runner) Start(ctx context.Context, configJSON []byte) error {
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
+		_ = stdout.Close()
 		cancel()
 		os.Remove(cfgPath)
 		return fmt.Errorf("windows: stderr pipe: %w", err)
 	}
 
-	if err := cmd.Start(); err != nil {
+	releaseProcess, err := startOwnedCommand(cmd)
+	if err != nil {
 		cancel()
+		_ = stdout.Close()
+		_ = stderr.Close()
 		os.Remove(cfgPath)
 		return fmt.Errorf("windows: start sing-box: %w", err)
 	}
@@ -183,6 +194,7 @@ func (r *Runner) Start(ctx context.Context, configJSON []byte) error {
 	// the running state so the Runner can be started again.
 	go func() {
 		werr := cmd.Wait()
+		werr = errors.Join(werr, releaseProcess())
 		cancel()
 		os.Remove(cfgPath)
 

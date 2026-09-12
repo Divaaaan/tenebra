@@ -21,6 +21,7 @@ import (
 	"io"
 
 	"github.com/Divaaaan/tenebra/core/model"
+	"github.com/Divaaaan/tenebra/core/protection"
 )
 
 // Command names. These are the cmd values a Request may carry.
@@ -307,10 +308,10 @@ type State struct {
 	// connect will use; an empty/off split omits them.
 	Split     string   `json:"split,omitempty"`
 	SplitApps []string `json:"split_apps,omitempty"`
-	// KillSwitch reports whether the kill switch is armed (strict_route on the
-	// tun, plus an automatic relaunch if the tunnel process dies). Omitted when
-	// off, like the split fields.
-	KillSwitch bool `json:"kill_switch,omitempty"`
+	// KillSwitch is the desired preference. Protection separately reports
+	// confirmed host enforcement; a true setting is never evidence of applied rules.
+	KillSwitch bool             `json:"kill_switch,omitempty"`
+	Protection protection.State `json:"protection"`
 	// TLSFragment reports whether forced TLS ClientHello fragmentation is armed —
 	// every TLS-bearing outbound carries tls.fragment. Omitted when off, like the
 	// kill switch. The adaptive walk still reaches fragmentation per-node on a

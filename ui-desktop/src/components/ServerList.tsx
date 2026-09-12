@@ -19,6 +19,7 @@ export interface ServerRow {
   rttMs: number | null;
   /** Probe came back failed. */
   dead: boolean;
+  stale?: boolean;
   /** TLS certificate verification is off (skip-cert-verify) on this node. */
   insecure: boolean;
 }
@@ -38,6 +39,7 @@ interface ServerListProps {
   onSelectNode: (id: string) => void;
   onAddSubscription: () => void;
   pinging: boolean;
+  disabled?: boolean;
   /**
    * OPTIONAL — for the orchestrator to wire from App. True when the exit is
    * auto-picked (no node pinned by hand): the AUTO row then carries the active
@@ -104,6 +106,7 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
       onSelectNode,
       onAddSubscription,
       pinging,
+      disabled = false,
       auto,
       onSelectAuto,
     },
@@ -156,7 +159,7 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
       let best: ServerRow | null = null;
       let bestRtt = Infinity;
       for (const r of rows) {
-        if (!r.dead && r.rttMs !== null && r.rttMs < bestRtt) {
+        if (!r.dead && !r.stale && r.rttMs !== null && r.rttMs < bestRtt) {
           best = r;
           bestRtt = r.rttMs;
         }
@@ -169,7 +172,7 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
     // stand-in (exact while idle; connected-auto needs the prop).
     const isAuto = auto ?? activeNodeId === null;
 
-    const online = rows.filter((r) => !r.dead).length;
+    const online = rows.filter((r) => !r.dead && !r.stale && r.rttMs !== null).length;
     const insecureCount = rows.filter((r) => r.insecure).length;
     const insecureSummary = t.servers.insecureSummary
       .replace("{n}", String(insecureCount))
@@ -215,6 +218,7 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
                     key={p.id}
                     role="tab"
                     aria-selected={p.id === selectedProfileId}
+                    disabled={disabled}
                     className={`chip${p.id === selectedProfileId ? " on" : ""}`}
                     onClick={() => onSelectProfile(p.id)}
                   >
@@ -234,8 +238,10 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
 
           <div className="srv-title">
             <h2>
-              {t.servers.title} · {online} {t.servers.online}
-              {pinging && <span className="srv-pinging"> · …</span>}
+              {t.servers.title}
+              <span className="srv-reachability">{online} {t.servers.online}
+                {pinging && <span className="srv-pinging"> · …</span>}
+              </span>
             </h2>
             <div className="count">
               {t.servers.showing} <b>{visible.length}</b>
@@ -257,6 +263,7 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
                 type="button"
                 key={labelKey}
                 className={`chip${region === key ? " on" : ""}`}
+                aria-pressed={region === key}
                 onClick={() => onRegion(key)}
               >
                 {t.servers[REGION_LABELS[labelKey]]}
@@ -266,7 +273,7 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
 
           <div className="srv-search">
             <span className="prompt" aria-hidden="true">
-              &gt;
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none"><circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" strokeWidth="1.5"/><path d="m13 13 4 4" stroke="currentColor" strokeWidth="1.5"/></svg>
             </span>
             <input
               ref={setSearchRef}
@@ -288,10 +295,12 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
             <div
               className={`srv-auto${isAuto ? " on" : ""}`}
               role="button"
-              tabIndex={0}
+              tabIndex={disabled ? -1 : 0}
+              aria-disabled={disabled}
               aria-pressed={isAuto}
-              onClick={() => onSelectAuto?.()}
+              onClick={() => { if (!disabled) onSelectAuto?.(); }}
               onKeyDown={(e) => {
+                if (disabled) return;
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
                   onSelectAuto?.();
@@ -352,11 +361,14 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
                   className={`srv-row${active ? " active" : ""}${s.dead ? " is-dead" : ""}`}
                   style={{ animationDelay: staggerDelay(i) }}
                   role="button"
-                  tabIndex={s.dead ? -1 : 0}
-                  aria-disabled={s.dead}
-                  onClick={() => !s.dead && onSelectNode(s.id)}
+                  tabIndex={disabled ? -1 : 0}
+                  aria-disabled={disabled}
+                  aria-pressed={active}
+                  title={s.dead ? t.servers.manualAfterPing : undefined}
+                  onClick={() => { if (!disabled) onSelectNode(s.id); }}
                   onKeyDown={(e) => {
-                    if (!s.dead && (e.key === "Enter" || e.key === " ")) {
+                    if (disabled) return;
+                    if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
                       onSelectNode(s.id);
                     }
@@ -390,7 +402,7 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
                     </span>
                   )}
                   <div className={`srv-ping${pingCls}`}>
-                    {s.dead
+                    {s.stale ? t.servers.pingStale : s.dead
                       ? t.servers.down
                       : s.rttMs !== null
                         ? `${s.rttMs} ${t.units.ms}`

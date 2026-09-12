@@ -18,6 +18,22 @@ import (
 // walk), relaunching a tunnel whose process died while the switch was armed,
 // and persisting both preferences across a daemon restart.
 
+// awaitRestartConnected requires the replacement's connecting transition and
+// exact process count. Protection notifications may repeat Connected for the old
+// process (including OFF), so they cannot acknowledge a completed restart.
+func (h *harness) awaitRestartConnected(starts int) map[string]any {
+	h.t.Helper()
+	h.awaitState(StateConnecting)
+	ev := h.awaitState(StateConnected)
+	if got := h.runner.starts(); got != starts {
+		h.t.Fatalf("connected after restart: starts = %d, want %d", got, starts)
+	}
+	if st := h.daemon.snapshotState(); st.State != StateConnected || st.Node != ev["node"] {
+		h.t.Fatalf("restart event does not match current connection: event=%v state=%+v", ev, st)
+	}
+	return ev
+}
+
 // tunFromConfig extracts strict_route and the stack from the (single) tun
 // inbound of a built config.
 func tunFromConfig(t *testing.T, cfgJSON []byte) (strictRoute bool, stack string) {
@@ -123,7 +139,7 @@ func TestSetKillSwitchLiveHotSwapsSameNode(t *testing.T) {
 	}
 
 	// The swap dips through connecting and lands connected on the same node.
-	re := h.awaitState(StateConnected)
+	re := h.awaitRestartConnected(2)
 	if re["node"] != node {
 		t.Errorf("reconnected node = %v, want the same node %s", re["node"], node)
 	}
@@ -209,7 +225,7 @@ func TestSetTunLiveHotSwapsSameNode(t *testing.T) {
 
 	h.send(Request{ID: 2, Cmd: CmdSetTun, Stack: singbox.StackMixed})
 	h.await()
-	re := h.awaitState(StateConnected)
+	re := h.awaitRestartConnected(2)
 	if re["node"] != connected["node"] {
 		t.Errorf("reconnected node = %v, want %v", re["node"], connected["node"])
 	}
@@ -258,7 +274,7 @@ func TestKillSwitchRelaunchesDeadTunnel(t *testing.T) {
 
 	h.runner.exit(errors.New("boom"))
 	h.awaitLogContains("kill switch: tunnel process died")
-	re := h.awaitState(StateConnected)
+	re := h.awaitRestartConnected(2)
 	if re["node"] != connected["node"] {
 		t.Errorf("relaunched node = %v, want %v", re["node"], connected["node"])
 	}
@@ -309,7 +325,7 @@ func TestKillSwitchRelaunchBudget(t *testing.T) {
 
 	for i := 0; i < maxRelaunches; i++ {
 		h.runner.exit(errors.New("boom"))
-		h.awaitState(StateConnected) // each death within budget is answered
+		h.awaitRestartConnected(i + 2) // each death within budget is answered
 	}
 	// Back-to-back deaths never clear the reset window, so the budget still runs
 	// out and the daemon gives up (see the honest wording in killSwitchRelaunch).
@@ -323,9 +339,9 @@ func TestKillSwitchRelaunchBudget(t *testing.T) {
 	// A user reconnect resets the budget: the next death relaunches again.
 	h.send(Request{ID: 3, Cmd: CmdConnect, Profile: p.ID})
 	h.await()
-	h.awaitState(StateConnected)
+	h.awaitRestartConnected(maxRelaunches + 2)
 	h.runner.exit(errors.New("boom"))
-	h.awaitState(StateConnected)
+	h.awaitRestartConnected(maxRelaunches + 3)
 }
 
 // TestReapplyDefersWhenNodeVanished: if the connected node is gone from the
@@ -630,7 +646,7 @@ func TestKillSwitchRelaunchBudgetRefundedByUptime(t *testing.T) {
 	for i := 0; i < maxRelaunches+3; i++ {
 		advance(2 * defaultRelaunchReset)
 		h.runner.exit(errors.New("boom"))
-		h.awaitState(StateConnected) // relaunched, not degraded to error
+		h.awaitRestartConnected(i + 2) // relaunched, not degraded to error
 	}
 }
 

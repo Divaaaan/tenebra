@@ -83,14 +83,18 @@ func (d *Daemon) healthWatch(ctx context.Context, gen uint64, profileID, nodeID 
 			// session, and everything already open finishes on the old exit instead of
 			// being cut. Only when that is impossible or does not hold up does this
 			// fall through to the reconnect-based failover.
-			if d.autoSwitchAway(ctx, gen, profileID, active) {
+			switch d.autoSwitchAway(ctx, gen, profileID, active) {
+			case autoSwitchSucceeded, autoSwitchSuppressed:
 				fails, warnedNoAlt = 0, false
 				continue
 			}
 
 			switch d.healthFailover(gen, profileID, active) {
 			case failoverStarted:
-				return // the reconnect owns the connection from here
+				// Scheduling does not yet transfer ownership: the queued reconnect
+				// can yield to a manual switch or fail validation. Keep monitoring
+				// until an actual teardown cancels this context/generation.
+				fails, warnedNoAlt = 0, false
 			case failoverNoAlternative:
 				// A single-node profile has nowhere to fail over to. Keep monitoring so
 				// a later subscription refresh or a recovery is still picked up, but warn
@@ -133,8 +137,8 @@ func (d *Daemon) defaultHealthProbe(ctx context.Context) error {
 type failoverResult int
 
 const (
-	// failoverStarted: a reconnect to another node was launched; it now owns the
-	// connection and the watchdog should return.
+	// failoverStarted: a reconnect was queued. The current watchdog remains until
+	// that reconnect actually cancels its generation.
 	failoverStarted failoverResult = iota
 	// failoverNoAlternative: the profile has no other node to move to, so the
 	// current connection is left as-is and the watchdog keeps monitoring.
@@ -148,10 +152,21 @@ const (
 // connect walk with that node excluded so it lands on a different exit. It first
 // confirms another renderable node exists — otherwise there is nothing to fail
 // over to and the (possibly recoverable) tunnel is left running. The reconnect
-// goes through startConnectIfCurrent so it runs off the watchdog's own stack (its
-// teardown waits on d.wg, which the watchdog is part of), re-checks the generation
-// under connMu, and yields cleanly to any user command that raced it.
+// runs off the watchdog's own stack (teardown waits on d.wg, which the watchdog
+// is part of), re-checks generation and policy under connMu, and yields to user
+// commands that raced it.
 func (d *Daemon) healthFailover(gen uint64, profileID, nodeID string) failoverResult {
+	if !d.allowAutoRecovery(gen, profileID, nodeID) {
+		return failoverAborted
+	}
+	d.mu.Lock()
+	chain := d.multihop.Enabled
+	d.mu.Unlock()
+	if chain {
+		// The selected chain has exactly one exit. Other stored nodes are not
+		// authorization to change that chain or fall back to a single hop.
+		return failoverNoAlternative
+	}
 	p, ok := d.store.Get(profileID)
 	if !ok {
 		d.emitLog(LogWarn, "health: cannot fail over, profile no longer stored")
@@ -169,23 +184,34 @@ func (d *Daemon) healthFailover(gen uint64, profileID, nodeID string) failoverRe
 	}
 
 	d.emitLog(LogWarn, fmt.Sprintf("health: active node failed %d health probes in a row; failing over to another node", d.healthFailThreshold))
-	d.startConnectIfCurrent(gen, p, "", nodeID,
-		func() {
-			// Runs under connMu with the generation confirmed current: announce the
-			// health-driven switch before the reconnect's teardown moves the state to
-			// connecting, so a UI can tell an automatic failover from a manual connect.
-			// If a user command already superseded us this never runs and no
-			// health_reconnecting is emitted.
-			d.setState(State{State: StateHealthReconnecting, Profile: profileID, Node: nodeID,
-				Routing: d.snapshotState().Routing})
-		},
-		func(err error) {
-			// startConnect only errors before it tears the old tunnel down (a build or
-			// no-alternative failure, reachable here only if the last other node
-			// vanished in the meantime), so the degraded tunnel is still up: log rather
-			// than forcing an error state over a live connection.
+	// Run off the watchdog stack: teardown waits for that watchdog. Re-check and
+	// spend the shared budget under connMu, where no user or automatic switch can
+	// interleave. A queued reconnect must yield if the exit changed during its wait.
+	d.relaunchWG.Add(1)
+	go func() {
+		defer d.relaunchWG.Done()
+		if d.beforeReconnect != nil {
+			d.beforeReconnect()
+		}
+		d.connMu.Lock()
+		defer d.connMu.Unlock()
+		if !d.allowAutoRecovery(gen, profileID, nodeID) || d.liveNode("") != nodeID {
+			return
+		}
+		latest, ok := d.store.Get(profileID)
+		if !ok {
+			return
+		}
+		d.recordAutoSwitch()
+		d.setState(State{State: StateHealthReconnecting, Profile: profileID, Node: nodeID,
+			Routing: d.snapshotState().Routing})
+		if _, err := d.startConnect(context.Background(), latest, "", false, false, nodeID); err != nil {
+			// Validation errors leave the old engine up. Preserve that state while
+			// counting the failed recovery attempt so repeated failures cannot churn.
+			d.setState(State{State: StateConnected, Profile: profileID, Node: nodeID})
 			d.emitLog(LogWarn, fmt.Sprintf("health: failover reconnect could not start: %v", err))
-		})
+		}
+	}()
 	return failoverStarted
 }
 

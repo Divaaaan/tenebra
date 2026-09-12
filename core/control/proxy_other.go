@@ -9,14 +9,14 @@ import "errors"
 // proxy there means writing per-desktop settings (GNOME's gsettings, KDE's
 // kioslaverc, and a session's own environment) as the logged-in user, which a
 // root daemon has no session bus to reach — a separate piece of work from
-// bringing the tun path up. The daemon degrades gracefully: arming logs this and
-// stays disarmed, so system-proxy mode simply doesn't take effect rather than
-// crashing the core, and tun mode — the default — is unaffected.
+// bringing the tun path up. The daemon reports a local setup failure rather
+// than promoting a connection whose OS proxy could not be applied. TUN remains
+// the default supported mode.
 var errSystemProxyUnsupported = errors.New("control: system proxy is not supported on this platform")
 
 func enableSystemProxy(string) error { return errSystemProxyUnsupported }
 
-func disableSystemProxy() error { return errSystemProxyUnsupported }
+func disableSystemProxy() error { return nil } // unsupported apply cannot mutate the OS
 
 // readSystemProxy reports "no proxy set" with no error so the startup reconcile
 // finds nothing to clear rather than logging a spurious failure on every launch.

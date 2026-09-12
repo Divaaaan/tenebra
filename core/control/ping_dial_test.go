@@ -210,7 +210,7 @@ func TestNewDaemonUsesPingDialer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	d := NewDaemon(store, newFakeRunner())
+	d := newUnitTestDaemon(store, newFakeRunner())
 	if d.dial == nil {
 		t.Fatal("daemon has no dial function")
 	}

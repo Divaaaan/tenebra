@@ -26,7 +26,7 @@ const ROUTING_LABEL: Record<RoutingMode, keyof Strings["settings"]> = {
 
 /**
  * Raises a toast on the App-level state transitions the user just caused:
- * reaching "connected", arming / disarming the kill switch, and changing the
+ * reaching "connected", changing the requested kill switch preference, and changing the
  * routing mode. Baselines are seeded from the first settled snapshot (once
  * `ready`), so the initial status load is silent — only genuine changes speak.
  *

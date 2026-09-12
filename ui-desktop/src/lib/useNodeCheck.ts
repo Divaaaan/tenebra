@@ -2,6 +2,8 @@ import { useCallback, useRef, useState } from "react";
 
 import { api, type NodeCheckResult } from "../api";
 
+export type NodeCheckOutcome = { kind: "checked"; best: string | null } | { kind: "failed"; error: string };
+
 export interface NodeCheckState {
   /** node id → what the last check measured through it. */
   results: Map<string, NodeCheckResult>;
@@ -16,7 +18,7 @@ export interface NodeCheckState {
   /** The error from the last run, if it failed outright. */
   error: string | null;
   /** Run a check over the given profile. Resolves to the best node, if any. */
-  run: (profileId: string) => Promise<string | null>;
+  run: (profileId: string) => Promise<NodeCheckOutcome>;
   /** Drop everything measured, e.g. when the profile changes. */
   reset: () => void;
 }
@@ -41,9 +43,9 @@ export function useNodeCheck(): NodeCheckState {
   const [checking, setChecking] = useState(false);
   const [checked, setChecked] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const inFlight = useRef<Promise<string | null> | null>(null);
+  const inFlight = useRef<Promise<NodeCheckOutcome> | null>(null);
 
-  const run = useCallback((profileId: string): Promise<string | null> => {
+  const run = useCallback((profileId: string): Promise<NodeCheckOutcome> => {
     if (inFlight.current) return inFlight.current;
 
     setChecking(true);
@@ -63,12 +65,15 @@ export function useNodeCheck(): NodeCheckState {
         const winner = check.best || null;
         setBest(winner);
         setChecked(true);
-        return winner;
+        return { kind: "checked" as const, best: winner };
       })
       .catch((e: unknown) => {
-        setError(e instanceof Error ? e.message : String(e));
-        setChecked(true);
-        return null;
+        const error = e instanceof Error ? e.message : String(e);
+        setError(error);
+        setResults(new Map());
+        setBest(null);
+        setChecked(false);
+        return { kind: "failed" as const, error };
       })
       .finally(() => {
         setChecking(false);

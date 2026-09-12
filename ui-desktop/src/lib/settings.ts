@@ -67,6 +67,7 @@ export function getAutoInstallUpdates(): boolean {
 
 export function setAutoInstallUpdates(on: boolean): void {
   localStorage.setItem(AUTO_INSTALL_UPDATES_KEY, on ? "1" : "0");
+  window.dispatchEvent(new Event("tenebra:auto-install"));
 }
 
 /**

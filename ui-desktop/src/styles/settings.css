@@ -1,21 +1,15 @@
-/* Settings overlay — spec-sheet restyle. A two-column document: a fixed section
-   rail on the left, a scrolling content column on the right. One accent
-   (--signal), mono throughout, sharp corners, considered motion only. Lives
-   inside .overlay-panel / .overlay-body. */
+/* Settings use a section rail and a scrolling document. Shared theme tokens keep
+   fields, controls and keyboard focus consistent with the desktop shell. */
 
 /* ── shell: rail + content, filling the capped overlay-body height ── */
 .set-shell {
   display: grid;
-  grid-template-columns: 190px 1fr;
-  /* Fill the overlay body's capped box (the window − 72 overlay padding − the
-     body's own 8px padding top and bottom) so the rail spans full height and
-     only the content column scrolls. The window is fixed at 720px, so at the
-     design size the two lines below agree exactly; measuring the viewport is
-     what keeps the box honest when it is shorter than the design (a zoomed
-     WebView reports fewer CSS pixels), where a hard 632px would push the rail's
-     tail out of sight with nothing to scroll it back. */
-  height: calc(100vh - 72px - 2 * var(--sp-2));
-  max-height: calc(720px - 72px - 2 * var(--sp-2));
+  grid-template-columns: 196px minmax(0, 1fr);
+  height: calc(100dvh - 74px);
+  max-height: 646px;
+  font-family: var(--ui);
+  line-height: 1.5;
+  min-width: 0;
 }
 
 /* ── left rail: title, section links, version/licence foot ── */
@@ -24,17 +18,21 @@
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  padding: var(--sp-5) 0;
+  padding: 24px 0 20px;
   border-right: var(--bw) solid var(--line);
+  background: var(--surface);
+  border-radius: 12px 0 0 12px;
 }
 .set-nav-title {
-  font-family: var(--display);
-  font-size: var(--fs-sku);
-  font-weight: 600;
-  letter-spacing: var(--track-sku);
-  text-transform: uppercase;
-  padding: 0 18px;
-  margin-bottom: var(--sp-5);
+  font-family: var(--ui);
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 0 20px;
+  margin-bottom: 20px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 /* The rail carries 13 fixed items between a title and the version foot, inside a
    height the window dictates. Whenever the metrics run large — a fallback mono
@@ -51,80 +49,48 @@
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  padding: 2px 4px 2px 0;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
 }
 .set-nav-item {
   text-align: left;
-  font-family: var(--mono);
-  font-size: var(--fs-label);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
-  /* 2px left tick reserved on every item (transparent until active) so the label
-     never shifts; 16px + 2px keeps the text aligned with the title's 18px. */
-  padding: 8px 18px 8px 16px;
+  font-family: var(--ui);
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: none;
+  /* Reserve the active indicator so labels stay aligned with the title. */
+  padding: 9px 14px 9px 18px;
   border-left: var(--bw-emphasis) solid transparent;
   color: var(--text-dim);
   transition:
     color var(--t-fast),
     background-color var(--t-fast),
     border-color var(--t-fast);
-  /* The rail cascades once, on the row step: thirteen items on the chunk step
-     would still be arriving after the user had started reading them. The
-     nth-child delays run to twelve and everything past that shares the last
-     one — a tail, not a queue. */
-  animation: ui-rise var(--d-slow) var(--e-out) backwards;
-  animation-delay: calc(var(--stagger) * 12);
-}
-.set-nav-item:nth-child(1) {
-  animation-delay: 0ms;
-}
-.set-nav-item:nth-child(2) {
-  animation-delay: var(--stagger);
-}
-.set-nav-item:nth-child(3) {
-  animation-delay: calc(var(--stagger) * 2);
-}
-.set-nav-item:nth-child(4) {
-  animation-delay: calc(var(--stagger) * 3);
-}
-.set-nav-item:nth-child(5) {
-  animation-delay: calc(var(--stagger) * 4);
-}
-.set-nav-item:nth-child(6) {
-  animation-delay: calc(var(--stagger) * 5);
-}
-.set-nav-item:nth-child(7) {
-  animation-delay: calc(var(--stagger) * 6);
-}
-.set-nav-item:nth-child(8) {
-  animation-delay: calc(var(--stagger) * 7);
-}
-.set-nav-item:nth-child(9) {
-  animation-delay: calc(var(--stagger) * 8);
-}
-.set-nav-item:nth-child(10) {
-  animation-delay: calc(var(--stagger) * 9);
-}
-.set-nav-item:nth-child(11) {
-  animation-delay: calc(var(--stagger) * 10);
-}
-.set-nav-item:nth-child(12) {
-  animation-delay: calc(var(--stagger) * 11);
+  min-height: 38px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  border-radius: 0 8px 8px 0;
 }
 .set-nav-item:hover {
   color: var(--text);
+  background: var(--surface-2);
 }
 .set-nav-item.is-active {
   color: var(--signal);
   background: var(--nav-active-bg);
   border-left-color: var(--signal);
+  font-weight: 600;
 }
 .set-nav-foot {
   margin-top: auto;
-  padding: var(--sp-4) 18px 0;
-  font-family: var(--mono);
-  font-size: var(--fs-label);
-  letter-spacing: var(--track-body);
+  padding: 16px 20px 0;
+  font-family: var(--ui);
+  font-size: 12px;
+  letter-spacing: 0;
   color: var(--text-dim-2);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 /* ── right content column: the scroll container ── */
@@ -133,7 +99,9 @@
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 var(--sp-6) var(--sp-5);
+  padding: 0 28px 24px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 /* Sticky "esc ✕" close, pinned to the top-right of the scrolling content.
@@ -158,17 +126,19 @@
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
-  font-family: var(--mono);
-  font-size: var(--fs-data);
-  letter-spacing: var(--track-body);
-  text-transform: uppercase;
+  font-family: var(--ui);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--text-dim);
-  background: var(--bg);
-  padding: 4px 10px;
+  background: var(--surface);
+  padding: 5px 10px;
   border: var(--bw) solid var(--line);
   transition:
     color var(--t-fast),
     border-color var(--t-fast);
+  min-height: 32px;
+  border-radius: 8px;
 }
 .set-close:hover {
   color: var(--signal);
@@ -179,31 +149,17 @@
 .set-section {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-4);
-  padding: var(--sp-5) 0;
+  gap: 16px;
+  padding: 24px 0;
   border-top: var(--bw) solid var(--line);
   /* The rail jumps here with scrollIntoView({block: "start"}), which parks the
      section's top edge at the very top of the scrollport — i.e. behind the
-     sticky close bar (12 + ~27 + 8 ≈ 47px tall), leaving the section's first
+     sticky close bar (12 + 32 + 8 = 52px tall), leaving the section's first
      control barely clear of it. Offset the jump so the head and the first
      control always land below the bar. Ceiling: the 60px threshold
      pickActiveSection uses in SettingsScreen.tsx — a larger offset would stop
      the jump from registering and the rail would keep the previous item lit. */
   scroll-margin-top: 56px;
-  /* Sections are semantic blocks, not rows, so they take the longer beat — but
-     only the first few carry a delay. A pane the user scrolls should be settled
-     by the time they reach its middle. */
-  animation: ui-rise var(--d-slow) var(--e-out) backwards;
-  animation-delay: calc(var(--stagger-chunk) * 3);
-}
-.set-section:nth-of-type(1) {
-  animation-delay: 0ms;
-}
-.set-section:nth-of-type(2) {
-  animation-delay: var(--stagger-chunk);
-}
-.set-section:nth-of-type(3) {
-  animation-delay: calc(var(--stagger-chunk) * 2);
 }
 /* The first section sits directly under the sticky close bar, so it drops the
    top rule and extra margin the stacked sections carry. */
@@ -215,20 +171,24 @@
 .set-section-head {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-1);
+  gap: 6px;
 }
 .set-eyebrow {
-  font-family: var(--mono);
-  font-size: var(--fs-label);
-  letter-spacing: var(--track-cap);
-  text-transform: uppercase;
-  color: var(--text-dim);
+  font-family: var(--ui);
+  font-size: 14px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text);
+  font-weight: 600;
+  line-height: 1.4;
 }
 .set-sub {
-  font-family: var(--mono);
-  font-size: var(--fs-data);
-  letter-spacing: var(--track-body);
+  font-family: var(--ui);
+  font-size: 13px;
+  letter-spacing: 0;
   color: var(--text-dim);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 /* ── option rows (routing / split mode) — bordered radio rows ── */
@@ -237,12 +197,13 @@
 .set-options {
   display: flex;
   flex-direction: column;
+  margin-bottom: 1px;
 }
 .set-option {
   display: flex;
   align-items: flex-start;
   gap: var(--sp-3);
-  padding: 12px 14px;
+  padding: 14px 16px;
   border: var(--bw) solid var(--line);
   margin-bottom: -1px; /* adjacent borders merge into one rule */
   text-align: left;
@@ -251,6 +212,7 @@
     color var(--t-fast),
     border-color var(--t-fast),
     background-color var(--t-fast);
+  background: var(--surface);
 }
 .set-option:hover {
   border-color: var(--text-dim);
@@ -278,19 +240,24 @@
   min-width: 0;
 }
 .set-option-label {
-  font-family: var(--mono);
-  font-size: var(--fs-body);
-  letter-spacing: var(--track-body);
-  text-transform: uppercase;
+  font-family: var(--ui);
+  font-size: 14px;
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 .set-option.is-checked .set-option-label {
   color: var(--signal);
 }
 .set-option-hint {
-  font-family: var(--mono);
-  font-size: var(--fs-data);
-  letter-spacing: var(--track-body);
+  font-family: var(--ui);
+  font-size: 13px;
+  letter-spacing: 0;
   color: var(--text-dim);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 /* ── update-channel group: a captioned radiogroup in the Updates section ── */
@@ -311,6 +278,7 @@
 .set-add {
   display: flex;
   gap: var(--sp-2);
+  flex-wrap: wrap;
 }
 .set-field {
   display: flex;
@@ -319,11 +287,21 @@
   flex: 1;
   min-width: 0;
   border: var(--bw) solid var(--line);
-  padding: 7px 11px;
+  padding: 9px 12px;
   transition: border-color var(--t-fast);
+  min-height: 40px;
+  border-radius: 8px;
+  background: var(--surface);
 }
 .set-field:focus-within {
   border-color: var(--signal);
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+}
+/* Width basis only belongs to the horizontal add row. Resolver fields also
+   appear directly in a column and must retain their natural height. */
+.set-add .set-field {
+  flex: 1 1 220px;
 }
 /* A malformed resolver draft: warm the border to the accent (the app's single
    destructive/attention colour) to match the inline .set-error line below. */
@@ -333,15 +311,17 @@
 
 /* Inline validation line under a resolver field. */
 .set-error {
-  font-family: var(--mono);
-  font-size: var(--fs-data);
-  letter-spacing: var(--track-body);
+  font-family: var(--ui);
+  font-size: 13px;
+  letter-spacing: 0;
   color: var(--signal);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 .set-field .set-prompt {
   color: var(--signal);
   font-family: var(--mono);
-  font-size: var(--fs-meta);
+  font-size: 13px;
   flex: none;
 }
 .set-field input {
@@ -349,54 +329,61 @@
   flex: 1;
   min-width: 0;
   font-family: var(--mono);
-  font-size: var(--fs-meta);
-  letter-spacing: var(--track-body);
+  font-size: 13px;
+  letter-spacing: 0;
   color: var(--text);
   caret-color: var(--signal);
+  line-height: 1.5;
 }
 .set-field input::placeholder {
   color: var(--text-dim-2);
 }
 
-/* primary action — the connect-button vocabulary, sized down */
+/* Secondary setting actions use a quiet surface, with a clear focus ring. */
 .set-btn {
   flex: none;
-  font-family: var(--mono);
-  font-size: var(--fs-meta);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+  font-family: var(--ui);
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: none;
   font-weight: 600;
-  padding: 0 18px;
-  border: var(--bw-emphasis) solid var(--signal);
-  color: var(--signal);
+  padding: 8px 14px;
+  border: var(--bw) solid var(--line-2);
+  color: var(--text);
   transition:
     background-color var(--t-base),
     color var(--t-base),
     border-color var(--t-base),
     transform var(--d-micro) var(--e-out);
+  min-height: 36px;
+  max-width: 100%;
+  border-radius: 8px;
+  background: var(--surface);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  text-align: center;
 }
-.set-btn:hover {
-  background: var(--signal);
-  color: var(--on-signal);
+.set-btn:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--signal);
 }
 .set-btn:active:not(:disabled) {
-  transform: scale(0.96);
+  transform: translateY(1px);
 }
 .set-btn:disabled {
   border-color: var(--line);
   color: var(--text-dim-2);
   cursor: default;
-}
-.set-btn:disabled:hover {
-  background: transparent;
-  color: var(--text-dim-2);
+  background: var(--surface-2);
 }
 
 .set-empty {
-  font-family: var(--mono);
-  font-size: var(--fs-data);
-  letter-spacing: var(--track-body);
+  font-family: var(--ui);
+  font-size: 13px;
+  letter-spacing: 0;
   color: var(--text-dim);
+  line-height: 1.6;
 }
 
 .set-app-list {
@@ -414,22 +401,24 @@
   padding: 9px 12px;
   border: var(--bw) solid var(--line);
   margin-bottom: -1px;
+  background: var(--surface);
 }
 .set-app-name {
   font-family: var(--mono);
-  font-size: var(--fs-body);
-  letter-spacing: var(--track-body);
+  font-size: 13px;
+  letter-spacing: 0;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
 /* ghost remove — a quiet ✕ that warms to the accent (destructive = signal) */
 .set-remove {
   flex: none;
-  font-family: var(--mono);
-  font-size: var(--fs-data);
+  font-family: var(--ui);
+  font-size: 13px;
   line-height: 1;
   color: var(--text-dim);
   padding: 4px 7px;
@@ -437,6 +426,10 @@
   transition:
     color var(--t-fast),
     border-color var(--t-fast);
+  min-height: 30px;
+  min-width: 30px;
+  border-radius: 7px;
+  background: var(--surface);
 }
 .set-remove:hover {
   color: var(--signal);
@@ -457,17 +450,22 @@
   min-width: 0;
 }
 .set-row-label {
-  font-family: var(--mono);
-  font-size: var(--fs-meta);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
+  font-family: var(--ui);
+  font-size: 14px;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--text);
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 .set-row-hint {
-  font-family: var(--mono);
-  font-size: var(--fs-data);
-  letter-spacing: var(--track-body);
+  font-family: var(--ui);
+  font-size: 13px;
+  letter-spacing: 0;
   color: var(--text-dim);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 /* ── strategy pick: the row, plus the run's progress under it ──
@@ -481,34 +479,42 @@
   gap: var(--sp-2);
 }
 .set-pick-step {
-  font-family: var(--mono);
-  font-size: var(--fs-data);
-  letter-spacing: var(--track-body);
+  font-family: var(--ui);
+  font-size: 13px;
+  letter-spacing: 0;
   /* Full-strength text, a step up from the hint above it: this is the live part
      of the row. Not the signal colour — that one carries refusals here
      (.set-error), and a progress line must not read as a failure. */
   color: var(--text);
   /* One long strategy name must not stretch the settings column. */
   overflow-wrap: anywhere;
+  line-height: 1.6;
 }
 
-/* ── segmented control (theme / language) — adjacent buttons, borders merged ── */
+/* ── segmented control (theme / language) ── */
 .set-seg {
   display: inline-flex;
   flex: none;
+  padding: 3px;
+  gap: 3px;
+  border: var(--bw) solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
 }
 .set-seg button {
-  font-family: var(--mono);
-  font-size: var(--fs-label);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 6px 13px;
-  border: var(--bw) solid var(--line);
-  margin-right: -1px;
+  font-family: var(--ui);
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 5px 11px;
+  border: var(--bw) solid transparent;
+  margin-right: 0;
   color: var(--text-dim);
   transition:
     color var(--t-fast),
     border-color var(--t-fast);
+  min-height: 30px;
+  border-radius: 7px;
 }
 .set-seg button:last-child {
   margin-right: 0;
@@ -517,10 +523,12 @@
   color: var(--text);
 }
 .set-seg button.is-active {
-  color: var(--signal);
-  border-color: var(--signal);
+  color: var(--text);
+  border-color: var(--line-2);
   position: relative;
   z-index: 1;
+  background: var(--surface-2);
+  font-weight: 600;
 }
 
 /* ── switch (startup toggles) — a labelled ▢/▣ box, not a sliding pill ── */
@@ -529,10 +537,10 @@
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
-  font-family: var(--mono);
-  font-size: var(--fs-label);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-family: var(--ui);
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: none;
   padding: 6px 12px;
   border: var(--bw) solid var(--line);
   color: var(--text-dim);
@@ -540,28 +548,34 @@
     color var(--t-fast),
     border-color var(--t-fast),
     transform var(--d-micro) var(--e-out);
+  min-height: 34px;
+  font-weight: 600;
+  border-radius: 8px;
+  background: var(--surface);
 }
 .set-switch:active:not(:disabled) {
-  transform: scale(0.96);
+  transform: translateY(1px);
 }
-.set-switch:hover {
+.set-switch:hover:not(:disabled) {
   color: var(--text);
   border-color: var(--text-dim);
 }
 .set-switch.is-on {
-  color: var(--good);
-  border-color: var(--good);
+  color: var(--on-signal);
+  border-color: var(--signal);
+  background: var(--signal);
+}
+.set-switch.is-on:hover:not(:disabled) {
+  color: var(--on-signal);
+  border-color: var(--signal);
+  background: color-mix(in srgb, var(--signal) 88%, var(--text));
 }
 .set-switch:disabled {
   opacity: 0.45;
   cursor: default;
 }
-.set-switch:disabled:hover {
-  color: var(--text-dim);
-  border-color: var(--line);
-}
 .set-switch-box {
-  font-size: var(--fs-data);
+  font-size: 13px;
   line-height: 1;
 }
 
@@ -588,28 +602,31 @@
   align-items: baseline;
   justify-content: space-between;
   gap: var(--sp-3);
-  padding: 9px 12px;
+  padding: 11px 14px;
   border: var(--bw) solid var(--line);
   margin-bottom: -1px;
+  background: var(--surface);
 }
 .set-fact dt {
-  flex: none;
-  font-family: var(--mono);
-  font-size: var(--fs-label);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
+  flex: 0 1 45%;
+  font-family: var(--ui);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--text-dim);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 .set-fact dd {
   margin: 0;
   min-width: 0;
   font-family: var(--mono);
-  font-size: var(--fs-meta);
-  letter-spacing: var(--track-body);
+  font-size: 12px;
+  letter-spacing: 0;
   color: var(--text);
   text-align: right;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 /* Tone a single-value verdict: good (green) when healthy, signal (accent) when
    blocked. Neutral facts keep the default text colour. */
@@ -621,21 +638,21 @@
 }
 /* Speed KPI: the display-font throughput number, toned good like a live tunnel. */
 .set-fact-kpi {
-  font-family: var(--display);
-  font-size: var(--fs-sku);
+  font-family: var(--ui);
+  font-size: 22px;
   font-weight: 600;
-  letter-spacing: var(--track-sku);
+  letter-spacing: 0;
   font-variant-numeric: tabular-nums;
   color: var(--good);
 }
 .set-fact-unit {
-  font-family: var(--mono);
-  font-size: var(--fs-meta);
+  font-family: var(--ui);
+  font-size: 13px;
   color: var(--text-dim);
 }
 .set-fact-note {
-  font-family: var(--mono);
-  font-size: var(--fs-data);
+  font-family: var(--ui);
+  font-size: 13px;
   color: var(--text-dim);
 }
 
@@ -651,7 +668,121 @@
 }
 .overlay-panel:has(.set-shell) .overlay-body {
   overflow: hidden;
+  padding: 0;
 }
 .overlay-panel:has(.set-shell) .overlay-close {
   display: none;
+}
+
+.set-nav-group {
+  margin: 16px 20px 7px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 600;
+}
+.set-nav-group:first-child { margin-top: 0; }
+
+.set-section-head .set-eyebrow {
+  font-size: 19px;
+  font-weight: 650;
+}
+.set-option:first-child,
+.set-app-row:first-child,
+.set-fact:first-child {
+  border-radius: 10px 10px 0 0;
+}
+.set-option:last-child,
+.set-app-row:last-child,
+.set-fact:last-child {
+  border-radius: 0 0 10px 10px;
+}
+.set-option:only-child,
+.set-app-row:only-child,
+.set-fact:only-child {
+  border-radius: 10px;
+}
+.set-shell button:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+}
+/* The rail clips its scrollport, so draw its focus ring inside each item. */
+.set-shell .set-nav-item:focus-visible {
+  outline-offset: -3px;
+}
+.set-field input:focus-visible {
+  outline: none;
+}
+
+/* Narrow windows keep every section reachable in a horizontal scrolling rail. */
+@media (max-width: 700px) {
+  .set-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    height: calc(100dvh - 26px);
+  }
+  .set-nav {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    padding: 18px 0 10px;
+    border-right: 0;
+    border-bottom: var(--bw) solid var(--line);
+    border-radius: 12px 12px 0 0;
+  }
+  .set-nav-title {
+    padding-inline: 18px;
+    margin: 0;
+    font-size: 21px;
+  }
+  .set-nav-foot {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: center;
+    max-width: 22ch;
+    margin: 0;
+    padding: 0 18px 0 0;
+    font-size: 11px;
+    text-align: right;
+  }
+  .set-nav-list {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 14px 5px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-gutter: auto;
+  }
+  .set-nav-item {
+    flex: none;
+    white-space: nowrap;
+    min-height: 36px;
+    padding: 8px 12px;
+    border: var(--bw) solid transparent;
+    border-radius: 8px;
+  }
+  .set-nav-item.is-active {
+    border-color: var(--signal);
+  }
+  .set-nav-group,
+  .set-nav-group:first-child {
+    flex: none;
+    white-space: nowrap;
+    margin: 0 4px 0 12px;
+    padding-left: 12px;
+    border-left: var(--bw) solid var(--line);
+  }
+  .set-main {
+    padding: 0 18px 20px;
+  }
+  .set-row {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .set-row-text {
+    flex: 1 1 240px;
+  }
 }

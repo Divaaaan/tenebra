@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Divaaaan/tenebra/core/model"
 	"github.com/Divaaaan/tenebra/core/profile"
@@ -34,7 +35,20 @@ func daemonForConflictTest(t *testing.T) (*Daemon, string) {
 	if err := store.Add(p); err != nil {
 		t.Fatalf("add profile: %v", err)
 	}
-	return NewDaemon(store, newFakeRunner()), p.ID
+	d := newUnitTestDaemon(store, newFakeRunner())
+	// These tests start asynchronous connects. Drain them before the fixture's
+	// store disappears, without Close(), which also stops the host DPI bypass.
+	t.Cleanup(func() {
+		d.connMu.Lock()
+		err := d.teardown(StateIdle, "", "")
+		d.connMu.Unlock()
+		d.relaunchWG.Wait()
+		d.entCancel()
+		if err != nil {
+			t.Errorf("conflict fixture teardown: %v", err)
+		}
+	})
+	return d, p.ID
 }
 
 // foreignTunnel is another VPN holding the default route at a metric that beats
@@ -78,6 +92,10 @@ func TestConnectProceedsWithExplicitOverride(t *testing.T) {
 // with anything; blocking it would be pure obstruction.
 func TestConnectNotGuardedInSystemProxyMode(t *testing.T) {
 	d, pid := daemonForConflictTest(t)
+	proxy, ok := d.proxy.(*fakeProxyController)
+	if !ok {
+		t.Fatalf("conflict fixture must not use host proxy controller %T", d.proxy)
+	}
 	d.SetInterfaceProbe(func() ([]tunguard.Iface, error) { return foreignTunnel(), nil })
 	d.mu.Lock()
 	d.tun.Mode = singbox.ModeSystemProxy
@@ -86,6 +104,18 @@ func TestConnectNotGuardedInSystemProxyMode(t *testing.T) {
 	resp := d.handleConnect(context.Background(), Request{ID: 1, Cmd: CmdConnect, Profile: pid})
 	if !resp.Ok {
 		t.Fatalf("system-proxy connect was blocked by the tun guard: %q", resp.Error)
+	}
+	// An accepted asynchronous command is not proof that the system-proxy path
+	// completed. Reach recordSuccess and require the injected adapter to own it.
+	deadline := time.Now().Add(3 * time.Second)
+	for d.snapshotState().State != StateConnected {
+		if time.Now().After(deadline) {
+			t.Fatalf("system-proxy connect did not complete: %+v", d.snapshotState())
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if proxy.enables() != 1 || proxy.lastHostPort() != "127.0.0.1:2080" {
+		t.Fatalf("proxy enables=%d target=%q, want one fake apply at 127.0.0.1:2080", proxy.enables(), proxy.lastHostPort())
 	}
 }
 

@@ -1,401 +1,83 @@
-/* App shell — fixed 1120×720 window split into top bar / (kill banner) / body /
-   bottom bar. Body is the two-pane connection + server grid. */
+/* Desktop chrome and shared modal host. Content owns its scroll area. */
+.app { position: relative; width: 100%; height: 100%; background: var(--bg); border: 1px solid var(--line); display: flex; flex-direction: column; overflow: hidden; }
+.app > * { position: relative; z-index: 1; }
+.app-top { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 17px 24px; border-bottom: 1px solid var(--line); }
+.brand { font: 700 21px var(--display); display: flex; align-items: center; gap: 7px; flex: none; }
+.brand .bracket { color: var(--signal); font-weight: 500; }
+.brand .mark { color: var(--text); }
+.brand .ver { font: 11px var(--mono); color: var(--text-dim); margin-left: 8px; }
+.app-acct { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px 12px; min-width: 0; font-size: 12px; color: var(--text-dim); }
+.app-acct .b { color: var(--text); min-width: 0; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-acct .sep { color: var(--line-2); }
+.acct-badge { color: var(--text-dim); padding: 2px 6px; background: var(--surface-2); border-radius: 4px; font-size: 11px; }
+.acct-badge--premium { color: var(--signal); }
+.app-body { display: grid; grid-template-columns: minmax(0, .82fr) minmax(0, 1fr); gap: 24px; padding: 24px; flex: 1; min-height: 0; }
+.pane { min-height: 0; min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
 
-.app {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  background: var(--bg);
-  border: var(--bw) solid var(--line-2);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
+/* Requested protection stays visually distinct from confirmed native evidence. */
+.protection-banner { flex: none; display: flex; align-items: center; gap: 12px; padding: 12px 24px; border-bottom: 1px solid var(--line); color: var(--text-dim); background: var(--surface); font-size: 13px; }
+.protection-copy { flex: 1; min-width: 0; }
+.protection-copy p { margin: 0; line-height: 1.5; }
+.protection-copy pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.protection-copy details { margin-top: 6px; }
+.protection-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.protection-actions button { min-height: 34px; padding: 4px 10px; border: 1px solid currentColor; border-radius: 6px; font: 13px/1.5 var(--ui); }
+.protection-banner[data-protection="active"] { color: var(--good); }
+.protection-banner[data-protection="blocked"], .protection-banner[data-protection="error"] { color: var(--signal); }
+.update-banner { flex: none; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; padding: 10px 24px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.update-banner-text { color: var(--warn-soft); font-weight: 500; }
+.update-banner-actions { display: flex; align-items: center; gap: 12px; }
+.update-banner-actions button { display: inline-flex; color: var(--text-dim); padding-block: 4px; }
+.update-banner-actions .update-banner-install, .update-banner-actions button:hover { color: var(--signal); }
+.update-banner-actions button:disabled { color: var(--text-dim-2); cursor: default; }
+.daemon-skew-hint { color: var(--text-dim); }
 
-/* A whisper of grain so flat panels don't read as dead space. Dark only. */
-.app::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  opacity: var(--grain-opacity);
-  mix-blend-mode: overlay;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
-}
+.app-bottom { flex: none; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 12px 24px; border-top: 1px solid var(--line); }
+.proto { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.proto-lab { font-size: 12px; color: var(--text-dim); }
+.seg { display: flex; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.seg button { padding: 5px 10px; border-radius: 5px; font: 13px/1.5 var(--ui); color: var(--text-dim); }
+.seg button.on { background: var(--surface-2); color: var(--text); font-weight: 600; }
+.seg button:hover { color: var(--text); }
+.toggle { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 7px; color: var(--text-dim); font: 13px/1.5 var(--ui); }
+.toggle.on { color: var(--signal); border-color: var(--signal); background: var(--signal-faint); }
+.toggle:hover { border-color: var(--text-dim); color: var(--text); }
+.toggle:disabled { opacity: .6; cursor: default; }
+.toggle .box { font-size: 13px; }
+.app-bottom .right { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.app-bottom .act { display: inline-flex; align-items: center; min-height: 34px; padding: 0 5px; border-radius: 5px; color: var(--text-dim); font-size: 13px; }
+.app-bottom .act:hover { color: var(--text); text-decoration: underline; text-underline-offset: 4px; }
+.app-bottom .bypass-stat { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); max-width: 220px; overflow-wrap: anywhere; }
+.app-bottom .bypass-stat.is-on { color: var(--good); }
+.app-bottom .bypass-stat .box { font-size: 12px; }
 
-.app > * {
-  position: relative;
-  z-index: 1;
+/* ModalLayer owns focus/inert. This stylesheet only controls the visual frame. */
+.overlay { position: absolute; inset: 0; z-index: 20; background: var(--scrim); display: flex; align-items: flex-start; justify-content: center; padding: 24px; overflow-y: auto; animation: ui-fade-in var(--d-base) var(--e-out) backwards; }
+.overlay-panel { position: relative; width: min(900px,100%); min-width: 0; background: var(--bg); border: 1px solid var(--line-2); border-radius: 14px; box-shadow: 0 16px 60px rgba(0,0,0,.2); animation: ui-panel-in var(--d-slow) var(--e-out) backwards; }
+.overlay.is-leaving { animation: ui-fade-out var(--d-base) var(--e-in) both; pointer-events: none; }
+.overlay.is-leaving .overlay-panel { animation: ui-panel-out var(--d-fast) var(--e-in) both; }
+.overlay-close { position: absolute; top: 12px; right: 12px; z-index: 2; display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text-dim); font: 16px var(--ui); }
+.overlay-close:hover { color: var(--text); background: var(--surface-2); }
+.overlay-body { padding: 8px; max-height: calc(100dvh - 50px); overflow-y: auto; border-radius: inherit; }
+.app > .setup { width: min(560px,calc(100% - 48px)); margin: auto; padding: 32px 0; flex: none; }
+.app-starting { width: min(560px,calc(100% - 48px)); margin: auto; padding: 32px 0; }
+.app-starting h1 { font: 600 30px/1.3 var(--ui); margin-bottom: 14px; }
+.app-starting p { color: var(--text-dim); font-size: 15px; line-height: 1.6; }
+.connection-error { flex: none; padding: 12px 24px; border-bottom: 1px solid var(--signal); background: var(--signal-faint); font-size: 13px; max-height: 35dvh; overflow: auto; }
+.connection-error p { margin: 0 0 8px; line-height: 1.6; }
+.connection-error summary { cursor: pointer; color: var(--text-dim); margin-bottom: 8px; }
+.connection-error pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 900px) {
+  .app-top { padding: 14px 20px; flex-wrap: wrap; }
+  .app-acct { justify-content: flex-start; }
+  .app-body { gap: 18px; padding: 20px; }
+  .app-bottom .right { width: 100%; }
 }
-
-/* ── top bar ── */
-.app-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 22px;
-  border-bottom: var(--bw) solid var(--line);
-}
-.brand {
-  font-family: var(--display);
-  font-weight: 700;
-  font-size: var(--fs-brand);
-  letter-spacing: 0.01em;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-.brand .bracket {
-  color: var(--text-dim);
-  font-weight: 500;
-}
-.brand .mark {
-  color: var(--text);
-}
-.brand .ver {
-  font-family: var(--mono);
-  font-size: var(--fs-label);
-  color: var(--text-dim);
-  letter-spacing: 0.06em;
-  margin-left: 10px;
-  text-transform: uppercase;
-}
-.app-acct {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  font-size: var(--fs-meta);
-  color: var(--text-dim);
-  letter-spacing: var(--track-body);
-}
-.app-acct .b {
-  color: var(--text);
-}
-.app-acct .sep {
-  color: var(--line-2);
-}
-
-/* Entitlement badge beside the active subscription name — mono, bracketed like
-   the wordmark, in the rationed accent. A status marker, not a control; the
-   brackets auto-dim relative to whatever colour the badge carries. */
-.acct-badge {
-  font-family: var(--mono);
-  font-size: var(--fs-label);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
-  font-weight: 600;
-  white-space: nowrap;
-}
-.acct-badge::before {
-  content: "[ ";
-  color: color-mix(in srgb, currentColor 50%, transparent);
-}
-.acct-badge::after {
-  content: " ]";
-  color: color-mix(in srgb, currentColor 50%, transparent);
-}
-.acct-badge--premium {
-  color: var(--signal);
-}
-
-/* ── kill-switch banner ── */
-.kill-banner {
-  background: var(--signal);
-  color: var(--on-signal);
-  padding: 6px 22px;
-  font-size: var(--fs-label);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  font-weight: 600;
-  text-align: center;
-  /* Drops in from under the top bar when armed. Neutralised by reduced-motion. */
-  animation: kill-banner-in var(--d-slow) var(--e-out) backwards;
-}
-@keyframes kill-banner-in {
-  from {
-    opacity: 0;
-    transform: translateY(-100%);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* ── update banner — the update check found a newer release ── */
-/* Quiet by design: a bordered row in the warn tint, not the kill banner's
-   filled alarm. An update is a heads-up, not an incident. The daemon-skew
-   banner (a stale privileged daemon behind an updated app) shares these
-   classes: same severity, same row. */
-.update-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-4);
-  padding: 6px 22px;
-  border-bottom: var(--bw) solid var(--line);
-  font-size: var(--fs-label);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-.update-banner-text {
-  color: var(--warn-soft);
-  font-weight: 600;
-}
-.update-banner-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-}
-.update-banner-actions button {
-  display: inline-flex;
-  gap: 6px;
-  color: var(--text-dim);
-  transition:
-    color var(--t-fast),
-    transform var(--d-micro) var(--e-out);
-}
-.update-banner-actions button:active:not(:disabled) {
-  transform: scale(0.96);
-}
-.update-banner-actions .update-banner-install {
-  color: var(--signal);
-}
-.update-banner-actions button:hover {
-  color: var(--signal);
-}
-.update-banner-actions button:disabled {
-  color: var(--text-dim-2);
-  cursor: default;
-}
-/* The non-mac daemon-skew hint is plain text, not an action: keep it dim so
-   the dismiss button reads as the only interactive thing beside it. */
-.daemon-skew-hint {
-  color: var(--text-dim-2);
-}
-
-/* ── body ── */
-.app-body {
-  display: grid;
-  grid-template-columns: 1.25fr 1fr;
-  flex: 1;
-  min-height: 0;
-}
-.pane {
-  min-height: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-/* ── bottom bar ── */
-.app-bottom {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--sp-3) 22px;
-  border-top: var(--bw) solid var(--line);
-}
-.proto {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.proto-lab {
-  font-size: var(--fs-label);
-  letter-spacing: var(--track-label);
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
-.seg {
-  display: flex;
-}
-.seg button {
-  font-family: var(--mono);
-  font-size: var(--fs-label);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 5px 11px;
-  border: var(--bw) solid var(--line);
-  margin-right: -1px;
-  color: var(--text-dim);
-  transition:
-    color var(--t-fast),
-    border-color var(--t-fast),
-    background-color var(--t-fast),
-    transform var(--d-micro) var(--e-out);
-}
-.seg button:active {
-  transform: scale(0.96);
-}
-.seg button.on {
-  color: var(--signal);
-  border-color: var(--signal);
-  background: var(--signal-faint);
-  position: relative;
-  z-index: 1;
-}
-.seg button:hover {
-  color: var(--text);
-}
-.toggle {
-  font-family: var(--mono);
-  font-size: var(--fs-label);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 5px 10px;
-  border: var(--bw) solid var(--line);
-  color: var(--text-dim);
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-2);
-  transition:
-    color var(--t-fast),
-    border-color var(--t-fast),
-    background-color var(--t-fast),
-    transform var(--d-micro) var(--e-out);
-}
-.toggle:active:not(:disabled) {
-  transform: scale(0.96);
-}
-.toggle:hover {
-  color: var(--text);
-  border-color: var(--text-dim);
-}
-.toggle.on {
-  color: var(--signal);
-  border-color: var(--signal);
-  background: var(--signal-faint);
-}
-.toggle:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-.toggle:disabled:hover {
-  color: var(--text-dim);
-  border-color: var(--line);
-}
-.toggle .box {
-  font-size: var(--fs-data);
-  line-height: 1;
-}
-.app-bottom .right {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-}
-.app-bottom .act {
-  font-size: var(--fs-label);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  display: inline-flex;
-  gap: 6px;
-  transition:
-    color var(--t-fast),
-    transform var(--d-micro) var(--e-out);
-}
-.app-bottom .act:active {
-  transform: scale(0.96);
-}
-.app-bottom .act:hover {
-  color: var(--signal);
-}
-
-/* ── overlay host for secondary surfaces (import / settings / logs) ── */
-.overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 20;
-  background: var(--scrim);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 36px 22px;
-  overflow-y: auto;
-  /* Scrim fades up; the panel below rises on its own, slower curve. Both use the
-     shared enter/exit vocabulary from global.css, and both are neutralised by the
-     reduced-motion rule there. */
-  animation: ui-fade-in var(--d-base) var(--e-out) backwards;
-}
-.overlay-panel {
-  position: relative;
-  width: min(820px, 100%);
-  background: var(--bg);
-  border: var(--bw) solid var(--line-2);
-  animation: ui-panel-in var(--d-slow) var(--e-out) backwards;
-}
-
-/* Dismissed: App holds the overlay mounted for the exit (lib/usePresence). The
-   scrim goes out slower than the panel so the app behind it is uncovered *after*
-   the panel has cleared, instead of the panel appearing to fall through a hole. */
-.overlay.is-leaving {
-  animation: ui-fade-out var(--d-base) var(--e-in) both;
-  pointer-events: none;
-}
-.overlay.is-leaving .overlay-panel {
-  animation: ui-panel-out var(--d-fast) var(--e-in) both;
-}
-.overlay-close {
-  position: absolute;
-  top: 10px;
-  right: 14px;
-  z-index: 1;
-  font-family: var(--mono);
-  font-size: var(--fs-data);
-  color: var(--text-dim);
-  padding: 4px 8px;
-  transition:
-    color var(--t-fast),
-    transform var(--d-micro) var(--e-out);
-}
-.overlay-close:hover {
-  color: var(--signal);
-}
-.overlay-close:active {
-  transform: scale(0.96);
-}
-.overlay-body {
-  padding: var(--sp-2);
-  max-height: calc(720px - 72px);
-  overflow-y: auto;
-}
-
-/* The bypass readout. A status, not an action: it shares the bar's type with the
-   actions beside it but takes no pointer, because switching the bypass lives in
-   Settings and a clickable status is how the old panel button got mistaken for
-   the switch itself. Lit only while the core reports the filter carrying
-   traffic. */
-.app-bottom .bypass-stat {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--fs-label);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
-
-.app-bottom .bypass-stat.is-on {
-  color: var(--signal);
-}
-
-/* Same glyph size as the kill switch's box, so the two read as one row rather
-   than as a control and a stray character next to it. */
-.app-bottom .bypass-stat .box {
-  font-size: var(--fs-data);
-  line-height: 1;
-}
-/* The setup strip inside the full shell: same component as the simple view,
-   laid out as a band above the panes so it reads as part of the app rather than
-   a modal blocking it. It removes itself once the subscription is in, so a
-   returning user never sees it. */
-.app > .setup {
-  width: auto;
-  margin: 0 var(--sp-5) var(--sp-3);
-  padding: var(--sp-3) var(--sp-4);
-  background: var(--surface-2);
-  border: var(--bw) solid var(--line);
-  border-radius: var(--radius);
+@media (max-width: 760px) {
+  .app-body { display: flex; flex-direction: column; overflow-y: auto; }
+  .app-body > .pane { flex: none; overflow: visible; }
+  .protection-banner { align-items: flex-start; flex-direction: column; padding-inline: 20px; }
+  .overlay { padding: 12px; }
+  .overlay-body { max-height: calc(100dvh - 26px); }
+  .app-bottom { padding: 10px 16px; }
 }

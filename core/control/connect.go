@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/Divaaaan/tenebra/core/fallback"
 	"github.com/Divaaaan/tenebra/core/model"
 	"github.com/Divaaaan/tenebra/core/profile"
+	"github.com/Divaaaan/tenebra/core/protection"
 	"github.com/Divaaaan/tenebra/core/routing"
 	"github.com/Divaaaan/tenebra/core/singbox"
 )
@@ -210,6 +212,21 @@ func (d *Daemon) logConnectPlan(p profile.Profile, m *fallback.Machine, explicit
 // reconnecting the one it just abandoned. It is ignored for an explicit-node
 // connect (the user pinned that exact exit) and when empty.
 func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNode string, auto, remember bool, avoid string) (State, error) {
+	d.mu.Lock()
+	mh := d.multihop
+	d.mu.Unlock()
+	if err := validateMultihopProfile(p, mh); err != nil {
+		return State{}, err
+	}
+	requestedNode := explicitNode
+	if mh.Enabled {
+		// A chain has one effective exit. Use it for the attempt, state, last-good
+		// and leak check, while keeping the user's original connect intent.
+		if avoid == mh.ExitID {
+			return State{}, fmt.Errorf("connect: multihop has no alternative exit; select another chain")
+		}
+		explicitNode = mh.ExitID
+	}
 	// Build the fallback candidates. An explicit node request collapses the walk
 	// to that single node: the user asked for a specific exit, so we honour it and
 	// do not silently wander to another protocol behind their back. Without an
@@ -236,6 +253,14 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 		if len(candidates) == 0 {
 			return State{}, fmt.Errorf("connect: no alternative node to fail over to")
 		}
+	}
+	// Lock down before candidate pings or any process replacement. Validation
+	// above remains a read-only refusal; errors here never start an engine.
+	d.mu.Lock()
+	protectionRouting := d.routing
+	d.mu.Unlock()
+	if err := d.prepareProtection(protectionRouting); err != nil {
+		return State{}, fmt.Errorf("host protection: %w", err)
 	}
 
 	// Choose the candidate ordering. The default is protocol preference (the
@@ -274,7 +299,6 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 	d.mu.Lock()
 	ro := d.routing
 	tun := d.tun
-	mh := d.multihop
 	d.mu.Unlock()
 
 	nodes := profileNodes(p)
@@ -282,8 +306,7 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 	tags := serverTags(p)
 	// Resolve the multihop selection (server IDs) into the builder-facing outbound
 	// tags now that the profile's tag map is in hand, so every per-candidate config
-	// this loop builds carries the same chain. An unresolvable pair (a node that
-	// vanished, or one the builder won't render) leaves ro untouched — a single hop.
+	// this loop builds carries the same chain, validated before any teardown.
 	ro = resolveMultihop(ro, mh, tags)
 	// Say it out loud when smart mode is about to run without its geodata. The
 	// connect still succeeds — the geo rules are simply not emitted and everything
@@ -299,7 +322,9 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 
 	// Tear down any existing connection (and any in-flight loop) before starting a
 	// new one so we never run two sing-box processes at once.
-	d.teardown(StateConnecting, p.ID, "")
+	if err := d.teardown(StateConnecting, p.ID, ""); err != nil {
+		return State{}, err
+	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	d.mu.Lock()
@@ -322,18 +347,19 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 		tun:           tun,
 		machine:       m,
 		remember:      remember,
-		requestedNode: explicitNode,
+		requestedNode: requestedNode,
 	}
+	// Publish the initial phase before the worker can finish, so a fast result
+	// cannot be followed by a stale Connecting event. The caller holds connMu
+	// through this publication and the launch, excluding a concurrent teardown.
+	st := State{State: StateConnecting, Profile: p.ID, Routing: string(ro.Mode)}
+	d.setState(st)
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
 		d.runFallback(runCtx, loop)
 	}()
 
-	// connect reports connecting immediately; connected/error arrive later as
-	// state events from the loop.
-	st := State{State: StateConnecting, Profile: p.ID, Routing: string(ro.Mode)}
-	d.setState(st)
 	return d.snapshotState(), nil
 }
 
@@ -422,8 +448,17 @@ func (d *Daemon) handleDisconnect(req Request) Response {
 	// an in-flight relaunch/reconcile: that goroutine, blocked on connMu, wakes to
 	// find the generation moved and yields instead of resurrecting the tunnel.
 	d.connMu.Lock()
-	d.teardown(StateIdle, "", "")
+	cleanupErr := d.teardown(StateIdle, "", "")
+	d.protectionOp.Lock()
+	protectionErr := d.protection.Release()
+	d.protectionOp.Unlock()
 	d.connMu.Unlock()
+	if protectionErr != nil {
+		protectionErr = fmt.Errorf("host protection release: %w", protectionErr)
+	}
+	if err := errors.Join(cleanupErr, protectionErr); err != nil {
+		return newError(req.ID, "disconnect: "+err.Error())
+	}
 	st := d.snapshotState()
 	resp, err := newResult(req.ID, st)
 	if err != nil {
@@ -442,7 +477,13 @@ func (d *Daemon) handleDisconnect(req Request) Response {
 // follows it) is serialized against the off-command relaunch/reconcile connects.
 // It waits on d.wg, which never tracks those goroutines (they run under
 // relaunchWG), so the wait cannot deadlock against a connMu holder.
-func (d *Daemon) teardown(newState ConnState, profileID, nodeID string) {
+func (d *Daemon) teardown(newState ConnState, profileID, nodeID string) error {
+	// Acceptance holds protectionOp until Active/Connected is published. Claim
+	// cancellation under the same fence so that publication either finishes
+	// before teardown, or observes this generation as cancelled before any gates.
+	// Lock order is connMu -> protectionOp -> mu; recordSuccess never waits on
+	// connMu, and setting commands release protectionOp before reapplyLive.
+	d.protectionOp.Lock()
 	d.mu.Lock()
 	cancel := d.cancel
 	d.cancel = nil
@@ -461,12 +502,16 @@ func (d *Daemon) teardown(newState ConnState, profileID, nodeID string) {
 	if cancel != nil {
 		cancel()
 	}
+	// An old fallback goroutine may be waiting to enter recordSuccess. It must
+	// acquire the fence, see cancellation and drain, so never hold it for wg.Wait.
+	d.protectionOp.Unlock()
 	// Stop the process and wait for connection goroutines (the fallback loop, then
 	// any watcher/poller it started) to finish before we declare the new state, so
 	// events don't interleave across connections. The loop also stops the runner
 	// itself on cancel; Stop is idempotent.
 	_ = d.runner.Stop()
 	d.wg.Wait()
+	d.protection.Interrupted()
 
 	// Clear the OS system proxy AFTER the goroutines have drained — this is the
 	// guard's single busiest chokepoint (every disconnect, hot-swap, connect
@@ -475,7 +520,11 @@ func (d *Daemon) teardown(newState ConnState, profileID, nodeID string) {
 	// be arming the proxy as it unwinds, and a disarm that ran earlier would leave
 	// that late arm standing. It is idempotent and a no-op unless we armed it, so
 	// tun-mode teardowns and the pre-start teardown of a fresh connect pay nothing.
-	d.disarmSystemProxy()
+	if err := d.disarmSystemProxy(); err != nil {
+		msg := fmt.Errorf("system proxy cleanup failed: %w", err)
+		d.setState(State{State: StateError, Error: msg.Error(), Routing: d.snapshotState().Routing})
+		return msg
+	}
 
 	switch newState {
 	case StateIdle:
@@ -485,6 +534,7 @@ func (d *Daemon) teardown(newState ConnState, profileID, nodeID string) {
 		// interim value so a failure in between is still coherent.
 		d.setState(State{State: newState, Profile: profileID, Node: nodeID, Routing: d.snapshotState().Routing})
 	}
+	return nil
 }
 
 // fallbackLoop bundles the immutable inputs of one connect's fallback walk so
@@ -686,7 +736,7 @@ func (d *Daemon) runFallback(ctx context.Context, loop fallbackLoop) {
 		switch outcome, reason := d.attemptNode(ctx, loop, attempt, tracker); outcome {
 		case nodeConnected:
 			return // attemptNode promoted to connected and started the lifecycle
-		case nodeSuperseded:
+		case nodeSuperseded, nodeLocalFailure:
 			return // teardown owns the state; the runner is already stopped
 		default: // nodeFailed
 			tracker.blockedWithReason(attempt, reason)
@@ -709,6 +759,8 @@ const (
 	// nodeFailed: the node did not come up under any strategy (or could not be
 	// rendered/started); the loop marks it blocked and advances to the next node.
 	nodeFailed
+	// nodeLocalFailure is an OS setup refusal; changing the remote node cannot fix it.
+	nodeLocalFailure
 )
 
 // attemptNode tries one node across the transport-strategy cascade. It begins
@@ -755,6 +807,15 @@ func (d *Daemon) attemptNode(ctx context.Context, loop fallbackLoop, attempt fal
 				_ = d.runner.Stop()
 				return nodeSuperseded, ""
 			}
+			var local interface{ LocalSetupFailure() bool }
+			if errors.As(err, &local) && local.LocalSetupFailure() {
+				_ = d.runner.Stop()
+				msg := "local tunnel setup failed: " + err.Error()
+				tracker.blockedWithReason(attempt, "local setup failed")
+				d.emitLog(LogError, msg)
+				d.setState(State{State: StateError, Profile: loop.profileID, Error: msg, Routing: d.snapshotState().Routing})
+				return nodeLocalFailure, ""
+			}
 			d.emitLog(LogWarn, fmt.Sprintf("connect: sing-box would not start for %s: %v", who, err))
 			return nodeFailed, ""
 		}
@@ -768,7 +829,16 @@ func (d *Daemon) attemptNode(ctx context.Context, loop fallbackLoop, attempt fal
 		if up {
 			// Superseded mid-probe returns up=false, so reaching here is a genuine
 			// success on the current generation.
-			d.recordSuccess(ctx, loop, attempt, tracker, strat, sel)
+			if err := d.recordSuccess(ctx, loop, attempt, tracker, strat, sel); err != nil {
+				_ = d.runner.Stop()
+				d.protection.Interrupted()
+				if d.isCurrent(loop.gen) {
+					tracker.blockedWithReason(attempt, "local setup failed")
+					d.emitLog(LogError, err.Error())
+					d.setState(State{State: StateError, Profile: loop.profileID, Error: err.Error(), Routing: d.snapshotState().Routing})
+				}
+				return nodeLocalFailure, ""
+			}
 			return nodeConnected, ""
 		}
 		if !d.isCurrent(loop.gen) {
@@ -819,7 +889,23 @@ func (d *Daemon) attemptNode(ctx context.Context, loop fallbackLoop, attempt fal
 // connection to the watcher/poller, and reconciles any option toggled during the
 // connecting window. strat is the strategy the node came up under, so a
 // non-default one is surfaced in the snapshot.
-func (d *Daemon) recordSuccess(ctx context.Context, loop fallbackLoop, attempt fallback.Attempt, tracker *attemptTracker, strat fallback.Strategy, sel selectorShape) {
+func (d *Daemon) recordSuccess(ctx context.Context, loop fallbackLoop, attempt fallback.Attempt, tracker *attemptTracker, strat fallback.Strategy, sel selectorShape) error {
+	d.protectionOp.Lock()
+	defer d.protectionOp.Unlock()
+	if ctx.Err() != nil || !d.isCurrent(loop.gen) {
+		return context.Canceled
+	}
+	if err := d.activateProtectionLocked(loop.ro, loop.tun); err != nil {
+		return fmt.Errorf("host protection: %w", err)
+	}
+	if loop.tun.IsSystemProxy() {
+		if err := d.armSystemProxy(loop.tun.MixedHostPort()); err != nil {
+			return fmt.Errorf("system proxy setup failed: %w", err)
+		}
+	}
+	if ctx.Err() != nil || !d.isCurrent(loop.gen) {
+		return context.Canceled
+	}
 	loop.machine.Success(attempt)
 	// Record what the process that just came up can be steered to, so a later exit
 	// change can be decided against the config actually running rather than against
@@ -850,17 +936,7 @@ func (d *Daemon) recordSuccess(ctx context.Context, loop fallbackLoop, attempt f
 	// Capture the connected instant before publishing it, so the uptime the
 	// relaunch budget reads later is measured from a fixed point.
 	connectedAt := d.now()
-	// In system-proxy mode, point the OS at the loopback mixed inbound before we
-	// announce "connected", so the state never claims the tunnel is up while system
-	// traffic still egresses direct. The probe already confirmed the inbound carries
-	// traffic. The guard clears it again on any teardown (disconnect, hot-swap,
-	// shutdown) and on a tunnel-process death, so the OS is never left pointing at a
-	// proxy that is no longer listening. The address comes from loop.tun — the
-	// snapshot this connect built its config from — so a mid-connect mode change
-	// can't point the OS at the wrong port.
-	if loop.tun.IsSystemProxy() {
-		d.armSystemProxy(loop.tun.MixedHostPort())
-	}
+	d.protection.Accepted()
 	d.setState(State{State: StateConnected, Profile: loop.profileID,
 		Node: attempt.NodeID, Routing: d.snapshotState().Routing})
 	// Hand the live connection off to the watcher/poller.
@@ -868,6 +944,7 @@ func (d *Daemon) recordSuccess(ctx context.Context, loop fallbackLoop, attempt f
 	// A kill-switch/tun toggle that landed during the connecting window was
 	// recorded but not baked into this config; reconcile it now.
 	d.reconcileConnectingOptions(loop, attempt.NodeID)
+	return nil
 }
 
 // probeUntilUp waits for the clash API to come up, then probes the selector
@@ -895,8 +972,8 @@ func (d *Daemon) probeUntilUp(ctx context.Context, gen uint64, wantTag string) (
 	// not name — and then the probe measures one exit while the state reports
 	// another. Pinning the selector to this config's default closes that, at the
 	// cost of one loopback call. It is retried alongside the probe because the API
-	// may not be listening yet, and it is best-effort: a runner that cannot select
-	// is the runner whose probe is about to fail anyway.
+	// may not be listening yet. A successful probe is meaningful only after this
+	// pin succeeds; an unconfirmed selector may still carry a cached old exit.
 	pinned := wantTag == ""
 
 	for {
@@ -916,6 +993,16 @@ func (d *Daemon) probeUntilUp(ctx context.Context, gen uint64, wantTag string) (
 			pinErr := d.runner.Select(pinCtx, proxySelectorTag, wantTag)
 			cancelPin()
 			pinned = pinErr == nil
+			if !pinned {
+				select {
+				case <-budget.Done():
+					return false, false
+				case <-done:
+					return false, false
+				case <-time.After(d.probeRetry):
+					continue
+				}
+			}
 		}
 
 		probeCtx, cancelProbe := context.WithTimeout(budget, d.probeTimeout)
@@ -1036,12 +1123,15 @@ func (d *Daemon) watchProcess(ctx context.Context, gen uint64, profileID, nodeID
 				msg = err.Error()
 			}
 			d.emitLog(LogError, "tunnel process exited: "+msg)
+			d.protection.Interrupted()
 			// The mixed inbound died with the process, so an armed system proxy now
 			// points at nothing — clear it immediately to restore direct connectivity.
 			// A kill-switch relaunch below re-arms it once the tunnel is back
 			// (recordSuccess); the plain error path leaves it cleared, which is the
 			// honest outcome (proxy mode has no strict_route to fail closed on).
-			d.disarmSystemProxy()
+			if restoreErr := d.disarmSystemProxy(); restoreErr != nil {
+				msg += "; system proxy restore failed: " + restoreErr.Error()
+			}
 			if d.killSwitchRelaunch(gen, profileID, nodeID, d.now().Sub(connectedAt)) {
 				return // the relaunch owns the state from here
 			}
@@ -1071,12 +1161,9 @@ const defaultRelaunchReset = 30 * time.Second
 // state; false means the caller should fall through to the plain error state.
 // uptime is how long the dead tunnel held the connection.
 //
-// Why restart at all: strict_route only holds while sing-box runs — the moment
-// the process dies, its filter rules and the tun route die with it, and traffic
-// would fall back to the physical interface. The honest mitigation the daemon
-// can offer is to put the tunnel (and its filters) back immediately, pinned to
-// the node the user was on. During the gap the OS is unprotected; that window
-// is why this relaunches eagerly rather than waiting for the user.
+// Persistent host protection remains installed through process death and retry
+// exhaustion. Relaunch restores availability on the user's node; it is not the
+// mechanism that blocks direct traffic while the process is absent.
 //
 // The budget: a relaunch that held the tunnel up past relaunchResetAfter proved a
 // recovery, not one more turn of a crash-loop, so its eventual death refunds the
@@ -1404,6 +1491,7 @@ func (d *Daemon) isCurrent(gen uint64) bool {
 
 // setState replaces the connection state and emits a state event reflecting it.
 func (d *Daemon) setState(s State) {
+	s.Protection = d.protection.Snapshot()
 	d.mu.Lock()
 	// Preserve the routing label if the new state didn't set one.
 	if s.Routing == "" {
@@ -1430,16 +1518,17 @@ func (d *Daemon) setState(s State) {
 }
 
 // stateEventBody projects a State into the state event payload (which omits the
-// profile field — the protocol's state event carries state/node/error only).
+// profile field — the protocol carries state/node/error and protection).
 func stateEventBody(s State) stateEvent {
-	return stateEvent{State: s.State, Node: s.Node, Error: s.Error}
+	return stateEvent{State: s.State, Node: s.Node, Error: s.Error, Protection: s.Protection}
 }
 
 // stateEvent is the wire body of a state event.
 type stateEvent struct {
-	State ConnState `json:"state"`
-	Node  string    `json:"node,omitempty"`
-	Error string    `json:"error,omitempty"`
+	State      ConnState        `json:"state"`
+	Node       string           `json:"node,omitempty"`
+	Error      string           `json:"error,omitempty"`
+	Protection protection.State `json:"protection"`
 }
 
 // emitTraffic pushes a traffic counter event to the UI, if an emitter is set.
@@ -1543,12 +1632,12 @@ func (d *Daemon) Close() error {
 	// where it came from. Best-effort — a failure here must not hold up shutdown.
 	d.stopZapretQuietly()
 	d.connMu.Lock()
-	d.teardown(StateIdle, "", "")
+	teardownErr := d.teardown(StateIdle, "", "")
 	d.connMu.Unlock()
 	// teardown already disarmed the system proxy; clear it once more defensively so
 	// process shutdown never leaves the OS pointing at a dead proxy even if some
 	// path armed it after the teardown. Idempotent — a no-op when already clear.
-	d.disarmSystemProxy()
+	cleanupErr := d.disarmSystemProxy()
 	// The teardown above bumped the generation, so any kill-switch relaunch or
 	// connecting-window reconcile still in flight will observe it and abort instead
 	// of starting a tunnel. Wait for those goroutines to unwind (after releasing
@@ -1557,7 +1646,7 @@ func (d *Daemon) Close() error {
 	// The entitlement lookups were cancelled above; wait for them to unwind so
 	// none outlives us writing to the store.
 	d.entWG.Wait()
-	return nil
+	return errors.Join(teardownErr, cleanupErr)
 }
 
 // selectorShape is what the built config's proxy selector looks like: the tag it

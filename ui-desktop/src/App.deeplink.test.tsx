@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 
 import type { DeepLinkAction } from "./api";
 import { App } from "./App";
@@ -133,9 +133,9 @@ describe("App deep-link connect gate", () => {
 
   it("connects only after the user approves", async () => {
     await mountAndDeliverConnect();
-    await screen.findByRole("alertdialog");
+    const dialog = await screen.findByRole("alertdialog");
 
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Connect" }));
 
     // Now — and only now — the backend connect fires, for the named profile.
     await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1));

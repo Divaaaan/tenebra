@@ -132,15 +132,30 @@ export interface Strings {
      * connect is still being attempted, because it is — the core's fallback walk
      * runs anyway, and a refusal would be a worse answer than a slow connect.
      */
+    pingStale: string;
+    manualAfterPing: string;
     noneUsable: string;
   };
 
   /** Bottom bar: routing segmented control, kill-switch, quick actions. */
+  protection: {
+    active: string;
+    blocked: string;
+    applying: string;
+    off: string;
+    error: string;
+    unavailable: string;
+    legacy: string;
+    unknown: string;
+    lastGuard: string;
+    retry: string;
+    disable: string;
+    disconnect: string;
+  };
   bottom: {
     routing: string;
     killSwitch: string;
-    killBanner: string;
-    /** Tooltip explaining what arming actually does (and costs). */
+    /** Requested preference; actual native evidence is displayed separately. */
     killSwitchHint: string;
     leakCheck: string;
     settings: string;
@@ -186,6 +201,7 @@ export interface Strings {
 
   /** Update banner shown when a scheduled check finds a newer release. */
   update: {
+    waitingForStatus: string;
     /** "{version}" interpolated by the caller. */
     available: string;
     install: string;
@@ -363,6 +379,26 @@ export interface Strings {
    * words are reused from `home`/`state`.
    */
   simple: {
+    mode: string;
+    welcome: string;
+    welcomeHint: string;
+    linkHelp: string;
+    importing: string;
+    refreshFailed: string;
+    subscription: string;
+    manage: string;
+    autoHint: string;
+    changeHint: string;
+    noNodes: string;
+    checkingServers: string;
+    preparing: string;
+    serviceStarting: string;
+    serviceUnavailable: string;
+    serviceHelp: string;
+    trafficBlocked: string;
+    blockedHint: string;
+    details: string;
+    checksTitle: string;
     /** The only setup step: paste the subscription link. */
     setupLink: string;
     setupLinkPlaceholder: string;
@@ -470,6 +506,10 @@ export interface Strings {
   };
 
   settings: {
+    groupTraffic: string;
+    groupAdvanced: string;
+    groupHelp: string;
+    groupApp: string;
     title: string;
     routing: string;
     routingSmart: string;
@@ -830,6 +870,13 @@ export interface Strings {
   };
 
   errors: {
+    probeFailed: string;
+    connectFailed: string;
+    protocolFailed: string;
+    serviceFailed: string;
+    selectionFailed: string;
+    details: string;
+
     generic: string;
     nameRequired: string;
     urlRequired: string;
@@ -870,10 +917,10 @@ const en: Strings = {
   },
   conn: {
     eyebrow: "Tunnel status",
-    subOff: "traffic unprotected · select a node and connect",
+    subOff: "tunnel disconnected · select a node and connect",
     subPending: "establishing tunnel · negotiating · · ·",
     subReconnecting: "node failed · switching to a healthy exit on its own",
-    subConnected: "no logs",
+    subConnected: "tunnel connected",
     wordChecking: "Measuring…",
     subChecking: "probing every node · finding one that carries traffic",
     measuring: "MEASURING",
@@ -901,7 +948,7 @@ const en: Strings = {
   },
   servers: {
     title: "Nodes",
-    online: "online",
+    online: "TCP reachable",
     showing: "showing",
     regionAll: "all",
     regionEurope: "europe",
@@ -909,7 +956,7 @@ const en: Strings = {
     regionAsiaPac: "asia-pac",
     searchPlaceholder: "search node · de-fra",
     emptyFilter: "no nodes match this filter",
-    down: "down",
+    down: "no TCP",
     addSub: "+ add",
     noNodes: "this subscription has no nodes",
     auto: "AUTO",
@@ -923,22 +970,37 @@ const en: Strings = {
     insecureSummary:
       "{n} of {m} nodes skip TLS verification — on-path interception possible",
     checking: "Checking which nodes actually work…",
+    pingStale: "stale",
+    manualAfterPing: "TCP check failed. Select this node to try connecting manually.",
     noneUsable: "No node carried traffic — connecting anyway, node by node",
+  },
+  protection: {
+    active: "Persistent protection is active. The tunnel and traffic guard are verified. Closing the app keeps the guard; Disconnect releases it.",
+    blocked: "Internet traffic is blocked until the tunnel recovers or you explicitly disconnect.",
+    applying: "Applying protection. Waiting for the service to confirm the traffic guard.",
+    off: "Protection is requested, but no traffic guard is installed yet.",
+    error: "Protection could not be confirmed. Retry it or explicitly turn it off to release the block.",
+    unavailable: "This platform does not provide persistent protection. The preference alone cannot block traffic.",
+    legacy: "This service version does not confirm persistent protection. The saved preference is not a guarantee.",
+    unknown: "Current protection is unconfirmed. Waiting for a fresh service status.",
+    lastGuard: "The last confirmed guard was persistent. Current protection is unconfirmed; traffic may remain blocked until recovery or explicit removal.",
+    retry: "Retry protection",
+    disable: "Turn protection off",
+    disconnect: "Disconnect and allow traffic",
   },
   bottom: {
     routing: "Routing",
     killSwitch: "kill-switch",
-    killBanner: "KILL-SWITCH ARMED · traffic blocked if the tunnel drops",
     killSwitchHint:
-      "Block traffic that tries to bypass the tunnel; if the tunnel dies, restart it. Applies live; connects get rougher while armed.",
+      "Request persistent protection. The status above confirms whether it is installed. Use Turn protection off or Disconnect to release a confirmed block.",
     leakCheck: "leak-check",
     settings: "settings",
     report: "report a problem",
   },
   toast: {
     tunnelUp: "tunnel up",
-    killOn: "kill-switch · on",
-    killOff: "kill-switch · off",
+    killOn: "kill-switch · requested",
+    killOff: "kill-switch request · off",
     route: "route · {mode}",
     profileActive: "active profile · {name}",
     profilePinged: "ping updated · {alive}/{total} alive",
@@ -952,6 +1014,7 @@ const en: Strings = {
     dismiss: "Dismiss",
   },
   update: {
+    waitingForStatus: "Update ready — waiting for the background service status.",
     available: "Version {version} is available",
     install: "Update",
     later: "Later",
@@ -1043,14 +1106,34 @@ const en: Strings = {
     sessionTraffic: "This session",
   },
   simple: {
+    mode: "Simple view",
+    welcome: "Start with your subscription",
+    welcomeHint: "Add your subscription, then choose a server and connect.",
+    linkHelp: "Use the subscription link from your VPN provider. Tenebra does not issue subscriptions.",
+    importing: "Adding subscription…",
+    refreshFailed: "Your subscription was saved, but its server list could not be loaded. Try again to refresh the list.",
+    subscription: "Subscription",
+    manage: "Manage subscriptions",
+    autoHint: "Tenebra will check the servers when you connect. You can also choose one yourself.",
+    changeHint: "Choosing another server changes the current connection. A different subscription applies to your next connection.",
+    noNodes: "This subscription has no servers. Open subscriptions to refresh it or add another one.",
+    checkingServers: "Checking servers…",
+    preparing: "Preparing connection…",
+    serviceStarting: "Starting Tenebra…",
+    serviceUnavailable: "Service unavailable",
+    serviceHelp: "Wait for the service to reconnect. If this continues, open Settings or report the problem.",
+    trafficBlocked: "Internet traffic blocked",
+    blockedHint: "Connect to the VPN, or explicitly release the block using the action above.",
+    details: "Connection details",
+    checksTitle: "Connection checks",
     setupLink: "Paste your subscription link",
     setupLinkPlaceholder: "https://…",
     bypassOn: "bypass on",
     bypassOff: "bypass off",
-    statusOn: "You're protected",
+    statusOn: "Tunnel connected",
     statusOff: "You're not connected",
     server: "Server",
-    auto: "Automatic — fastest",
+    auto: "Automatic selection",
     noProfile: "Import a subscription to get started.",
     advanced: "Advanced view",
   },
@@ -1114,6 +1197,10 @@ const en: Strings = {
     },
   },
   settings: {
+    groupTraffic: "Where traffic goes",
+    groupAdvanced: "Advanced connection",
+    groupHelp: "Recovery and help",
+    groupApp: "App and updates",
     title: "Settings",
     routing: "Routing",
     routingSmart: "Smart",
@@ -1222,7 +1309,7 @@ const en: Strings = {
       "Game clients and launchers connect directly: no tunnel latency on a match, and no exit-address change for anti-cheat to flag. Game servers see your real IP address.",
     presetVoiceDirect: "Real-time UDP skips the tunnel",
     presetVoiceDirectHint:
-      "UDP ports 50000-65535 connect directly — measured here at 9ms against 239ms through the tunnel. This range carries voice chat, browser calls and torrents, so whoever is on the other end sees your real IP address.",
+      "UDP ports 50000-65535 connect directly. Latency depends on your network and destination. This range carries voice chat, browser calls and torrents, so whoever is on the other end sees your real IP address.",
     rules: "Custom rules",
     rulesHint:
       "Send specific domains direct or through the tunnel, on top of the routing above.",
@@ -1385,6 +1472,13 @@ const en: Strings = {
     ms: "ms",
   },
   errors: {
+    probeFailed: "The node check could not run. Trying a normal connection; you can also choose a node manually.",
+    connectFailed: "Connection failed. Try another node or open the diagnostic report below.",
+    protocolFailed: "The server protocols could not establish a tunnel. Refresh the subscription and try another node; the report keeps the failure details.",
+    serviceFailed: "The background service did not accept the connection. Check the service status, restart Tenebra and retry.",
+    selectionFailed: "The selected profile or node is no longer available. Refresh the subscription and choose a current node.",
+    details: "Technical details",
+
     generic: "Something went wrong.",
     nameRequired: "Enter a name.",
     urlRequired: "Enter a subscription URL.",
@@ -1427,10 +1521,10 @@ const ru: Strings = {
   },
   conn: {
     eyebrow: "Статус туннеля",
-    subOff: "трафик не защищён · выберите узел и подключитесь",
+    subOff: "туннель отключён · выберите узел и подключитесь",
     subPending: "поднимаю туннель · согласование · · ·",
     subReconnecting: "узел отказал · сам переключаюсь на рабочий выход",
-    subConnected: "без логов",
+    subConnected: "туннель подключён",
     wordChecking: "Замеряю…",
     subChecking: "проверяю каждый узел · ищу тот, через который идёт трафик",
     measuring: "ЗАМЕР",
@@ -1458,7 +1552,7 @@ const ru: Strings = {
   },
   servers: {
     title: "Узлы",
-    online: "онлайн",
+    online: "ответили TCP",
     showing: "показано",
     regionAll: "все",
     regionEurope: "европа",
@@ -1466,7 +1560,7 @@ const ru: Strings = {
     regionAsiaPac: "азия",
     searchPlaceholder: "поиск узла · de-fra",
     emptyFilter: "нет узлов под этот фильтр",
-    down: "недост.",
+    down: "нет TCP",
     addSub: "+ добавить",
     noNodes: "в этой подписке нет узлов",
     auto: "АВТО",
@@ -1480,22 +1574,37 @@ const ru: Strings = {
     insecureSummary:
       "{n} из {m} узлов без проверки TLS — возможен перехват трафика",
     checking: "Проверяю, какие узлы реально работают…",
+    pingStale: "устарело",
+    manualAfterPing: "TCP-проверка не прошла. Выберите узел, чтобы попробовать подключиться вручную.",
     noneUsable: "Ни один узел не пропустил трафик — подключаюсь перебором",
+  },
+  protection: {
+    active: "Постоянная защита активна. Туннель и блокировка трафика подтверждены. Закрытие приложения сохраняет блокировку; Отключить снимает её.",
+    blocked: "Интернет-трафик заблокирован до восстановления туннеля или явного отключения.",
+    applying: "Применяем защиту. Ожидаем подтверждения блокировки от службы.",
+    off: "Защита запрошена, но блокировка трафика ещё не установлена.",
+    error: "Не удалось подтвердить защиту. Повторите попытку или явно выключите её, чтобы снять блокировку.",
+    unavailable: "На этой платформе постоянная защита недоступна. Одна настройка не блокирует трафик.",
+    legacy: "Эта версия службы не подтверждает постоянную защиту. Сохранённая настройка не гарантирует блокировку.",
+    unknown: "Текущая защита не подтверждена. Ожидаем свежий статус службы.",
+    lastGuard: "Последняя подтверждённая блокировка была постоянной. Текущая защита не подтверждена; трафик может оставаться заблокированным до восстановления или явного снятия.",
+    retry: "Повторить защиту",
+    disable: "Выключить защиту",
+    disconnect: "Отключить и разрешить трафик",
   },
   bottom: {
     routing: "Маршрут",
     killSwitch: "kill-switch",
-    killBanner: "KILL-SWITCH ВКЛ · трафик блокируется при обрыве туннеля",
     killSwitchHint:
-      "Блокировать трафик в обход туннеля; при падении туннеля — перезапустить его. Применяется сразу; коннект с ним грубее.",
+      "Запросить постоянную защиту. Статус выше подтверждает её применение. Чтобы снять подтверждённую блокировку, выключите защиту или нажмите Отключить.",
     leakCheck: "проверка",
     settings: "настройки",
     report: "сообщить о проблеме",
   },
   toast: {
     tunnelUp: "туннель поднят",
-    killOn: "kill-switch · вкл",
-    killOff: "kill-switch · выкл",
+    killOn: "kill-switch · запрошен",
+    killOff: "kill-switch · запрос снят",
     route: "маршрут · {mode}",
     profileActive: "активный профиль · {name}",
     profilePinged: "пинг обновлён · {alive}/{total} живы",
@@ -1509,6 +1618,7 @@ const ru: Strings = {
     dismiss: "Закрыть",
   },
   update: {
+    waitingForStatus: "Обновление готово — ожидаю состояние фоновой службы.",
     available: "Доступна версия {version}",
     install: "Обновить",
     later: "Позже",
@@ -1599,15 +1709,35 @@ const ru: Strings = {
     sessionTraffic: "За сессию",
   },
   simple: {
+    mode: "Простой режим",
+    welcome: "Начнём с подписки",
+    welcomeHint: "Добавьте подписку, затем выберите сервер и подключитесь.",
+    linkHelp: "Ссылка находится у вашего VPN-провайдера. Tenebra не выдаёт подписки.",
+    importing: "Добавляем подписку…",
+    refreshFailed: "Подписка сохранена, но список серверов не загрузился. Повторите действие, чтобы обновить список.",
+    subscription: "Подписка",
+    manage: "Управление подписками",
+    autoHint: "Tenebra проверит серверы при подключении. При желании можно выбрать сервер вручную.",
+    changeHint: "Другой сервер применяется к текущему соединению. Другая подписка — при следующем подключении.",
+    noNodes: "В подписке нет серверов. Откройте подписки, чтобы обновить её или добавить другую.",
+    checkingServers: "Проверяем серверы…",
+    preparing: "Готовим подключение…",
+    serviceStarting: "Запускаем Tenebra…",
+    serviceUnavailable: "Служба недоступна",
+    serviceHelp: "Дождитесь восстановления связи со службой. Если это не помогает, откройте настройки или сообщите о проблеме.",
+    trafficBlocked: "Интернет заблокирован",
+    blockedHint: "Подключитесь к VPN или снимите блокировку кнопкой выше.",
+    details: "Сведения о подключении",
+    checksTitle: "Проверка подключения",
     /** The only setup step: paste the subscription link. */
-    setupLink: "Вставь ссылку на подписку",
+    setupLink: "Ссылка на подписку",
     setupLinkPlaceholder: "https://…",
     bypassOn: "обход включён",
     bypassOff: "обход выключен",
-    statusOn: "Вы под защитой",
+    statusOn: "Туннель подключён",
     statusOff: "Вы не подключены",
     server: "Сервер",
-    auto: "Автоматически — быстрее всего",
+    auto: "Автоматический выбор",
     noProfile: "Импортируйте подписку, чтобы начать.",
     advanced: "Расширенный режим",
   },
@@ -1672,6 +1802,10 @@ const ru: Strings = {
     },
   },
   settings: {
+    groupTraffic: "Куда идёт трафик",
+    groupAdvanced: "Параметры соединения",
+    groupHelp: "Восстановление и помощь",
+    groupApp: "Приложение и обновления",
     title: "Настройки",
     routing: "Маршрутизация",
     routingSmart: "Умная",
@@ -1780,7 +1914,7 @@ const ru: Strings = {
       "Игровые клиенты и лаунчеры подключаются напрямую: нет задержки туннеля в матче и нет смены адреса, на которую реагирует анти-чит. Игровые серверы видят ваш реальный IP.",
     presetVoiceDirect: "Realtime-UDP мимо туннеля",
     presetVoiceDirectHint:
-      "UDP-порты 50000-65535 идут напрямую — здесь это 9 мс против 239 мс через туннель. В этом диапазоне живут голосовые чаты, звонки в браузере и торренты, так что собеседник видит ваш реальный IP.",
+      "UDP-порты 50000-65535 идут напрямую. Задержка зависит от вашей сети и адресата. В этом диапазоне живут голосовые чаты, звонки в браузере и торренты, так что собеседник видит ваш реальный IP.",
     rules: "Свои правила",
     rulesHint:
       "Направляйте отдельные домены напрямую или через туннель, поверх маршрутизации выше.",
@@ -1943,6 +2077,13 @@ const ru: Strings = {
     ms: "мс",
   },
   errors: {
+    probeFailed: "Проверка узлов не выполнилась. Пробую обычное подключение; узел также можно выбрать вручную.",
+    connectFailed: "Подключиться не удалось. Попробуйте другой узел или откройте отчёт диагностики ниже.",
+    protocolFailed: "Протоколы сервера не смогли установить туннель. Обновите подписку и попробуйте другой узел; подробности отказа сохранены в отчёте.",
+    serviceFailed: "Фоновая служба не приняла подключение. Проверьте её состояние, перезапустите Tenebra и повторите попытку.",
+    selectionFailed: "Выбранный профиль или узел больше недоступен. Обновите подписку и выберите актуальный узел.",
+    details: "Технические подробности",
+
     generic: "Что-то пошло не так.",
     nameRequired: "Введите название.",
     urlRequired: "Введите ссылку подписки.",

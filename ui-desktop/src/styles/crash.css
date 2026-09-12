@@ -5,34 +5,51 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--sp-4);
-  padding: var(--sp-2) 22px;
+  gap: 10px;
+  padding: 12px 24px;
   border-bottom: var(--bw) solid var(--line);
-  font-size: var(--fs-label);
+  font-size: 13px;
+  flex-wrap: wrap;
+  font-family: var(--ui);
+  line-height: 1.5;
 }
 .crash-banner-text {
   color: var(--warn-soft);
+  flex: 1 1 260px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .crash-banner-actions {
   display: flex;
   align-items: center;
-  gap: var(--sp-4);
+  gap: 8px;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  max-width: 100%;
 }
 .crash-banner-actions button {
   display: inline-flex;
   gap: 6px;
-  white-space: nowrap;
+  white-space: normal;
   color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  text-transform: none;
+  letter-spacing: 0;
   transition: color var(--t-fast);
+  align-items: center;
+  font-family: var(--ui);
+  font-size: 13px;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: var(--bw) solid transparent;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
 }
 .crash-banner-actions .crash-banner-primary {
   color: var(--signal);
 }
 .crash-banner-actions button:hover {
   color: var(--signal);
+  background: var(--surface-2);
 }
 
 /* ── crash fallback — the ErrorBoundary caught a render error ── */
@@ -45,36 +62,48 @@
   align-items: center;
   justify-content: center;
   gap: var(--sp-5);
-  padding: var(--sp-6);
+  padding: 28px;
   background: var(--bg);
   color: var(--text);
-  font-family: var(--mono);
+  font-family: var(--ui);
   text-align: center;
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-y: auto;
 }
 .crash-fallback-title {
   margin: 0;
-  font-size: var(--fs-sku);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 24px;
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 650;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 .crash-fallback-reload {
-  font-family: var(--mono);
-  font-size: var(--fs-label);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: var(--sp-2) var(--sp-5);
+  font-family: var(--ui);
+  font-size: 14px;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 9px 18px;
   border: var(--bw) solid var(--signal);
-  color: var(--signal);
+  color: var(--on-signal);
   transition:
     color var(--t-fast),
     background-color var(--t-fast),
     transform var(--d-micro) var(--e-out);
+  font-weight: 600;
+  min-height: 38px;
+  border-radius: 8px;
+  background: var(--signal);
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 .crash-fallback-reload:active {
-  transform: scale(0.96);
+  transform: translateY(1px);
 }
 .crash-fallback-reload:hover {
-  background: var(--signal);
+  background: color-mix(in srgb, var(--signal) 88%, var(--text));
   color: var(--on-signal);
 }
 
@@ -86,12 +115,25 @@
   max-height: 48vh;
   margin: 0;
   overflow: auto;
-  padding: var(--sp-3);
+  padding: 14px;
   border: var(--bw) solid var(--line);
   background: var(--surface);
   font-family: var(--mono);
-  font-size: var(--fs-meta);
-  line-height: 1.5;
+  font-size: 12px;
+  line-height: 1.65;
   white-space: pre-wrap;
-  word-break: break-word;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.crash-banner-actions button:focus-visible,
+.crash-fallback-reload:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+}
+@media (max-width: 700px) {
+  .crash-banner {
+    padding: 12px 18px;
+  }
 }

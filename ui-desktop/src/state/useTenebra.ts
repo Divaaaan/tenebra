@@ -102,10 +102,10 @@ export interface Tenebra {
   ready: boolean;
   /**
    * Why the last attempt to reach the core failed, or null once one succeeded.
-   * Non-null means the app is drawn but has nothing behind it — no profiles, no
-   * state, every action doomed — and the shell is expected to say so out loud.
-   * The retry keeps running underneath, so this clears itself the moment the
-   * core answers. Optional so a hand-built stub reads as a healthy core.
+   * Non-null means current service state is unconfirmed. Previously loaded
+   * profiles and guard evidence remain available, but cannot certify a live
+   * tunnel. Retries continue until a fresh status answers. Optional so a
+   * hand-built stub reads as a healthy core.
    */
   coreError?: string | null;
   state: State;
@@ -187,7 +187,7 @@ export interface Tenebra {
    * them needs this. The bypass commands do: `start_zapret` answers with the
    * strategy it started and `pick_zapret` with its measurements, neither of them
    * a `State`, and the core pushes no state event for either — the state event
-   * carries only phase/node/error. Without a re-read the screen keeps drawing
+   * carries phase/node/error/protection. Without a re-read the screen keeps drawing
    * the bypass exactly as it was before the user switched it.
    */
   refreshStatus: () => Promise<void>;
@@ -220,6 +220,9 @@ export function useTenebra(): Tenebra {
   );
 
   const logSeq = useRef(0);
+  const stateEventSeq = useRef(0);
+  const serviceLossSeq = useRef(0);
+  const serviceLost = useRef(false);
 
   const appendLog = useCallback((e: LogEvent) => {
     setLogs((prev) => {
@@ -249,8 +252,18 @@ export function useTenebra(): Tenebra {
   }, []);
 
   const refreshStatus = useCallback(async () => {
-    applySnapshot(await api.status());
-  }, [applySnapshot]);
+    const eventSeq = stateEventSeq.current;
+    const lossSeq = serviceLossSeq.current;
+    const next = await api.status();
+    setState((prev) => foldSnapshot(prev, eventSeq === stateEventSeq.current ? next : {
+      ...next, state: prev.state, node: prev.node, error: prev.error,
+      protection: prev.protection ?? next.protection,
+    }));
+    if (lossSeq === serviceLossSeq.current) {
+      serviceLost.current = false;
+      setCoreError(null);
+    }
+  }, []);
 
   // Initial load and event wiring. Unlisten handles are resolved
   // asynchronously, so we guard against tearing down before they arrive.
@@ -258,6 +271,9 @@ export function useTenebra(): Tenebra {
     let active = true;
     const unlisteners: UnlistenFn[] = [];
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
+    let recovering = false;
+    let recoveryDelay = BOOTSTRAP_RETRY_MS;
     let retryDelay = BOOTSTRAP_RETRY_MS;
     // Once the core has pushed a state event it is fresher than any snapshot
     // still in flight; a status that resolves (or is retried) afterwards must
@@ -265,6 +281,27 @@ export function useTenebra(): Tenebra {
     let sawStateEvent = false;
     // The console gets one line per outage, not one per retry.
     let announcedFailure = false;
+
+    const recover = async () => {
+      if (!active || recovering) return;
+      if (recoveryTimer) clearTimeout(recoveryTimer);
+      recoveryTimer = null;
+      recovering = true;
+      try {
+        await refreshStatus();
+      } catch (error) {
+        if (active) setCoreError(reasonOf(error));
+      } finally {
+        recovering = false;
+        if (active && serviceLost.current) scheduleRecovery();
+        else recoveryDelay = BOOTSTRAP_RETRY_MS;
+      }
+    };
+    const scheduleRecovery = () => {
+      if (recoveryTimer || recovering || !active) return;
+      recoveryTimer = setTimeout(() => { recoveryTimer = null; void recover(); }, recoveryDelay);
+      recoveryDelay = Math.min(recoveryDelay * 2, BOOTSTRAP_RETRY_MAX_MS);
+    };
 
     const applyTraffic = (e: TrafficEvent) => {
       setTraffic({
@@ -286,11 +323,23 @@ export function useTenebra(): Tenebra {
         const subs = await Promise.all([
           onState((e) => {
             sawStateEvent = true;
+            stateEventSeq.current++;
+            // The Rust relay emits these while the daemon pipe is unavailable.
+            // Its synthetic phase does not confirm either a tunnel or guard.
+            if (/reconnecting to the tenebra service|lost the connection to the tenebra service/i.test(e.error ?? "")) {
+              serviceLost.current = true;
+              serviceLossSeq.current++;
+              setCoreError(e.error!);
+              scheduleRecovery();
+            } else if (serviceLost.current) {
+              void recover();
+            }
             setState((prev) => ({
               ...prev,
               state: e.state,
               node: e.node ?? prev.node,
               error: e.error,
+              protection: e.protection ?? prev.protection,
             }));
             // A clean disconnect zeroes the live counters.
             if (e.state === "idle") {
@@ -341,6 +390,7 @@ export function useTenebra(): Tenebra {
     // silent. Failing this once used to abort the whole effect: no ready, no
     // profiles, no subscriptions — an app that looked alive and did nothing.
     const load = async () => {
+      const lossSeq = serviceLossSeq.current;
       try {
         const [initialState, initialProfiles] = await Promise.all([
           api.status(),
@@ -349,11 +399,20 @@ export function useTenebra(): Tenebra {
         if (!active) {
           return;
         }
-        if (!sawStateEvent) {
-          applySnapshot(initialState);
-        }
+        setState((prev) => sawStateEvent
+          ? foldSnapshot(prev, {
+              ...initialState,
+              state: prev.state,
+              node: prev.node,
+              error: prev.error,
+              protection: prev.protection ?? initialState.protection,
+            })
+          : foldSnapshot(prev, initialState));
         setProfiles(initialProfiles);
-        setCoreError(null);
+        if (lossSeq === serviceLossSeq.current) {
+          serviceLost.current = false;
+          setCoreError(null);
+        }
         setReady(true);
         if (announcedFailure) {
           announcedFailure = false;
@@ -387,9 +446,10 @@ export function useTenebra(): Tenebra {
         clearTimeout(retryTimer);
         retryTimer = null;
       }
+      if (recoveryTimer) clearTimeout(recoveryTimer);
       unlisteners.forEach((u) => u());
     };
-  }, [appendLog, applySnapshot]);
+  }, [appendLog, refreshStatus]);
 
   const connect = useCallback(
     async (

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { Fragment, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getVersion } from "@tauri-apps/api/app";
 import type { Update } from "@tauri-apps/plugin-updater";
@@ -8,6 +8,7 @@ import {
   type ConnectionMode,
   type PickProgressEvent,
   type RoutingMode,
+  type State,
   type SplitMode,
   type TunStack,
   type ZapretUpdate,
@@ -46,6 +47,7 @@ import {
   type UpdateStatus,
 } from "../lib/updates";
 import { tunnelBusy } from "../lib/tunnel";
+import { useIntentQueue } from "../lib/useIntentQueue";
 import { useReducedMotion } from "../lib/useReducedMotion";
 
 interface SettingsScreenProps {
@@ -554,49 +556,45 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
       .catch(() => {});
   }
 
+  const { value: intended, enqueue } = useIntentQueue(tenebra.state, reportRefusal);
+  const queueDns = (change: (s: State) => State) => enqueue(change, (s) =>
+    tenebra.setDns(s.ad_block ?? false, s.dns_remote ?? "", s.dns_direct ?? "", s.ipv4_only ?? false));
+  const queueRules = (change: (s: State) => State) => enqueue(change, (s) =>
+    tenebra.setRules(s.rules_direct ?? [], s.rules_proxy ?? [], s.preset_ru_banking ?? false, s.preset_ru_gov ?? false));
+  const queueSplit = (change: (s: State) => State) => enqueue(change, (s) =>
+    tenebra.setSplit(s.split ?? "off", s.split_apps ?? []));
+
   // Multihop two-hop chain. Core-owned like the other toggles: off with no
   // selection until the user picks an entry and an exit node. The choices are
   // drawn from the active profile (the connected one, else the first stored) and
-  // sent by stable id; the core resolves them at connect time and falls back to a
-  // single hop for a pair that no longer fits the profile.
+  // sent by stable id; the core rejects a pair that no longer fits the profile.
   const multihopProfileId =
     tenebra.state.profile || tenebra.profiles[0]?.id || "";
   const multihopNodes =
     tenebra.profiles.find((p) => p.id === multihopProfileId)?.nodes ?? [];
-  const multihopEnabled = tenebra.state.multihop?.enabled ?? false;
-  const multihopEntry = tenebra.state.multihop?.entry_id ?? "";
-  const multihopExit = tenebra.state.multihop?.exit_id ?? "";
+  const multihopEnabled = intended.multihop?.enabled ?? false;
+  const multihopEntry = intended.multihop?.entry_id ?? "";
+  const multihopExit = intended.multihop?.exit_id ?? "";
   // The chain can only be armed once both ends are chosen and distinct — the same
   // rule the core enforces — so the toggle is inert until then (it can always turn
   // off). The selectors stay usable while off so a pick can be made first.
   const multihopArmable =
     multihopEntry !== "" &&
     multihopExit !== "" &&
-    multihopEntry !== multihopExit;
+    multihopEntry !== multihopExit &&
+    multihopNodes.some((n) => n.id === multihopEntry) &&
+    multihopNodes.some((n) => n.id === multihopExit);
 
+  function queueMultihop(patch: Partial<NonNullable<State["multihop"]>>) {
+    enqueue((s) => ({ ...s, multihop: { enabled: false, entry_id: "", exit_id: "", ...s.multihop, ...patch } }),
+      (s) => tenebra.setMultihop(multihopProfileId, s.multihop!.enabled, s.multihop!.entry_id ?? "", s.multihop!.exit_id ?? ""));
+  }
   function toggleMultihop() {
-    if (!multihopEnabled && !multihopArmable) {
-      return;
-    }
-    void tenebra
-      .setMultihop(
-        multihopProfileId,
-        !multihopEnabled,
-        multihopEntry,
-        multihopExit,
-      )
-      .catch(reportRefusal);
+    if (!multihopEnabled && !multihopArmable) return;
+    queueMultihop({ enabled: !multihopEnabled });
   }
-  function selectMultihopEntry(entryId: string) {
-    void tenebra
-      .setMultihop(multihopProfileId, multihopEnabled, entryId, multihopExit)
-      .catch(reportRefusal);
-  }
-  function selectMultihopExit(exitId: string) {
-    void tenebra
-      .setMultihop(multihopProfileId, multihopEnabled, multihopEntry, exitId)
-      .catch(reportRefusal);
-  }
+  function selectMultihopEntry(entryId: string) { queueMultihop({ entry_id: entryId }); }
+  function selectMultihopExit(exitId: string) { queueMultihop({ exit_id: exitId }); }
 
   // Health-failover watchdog. On by default in the core, which projects the
   // effective value into State as a concrete bool — so the armed default arrives
@@ -619,40 +617,34 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   // (`tenebra.simpleMode`) and "true"/"false" encoding are a contract with the
   // shell — keep them verbatim.
   const [simpleMode, setSimpleMode] = useState(
-    () => localStorage.getItem("tenebra.simpleMode") === "true",
+    () => ["true", "1"].includes(localStorage.getItem("tenebra.simpleMode") ?? ""),
   );
 
   function toggleSimpleMode() {
-    setSimpleMode((prev) => {
-      const next = !prev;
-      const value = next ? "true" : "false";
-      localStorage.setItem("tenebra.simpleMode", value);
-      // Same-document writes don't fire `storage` natively (that event is for
-      // *other* tabs), so raise it ourselves for the app shell's listener.
-      window.dispatchEvent(
-        new StorageEvent("storage", {
-          key: "tenebra.simpleMode",
-          newValue: value,
-        }),
-      );
-      return next;
-    });
+    const next = !simpleMode;
+    setSimpleMode(next);
+    const value = next ? "true" : "false";
+    localStorage.setItem("tenebra.simpleMode", value);
+    // Notify from the event handler: React can replay state updaters during
+    // render, when synchronously updating the listening app shell is invalid.
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: "tenebra.simpleMode",
+        newValue: value,
+      }),
+    );
   }
 
   function toggleAutoFastest() {
-    setAutoFastestState((prev) => {
-      const next = !prev;
-      setAutoFastest(next);
-      return next;
-    });
+    const next = !autoFastest;
+    setAutoFastestState(next);
+    setAutoFastest(next);
   }
 
   function toggleAutoInstall() {
-    setAutoInstallState((prev) => {
-      const next = !prev;
-      setAutoInstallUpdates(next);
-      return next;
-    });
+    const next = !autoInstall;
+    setAutoInstallState(next);
+    setAutoInstallUpdates(next);
   }
 
   // Update channel is renderer-owned, like the auto-* toggles: the scheduled
@@ -726,7 +718,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   // The download → install → relaunch itself. Shared by the direct (tunnel down)
   // path and the confirmed one, so the gate below has one thing to call.
   async function runUpdateInstall() {
-    if (!pendingUpdate) {
+    if (!pendingUpdate || !tenebra.ready || tenebra.coreError) {
       return;
     }
     setConfirmingInstall(false);
@@ -747,7 +739,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   // background service to swap it), which would drop a live tunnel — so when one
   // is up, confirm first; when it's down, install straight away.
   function applyUpdate() {
-    if (!pendingUpdate) {
+    if (!pendingUpdate || !tenebra.ready || tenebra.coreError) {
       return;
     }
     if (tunnelBusy(tenebra.state.state)) {
@@ -847,8 +839,8 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   // Split tunnelling. The core owns the canonical list (it normalizes names), so
   // the rendered list always reflects tenebra.state rather than a local copy; the
   // text field is the only local state.
-  const splitMode = tenebra.state.split ?? "off";
-  const splitApps = tenebra.state.split_apps ?? [];
+  const splitMode = intended.split ?? "off";
+  const splitApps = intended.split_apps ?? [];
   const [appDraft, setAppDraft] = useState("");
 
   const splitOptions: { mode: SplitMode; label: string; hint: string }[] = [
@@ -869,7 +861,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     if (mode === splitMode) {
       return;
     }
-    void tenebra.setSplit(mode, splitApps).catch(reportRefusal);
+    queueSplit((s) => ({ ...s, split: mode }));
   }
 
   // See routingRefs: arrow keys move focus along with the selection here too.
@@ -899,19 +891,12 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
     if (!canAddApp) {
       return;
     }
-    void tenebra
-      .setSplit(splitMode, [...splitApps, normalizedDraft])
-      .catch(reportRefusal);
+    queueSplit((s) => ({ ...s, split_apps: [...(s.split_apps ?? []), normalizedDraft] }));
     setAppDraft("");
   }
 
   function removeApp(name: string) {
-    void tenebra
-      .setSplit(
-        splitMode,
-        splitApps.filter((a) => a !== name),
-      )
-      .catch(reportRefusal);
+    queueSplit((s) => ({ ...s, split_apps: (s.split_apps ?? []).filter((a) => a !== name) }));
   }
 
   function onAppInputKey(e: KeyboardEvent) {
@@ -1007,10 +992,10 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   // re-applies them in place. Each set_dns carries the whole set, so we derive it
   // from the current toggles and the two resolver drafts, ignoring a malformed
   // draft.
-  const adBlock = tenebra.state.ad_block ?? false;
-  const ipv4Only = tenebra.state.ipv4_only ?? false;
-  const dnsRemote = tenebra.state.dns_remote ?? "";
-  const dnsDirect = tenebra.state.dns_direct ?? "";
+  const adBlock = intended.ad_block ?? false;
+  const ipv4Only = intended.ipv4_only ?? false;
+  const dnsRemote = intended.dns_remote ?? "";
+  const dnsDirect = intended.dns_direct ?? "";
   const [remoteDraft, setRemoteDraft] = useState(dnsRemote);
   const [directDraft, setDirectDraft] = useState(dnsDirect);
 
@@ -1031,27 +1016,20 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
 
   // Every set_dns carries the whole set of preferences, so each toggle/edit path
   // re-sends the current values of the others alongside the one it changes.
-  function pushDns(nextAdBlock: boolean, nextIpv4Only: boolean) {
-    void tenebra
-      .setDns(nextAdBlock, remoteValue, directValue, nextIpv4Only)
-      .catch(reportRefusal);
-  }
-
   function toggleAdBlock() {
-    pushDns(!adBlock, ipv4Only);
+    const ad_block = !adBlock;
+    queueDns((s) => ({ ...s, ad_block }));
   }
-
   function toggleIpv4Only() {
-    pushDns(adBlock, !ipv4Only);
+    const ipv4_only = !ipv4Only;
+    queueDns((s) => ({ ...s, ipv4_only }));
   }
-
-  // Commit a resolver edit: only when a valid draft actually changes an effective
-  // resolver, so blurring an unchanged (or malformed) field is a no-op.
   function commitResolvers() {
-    if (remoteValue === dnsRemote && directValue === dnsDirect) {
-      return;
-    }
-    pushDns(adBlock, ipv4Only);
+    if (remoteValue === dnsRemote && directValue === dnsDirect) return;
+    const patch: Partial<State> = {};
+    if (remoteValue !== dnsRemote) patch.dns_remote = remoteValue;
+    if (directValue !== dnsDirect) patch.dns_direct = directValue;
+    queueDns((s) => ({ ...s, ...patch }));
   }
 
   function onResolverKey(e: KeyboardEvent) {
@@ -1066,28 +1044,18 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   // (when a tunnel is live) re-applies in place. Each set_rules carries the whole
   // set, so every toggle/edit re-sends the current values of the others alongside
   // the one it changes.
-  const rulesDirect = tenebra.state.rules_direct ?? [];
-  const rulesProxy = tenebra.state.rules_proxy ?? [];
-  const presetRuBanking = tenebra.state.preset_ru_banking ?? false;
-  const presetRuGov = tenebra.state.preset_ru_gov ?? false;
-
-  function pushRules(
-    nextDirect: string[],
-    nextProxy: string[],
-    nextBanking: boolean,
-    nextGov: boolean,
-  ) {
-    void tenebra
-      .setRules(nextDirect, nextProxy, nextBanking, nextGov)
-      .catch(reportRefusal);
-  }
+  const rulesDirect = intended.rules_direct ?? [];
+  const rulesProxy = intended.rules_proxy ?? [];
+  const presetRuBanking = intended.preset_ru_banking ?? false;
+  const presetRuGov = intended.preset_ru_gov ?? false;
 
   function toggleRuleBanking() {
-    pushRules(rulesDirect, rulesProxy, !presetRuBanking, presetRuGov);
+    const preset_ru_banking = !presetRuBanking;
+    queueRules((s) => ({ ...s, preset_ru_banking }));
   }
-
   function toggleRuleGov() {
-    pushRules(rulesDirect, rulesProxy, presetRuBanking, !presetRuGov);
+    const preset_ru_gov = !presetRuGov;
+    queueRules((s) => ({ ...s, preset_ru_gov }));
   }
 
   // Routing presets. Two of the three take a class of traffic out of the tunnel,
@@ -1124,9 +1092,11 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
         <div className="set-nav-list">
           {NAV_SECTIONS.map((key) => {
             const active = activeSection === key;
+            const group = key === "routing" ? t.settings.groupTraffic : key === "mode" ? t.settings.groupAdvanced : key === "reliability" ? t.settings.groupHelp : key === "appearance" ? t.settings.groupApp : null;
             return (
+              <Fragment key={key}>
+              {group && <p className="set-nav-group">{group}</p>}
               <button
-                key={key}
                 type="button"
                 className={`set-nav-item${active ? " is-active" : ""}`}
                 aria-current={active ? "true" : undefined}
@@ -1134,6 +1104,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
               >
                 {t.settings[key]}
               </button>
+              </Fragment>
             );
           })}
         </div>
@@ -1319,6 +1290,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             <button
               type="button"
               role="switch"
+                  aria-label={t.settings.presetUnblockServices}
               aria-checked={presetUnblockServices}
               className={`set-switch${presetUnblockServices ? " is-on" : ""}`}
               onClick={() => pushPresets({ services: !presetUnblockServices })}
@@ -1342,6 +1314,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             <button
               type="button"
               role="switch"
+                  aria-label={t.settings.presetGamesDirect}
               aria-checked={presetGamesDirect}
               className={`set-switch${presetGamesDirect ? " is-on" : ""}`}
               onClick={() => pushPresets({ games: !presetGamesDirect })}
@@ -1365,6 +1338,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             <button
               type="button"
               role="switch"
+                  aria-label={t.settings.presetVoiceDirect}
               aria-checked={presetVoiceDirect}
               className={`set-switch${presetVoiceDirect ? " is-on" : ""}`}
               onClick={() => pushPresets({ voice: !presetVoiceDirect })}
@@ -1399,6 +1373,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             <button
               type="button"
               role="switch"
+                  aria-label={t.settings.presetRuBanking}
               aria-checked={presetRuBanking}
               className={`set-switch${presetRuBanking ? " is-on" : ""}`}
               onClick={toggleRuleBanking}
@@ -1418,6 +1393,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             <button
               type="button"
               role="switch"
+                  aria-label={t.settings.presetRuGov}
               aria-checked={presetRuGov}
               className={`set-switch${presetRuGov ? " is-on" : ""}`}
               onClick={toggleRuleGov}
@@ -1435,20 +1411,10 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             hint={t.settings.rulesDirectHint}
             domains={rulesDirect}
             onAdd={(domain) =>
-              pushRules(
-                [...rulesDirect, domain],
-                rulesProxy,
-                presetRuBanking,
-                presetRuGov,
-              )
+              queueRules((s) => ({ ...s, rules_direct: [...(s.rules_direct ?? []), domain] }))
             }
             onRemove={(domain) =>
-              pushRules(
-                rulesDirect.filter((d) => d !== domain),
-                rulesProxy,
-                presetRuBanking,
-                presetRuGov,
-              )
+              queueRules((s) => ({ ...s, rules_direct: (s.rules_direct ?? []).filter((d) => d !== domain) }))
             }
           />
 
@@ -1458,20 +1424,10 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             hint={t.settings.rulesProxyHint}
             domains={rulesProxy}
             onAdd={(domain) =>
-              pushRules(
-                rulesDirect,
-                [...rulesProxy, domain],
-                presetRuBanking,
-                presetRuGov,
-              )
+              queueRules((s) => ({ ...s, rules_proxy: [...(s.rules_proxy ?? []), domain] }))
             }
             onRemove={(domain) =>
-              pushRules(
-                rulesDirect,
-                rulesProxy.filter((d) => d !== domain),
-                presetRuBanking,
-                presetRuGov,
-              )
+              queueRules((s) => ({ ...s, rules_proxy: (s.rules_proxy ?? []).filter((d) => d !== domain) }))
             }
           />
         </section>
@@ -1580,6 +1536,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             <button
               type="button"
               role="switch"
+                  aria-label={t.settings.adBlock}
               aria-checked={adBlock}
               className={`set-switch${adBlock ? " is-on" : ""}`}
               onClick={toggleAdBlock}
@@ -1599,6 +1556,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             <button
               type="button"
               role="switch"
+                  aria-label={t.settings.ipv4Only}
               aria-checked={ipv4Only}
               className={`set-switch${ipv4Only ? " is-on" : ""}`}
               onClick={toggleIpv4Only}
@@ -1760,6 +1718,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             <button
               type="button"
               role="switch"
+                  aria-label={t.settings.tlsFragment}
               aria-checked={tlsFragment}
               className={`set-switch${tlsFragment ? " is-on" : ""}`}
               onClick={toggleTlsFragment}
@@ -1809,6 +1768,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             <button
               type="button"
               role="switch"
+                  aria-label={t.settings.bypassAutoUpdate}
               aria-checked={bypassAutoUpdate}
               className={`set-switch${bypassAutoUpdate ? " is-on" : ""}`}
               onClick={toggleBypassAutoUpdate}
@@ -1841,6 +1801,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             <button
               type="button"
               role="switch"
+                  aria-label={t.settings.multihopEnable}
               aria-checked={multihopEnabled}
               disabled={!multihopEnabled && !multihopArmable}
               className={`set-switch${multihopEnabled ? " is-on" : ""}`}
@@ -1920,6 +1881,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             <button
               type="button"
               role="switch"
+                  aria-label={t.settings.autoFailover}
               aria-checked={autoFailover}
               className={`set-switch${autoFailover ? " is-on" : ""}`}
               onClick={toggleAutoFailover}
@@ -2004,6 +1966,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             <button
               type="button"
               role="switch"
+                  aria-label={t.settings.simpleMode}
               aria-checked={simpleMode}
               className={`set-switch${simpleMode ? " is-on" : ""}`}
               onClick={toggleSimpleMode}
@@ -2034,6 +1997,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             <button
               type="button"
               role="switch"
+                  aria-label={t.settings.launchAtLogin}
               aria-checked={launchAtLogin}
               disabled={launchBusy}
               className={`set-switch${launchAtLogin ? " is-on" : ""}`}
@@ -2054,6 +2018,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             <button
               type="button"
               role="switch"
+                  aria-label={t.settings.autoconnect}
               aria-checked={autoconnect}
               className={`set-switch${autoconnect ? " is-on" : ""}`}
               onClick={toggleAutoconnect}
@@ -2073,6 +2038,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             <button
               type="button"
               role="switch"
+                  aria-label={t.settings.autoFastest}
               aria-checked={autoFastest}
               className={`set-switch${autoFastest ? " is-on" : ""}`}
               onClick={toggleAutoFastest}
@@ -2154,7 +2120,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             pendingUpdate &&
             (updateStatus.kind === "available" ||
               updateStatus.kind === "error") ? (
-              <button type="button" className="set-btn" onClick={applyUpdate}>
+              <button type="button" className="set-btn" onClick={applyUpdate} disabled={!tenebra.ready || !!tenebra.coreError} title={!tenebra.ready ? t.update.waitingForStatus : undefined}>
                 {t.settings.updatesInstall}
               </button>
             ) : (
@@ -2179,6 +2145,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             <button
               type="button"
               role="switch"
+                  aria-label={t.settings.autoInstall}
               aria-checked={autoInstall}
               className={`set-switch${autoInstall ? " is-on" : ""}`}
               onClick={toggleAutoInstall}
@@ -2203,6 +2170,7 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
             <button
               type="button"
               role="switch"
+                  aria-label={t.settings.crashReports}
               aria-checked={crashReports}
               className={`set-switch${crashReports ? " is-on" : ""}`}
               onClick={toggleCrashReports}

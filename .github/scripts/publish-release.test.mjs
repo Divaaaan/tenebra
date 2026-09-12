@@ -6,7 +6,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { expectedAssets, missingAssets } from "./publish-release.mjs";
+import { expectedAssets, missingAssets, parsePublishArgs } from "./publish-release.mjs";
+
+test('publication arguments require the explicit prepare-only flag and reject typos', () => {
+  assert.deepEqual(parsePublishArgs(['v0.6.0']), { tag: 'v0.6.0', prepareOnly: false });
+  assert.deepEqual(parsePublishArgs(['v0.6.0', '--prepare-only']), { tag: 'v0.6.0', prepareOnly: true });
+  for (const args of [[], ['--prepare-only'], ['v0.6.0', '--prepare'], ['v0.6.0', '--prepare-only', '--extra']]) {
+    assert.throws(() => parsePublishArgs(args), /usage:/);
+  }
+});
 
 /** The eleven files v0.5.0 actually shipped with — the Arch package missing. */
 const v050Assets = [

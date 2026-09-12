@@ -1,255 +1,181 @@
 import type { ReactNode } from "react";
 
-import type {
-  ConnectionState,
-  Node,
-  Profile,
-  ServiceCheck as ServiceCheckResult,
-} from "../api";
+import type { ConnectionState, Node, Profile, ServiceCheck } from "../api";
 import { useI18n } from "../i18n/I18nContext";
+import { formatExpiry, formatTrafficUsage } from "../lib/format";
 import { ServiceChecks } from "./ServiceChecks";
 import { SimpleSetup } from "./SimpleSetup";
 
 interface SimpleViewProps {
   phase: ConnectionState;
-  /** True while a primary action is mid-flight; disables the button. */
   busy: boolean;
-  /** Connect / disconnect / abort, decided by phase — the same handler the shell uses. */
+  checkingServers?: boolean;
+  ready?: boolean;
+  protectionBlocked?: boolean;
   onPrimary: () => void;
-  /** Display name of the active (connected) or target node; "" when none. */
   nodeName: string;
   profiles: Profile[];
   selectedProfileId: string | null;
   onSelectProfile: (id: string) => void;
-  /** Nodes of the selected profile. */
   nodes: Node[];
-  /** Pinned node id, or "" for automatic (let the core pick the fastest). */
   selectedNodeId: string;
   onSelectNode: (id: string) => void;
   onSelectAuto: () => void;
-  /** True when the core reports a bundle on disk (or a filter already running). */
   bypassInstalled: boolean;
-  /** True when the core reports the packet filter as carrying traffic. */
   bypassOn: boolean;
-  /** The strategy the core is running; "" when it does not name one. */
   bypassStrategy: string;
-  /**
-   * True while the core cannot be reached at all. Nothing else on this screen is
-   * backed by anything then, and saying so beats a calm "disconnected" over an
-   * app that has no core behind it.
-   */
   coreUnreachable: boolean;
-  /** Import a subscription from a pasted link. */
   onSubscribe: (url: string) => Promise<void>;
-  /** What the post-connect checks measured; empty before one has run. */
-  serviceChecks: ServiceCheckResult[];
-  /** True while those checks are in flight. */
+  serviceChecks: ServiceCheck[];
   serviceChecking: boolean;
-  /** Open the report-a-problem flow. */
   onReportProblem: () => void;
-  /**
-   * The app's own offer to report, when the checks below have twice said video
-   * isn't getting through. Built by the shell so both views raise the same one.
-   */
+  onManageProfiles?: () => void;
+  onSettings?: () => void;
   reportNudge?: ReactNode;
 }
 
-/**
- * The stripped-down connection screen for people who want one button, not a
- * control panel. A single large connect / disconnect control, the current status
- * in plain words, and a minimal server picker — everything advanced (routing,
- * kill switch, diagnostics, the node table, logs) is left to the full shell.
- * Reads the same connection state and calls the same actions as the shell, so the
- * two views never disagree.
- */
+/** A daily connection screen using the shell's real state and shared actions. */
 export function SimpleView({
-  phase,
-  busy,
-  onPrimary,
-  nodeName,
-  profiles,
-  selectedProfileId,
-  onSelectProfile,
-  nodes,
-  selectedNodeId,
-  onSelectNode,
-  onSelectAuto,
-  bypassInstalled,
-  bypassOn,
-  bypassStrategy,
-  coreUnreachable,
-  onSubscribe,
-  serviceChecks,
-  serviceChecking,
-  onReportProblem,
-  reportNudge = null,
+  phase, busy, checkingServers = false, ready = true, protectionBlocked = false, onPrimary, nodeName,
+  profiles, selectedProfileId, onSelectProfile, nodes, selectedNodeId,
+  onSelectNode, onSelectAuto, bypassInstalled, bypassOn, bypassStrategy,
+  coreUnreachable, onSubscribe, serviceChecks, serviceChecking,
+  onReportProblem, onManageProfiles, onSettings, reportNudge = null,
 }: SimpleViewProps) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const connected = phase === "connected";
+  const pending = phase === "connecting" || phase === "health_reconnecting";
+  const hasProfile = profiles.length > 0;
+  const showConnection = hasProfile || connected || pending;
+  const unavailable = !ready || coreUnreachable;
+  const selectionLocked = unavailable || busy || pending || checkingServers;
+  const selectedProfile = profiles.find((profile) => profile.id === selectedProfileId);
+  const usage = selectedProfile
+    ? formatTrafficUsage(selectedProfile.trafficUsed, selectedProfile.trafficTotal)
+    : null;
+  const expiry = selectedProfile
+    ? formatExpiry(selectedProfile.expiresAt, lang, {
+      in: t.profiles.expiresIn, today: t.profiles.expiresToday,
+      tomorrow: t.profiles.expiresTomorrow, expired: t.profiles.expired,
+    }) : null;
 
-  // The only way out of simple mode from here: it hides Settings (and its own
-  // toggle), so a stranded user would otherwise be stuck. Flip the shared
-  // `tenebra.simpleMode` flag off and nudge the app shell exactly the way the
-  // Settings toggle does — a `storage` event — plus the same-document custom
-  // event App also listens for. App re-reads the flag and restores the full
-  // shell. The key and "false" encoding are the contract with App/Settings;
-  // keep them verbatim.
   function exitSimpleMode() {
     localStorage.setItem("tenebra.simpleMode", "false");
-    window.dispatchEvent(
-      new StorageEvent("storage", {
-        key: "tenebra.simpleMode",
-        newValue: "false",
-      }),
-    );
+    window.dispatchEvent(new StorageEvent("storage", {
+      key: "tenebra.simpleMode", newValue: "false",
+    }));
     window.dispatchEvent(new CustomEvent("tenebra:simple-mode"));
   }
 
-  const connected = phase === "connected";
-  const pending = phase === "connecting";
-  const hasProfile = profiles.length > 0;
-
-  const buttonLabel = connected
-    ? t.home.disconnect
-    : pending
-      ? t.conn.abort
-      : t.home.connect;
-
-  // Calm, plain-language status line. Connecting / reconnecting say nothing extra —
-  // the status word already carries it.
-  const reassurance =
-    phase === "connected"
-      ? nodeName
-        ? `${t.simple.statusOn} · ${nodeName}`
-        : t.simple.statusOn
-      : phase === "idle" || phase === "error"
-        ? t.simple.statusOff
-        : "";
+  const statusLabel = coreUnreachable ? t.simple.serviceUnavailable
+    : !ready ? t.simple.serviceStarting
+      : protectionBlocked && !pending && !checkingServers ? t.simple.trafficBlocked
+        : checkingServers ? t.simple.checkingServers
+        : busy && !connected && !pending ? t.simple.preparing : t.state[phase];
+  const buttonLabel = connected ? t.home.disconnect
+    : pending ? t.conn.abort
+      : checkingServers ? t.simple.checkingServers
+        : busy ? t.simple.preparing : t.home.connect;
+  const reassurance = connected && !unavailable
+    ? nodeName ? `${t.simple.statusOn} · ${nodeName}` : t.simple.statusOn
+    : coreUnreachable ? t.simple.serviceHelp
+      : protectionBlocked && ready ? t.simple.blockedHint
+        : phase === "idle" && !busy && ready ? t.simple.statusOff : "";
 
   return (
     <div className="simple">
-      <div className="simple-brand" aria-hidden="true">
-        <span className="bracket">[</span>
-        <span className="mark">Tenebra</span>
-        <span className="bracket">]</span>
-      </div>
-
-      {/* A core that never answered leaves this screen drawn over nothing: no
-          profiles, no real status, every button doomed. The calm one-word status
-          is exactly what must not be shown on its own here. */}
-      {coreUnreachable && (
-        <p className="simple-core-down" role="alert">
-          ⚠ {t.daemon.unreachable}
-        </p>
-      )}
-
-      <div className="simple-core">
-        <div className={`simple-word ${phase}`}>
-          <span className="simple-ind" aria-hidden="true" />
-          <span className="simple-word-text" aria-live="polite">
-            {t.state[phase]}
-          </span>
+      <header className="simple-header">
+        <div className="simple-brand" aria-label="Tenebra">
+          <span className="bracket" aria-hidden="true">[</span>
+          <span className="mark">Tenebra</span>
+          <span className="bracket" aria-hidden="true">]</span>
+          <span className="simple-mode">{t.simple.mode}</span>
         </div>
-        {reassurance && <p className="simple-sub">{reassurance}</p>}
-        {/* The bypass, read off the core's own snapshot. It is named rather than
-            just flagged: which strategy is up is the one fact worth showing —
-            they behave differently and the app chose this one by measurement.
-            Nothing is drawn before a bundle exists, because until the first
-            connect installs one there is genuinely nothing to report. */}
-        {bypassInstalled && (
-          <p className={`simple-bypass${bypassOn ? "" : " is-off"}`}>
-            <span className="simple-bypass-dot" aria-hidden="true" />
-            {bypassOn
-              ? bypassStrategy
-                ? `${t.simple.bypassOn} · ${bypassStrategy}`
-                : t.simple.bypassOn
-              : t.simple.bypassOff}
-          </p>
-        )}
+        <button type="button" className="simple-link" onClick={exitSimpleMode}>{t.simple.advanced}</button>
+      </header>
 
-        <button
-          type="button"
-          className={`simple-btn${connected ? " on" : ""}${pending ? " pending" : ""}`}
-          onClick={onPrimary}
-          disabled={busy || (!connected && !pending && !hasProfile)}
-        >
-          {buttonLabel}
-        </button>
+      <main className="simple-content">
+        {coreUnreachable && <p className="simple-core-down" role="alert">{t.daemon.unreachable}</p>}
 
-        {/* What "connected" actually bought: video, voice and game latency,
-            measured. The status word alone leaves a user watching a spinning
-            YouTube with no way to say what is wrong. */}
-        <ServiceChecks checks={serviceChecks} checking={serviceChecking} />
+        {showConnection ? (
+          <div className="simple-layout">
+            <section className="simple-core" aria-label={t.simple.mode}>
+              <h1 className={`simple-word ${unavailable ? "unavailable" : phase}`} aria-live="polite">
+                {statusLabel}
+              </h1>
+              {reassurance && <p className="simple-sub">{reassurance}</p>}
+              <button type="button"
+                className={`simple-btn${connected && !unavailable ? " on" : ""}${pending || checkingServers ? " pending" : ""}`}
+                onClick={onPrimary}
+                disabled={busy || checkingServers || (!connected && !pending && (unavailable || nodes.length === 0 || !selectedProfile))}
+              >
+                <span className="simple-power" aria-hidden="true">
+                  <svg width="38" height="38" viewBox="0 0 32 32" fill="none">
+                    <path d="M16 3v12M8 7.5a12 12 0 1 0 16 0" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                </span>
+                <span className="simple-button-label">{buttonLabel}</span>
+              </button>
+              {!unavailable && (serviceChecking || serviceChecks.length > 0) && <section className="simple-checks" aria-label={t.simple.checksTitle}>
+                <h2>{t.simple.checksTitle}</h2>
+                <ServiceChecks checks={serviceChecks} checking={serviceChecking} />
+              </section>}
+              {reportNudge}
+            </section>
 
-        {/* Directly under the check that raised it, where the ✕ it is talking
-            about is on screen. */}
-        {reportNudge}
-      </div>
+            <section className="simple-pick" aria-label={t.simple.subscription}>
+              <div className="simple-section-head">
+                <h2>{t.simple.subscription}</h2>
+                {onManageProfiles && <button type="button" className="simple-link" onClick={onManageProfiles}>{t.simple.manage}</button>}
+              </div>
+              {profiles.length > 1 ? (
+                <label className="simple-field">
+                  <span className="simple-field-lab">{t.simple.subscription}</span>
+                  <select className="simple-select" value={selectedProfileId ?? ""}
+                    disabled={selectionLocked} onChange={(event) => onSelectProfile(event.target.value)}>
+                    {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+                  </select>
+                </label>
+              ) : <p className="simple-profile-name">{selectedProfile?.name ?? profiles[0]?.name}</p>}
+              {(usage || expiry) && <div className="simple-subscription-meta">
+                {usage && <span>{usage}</span>}{expiry && <span>{expiry}</span>}
+              </div>}
 
-      <div className="simple-pick">
-        {hasProfile ? (
-          <>
-            {profiles.length > 1 && (
-              <label className="simple-field">
-                <span className="simple-field-lab">{t.home.activeProfile}</span>
-                <select
-                  className="simple-select"
-                  value={selectedProfileId ?? ""}
-                  onChange={(e) => onSelectProfile(e.target.value)}
-                >
-                  {profiles.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
+              <label className="simple-field simple-server-field">
+                <span className="simple-field-lab">{t.simple.server}</span>
+                <select className="simple-select" value={selectedNodeId}
+                  disabled={selectionLocked || nodes.length === 0}
+                  onChange={(event) => event.target.value ? onSelectNode(event.target.value) : onSelectAuto()}>
+                  <option value="">{t.simple.auto}</option>
+                  {nodes.map((node) => <option key={node.id} value={node.id}>{node.name}</option>)}
                 </select>
               </label>
-            )}
+              <p className={`simple-hint${nodes.length === 0 ? " is-empty" : ""}`}>
+                {nodes.length === 0 ? t.simple.noNodes : connected ? t.simple.changeHint : t.simple.autoHint}
+              </p>
 
-            <label className="simple-field">
-              <span className="simple-field-lab">{t.simple.server}</span>
-              <select
-                className="simple-select"
-                value={selectedNodeId}
-                onChange={(e) =>
-                  e.target.value
-                    ? onSelectNode(e.target.value)
-                    : onSelectAuto()
-                }
-                disabled={nodes.length === 0}
-              >
-                <option value="">{t.simple.auto}</option>
-                {nodes.map((n) => (
-                  <option key={n.id} value={n.id}>
-                    {n.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </>
-        ) : null}
-      </div>
+              {!unavailable && bypassInstalled && <details className="simple-details">
+                <summary>{t.simple.details}</summary>
+                <p className={`simple-bypass${bypassOn ? "" : " is-off"}`}>
+                  <span className="simple-bypass-dot" aria-hidden="true" />
+                  {bypassOn ? t.simple.bypassOn : t.simple.bypassOff}
+                </p>
+                {bypassOn && bypassStrategy && <p className="simple-strategy">{bypassStrategy}</p>}
+              </details>}
+            </section>
+          </div>
+        ) : unavailable ? (
+          <section className="simple-wait" role="status">
+            <h1>{statusLabel}</h1>
+            <p>{t.simple.serviceHelp}</p>
+          </section>
+        ) : <SimpleSetup hasProfile={false} onSubscribe={onSubscribe} />}
+      </main>
 
-      <SimpleSetup hasProfile={hasProfile} onSubscribe={onSubscribe} />
-
-      {/* This screen has no Settings and no log console, so before this there
-          was nothing here to complain with at all — a user whose video stopped
-          loading could only close the app. */}
-      <div className="simple-foot">
-        <button
-          type="button"
-          className="simple-advanced"
-          onClick={onReportProblem}
-        >
-          {t.report.action}
-        </button>
-        <button
-          type="button"
-          className="simple-advanced"
-          onClick={exitSimpleMode}
-        >
-          {t.simple.advanced}
-        </button>
-      </div>
+      <footer className="simple-foot">
+        {onSettings && <button type="button" className="simple-link" onClick={onSettings}>{t.settings.title}</button>}
+        <button type="button" className="simple-link" onClick={onReportProblem}>{t.report.action}</button>
+      </footer>
     </div>
   );
 }

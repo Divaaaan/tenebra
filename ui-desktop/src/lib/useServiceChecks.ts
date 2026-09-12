@@ -27,23 +27,28 @@ export interface ServiceChecksState {
  * screen. Stale ticks next to a disconnected tunnel are worse than no ticks:
  * they say "everything works" about a session that no longer exists.
  */
-export function useServiceChecks(phase: ConnectionState): ServiceChecksState {
+export function useServiceChecks(phase: ConnectionState, sessionKey = ""): ServiceChecksState {
   const [checks, setChecks] = useState<ServiceCheck[]>([]);
   const [checking, setChecking] = useState(false);
   const [runs, setRuns] = useState(0);
   const inFlight = useRef(false);
+  const generation = useRef(0);
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
 
   const run = useCallback(() => {
-    if (inFlight.current) return;
+    if (inFlight.current || phaseRef.current !== "connected") return;
+    const current = generation.current;
     inFlight.current = true;
     setChecking(true);
     // Wrapped so a core without the command degrades to "no checks" rather than
     // throwing into the render path.
     void Promise.resolve()
       .then(() => api.checkServices())
-      .then((r) => setChecks(r.checks))
-      .catch(() => setChecks([]))
+      .then((r) => { if (current === generation.current) setChecks(r.checks); })
+      .catch(() => { if (current === generation.current) setChecks([]); })
       .finally(() => {
+        if (current !== generation.current) return;
         inFlight.current = false;
         setChecking(false);
         setRuns((n) => n + 1);
@@ -52,11 +57,19 @@ export function useServiceChecks(phase: ConnectionState): ServiceChecksState {
 
   useEffect(() => {
     if (phase === "connected") {
+      setChecks([]);
+      setRuns(0);
       run();
-      return;
+    } else {
+      setChecks([]);
+      setRuns(0);
+      setChecking(false);
     }
-    setChecks([]);
-  }, [phase, run]);
+    return () => {
+      generation.current += 1;
+      inFlight.current = false;
+    };
+  }, [phase, sessionKey, run]);
 
   return { checks, checking, runs, refresh: run };
 }
