@@ -6,8 +6,8 @@
 //   node scripts/set-version.mjs --check        # assert all files already agree
 //   node scripts/set-version.mjs 1.2.3 --check  # assert every file is 1.2.3
 //
-// The files are the desktop package manifest, the Tauri bundle config, the Rust
-// crate manifest and its lockfile entry, the Go core's build info, and the Arch
+// The files are the desktop package manifest and npm lockfile, the Tauri bundle
+// config, the Rust crate manifest and its lockfile entry, the Go core's build info, and the Arch
 // PKGBUILD. The release workflow reads the version from tauri.conf.json and the
 // updater's latest.json inherits it, so a stale copy would advertise the wrong
 // version to installed clients or leave the lockfile behind (build with --locked
@@ -27,6 +27,13 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 // and the Cargo.lock one is tied to this crate's package block.
 const targets = [
   { file: "ui-desktop/package.json", re: /("version":\s*")([^"]+)(")/ },
+  {
+    file: "ui-desktop/package-lock.json",
+    // npm keeps the project's version at the top and in packages[""]. Match
+    // only this package's own entries, preserving every dependency version.
+    re: /("name":\s*"tenebra-desktop",\s*"version":\s*")([^"]+)(")/g,
+    matchCount: 2,
+  },
   { file: "ui-desktop/src-tauri/tauri.conf.json", re: /("version":\s*")([^"]+)(")/ },
   { file: "ui-desktop/src-tauri/Cargo.toml", re: /(^version = ")([^"]+)(")/m },
   {
@@ -71,18 +78,20 @@ if (wanted && !SEMVER.test(wanted)) {
 const files = targets.map((t) => {
   const path = join(root, t.file);
   const text = readFileSync(path, "utf8");
-  const match = t.re.exec(text);
-  if (!match) {
-    fail(`could not find a version field in ${t.file}`);
+  const matcher = new RegExp(t.re.source, t.re.flags.includes("g") ? t.re.flags : `${t.re.flags}g`);
+  const matches = [...text.matchAll(matcher)];
+  if (matches.length !== (t.matchCount ?? 1)) {
+    fail(`expected ${t.matchCount ?? 1} version field(s) in ${t.file}, found ${matches.length}`);
   }
-  return { ...t, path, text, current: match[2] };
+  const versions = matches.map(match => match[2]);
+  return { ...t, path, text, versions, current: [...new Set(versions)].join(" / ") };
 });
 
 if (check) {
   const target = wanted ?? files[0].current;
-  const mismatched = files.filter((f) => f.current !== target);
+  const mismatched = files.filter((f) => f.versions.some(version => version !== target));
   for (const f of files) {
-    const ok = f.current === target ? "ok" : "MISMATCH";
+    const ok = f.versions.every(version => version === target) ? "ok" : "MISMATCH";
     console.log(`  ${f.current.padEnd(12)} ${f.file}  [${ok}]`);
   }
   if (mismatched.length > 0) {
@@ -96,7 +105,7 @@ if (check) {
 } else {
   let changed = 0;
   for (const f of files) {
-    if (f.current === wanted) {
+    if (f.versions.every(version => version === wanted)) {
       console.log(`  ${f.file}  already ${wanted}`);
       continue;
     }
