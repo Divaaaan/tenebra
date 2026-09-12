@@ -1,0 +1,273 @@
+name: Signed desktop candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Prepare immutable signed files, or promote already accepted bytes'
+        required: true
+        type: choice
+        options: [prepare, promote]
+      source_sha:
+        description: 'Full current main commit SHA; must equal this dispatch checkout'
+        required: true
+        type: string
+      acceptance_json:
+        description: 'Promote only: root-reviewed native acceptance JSON with run/artifact/file SHA pins'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# Share the release lock with the historical tag workflow. Preparing never
+# creates a tag/release or touches installed clients.
+concurrency:
+  group: tenebra-release
+  cancel-in-progress: false
+
+env:
+  GOTOOLCHAIN: local
+  SOURCE_SHA: ${{ inputs.source_sha }}
+
+jobs:
+  identity:
+    if: github.repository == 'Divaaaan/tenebra' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Require the exact main checkout and version agreement
+        run: |
+          node scripts/candidate-files.mjs identity
+          node scripts/set-version.mjs --check
+  ci:
+    if: inputs.mode == 'prepare'
+    needs: identity
+    uses: ./.github/workflows/ci.yml
+  windows:
+    needs: [identity, ci]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: '.go-version'
+          cache: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Fetch pinned resources
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fetch-resources.ps1
+      - name: Build and record the exact core
+        run: |
+          go build -o ui-desktop/src-tauri/binaries/tenebra-core-x86_64-pc-windows-msvc.exe ./cmd/tenebra-core
+          node scripts/verify-core-build.mjs ui-desktop/src-tauri/binaries/tenebra-core-x86_64-pc-windows-msvc.exe windows amd64 core-buildinfo-windows.json
+      - name: Install locked frontend dependencies
+        working-directory: ui-desktop
+        run: npm ci
+      - name: Build signed installer without creating a release
+        working-directory: ui-desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build -- --bundles nsis -- --locked
+      - name: Stage signed Windows files
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: node scripts/candidate-files.mjs collect windows
+      - uses: actions/upload-artifact@v6
+        with:
+          name: candidate-part-windows-${{ github.run_attempt }}
+          path: candidate-part/*
+          if-no-files-found: error
+          retention-days: 30
+  macos:
+    needs: [identity, ci]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: '.go-version'
+          cache: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+      - name: Fetch pinned resources
+        run: bash scripts/fetch-resources.sh
+      - name: Build both core slices and record provenance
+        run: |
+          set -euo pipefail
+          bins=ui-desktop/src-tauri/binaries
+          mkdir -p "$bins"
+          GOOS=darwin GOARCH=arm64 go build -o "$bins/tenebra-core-aarch64-apple-darwin" ./cmd/tenebra-core
+          GOOS=darwin GOARCH=amd64 go build -o "$bins/tenebra-core-x86_64-apple-darwin" ./cmd/tenebra-core
+          node scripts/verify-core-build.mjs "$bins/tenebra-core-aarch64-apple-darwin" darwin arm64 core-buildinfo-macos-arm64.json
+          node scripts/verify-core-build.mjs "$bins/tenebra-core-x86_64-apple-darwin" darwin amd64 core-buildinfo-macos-amd64.json
+          lipo -create "$bins/tenebra-core-aarch64-apple-darwin" "$bins/tenebra-core-x86_64-apple-darwin" -output "$bins/tenebra-core-universal-apple-darwin"
+      - name: Install locked frontend dependencies
+        working-directory: ui-desktop
+        run: npm ci
+      - name: Build signed macOS updater without creating a release
+        working-directory: ui-desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build -- --target universal-apple-darwin --bundles app,dmg -- --locked
+      - name: Stage signed macOS files
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: node scripts/candidate-files.mjs collect macos
+      - uses: actions/upload-artifact@v6
+        with:
+          name: candidate-part-macos-${{ github.run_attempt }}
+          path: candidate-part/*
+          if-no-files-found: error
+          retention-days: 30
+  linux:
+    needs: [identity, ci]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: '.go-version'
+          cache: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install bundle dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf file
+      - name: Fetch pinned resources
+        run: bash scripts/fetch-resources.sh --arch amd64
+      - name: Build and record the exact core
+        run: |
+          go build -o ui-desktop/src-tauri/binaries/tenebra-core-x86_64-unknown-linux-gnu ./cmd/tenebra-core
+          node scripts/verify-core-build.mjs ui-desktop/src-tauri/binaries/tenebra-core-x86_64-unknown-linux-gnu linux amd64 core-buildinfo-linux.json
+      - name: Install locked frontend dependencies
+        working-directory: ui-desktop
+        run: npm ci
+      - name: Build signed Linux updater without creating a release
+        working-directory: ui-desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build -- --bundles deb,appimage -- --locked
+      - name: Stage signed Linux files
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: node scripts/candidate-files.mjs collect linux
+      - uses: actions/upload-artifact@v6
+        with:
+          name: candidate-part-linux-${{ github.run_attempt }}
+          path: candidate-part/*
+          if-no-files-found: error
+          retention-days: 30
+  arch:
+    needs: [identity, ci]
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Install packaging tools
+        run: pacman -Syu --noconfirm --needed git nodejs npm
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Build from the immutable commit without a stable tag
+        env:
+          TENEBRA_SOURCE_COMMIT: ${{ inputs.source_sha }}
+        run: |
+          set -eu
+          useradd -m builder
+          echo 'builder ALL=(ALL) NOPASSWD: /usr/bin/pacman' > /etc/sudoers.d/builder
+          chown -R builder .
+          su builder -c 'cd packaging/arch && makepkg --syncdeps --noconfirm --needed'
+          su builder -c 'cd ui-desktop && npm ci'
+      - name: Stage signed Arch files
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: su builder -c 'node scripts/candidate-files.mjs collect arch'
+      - uses: actions/upload-artifact@v6
+        with:
+          name: candidate-part-arch-${{ github.run_attempt }}
+          path: candidate-part/*
+          if-no-files-found: error
+          retention-days: 30
+  assemble:
+    needs: [windows, macos, linux, arch]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: candidate-part-*-${{ github.run_attempt }}
+          merge-multiple: true
+          path: candidate-input
+      - name: Cryptographically verify every file and bind source provenance
+        run: node scripts/candidate-files.mjs manifest candidate-input candidate-output
+      - uses: actions/upload-artifact@v6
+        id: candidate
+        with:
+          name: tenebra-signed-desktop-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate-output/*
+          if-no-files-found: error
+          retention-days: 30
+      - name: Record acquisition pins
+        env:
+          ARTIFACT_ID: ${{ steps.candidate.outputs.artifact-id }}
+          ARTIFACT_SHA256: ${{ steps.candidate.outputs.artifact-digest }}
+        run: |
+          echo "Signed candidate artifact ID: $ARTIFACT_ID" >> "$GITHUB_STEP_SUMMARY"
+          echo "Archive SHA256: $ARTIFACT_SHA256" >> "$GITHUB_STEP_SUMMARY"
+          echo 'No tag, draft, public release or updater channel was created.' >> "$GITHUB_STEP_SUMMARY"
+  promote:
+    if: inputs.mode == 'promote'
+    needs: identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Install archive reader
+        run: sudo apt-get install -y --no-install-recommends unzip
+      - name: Promote only the accepted signed bytes
+        env:
+          # No signing key here. Using this token suppresses recursive tag
+          # builds and release-event workflows such as Winget.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACCEPTANCE_JSON: ${{ inputs.acceptance_json }}
+        run: node scripts/candidate-github.mjs promote
