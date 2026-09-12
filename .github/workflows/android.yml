@@ -124,6 +124,22 @@ jobs:
           path: ui-android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
+  release-held:
+    # A desktop-only release may deliberately omit Android. The explicit hold
+    # does not apply to debug builds and is reported instead of a fake APK pass.
+    if: ${{ startsWith(github.ref, 'refs/tags/') && vars.TENEBRA_ANDROID_RELEASE_HOLD == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report the Android release hold
+        run: |
+          set -eu
+          echo "::notice::Android release is intentionally held for $GITHUB_REF_NAME."
+          {
+            echo "## Android release intentionally held: $GITHUB_REF_NAME"
+            echo "TENEBRA_ANDROID_RELEASE_HOLD=true. No APK was built, signed, or attached."
+            echo "Desktop release validation continues separately; Android debug builds are unaffected."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   release-gate:
     # A v* tag drives the desktop release too, and Android can only join it if
     # the release signing secrets exist. This job used to resolve them into a
@@ -134,7 +150,7 @@ jobs:
     # signed is a failed Android release, so say so out loud. This is its own
     # workflow run — a red job here does not touch the desktop release — and the
     # day the secrets are added it arms itself.
-    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    if: ${{ startsWith(github.ref, 'refs/tags/') && vars.TENEBRA_ANDROID_RELEASE_HOLD != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Require the release signing key
@@ -160,7 +176,7 @@ jobs:
     # release. The desktop release.yml publishes to this same tag's release; this
     # job only adds the APK asset and never rewrites the release body.
     needs: release-gate
-    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    if: ${{ startsWith(github.ref, 'refs/tags/') && vars.TENEBRA_ANDROID_RELEASE_HOLD != 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -178,6 +178,20 @@ test('release hold runs the same final gate in explicit prepare-only mode', () =
   assert.doesNotMatch(publish, /^ {4}if:/m, 'hold must not skip asset verification');
 });
 
+test('explicit Android release hold stops both tag jobs and reports the missing APK without affecting debug', () => {
+  const android = jobs(workflow('android.yml'));
+  for (const job of ['release-gate', 'release']) {
+    assert.match(android.get(job), /if: \$\{\{ startsWith\(github\.ref, 'refs\/tags\/'\) && vars\.TENEBRA_ANDROID_RELEASE_HOLD != 'true' \}\}/);
+  }
+  const held = android.get('release-held');
+  assert.ok(held, 'an intentionally held release must be visible in the run');
+  assert.match(held, /if: \$\{\{ startsWith\(github\.ref, 'refs\/tags\/'\) && vars\.TENEBRA_ANDROID_RELEASE_HOLD == 'true' \}\}/);
+  assert.match(held, /GITHUB_STEP_SUMMARY/);
+  assert.match(held, /No APK was built, signed, or attached/);
+  assert.doesNotMatch(held, /secrets\.|contents: write|uses:|release upload|publish-release/);
+  assert.doesNotMatch(android.get('debug'), /TENEBRA_ANDROID_RELEASE_HOLD/);
+});
+
 test("a final job publishes the draft only after every build job", () => {
   const release = jobs(workflow("release.yml"));
   const publish = release.get("publish");
