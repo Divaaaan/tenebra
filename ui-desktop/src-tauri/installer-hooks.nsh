@@ -53,7 +53,9 @@
     ${EndIf}
     ; sc stop is asynchronous. WaitForStatus uses SCM's numeric state and is
     ; independent of the localized sc.exe output. No PATH or profile scripts.
-    nsExec::Exec /TIMEOUT=35000 `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "try { (New-Object System.ServiceProcess.ServiceController('tenebra')).WaitForStatus([System.ServiceProcess.ServiceControllerStatus]::Stopped,[TimeSpan]::FromSeconds(30)); exit 0 } catch { exit 1 }"`
+    ; A fresh Windows PowerShell process has not loaded ServiceProcess yet.
+    ; Load it explicitly before constructing the controller (also on x86).
+    nsExec::Exec /TIMEOUT=35000 `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "try { Add-Type -AssemblyName System.ServiceProcess -ErrorAction Stop; (New-Object System.ServiceProcess.ServiceController('tenebra')).WaitForStatus([System.ServiceProcess.ServiceControllerStatus]::Stopped,[TimeSpan]::FromSeconds(30)); exit 0 } catch { exit 1 }"`
     Pop $0
     !insertmacro TenebraRequireSuccess "wait for stopped state of"
   ${ElseIf} $0 != 1060

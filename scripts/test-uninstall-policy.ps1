@@ -23,3 +23,4 @@ $createChild = [Security.AccessControl.RawSecurityDescriptor]::new('O:BAG:BAD:(A
 Assert-TenebraCleanupAcl $createChild $false
 Reject { Assert-TenebraCleanupAcl $createChild $true }
 Write-Output 'PASS: pure uninstall path and ACL policy; no files, services, processes or WFP objects opened.'
+& "$PSScriptRoot/test-installer-service-bootstrap.ps1"
