@@ -163,10 +163,12 @@ test("no tauri job publishes the release before the assets are complete", () => 
   }
 });
 
-test('Android attaches only to a draft and retains the tag channel', () => {
+test('Android can only upload its signed APK to an existing release', () => {
   const attach = stepNamed(workflow('android.yml'), 'Attach the APK to the GitHub release');
-  assert.match(attach, /draft: true/);
-  assert.match(attach, /prerelease: \$\{\{ contains\(github\.ref_name, '-'\) \}\}/);
+  assert.match(attach, /APK_PATH: \$\{\{ steps\.sign\.outputs\.apk \}\}/);
+  assert.match(attach, /node scripts\/attach-android-release\.mjs "\$GITHUB_REF_NAME" "\$APK_PATH"/);
+  assert.match(attach, /timeout-minutes: 33/);
+  assert.doesNotMatch(attach, /softprops|draft:|releaseDraft:|prerelease:|release (?:create|edit)/);
 });
 
 test('release hold runs the same final gate in explicit prepare-only mode', () => {
