@@ -49,7 +49,7 @@ func newBareDaemon(t *testing.T) *Daemon {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	return NewDaemon(store, newFakeRunner())
+	return newUnitTestDaemon(store, newFakeRunner())
 }
 
 // connectTo forces the daemon into a connected state pointing at a one-node

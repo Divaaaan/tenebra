@@ -223,7 +223,7 @@ func TestNewDaemonPinsTheBypassPick(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	d := NewDaemon(store, newFakeRunner())
+	d := newUnitTestDaemon(store, newFakeRunner())
 	if d.probeIfaces == nil {
 		t.Fatal("daemon cannot enumerate adapters for the bypass pick; every probe would follow the tun")
 	}

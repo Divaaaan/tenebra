@@ -26,7 +26,7 @@ func TestPingServersBoundsConcurrency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	d := NewDaemon(store, newFakeRunner())
+	d := newUnitTestDaemon(store, newFakeRunner())
 
 	var inFlight int64
 	var maxInFlight int64
@@ -93,7 +93,7 @@ func TestPingServersEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	d := NewDaemon(store, newFakeRunner())
+	d := newUnitTestDaemon(store, newFakeRunner())
 
 	var dials int64
 	d.dial = func(ctx context.Context, network, address string) (net.Conn, error) {

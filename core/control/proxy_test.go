@@ -84,7 +84,7 @@ func bareDaemonWithProxy(t *testing.T) (*Daemon, *fakeProxyController) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	d := NewDaemon(store, newFakeRunner())
+	d := newUnitTestDaemon(store, newFakeRunner())
 	f := &fakeProxyController{}
 	d.proxy = f
 	return d, f

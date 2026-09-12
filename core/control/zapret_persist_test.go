@@ -77,7 +77,7 @@ func launchBypassDaemon(t *testing.T, storeDir, settingsDir string) (*Daemon, *s
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	d := NewDaemon(store, newFakeRunner())
+	d := newUnitTestDaemon(store, newFakeRunner())
 	d.SetSettings(settingsAt(t, settingsDir))
 	nets, err := OpenFileNetStrategies(storeDir)
 	if err != nil {

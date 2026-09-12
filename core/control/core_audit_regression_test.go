@@ -35,7 +35,7 @@ func coreAuditDaemon(t *testing.T) (*Daemon, *fakeRunner, profile.Profile) {
 		t.Fatal(err)
 	}
 	r := newFakeRunner()
-	d := NewDaemon(s, r)
+	d := newUnitTestDaemon(s, r)
 	d.localAddrs = func() []net.Addr { return nil }
 	d.tunWatchInterval, d.healthInterval, d.bypassVerifyDelay = 0, 0, 0
 	d.proxy = &fakeProxyController{}

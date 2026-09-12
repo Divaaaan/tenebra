@@ -77,7 +77,7 @@ func daemonWithSecretProfile(t *testing.T) (*Daemon, profile.Profile) {
 	if err := store.Add(p); err != nil {
 		t.Fatalf("add profile: %v", err)
 	}
-	return NewDaemon(store, newFakeRunner()), p
+	return newUnitTestDaemon(store, newFakeRunner()), p
 }
 
 // assertNoSecrets fails if any seeded secret sentinel appears anywhere in the
