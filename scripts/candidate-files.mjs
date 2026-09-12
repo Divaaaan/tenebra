@@ -16,17 +16,17 @@ export function readFlatFiles(dir) {
   return result;
 }
 function find(dir, name) {
-  const hits=[];
-  function visit(path,depth) {
-    if(depth>8) throw Error('Bundle directory depth exceeded');
-    for(const entry of readdirSync(path,{withFileTypes:true})) {
-      if(entry.isSymbolicLink()) continue; // app symlinks are not release assets.
-      const next=join(path,entry.name);
-      if(entry.isDirectory()) { if(!entry.name.endsWith('.app')) visit(next,depth+1); }
-      else if(entry.isFile() && entry.name===name) hits.push(next);
-    }
+  // Tauri puts finished files directly in each bundle-kind directory. Walking
+  // its sibling AppDir/deb staging trees can exceed bounds and select copies.
+  let path='.';
+  for(const segment of dir.split('/')) {
+    path=join(path,segment);const stat=lstatSync(path);
+    if(!stat.isDirectory() || stat.isSymbolicLink()) throw Error('Expected a regular bundle directory');
   }
-  visit(dir,0); if(hits.length!==1) throw Error(`Expected one bundle ${name}, found ${hits.length}`); return hits[0];
+  const hits=readdirSync(dir,{withFileTypes:true}).filter(entry=>entry.name.toLowerCase()===name.toLowerCase());
+  if(hits.length!==1 || hits[0].name!==name) throw Error(`Expected one exact bundle ${name}, found ${hits.length}`);
+  if(!hits[0].isFile() || hits[0].isSymbolicLink()) throw Error('Expected a regular bundle');
+  return join(dir,name);
 }
 export function signFile(path, cliPath=resolve('ui-desktop/node_modules/@tauri-apps/cli/tauri.js')) {
   try { execFileSync(process.execPath,[cliPath,'signer','sign',resolve(path)],{stdio:'pipe',timeout:120000,maxBuffer:1024*1024}); }
@@ -35,15 +35,15 @@ export function signFile(path, cliPath=resolve('ui-desktop/node_modules/@tauri-a
 export function collect(platform, version, output='candidate-part', operations={signFile}) {
   const names=bundleNames(version), root='ui-desktop/src-tauri/target';
   const sources={
-    windows:[[`${root}/release/bundle`,names[0],names[0]]],
-    macos:[[`${root}/universal-apple-darwin/release/bundle`,names[1],names[1]],[`${root}/universal-apple-darwin/release/bundle`,'Tenebra.app.tar.gz',names[2]]],
-    linux:[[`${root}/release/bundle`,names[3],names[3]],[`${root}/release/bundle`,names[4],names[4]]],
+    windows:[[`${root}/release/bundle/nsis`,names[0],names[0]]],
+    macos:[[`${root}/universal-apple-darwin/release/bundle/dmg`,names[1],names[1]],[`${root}/universal-apple-darwin/release/bundle/macos`,'Tenebra.app.tar.gz',names[2]]],
+    linux:[[`${root}/release/bundle/deb`,names[3],names[3]],[`${root}/release/bundle/appimage`,names[4],names[4]]],
     arch:[['packaging/arch',names[5],names[5]]],
   };
   if(!Object.hasOwn(sources,platform)) throw Error('Unsupported platform');
   mkdirSync(output); // refuse reuse: same-name uploads must never clobber.
   for(const [dir,raw,name] of sources[platform]) {
-    const source=platform==='arch'?join(dir,raw):find(dir,raw);
+    const source=find(dir,raw);
     const stat=lstatSync(source);if(!stat.isFile()||stat.isSymbolicLink())throw Error('Expected a regular bundle');
     copyFileSync(source,join(output,name));
     // Sign the staged filenames, including deb/DMG/Arch. No key in argv/logs.
