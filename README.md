@@ -1,369 +1,77 @@
 <div align="center">
 
-<img src="docs/assets/hero.png" alt="Tenebra — sing-box VPN client" width="100%">
+<img src="docs/assets/hero.png" alt="Tenebra" width="100%">
+
+**A desktop VPN client built on [sing-box](https://github.com/SagerNet/sing-box).**
+
+Bring your own subscription or compatible server link. Tenebra does not include VPN servers or require a Tenebra account.
+
+**English** · [Русский](README.ru.md)
+
+[![Download Windows 0.6.0](https://img.shields.io/badge/Download_Windows-v0.6.0-ff3d00?style=for-the-badge)](https://github.com/Divaaaan/tenebra/releases/download/v0.6.0/Tenebra_0.6.0_x64-setup.exe)
+
+Windows x64 · [All packages](https://github.com/Divaaaan/tenebra/releases/latest) · [What's new in 0.6.0](CHANGELOG.md#060---2026-09-13)
 
 [![CI](https://github.com/Divaaaan/tenebra/actions/workflows/ci.yml/badge.svg)](https://github.com/Divaaaan/tenebra/actions/workflows/ci.yml)
-[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-ff3d00.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Latest release](https://img.shields.io/github/v/release/Divaaaan/tenebra?color=ff3d00&label=release)](https://github.com/Divaaaan/tenebra/releases/latest)
-[![Platform](https://img.shields.io/badge/platform-Windows_%7C_macOS_%7C_Linux-0e0e0e.svg)](#project-status)
-
-**A cross-platform VPN client built on [sing-box](https://github.com/SagerNet/sing-box).**<br>
-Desktop first — Windows has an installer-managed service; the current audit candidate still requires native acceptance. macOS and Linux ship for advanced users (see below). The same Go core drives an Android client, in alpha and installed by hand; iOS is a scaffold.
-
-<img src="docs/assets/eclipse.svg" alt="A total eclipse: intercepted noise enters the dark, one clean signal leaves it. In tenebris lux." width="100%">
+[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-ff3d00.svg)](LICENSE)
 
 </div>
 
-> **Project status — early development.** The desktop client is the current
-> focus. Earlier Windows releases have been exercised against real servers;
-> that evidence does not establish native acceptance of the current audit
-> candidate, including its persistent host guard. The required packet, BFE and
-> reboot gates are [documented here](docs/host-protection-acceptance.md).
-> macOS and Linux have had no privileged live-tunnel run signed off.
-> Treat this as pre-release: not yet "production-ready",
-> and expect things to move around. See
-> [Project status](#project-status) for the honest breakdown.
+| Platform | Before you install |
+| --- | --- |
+| **Windows** | Installer sets up the background service. The installer is not Authenticode-signed; SmartScreen may warn. |
+| **macOS / Linux** | For advanced users: a privileged helper is required; setup varies by package. No native live-tunnel validation for 0.6.0. [Installation guide](docs/installation.md). |
+| **Android / iOS** | Outside the 0.6.0 release. Android is experimental; iOS is a scaffold. |
 
-## Why another client
+<img src="docs/assets/eclipse.svg" alt="An animated eclipse: in tenebris lux." width="100%">
 
-Most clients either lock you into a single protocol or are vague about what they
-do with your traffic. Tenebra:
+## Two ways to use Tenebra
 
-- speaks the protocols sing-box supports — VLESS/REALITY, Hysteria2, AmneziaWG,
-  Shadowsocks, Trojan, VMess;
-- routes Russian destinations directly and sends everything else through the
-  tunnel, so latency-sensitive local traffic stays local;
-- falls back between protocols when one gets throttled or blocked, and remembers
-  what worked;
-- ships no telemetry, no accounts and no bundled servers — you import your own
-  subscription.
+**Full mode** puts connection controls, servers, routing and diagnostics within reach.
 
-## What it does
+<img src="docs/assets/desktop-advanced.png" alt="Tenebra 0.6.0 full interface with demo data" width="100%">
 
-Everything below is implemented in this repo today (the UI features are desktop):
+*0.6.0 interface preview with demo data; not a live connection measurement.*
 
-- **Many protocols, one model.** Import VLESS (incl. REALITY), Hysteria2,
-  AmneziaWG, Shadowsocks, Trojan and VMess. A single normalized node model feeds
-  a from-scratch sing-box config generator. *(AmneziaWG links import and connect,
-  but the bundled stock sing-box applies none of the AWG obfuscation parameters —
-  the tunnel runs as plain WireGuard; full AmneziaWG obfuscation is
-  [planned](ROADMAP.md#planned) and needs a build that links a fork.)*
-- **Import the way you have it.** Subscription URL, a raw share link, a `.txt`
-  file of links, clipboard paste, or a QR code (image file or pasted image).
-  Subscription bodies handle a Clash/Mihomo YAML config, base64, or plaintext
-  link lists and read the `Subscription-Userinfo` header for traffic used / total
-  and expiry.
-- **Smart RU routing.** *Smart* keeps Russian domains and IPs (and your LAN)
-  direct and tunnels the rest; *Global* tunnels everything; *Direct* is the
-  proxy off. Geodata comes from the official public sing-geoip / sing-geosite
-  rule-sets, shipped in the build as local `.srs` binaries and loaded from disk —
-  never downloaded while you are connecting. If a build is missing them, *Smart*
-  routes like *Global* and says so in the log rather than failing to connect.
-- **DPI bypass that works on the first connect.** Windows only: the client drives
-  [zapret](https://github.com/bol-van/zapret) so censored services work at their
-  own latency instead of through an exit node. One bundle release is compiled
-  into the build so a censored network cannot leave a fresh install with no
-  bypass at all; newer releases are downloaded as they are published — see
-  [DPI bypass](#dpi-bypass).
-- **Protocol fallback.** A pure state machine walks the last known-good node
-  first, then by protocol preference (REALITY → Hysteria2 → AmneziaWG), so a
-  blocked or throttled protocol is retried as another. The last good node leads
-  the next launch.
-- **Per-app split tunnelling.** *Exclude* sends chosen apps around the tunnel;
-  *Include* sends only chosen apps through it. Matched by executable name and
-  persisted across restarts.
-- **Honest leak check.** Observes the machine's public IP from redundant echo
-  services and runs a best-effort DNS probe, then reports a verdict that never
-  fakes a pass — it tells you what it could *not* measure rather than claiming
-  "safe". See [docs/control-protocol.md](docs/control-protocol.md#leak-check-leak_check).
-- **Desktop niceties.** System tray that reflects the connection state (with quick
-  connect/disconnect), desktop notifications on state changes, `tenebra://` deep
-  links (import a subscription or connect a profile), launch at login (optionally
-  minimized to the tray), single-instance, live traffic graphs, light/dark themes,
-  and English / Russian UI.
+<details>
+<summary><strong>Simple mode</strong> — subscription, server and connection in one flow</summary>
 
-The v0.5.11 kill switch was best-effort; its behavior is recorded in the
-[changelog](CHANGELOG.md). The current Windows audit candidate adds persistent
-host protection, with desired settings separate from confirmed policy state.
-Its engine/service-death and reboot guarantees still require
-[native acceptance](docs/host-protection-acceptance.md); they are not established
-by unit tests or prior-release tunnel runs. LAN bypass remains a routing option.
+<img src="docs/assets/desktop-simple.png" alt="Tenebra 0.6.0 simple interface with demo data" width="100%">
 
-## DPI bypass
+*0.6.0 interface preview with demo data; not a live connection measurement.*
 
-Blocking here is done by inspecting traffic, not by address: YouTube can be
-unwatchable on a connection that is otherwise fine, and a tunnel handshake can be
-dropped for looking like a tunnel handshake. **On Windows** Tenebra answers that
-with [zapret](https://github.com/bol-van/zapret) — a separate program that edits
-packets on the way out (splitting the TLS ClientHello, sending decoys, and so on)
-until the filter stops matching them. It runs beside the tunnel rather than
-inside it, so a service the bypass can reach directly stays direct at its own
-latency instead of taking the round trip through an exit node. There is no
-equivalent on macOS or Linux; the tunnel there carries everything.
+</details>
 
-**Shipped as a floor, downloaded to stay current.** What the bypass needs is the
-[Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube)
-bundle: zapret's Windows build (`winws.exe`), the
-[WinDivert](https://github.com/basil00/WinDivert) packet-interception driver it
-attaches to, the Cygwin runtime that build needs, and the strategy and host lists
-around them. Strategies are a moving target — a set that worked in March is a
-set the filter has since learned — so the current release is fetched from
-upstream. But a client that can only download one is a client with no bypass on
-exactly the networks it exists for, so one release is also compiled into the
-Windows core: the archive upstream published, byte for byte, checked against the
-checksum this build pins for it. It is the floor, never the ceiling — a newer
-release replaces it as soon as one is published and pinned. The macOS and Linux
-binaries carry none of it; there is nothing there that could run a Windows
-packet filter.
+## Connect in three steps
 
-**When it happens and where it lands.** On the first connect with no bundle
-present, the core downloads the latest published release and unpacks it into its
-own data directory — `%ProgramData%\Tenebra\data\zapret` under the Windows
-service — then re-checks for a newer one every twelve hours. It is a plain
-download from the upstream release page; nothing about you goes with the request.
-When that download cannot deliver a bundle at all — no network, GitHub blocked,
-a release newer than any checksum this build carries, or an archive that did not
-match the checksum it does — the compiled-in copy is unpacked into the same
-place instead, and the next successful check upgrades past it.
+1. **Install and open Tenebra.** On macOS and Linux, complete the [helper setup](docs/installation.md) first.
+2. **Import your subscription or server link.** Paste a URL or share link, open a text file, or import a QR image. Obtain connection details from your provider or your own server.
+3. **Select a server and connect.** Start with **Smart** routing for direct Russian/LAN destinations and a tunnel for other traffic; choose **Global** to route through the tunnel.
 
-**How to decline the download.** *Settings → Censorship bypass → Update the
-bundle automatically* governs what Tenebra fetches: the first-connect download
-and the twelve-hour re-check alike. Turned off, it asks the release page for
-nothing — press *Update* when you want a newer one, or unpack one into the
-`zapret` directory above yourself. It does not govern the copy compiled into the
-build: those bytes need no
-network and no update, so a first connect with no bundle present still unpacks
-them and a fresh install is never left with the bypass missing. Deleting the
-`zapret` directory removes what is installed; a later connect lays the
-compiled-in copy back down. Running with no bypass at all means the tunnel
-carries every service, censored ones included, through the exit node instead of
-around the filter.
+## What you get
 
-Everything in the bundle, with its license and copyright holder, is listed in
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md#2-components-downloaded-at-runtime).
+- **Flexible imports.** VLESS/REALITY, Hysteria2, Shadowsocks, Trojan and VMess links; subscription lists, base64 and Clash/Mihomo YAML.
+- **Routing controls.** Smart, Global and Direct modes, plus per-app include/exclude lists.
+- **Connection fallback.** Tries the last working node first, then configured protocol alternatives when available.
+- **Optional Windows DPI bypass.** Integrated zapret with an embedded bundle and controlled updates. Results depend on your network. [How it works](docs/dpi-bypass.md).
+- **Useful diagnostics.** Public-IP observations, a best-effort DNS probe, logs and distinct service, engine and connection errors.
+- **Desktop controls.** Tray actions, profiles, live traffic graphs, light/dark themes and Russian/English interfaces.
 
-## Installing
+## Project status and known limits
 
-**Windows** — from the [Windows Package Manager](https://learn.microsoft.com/windows/package-manager/winget/):
+**0.6.0 is an early desktop release.** Recorded Windows checks cover the nine-step installation sequence, both interfaces under an ordinary user at 100% and 150% display scaling, IPv4 tunnelling, system-proxy handling and selected crash/recovery cases. This is a limited acceptance scope; it does not establish compatibility with every subscription or network.
 
-```powershell
-winget install Divaaaan.Tenebra
-```
+- **Windows protection:** the complete IPv6, BFE and reboot acceptance matrix remains open. A saved protection setting is separate from confirmed enforcement; do not read it as a universal leak-prevention guarantee. [Acceptance details](docs/host-protection-acceptance.md).
+- **macOS and Linux:** packages are available, but native live-tunnel acceptance has not been completed. macOS is unsigned and unnotarized; Linux system-proxy mode is unsupported.
+- **AmneziaWG:** links can be imported, but the bundled stock engine does not apply AWG obfuscation parameters; it uses plain WireGuard.
+- **Diagnostics:** the IP/DNS check reports what it can observe; it does not certify all traffic paths.
 
-or grab `Tenebra_x.y.z_x64-setup.exe` from the
-[latest release](https://github.com/Divaaaan/tenebra/releases/latest). Either
-way the installer sets up the background service and the in-app updater keeps
-everything current.
+## Documentation and support
 
-**macOS** — download the universal DMG from the
-[latest release](https://github.com/Divaaaan/tenebra/releases/latest), then
-read the [macOS note](#macos-note--read-before-downloading-the-dmg) first —
-the build currently needs a hand-installed root daemon.
+[Installation](docs/installation.md) · [DPI bypass](docs/dpi-bypass.md) · [Documentation](docs/README.md) · [Changelog](CHANGELOG.md) · [Roadmap](ROADMAP.md)
 
-## Getting a server
+For help, use [Discussions](https://github.com/Divaaaan/tenebra/discussions). Report bugs with your version, operating system and relevant logs through the [issue form](https://github.com/Divaaaan/tenebra/issues/new/choose). Remove subscription URLs, credentials and other private details before sharing logs. For security reports, follow [SECURITY.md](SECURITY.md).
 
-Tenebra is a **client** — it ships no servers and hard-codes nothing. You bring
-your own endpoint and import it as a subscription or a share link. Two ways to
-get one:
+To build or contribute, start with the [development guide](docs/development.md), [architecture](docs/architecture.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
-- **Run your own.** Any [sing-box](https://github.com/SagerNet/sing-box) or Xray
-  server works; point Tenebra at its subscription URL.
-- **Use a provider.** Any service that hands you a subscription or a share link
-  will do. I run one at **[vpsxd.pro](https://vpsxd.pro)**.
-
-## Project status
-
-| Area | State |
-|------|-------|
-| Go core (parsing, profiles, routing, config gen, fallback, leak logic) | Implemented, unit-tested, no third-party deps |
-| Control protocol (core ↔ UI) | Implemented; covered by Go tests **and** a real-binary e2e |
-| Desktop UI (Tauri 2 + React) | Implemented: all screens, reactive tray, notifications, deep links, autostart, i18n, themes |
-| Windows tunnel (wintun + sing-box) | A background **service** owns the tunnel; installer/update code coordinates app and service. The current audit candidate still needs standard-user installer, live-tunnel and [host-protection acceptance](docs/host-protection-acceptance.md). INC-01 remains open; cause unknown. |
-| macOS tunnel (utun + sing-box) | Builds and runs — universal `.app`/DMG — but see the **macOS note** below: it needs a hand-installed root daemon and is not yet a click-to-run product. No live-tunnel sign-off yet |
-| Linux tunnel (`/dev/net/tun` + sing-box) | Builds and runs — a root **systemd service** owns the tunnel, installed by an Arch package or a `sudo` script; see the **Linux note** below. No live-tunnel sign-off yet |
-| Android (`VpnService` + libbox) | **Alpha, hand-installed** — a Kotlin / Compose client in [`ui-android/`](ui-android/README.md) builds and runs on a device: subscription import, node list with latency badges, an AUTO exit, switching the live exit without a reconnect, connect-on-boot, a Quick Settings tile, in-app logs and crash reports. Routing is *Global* only and there is no DPI bypass. CI builds a debug APK; a tagged release carries a signed one only once the signing key is in CI secrets |
-| iOS (Network Extension) | Scaffold only — none of the Swift under `ui-ios/` has been compiled and no framework has been built; the plan is [docs/porting/ios.md](docs/porting/ios.md) |
-| Release pipeline | Tag-triggered `release` workflow builds the Windows, macOS and Linux bundles plus the Arch package, minisign-signs the in-app updater artifacts, and publishes the GitHub release once every expected asset is on it; Android is a separate workflow on the same tag |
-| Code-signing | Not set up — the Windows installer is Authenticode-unsigned (SmartScreen warns), the macOS build is unsigned/un-notarized (Gatekeeper needs a manual "Open Anyway"), and the Android release APK has no keystore in CI yet |
-
-### macOS note — read before downloading the DMG
-
-The macOS build is **for advanced users right now, not a finished product.** Two
-things are not yet in place, so a plain "download the DMG and drag to
-Applications" will **not** give you a working tunnel:
-
-- **The tunnel needs a privileged helper.** macOS only lets root open the `utun`
-  device, so the app talks to a small root **LaunchDaemon** that owns the tunnel.
-  That daemon is currently installed **by hand** with a `sudo` script
-  ([`scripts/macos/install-daemon.sh`](scripts/macos/install-daemon.sh)) — there
-  is no in-app installer for it yet. Without it, the app runs but cannot connect.
-- **The build is unsigned and un-notarized.** First launch needs
-  **System Settings → Privacy & Security → Open Anyway**, and updates to the
-  daemon are a manual step (the in-app updater refreshes only the app, not the
-  root daemon). Since 0.4.4 the app warns with a banner when the daemon has
-  fallen behind it; re-run the install script from your checkout to update:
-  `sudo bash scripts/macos/install-daemon.sh --from-app /Applications/Tenebra.app --allow-unsigned`.
-
-The click-to-run macOS path — a signed, notarized build with an `SMAppService`
-daemon bundled inside the app (so it installs and updates like the Windows
-service) — needs an Apple Developer ID and is **planned, not done**. Until then,
-use the DMG only if you're comfortable running the install script yourself.
-Windows uses an installer-managed service; the current audit candidate's
-installation and update path still requires [delivery acceptance](docs/delivery-acceptance.md).
-
-### Linux note — the tunnel needs a root service
-
-Linux is the same shape as macOS: only a privileged process may open
-`/dev/net/tun` and install routes, so the app talks to a small root **systemd
-service** that owns the tunnel and serves the control protocol on
-`/run/tenebra.sock`. The app alone cannot connect. Two ways to set it up:
-
-- **Arch Linux — build the package.** [`packaging/arch/PKGBUILD`](packaging/arch/PKGBUILD)
-  builds the core, the desktop app and the unit from source and installs them
-  with `pacman`:
-
-  ```
-  cd packaging/arch && makepkg -si
-  sudo systemctl enable --now tenebra.service
-  ```
-
-  Updates come from `pacman`, not the in-app updater — it can only replace an
-  AppImage, never files a package manager owns.
-
-- **Any other distribution — the install script.** Fetch the bundled resources,
-  then install the daemon from your checkout:
-
-  ```
-  bash scripts/fetch-resources.sh
-  sudo bash scripts/linux/install-daemon.sh --dev
-  ```
-
-  It is safe to re-run to upgrade, rolls back if an upgrade fails, and
-  [`scripts/linux/uninstall-daemon.sh`](scripts/linux/uninstall-daemon.sh)
-  removes it. The GUI is a separate `.deb`/AppImage build.
-
-Two limits worth knowing before you install: **system-proxy mode does nothing on
-Linux** (it needs per-desktop settings a root daemon cannot reach, so it stays
-quietly disarmed — tun mode, the default, is unaffected), and the bundled
-sing-box binaries are **glibc-linked**, so musl distributions need their own.
-Full detail, including the systemd sandbox and what is deliberately left out of
-it, is in [docs/porting/linux.md](docs/porting/linux.md).
-
-If you want to help close the gap, the macOS `SMAppService` path and the
-non-desktop adapters are the highest-leverage places — see
-[CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Repository layout
-
-```
-tenebra/
-├── core/                 Go. Platform-agnostic, stdlib-only, fully unit-tested.
-│   ├── model/            Normalized proxy node + config types.
-│   ├── subscription/     Parse vless/hysteria2/ss/trojan/vmess links + sub bodies.
-│   ├── profile/          Named profiles and their atomic on-disk store.
-│   ├── routing/          smart/global/direct + per-app split -> sing-box route/dns.
-│   ├── singbox/          Build a full sing-box config as plain JSON (no sing-box dep).
-│   ├── fallback/         Pure REALITY->Hysteria2->AmneziaWG fallback state machine.
-│   ├── zapret/           Drive the DPI-bypass bundle, embedded + downloaded (Windows).
-│   └── control/          The line-delimited JSON protocol + the daemon.
-├── core-bridge/          The same generator as a mobile-facing library (no sing-box).
-├── mobile/               gomobile wrapper: binds core-bridge + libbox into one artifact.
-├── adapters/
-│   ├── windows/          Spawn & supervise sing-box; traffic via its clash API.
-│   ├── macos/            The same over utun, under the root LaunchDaemon.
-│   └── linux/            The same over /dev/net/tun, under the root systemd service.
-├── cmd/
-│   └── tenebra-core/     The sidecar entry point (talks the protocol on stdin/stdout).
-├── ui-desktop/           Tauri 2 app: Rust shell (src-tauri) + React/TS front end (src).
-├── ui-android/           Kotlin/Compose client: VpnService + libbox (alpha).
-├── ui-ios/               SwiftUI + Network Extension scaffold; never compiled.
-├── deploy/               The privileged daemon's service definitions per platform.
-├── packaging/
-│   └── arch/             PKGBUILD building the whole thing for Arch Linux.
-├── scripts/
-│   ├── fetch-resources.ps1     Download pinned sing-box + wintun (Windows).
-│   ├── fetch-resources.sh      The same for macOS and Linux.
-│   ├── build-libbox-android.sh One gomobile bind -> the fused tenebra.aar.
-│   ├── build-libbox.sh         The same bind for Apple (xcframework).
-│   ├── macos/                  Install/remove the root LaunchDaemon.
-│   └── linux/                  Install/remove the root systemd service.
-└── docs/                 Architecture, control protocol, the dev guide, porting notes.
-```
-
-## Building
-
-Requirements: **Go 1.24+**, **Node 22+**, and the **Rust toolchain** (for the
-desktop UI). Full walkthrough and troubleshooting in
-[docs/development.md](docs/development.md).
-
-Core tests:
-
-```
-go test ./...
-```
-
-Desktop app (Windows):
-
-```
-# fetch the sing-box binary and wintun.dll into src-tauri/resources
-powershell -File scripts/fetch-resources.ps1
-
-# build the core sidecar where Tauri bundles it
-go build -o ui-desktop/src-tauri/binaries/tenebra-core-x86_64-pc-windows-msvc.exe ./cmd/tenebra-core
-
-# build the bundle
-cd ui-desktop
-npm install
-npm run tauri build
-```
-
-Desktop app (Linux):
-
-```
-# fetch the sing-box binary and the rule-sets into src-tauri/resources
-bash scripts/fetch-resources.sh
-
-# build the core sidecar where Tauri bundles it
-go build -o ui-desktop/src-tauri/binaries/tenebra-core-x86_64-unknown-linux-gnu ./cmd/tenebra-core
-
-# build the .deb and AppImage
-cd ui-desktop
-npm install
-npm run tauri build
-```
-
-On Arch, `cd packaging/arch && makepkg -si` does all of the above and installs
-the result — see the [Linux note](#linux-note--the-tunnel-needs-a-root-service).
-
-## Documentation
-
-- [docs/](docs/) — documentation index.
-- [docs/architecture.md](docs/architecture.md) — the layers and how they connect.
-- [docs/control-protocol.md](docs/control-protocol.md) — the core ↔ UI wire format.
-- [docs/development.md](docs/development.md) — set up, build, run and test.
-- [CONTRIBUTING.md](CONTRIBUTING.md) — how to contribute.
-- [SECURITY.md](SECURITY.md) — reporting a vulnerability and our trust stance.
-- [CHANGELOG.md](CHANGELOG.md) — what's changed.
-- [ROADMAP.md](ROADMAP.md) — where the project is headed.
-
-## Support
-
-Tenebra is maintained by one person in their spare time, so please keep support
-low-friction:
-
-- **Questions or help** — start a thread in
-  [Discussions](https://github.com/Divaaaan/tenebra/discussions).
-- **Bugs** — file a report through the
-  [issue form](https://github.com/Divaaaan/tenebra/issues/new/choose); it asks
-  for your version, Windows build and logs.
-- **Security problems** — follow [SECURITY.md](SECURITY.md); please don't open a
-  public issue.
-
-Response times vary — this is a side project, not a supported product. Thanks for
-your patience.
-
-## License
-
-GPLv3 — see [LICENSE](LICENSE). sing-box is GPLv3, so Tenebra is too. Bundled
-third-party components and their licenses are listed in
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+Tenebra is maintained in spare time; response times vary. Licensed under [GPLv3](LICENSE). Bundled components are listed in [Third-party notices](THIRD-PARTY-NOTICES.md).

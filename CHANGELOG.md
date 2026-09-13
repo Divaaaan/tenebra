@@ -4,12 +4,47 @@ All notable changes to Tenebra are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
-> **Early days.** Tenebra is at 0.x: the desktop clients (Windows and macOS) are
+> **Early days.** Tenebra is at 0.x: the desktop clients are
 > the current focus — see the
-> [project status](README.md#project-status). Expect breaking changes between
+> [project status](README.md#project-status-and-known-limits). Expect breaking changes between
 > 0.x releases.
 
 ## [Unreleased]
+
+## [0.6.0] - 2026-09-13
+
+### Changed
+
+- Redesigned the simple and full desktop interfaces, with clearer subscription
+  setup, server selection, connection feedback, settings and diagnostics.
+- Improved keyboard navigation, compact layouts, themes and Russian/English text.
+- Added persistent Windows protection through WFP, with the saved preference,
+  confirmed enforcement and cleanup errors shown separately. Explicit
+  Disconnect releases Tenebra's policy.
+
+### Fixed
+
+- Failed TCP probes no longer prevent manual server selection or claim that
+  the server's VPN protocol cannot connect.
+- Windows service communication verifies the installed service identity and
+  supports ordinary users and administrators, with bounded request waits.
+- System proxy handling tracks the owning user and retains restoration data.
+- Windows installation no longer falsely fails while waiting for service stop
+  in a fresh PowerShell process.
+- Split settings survive routing changes; unusable multihop chains are rejected
+  and repeated engine-crash recovery attempts are bounded.
+
+### Verification scope
+
+This release was published with an explicitly limited acceptance scope.
+Windows installation/upgrade/repair/removal, ordinary-user UI, IPv4 traffic,
+system-proxy restoration and selected engine/service failure cases were checked.
+The complete IPv6, BFE, reboot and other protection matrix remains open.
+The original unavailable-server report and real-world DPI effectiveness have
+not been causally verified. macOS/Linux build checks are not native tunnel
+acceptance. Android and iOS are outside this release.
+
+See the [published release and its verification notice](https://github.com/Divaaaan/tenebra/releases/tag/v0.6.0).
 
 ## [0.5.11] - 2026-08-31
 
@@ -1481,7 +1516,9 @@ Initial tagged release.
   first run. Updates delivered in-app are minisign-verified against the bundled
   key; only the initial download is unsigned.
 
-[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.5.10...HEAD
+[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Divaaaan/tenebra/compare/v0.5.11...v0.6.0
+[0.5.11]: https://github.com/Divaaaan/tenebra/compare/v0.5.10...v0.5.11
 [0.5.10]: https://github.com/Divaaaan/tenebra/compare/v0.5.5...v0.5.10
 [0.5.5]: https://github.com/Divaaaan/tenebra/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/Divaaaan/tenebra/compare/v0.5.3...v0.5.4

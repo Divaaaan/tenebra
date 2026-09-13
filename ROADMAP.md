@@ -37,7 +37,7 @@ Working today on the Windows, macOS and Linux desktop clients:
   release replaces it once upstream publishes one this build pins, re-checked
   every twelve hours, and the strategy that carries traffic is chosen by
   measuring the bundle against real destinations. Windows only — see
-  [DPI bypass](README.md#dpi-bypass).
+  [DPI bypass](docs/dpi-bypass.md).
 - **Connection diagnostics** — an on-demand UDP / STUN check (reachability, NAT
   type, external address) and a speed test through the active tunnel.
 - **A support report in one action** — state, versions, routing, the last
@@ -54,7 +54,7 @@ Working today on the Windows, macOS and Linux desktop clients:
   the unprivileged app attaches to it, installed by an Arch package (built from
   source in the release workflow) or a `sudo` script, with `.deb` and AppImage
   bundles beside them. Read the
-  [Linux note](README.md#linux-note--the-tunnel-needs-a-root-service) first.
+  [Linux installation guide](docs/installation.md#linux) first.
 
 ## In progress
 
@@ -113,5 +113,5 @@ Bigger ideas, not committed:
 ---
 
 Done items move up to **Shipped**; see the [changelog](CHANGELOG.md) for what
-landed in each release and [project status](README.md#project-status) for the
+landed in each release and [project status](README.md#project-status-and-known-limits) for the
 honest state of each layer.
