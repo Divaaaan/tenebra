@@ -18,7 +18,7 @@ By contributing you agree your work is licensed under the project's license,
 - **Triage** — reproducing issues and narrowing them down.
 
 Highest-leverage areas right now (see
-[the status table](README.md#project-status)):
+[the project status](README.md#project-status-and-known-limits)):
 
 1. **Live tunnel bring-up** on Windows (wintun + sing-box, elevated).
 2. **New platform adapters** — macOS/Linux (utun), Android (`VpnService`),

@@ -1,7 +1,14 @@
 # Tenebra documentation
 
 Project overview and quick-start live in the top-level
-[README](../README.md). This folder holds the deeper references.
+[README](../README.md) / [Русский](../README.ru.md). This folder holds the deeper references.
+
+- **[Installation](installation.md)** — downloads, Windows setup and the
+  required macOS/Linux helpers, with platform limitations.
+- **[DPI bypass](dpi-bypass.md)** — the optional Windows integration,
+  bundled components, update controls and network-dependent results.
+
+For developers:
 
 - **[architecture.md](architecture.md)** — the layers (Go core, platform
   adapters, the desktop UI) and how they connect, plus the project's hard rules.
