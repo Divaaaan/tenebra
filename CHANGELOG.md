@@ -11,6 +11,30 @@ All notable changes to Tenebra are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-16
+
+### Fixed
+
+- The on-connect, multi-destination node validation now reserves a free block
+  of loopback ports and authenticates its temporary SOCKS listeners, so an
+  unrelated local process cannot be mistaken for Tenebra's own probe.
+- Detected probe startup, bind-race and early process-exit failures are reported
+  as local validation errors instead of marking every server unreachable.
+  Captured probe output is bounded and scrubbed before it reaches diagnostics.
+- Separately, the server list's direct TCP status checks now distinguish runs
+  that are in progress, complete or failed, offer an explicit retry, and keep
+  an earlier RTT visibly stale without counting it as a current reachable
+  result.
+
+### Verification scope
+
+Automated tests cover the on-connect validation's probe ownership, lifecycle
+and port races, authenticated readiness and log bounds, plus the server list's
+direct TCP states. The precise trigger of the original unavailable-server
+report on the affected machine has not been causally reproduced. Native
+installation, service, ordinary-user UI and tunnel checks of the exact signed
+candidate remain required before publication.
+
 ## [0.6.0] - 2026-09-13
 
 ### Changed
@@ -1516,7 +1540,8 @@ Initial tagged release.
   first run. Updates delivered in-app are minisign-verified against the bundled
   key; only the initial download is unsigned.
 
-[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/Divaaaan/tenebra/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/Divaaaan/tenebra/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Divaaaan/tenebra/compare/v0.5.11...v0.6.0
 [0.5.11]: https://github.com/Divaaaan/tenebra/compare/v0.5.10...v0.5.11
 [0.5.10]: https://github.com/Divaaaan/tenebra/compare/v0.5.5...v0.5.10
