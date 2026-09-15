@@ -1,4 +1,5 @@
 import type { DeepLinkAction, PingResult, State } from "./api";
+import type { NodePingPhase } from "./lib/useNodePings";
 import { createElement } from 'react';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -10,6 +11,7 @@ const m = vi.hoisted(() => ({
   checkNodes: vi.fn(), importSubscription: vi.fn(), refreshProfiles: vi.fn(),
   updateAvailable: null as string | null, updateConfirm: false, confirmUpdate: vi.fn(),
   connect: vi.fn(), disconnect: vi.fn(), onDeepLink: vi.fn(), deep: null as ((e: DeepLinkAction) => void) | null, pings: new Map<string, PingResult>(),
+  pingPhase: "ready" as NodePingPhase, pingError: null as string | null, refreshPings: vi.fn(),
   profiles: [
     { id: 'p1', name: 'Profile A', source: 'manual', nodes: [{id:'n1',name:'Node A',protocol:'vless',server:'198.51.100.10',port:443}], updatedAt:'2026-01-01T00:00:00Z' },
     { id: 'p2', name: 'Profile B', source: 'manual', nodes: [{id:'n2',name:'Node B',protocol:'vless',server:'198.51.100.11',port:443}], updatedAt:'2026-01-01T00:00:00Z' },
@@ -27,7 +29,7 @@ vi.mock('./api/index.ts', () => ({
   takeLaunchDeepLinks: vi.fn(async () => []),
 }));
 vi.mock('./lib/useNodePings.ts', () => ({
-  useNodePings: () => ({results:m.pings,pinging:false,refresh:()=>{}}),
+  useNodePings: () => ({results:m.pings,phase:m.pingPhase,error:m.pingError,refresh:m.refreshPings}),
 }));
 vi.mock('./lib/useUpdateCheck.ts', () => ({
   useUpdateCheck: () => ({available:m.updateAvailable,stalled:false,confirming:m.updateConfirm,installing:false,deferred:false,progress:null,install:vi.fn(),dismiss:vi.fn(),cancelInstall:vi.fn(),confirmInstall:m.confirmUpdate}),
@@ -41,6 +43,7 @@ beforeEach(() => {
   m.importSubscription.mockResolvedValue({name:"Imported profile"});
   m.refreshProfiles.mockResolvedValue(undefined);
   m.pings = new Map();
+  m.pingPhase = "ready"; m.pingError = null; m.refreshPings.mockReset();
   m.onDeepLink.mockImplementation(async (handler) => { m.deep = handler; return () => {}; });
   m.connect.mockResolvedValue({state:'connecting'});
 });
@@ -54,6 +57,26 @@ it('keeps failed ping unknown and permits a deliberate manual selection', async 
   expect(row).toHaveClass('is-dead');
   expect(document.querySelector('.cur-rtt')).toBeNull();
   expect(document.querySelectorAll('.cur-meta .ping-scale-bar.on.good')).toHaveLength(0);
+});
+
+it('keeps a failed batch ping separate from the connect-time node check', async () => {
+  m.pings.set('n1',{node:'n1',ok:true,rttMs:17});
+  m.pingPhase = 'failed';
+  m.pingError = 'TCP prober unavailable';
+
+  renderWithProviders(createElement(App));
+
+  const status = await screen.findByText('Couldn’t check TCP');
+  expect(status).toHaveAttribute('title','TCP prober unavailable');
+  const row=screen.getByText('Node A',{selector:'.srv-node-code'}).closest('.srv-row')!;
+  expect(row).toHaveTextContent('stale');
+  expect(row.querySelectorAll('.ping-scale-bar.on')).toHaveLength(0);
+  expect(screen.getByText('lowest ping')).toBeInTheDocument();
+  expect(screen.queryByText(/lowest ping · now/)).not.toBeInTheDocument();
+  expect(document.querySelector('.cur-rtt')).toBeNull();
+  fireEvent.click(screen.getByRole('button',{name:'Retry TCP check'}));
+  expect(m.refreshPings).toHaveBeenCalledTimes(1);
+  expect(m.checkNodes).not.toHaveBeenCalled();
 });
 
 it.each([['0', false, null], ['0', true, 'service lost'], ['1', false, null], ['1', true, 'service lost']] as const)(

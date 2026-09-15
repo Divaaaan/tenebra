@@ -64,8 +64,10 @@ type Runner interface {
 	// did not take and the caller must fall back to a reconnect rather than
 	// report a move that did not happen.
 	Select(ctx context.Context, group, tag string) error
-	// Done delivers the process's exit: it sends the exit error (nil on a clean
-	// exit) once and is closed afterwards. Before any Start it must block.
+	// Done delivers the process's exit after stdout/stderr have been drained: it
+	// sends the exit error (nil on a clean exit) once and is closed afterwards.
+	// Thus Logs already contains the final diagnostic tail when Done is received.
+	// Before any Start it must block.
 	Done() <-chan error
 	// Logs returns a copy of the most recent sing-box output lines (newest last) —
 	// the in-memory tail each runner keeps for diagnostics. It is safe to call at
@@ -438,21 +440,22 @@ type Daemon struct {
 	// pretending; tests inject a fake.
 	probeRunner func() Runner
 	// checkTargets are the destinations a node verdict is measured against, and
-	// checkBasePort where the per-node probe listeners start. Both are fields so a
-	// test can shrink the target list and move off the production ports.
+	// checkBasePort is the preferred start of the dynamically reserved listener
+	// block. Both are fields so a test can shrink the target list and choose a
+	// deterministic first candidate.
 	checkTargets  []string
 	checkBasePort int
 	// checkProbe runs one control request through a probe listener and reports how
 	// far it got. Injectable so the ranking and reporting can be tested without a
 	// network or a sing-box.
-	checkProbe func(ctx context.Context, port int, target string) (nodecheck.Stage, int64)
+	checkProbe func(ctx context.Context, binding singbox.ProbeBinding, target string) (nodecheck.Stage, int64)
 	// checkBudget bounds a whole check run (see defaultCheckBudget). A field so a
 	// test can shrink it to milliseconds instead of waiting one out.
 	checkBudget time.Duration
-	// checkRunning is the single-flight guard for that run. The probe process
-	// binds a fixed range of loopback ports, so two overlapping runs would fight
-	// over them; it is an atomic rather than a mu-guarded flag because the check
-	// is served off the request loop and must not queue behind whatever holds mu.
+	// checkRunning is the single-flight guard for that run. Two overlapping runs
+	// would distort one another even when they receive separate free port blocks;
+	// it is an atomic rather than a mu-guarded flag because the check is served off
+	// the request loop and must not queue behind whatever holds mu.
 	checkRunning atomic.Bool
 
 	// localAddrs reports the machine's interface addresses, so a connect can pick

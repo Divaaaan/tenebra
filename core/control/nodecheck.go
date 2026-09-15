@@ -4,12 +4,16 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,11 +37,11 @@ var defaultCheckTargets = []string{
 	"https://api.anthropic.com/v1/messages",
 }
 
-// defaultCheckBasePort is where the per-node probe listeners start.
+// defaultCheckBasePort is the preferred start of the per-node probe block.
 //
 // High, unprivileged, and outside the ports this app already uses (the mixed
-// inbound's 2081 and the clash API's 9090), so a check run cannot collide with
-// the live tunnel it is running beside.
+// inbound's 2081 and the clash API's 9090). The block is reserved before use
+// and the allocator moves elsewhere when another local process already owns it.
 const defaultCheckBasePort = 24310
 
 // checkFanout bounds how many nodes are probed at once. Each node costs a few
@@ -54,6 +58,24 @@ const (
 	// checkListenerWait is how long to wait for the probe process to open its
 	// loopback listeners before giving up on the run.
 	checkListenerWait = 10 * time.Second
+	// probeListenerIOTimeout bounds one local SOCKS5 authentication exchange.
+	// Loopback either answers immediately or is not the listener we are waiting
+	// for; spending a node timeout here would only hide a local start failure.
+	probeListenerIOTimeout = 300 * time.Millisecond
+)
+
+const (
+	// Probe ports stay below the OS ephemeral range on the desktop platforms we
+	// ship. The preferred block is tried first; this range is the fallback when
+	// that block is occupied or lost in the narrow release-to-spawn race.
+	probeFallbackPortMin = 20000
+	probeFallbackPortMax = 30000
+	probePortSearchLimit = 2048
+	probeStartAttempts   = 3
+
+	probeFailureTailLines = 8
+	probeFailureLineRunes = 320
+	probeFailureMaxRunes  = 3000
 )
 
 // defaultCheckBudget bounds a whole run — the wait for the probe's listeners and
@@ -100,9 +122,9 @@ func (d *Daemon) handleCheckNodes(ctx context.Context, req Request) Response {
 		return newError(req.ID, "check_nodes: probe runner not configured")
 	}
 
-	// One run at a time for the whole daemon. The probe process binds a fixed
-	// range of loopback ports, so a second run started while the first still
-	// holds them would fail to bind and report every node dead — a measurement
+	// One run at a time for the whole daemon. Even with dynamically reserved
+	// loopback ports, a second probe process would compete for CPU and network and
+	// could distort both runs — a measurement
 	// that lies is worse than one that is refused. The UI collapses its own
 	// double-presses, but it is not the only caller: a session displaced
 	// mid-check (the UI restarting) leaves its run unwinding while the new client
@@ -112,8 +134,10 @@ func (d *Daemon) handleCheckNodes(ctx context.Context, req Request) Response {
 	}
 	defer d.checkRunning.Store(false)
 
-	// Everything below is bounded by one budget, and overrunning it truncates the
-	// run rather than failing it (see defaultCheckBudget).
+	// The request owns the process lifetime, while the shorter check budget owns
+	// only readiness and measurement. If the latter expires, exec.CommandContext
+	// must not kill the probe and race the intended successful partial result.
+	processParent := ctx
 	ctx, cancel := context.WithTimeout(ctx, d.checkBudget)
 	defer cancel()
 
@@ -121,38 +145,91 @@ func (d *Daemon) handleCheckNodes(ctx context.Context, req Request) Response {
 	for _, s := range p.Servers {
 		nodes = append(nodes, s.Node)
 	}
-	cfg, bindings, err := singbox.BuildProbe(nodes, d.checkBasePort)
+	// Render once at an arbitrary valid base to validate the nodes and learn how
+	// many listeners the usable subset needs. The actual config is rebuilt only
+	// after that many contiguous ports have been reserved successfully.
+	_, plannedBindings, err := singbox.BuildProbe(nodes, 1)
 	if err != nil {
 		return newError(req.ID, fmt.Sprintf("check_nodes: %v", err))
 	}
-	raw, err := json.Marshal(cfg)
-	if err != nil {
-		return newError(req.ID, fmt.Sprintf("check_nodes: encode probe config: %v", err))
-	}
 
 	d.emitLog(LogInfo, fmt.Sprintf("check_nodes: measuring %d node(s) of %q against %d target(s)",
-		len(bindings), p.Name, len(d.checkTargets)))
+		len(plannedBindings), p.Name, len(d.checkTargets)))
 
-	runner := d.probeRunner()
-	if err := runner.Start(ctx, raw); err != nil {
-		d.emitLog(LogWarn, fmt.Sprintf("check_nodes: the probe sing-box would not start: %v", err))
-		return newError(req.ID, fmt.Sprintf("check_nodes: start probe: %v", err))
+	var (
+		results []nodecheck.NodeResult
+		tried   []probePortSpan
+	)
+	for attempt := 1; attempt <= probeStartAttempts; attempt++ {
+		reservation, reserveErr := reserveProbePortBlock(len(plannedBindings), d.checkBasePort, tried)
+		if reserveErr != nil {
+			msg := probeFailureMessage("port reservation", reserveErr, nil)
+			d.emitLog(LogWarn, msg)
+			return newError(req.ID, msg)
+		}
+		tried = append(tried, probePortSpan{first: reservation.base, last: reservation.base + len(plannedBindings) - 1})
+
+		cfg, bindings, buildErr := singbox.BuildProbe(nodes, reservation.base)
+		if buildErr != nil {
+			reservation.release()
+			return newError(req.ID, fmt.Sprintf("check_nodes: %v", buildErr))
+		}
+		raw, marshalErr := json.Marshal(cfg)
+		if marshalErr != nil {
+			reservation.release()
+			return newError(req.ID, fmt.Sprintf("check_nodes: encode probe config: %v", marshalErr))
+		}
+
+		runner := d.probeRunner()
+		processCtx, cancelProcess := context.WithCancel(processParent)
+		stopProcess := func() {
+			cancelProcess()
+			_ = runner.Stop()
+		}
+		// Keep the whole contiguous block reserved while the config is rendered,
+		// then release it immediately before the process starts. There is no API
+		// for handing already-bound sockets to sing-box, so a tiny race remains;
+		// authenticated readiness plus the bounded retry below closes it honestly.
+		reservation.release()
+		if startErr := runner.Start(processCtx, raw); startErr != nil {
+			stopProcess()
+			msg := probeFailureMessage("startup", startErr, runner)
+			if isProbeBindCollision(startErr, runner.Logs()) && attempt < probeStartAttempts {
+				d.emitLog(LogWarn, fmt.Sprintf("%s; retrying on a new loopback block (%d/%d)", msg, attempt+1, probeStartAttempts))
+				continue
+			}
+			d.emitLog(LogWarn, msg)
+			return newError(req.ID, msg)
+		}
+
+		done := runner.Done()
+		retryable, readyErr := d.waitForProbeListeners(ctx, bindings, done)
+		if readyErr != nil {
+			stopProcess()
+			msg := probeFailureMessage("authenticated listener startup", readyErr, runner)
+			if (retryable || isProbeBindCollision(readyErr, runner.Logs())) && attempt < probeStartAttempts {
+				d.emitLog(LogWarn, fmt.Sprintf("%s; retrying on a new loopback block (%d/%d)", msg, attempt+1, probeStartAttempts))
+				continue
+			}
+			d.emitLog(LogWarn, msg)
+			return newError(req.ID, msg)
+		}
+
+		results, err = d.probeBindings(ctx, p, bindings, done)
+		if err != nil {
+			stopProcess()
+			msg := probeFailureMessage("measurement", err, runner)
+			d.emitLog(LogWarn, msg)
+			return newError(req.ID, msg)
+		}
+		stopProcess()
+		break
 	}
-	// The probe process is ours alone and must not outlive the command, including
-	// when the caller cancels: a stranded sing-box holding loopback ports would
-	// make the next run fail to bind.
-	defer func() { _ = runner.Stop() }()
-
-	if !d.waitForProbeListeners(ctx, bindings) {
-		// This one is worth naming precisely: every node would otherwise score a
-		// failure it did not earn, and the report would blame the exits for a
-		// local process that never bound its ports.
-		d.emitLog(LogWarn, fmt.Sprintf("check_nodes: the probe's loopback listeners never came up within %s; no node was actually measured",
-			checkListenerWait))
-		return newError(req.ID, "check_nodes: probe listeners never came up")
+	if results == nil {
+		msg := "check_nodes: local probe exhausted its startup attempts; no node was measured"
+		d.emitLog(LogWarn, msg)
+		return newError(req.ID, msg)
 	}
-
-	results := d.probeBindings(ctx, p, bindings)
 	d.logNodeCheck(results)
 
 	lastGood := ""
@@ -212,38 +289,254 @@ func (d *Daemon) logNodeCheck(results []nodecheck.NodeResult) {
 	}
 }
 
-// waitForProbeListeners blocks until every probe port accepts a connection, or
-// the budget runs out.
+// waitForProbeListeners blocks until every probe port completes this run's
+// authenticated, no-egress SOCKS5 handshake, the process exits, or the budget
+// runs out.
 //
 // Without it the first targets are measured against a process that has not
 // finished starting, and every node scores a failure it did not earn — the same
 // class of mistake that once labelled twelve working bypass strategies "did not
 // start".
-func (d *Daemon) waitForProbeListeners(ctx context.Context, bindings []singbox.ProbeBinding) bool {
+func (d *Daemon) waitForProbeListeners(ctx context.Context, bindings []singbox.ProbeBinding, done <-chan error) (bool, error) {
 	deadline := time.Now().Add(checkListenerWait)
+	sawForeignListener := false
 	for time.Now().Before(deadline) {
-		if ctx.Err() != nil {
-			return false
+		select {
+		case err, ok := <-done:
+			return isProbeBindCollision(err, nil), probeExitedError(err, ok)
+		case <-ctx.Done():
+			return false, ctx.Err()
+		default:
 		}
 		all := true
 		for _, b := range bindings {
-			c, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(b.Port)), 300*time.Millisecond)
-			if err != nil {
+			owned, listening := probeListenerOwnership(ctx, b)
+			if !owned {
 				all = false
+				sawForeignListener = sawForeignListener || listening
 				break
 			}
-			_ = c.Close()
 		}
 		if all {
-			return true
+			// Do not let a process that died just after its final auth response be
+			// promoted to ready. A non-blocking exit read closes that last race.
+			select {
+			case err, ok := <-done:
+				return isProbeBindCollision(err, nil), probeExitedError(err, ok)
+			default:
+				return false, nil
+			}
 		}
 		select {
+		case err, ok := <-done:
+			return isProbeBindCollision(err, nil), probeExitedError(err, ok)
 		case <-ctx.Done():
-			return false
+			return false, ctx.Err()
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
+	return sawForeignListener, fmt.Errorf("probe listeners did not authenticate within %s", checkListenerWait)
+}
+
+// probeListenerOwned authenticates to a mixed inbound over SOCKS5 and stops
+// before issuing CONNECT. That proves the listener knows this run's random
+// secret without sending a byte toward a node or any external destination.
+func probeListenerOwned(ctx context.Context, binding singbox.ProbeBinding) bool {
+	owned, _ := probeListenerOwnership(ctx, binding)
+	return owned
+}
+
+// probeListenerOwnership additionally reports whether something accepted TCP.
+// A listener that answers but rejects the run's random auth is evidence that the
+// release-to-spawn race was lost and a new port block should be tried.
+func probeListenerOwnership(ctx context.Context, binding singbox.ProbeBinding) (owned, listening bool) {
+	if binding.Username == "" || binding.Password == "" || len(binding.Username) > 255 || len(binding.Password) > 255 {
+		return false, false
+	}
+	dialCtx, cancel := context.WithTimeout(ctx, probeListenerIOTimeout)
+	defer cancel()
+	conn, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(binding.Port)))
+	if err != nil {
+		return false, false
+	}
+	defer conn.Close()
+	listening = true
+	if deadline, ok := dialCtx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+
+	// Offer only username/password. A no-auth SOCKS server cannot select a
+	// different method from the offered set and therefore cannot look like ours.
+	if _, err := conn.Write([]byte{5, 1, 2}); err != nil {
+		return false, true
+	}
+	reply := make([]byte, 2)
+	if _, err := io.ReadFull(conn, reply); err != nil || reply[0] != 5 || reply[1] != 2 {
+		return false, true
+	}
+	auth := make([]byte, 0, 3+len(binding.Username)+len(binding.Password))
+	auth = append(auth, 1, byte(len(binding.Username)))
+	auth = append(auth, binding.Username...)
+	auth = append(auth, byte(len(binding.Password)))
+	auth = append(auth, binding.Password...)
+	if _, err := conn.Write(auth); err != nil {
+		return false, true
+	}
+	if _, err := io.ReadFull(conn, reply); err != nil {
+		return false, true
+	}
+	return reply[0] == 1 && reply[1] == 0, true
+}
+
+type probePortReservation struct {
+	base      int
+	listeners []net.Listener
+}
+
+func (r *probePortReservation) release() {
+	for _, l := range r.listeners {
+		_ = l.Close()
+	}
+	r.listeners = nil
+}
+
+type probePortSpan struct {
+	first int
+	last  int
+}
+
+// reserveProbePortBlock proves that every port in one contiguous loopback block
+// can be bound at the same time and holds the sockets until immediately before
+// sing-box starts. A preferred block keeps normal runs stable; fallback search
+// moves away from an occupied or previously raced block without trusting a
+// connect-only availability check.
+func reserveProbePortBlock(count, preferred int, tried []probePortSpan) (*probePortReservation, error) {
+	if count < 1 {
+		return nil, errors.New("probe needs at least one listener")
+	}
+
+	candidates := make([]int, 0, probePortSearchLimit+1)
+	if preferred >= 1 && preferred+count-1 <= 65535 {
+		candidates = append(candidates, preferred)
+	}
+	for base := probeFallbackPortMin; base+count-1 <= probeFallbackPortMax && len(candidates) < probePortSearchLimit+1; base++ {
+		if base != preferred {
+			candidates = append(candidates, base)
+		}
+	}
+
+	var lastErr error
+	for _, base := range candidates {
+		candidate := probePortSpan{first: base, last: base + count - 1}
+		if overlapsProbeSpan(candidate, tried) {
+			continue
+		}
+		listeners := make([]net.Listener, 0, count)
+		for port := candidate.first; port <= candidate.last; port++ {
+			l, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+			if err != nil {
+				lastErr = err
+				for _, opened := range listeners {
+					_ = opened.Close()
+				}
+				listeners = nil
+				break
+			}
+			listeners = append(listeners, l)
+		}
+		if len(listeners) == count {
+			return &probePortReservation{base: base, listeners: listeners}, nil
+		}
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no candidate block remained")
+	}
+	return nil, fmt.Errorf("reserve %d contiguous loopback port(s): %w", count, lastErr)
+}
+
+func overlapsProbeSpan(candidate probePortSpan, prior []probePortSpan) bool {
+	for _, used := range prior {
+		if candidate.first <= used.last && used.first <= candidate.last {
+			return true
+		}
+	}
 	return false
+}
+
+func probeExitedError(err error, ok bool) error {
+	if !ok {
+		return errors.New("probe process exit channel closed without a status")
+	}
+	if err == nil {
+		return errors.New("probe process exited unexpectedly with a clean status")
+	}
+	return fmt.Errorf("probe process exited: %w", err)
+}
+
+// isProbeBindCollision recognises the cross-platform diagnostics emitted when a
+// port was claimed after reservation release. Only that local, transient start
+// failure earns another process; invalid configs and missing binaries fail once
+// with their real explanation.
+func isProbeBindCollision(err error, logs []string) bool {
+	parts := make([]string, 0, len(logs)+1)
+	if err != nil {
+		parts = append(parts, err.Error())
+	}
+	parts = append(parts, logs...)
+	text := strings.ToLower(strings.Join(parts, "\n"))
+	for _, marker := range []string{
+		"eaddrinuse",
+		"wsaeaddrinuse",
+		"address already in use",
+		"address is already in use",
+		"only one usage of each socket address",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// probeFailureMessage is the single wire/log representation of a local probe
+// failure. It keeps only a bounded tail, flattens oversized/multiline entries,
+// and then applies the daemon's established secret scrubber before anything can
+// reach the UI or diagnostics ring.
+func probeFailureMessage(phase string, cause error, runner Runner) string {
+	why := "unknown local failure"
+	if cause != nil {
+		why = cause.Error()
+	}
+	message := fmt.Sprintf("check_nodes: local probe failed during %s: %s", phase, why)
+	if runner != nil {
+		lines := runner.Logs()
+		if len(lines) > probeFailureTailLines {
+			lines = lines[len(lines)-probeFailureTailLines:]
+		}
+		clean := make([]string, 0, len(lines))
+		for _, line := range lines {
+			line = strings.Join(strings.Fields(line), " ")
+			if line == "" {
+				continue
+			}
+			clean = append(clean, truncateRunes(line, probeFailureLineRunes))
+		}
+		if len(clean) > 0 {
+			message += "; probe output: " + strings.Join(clean, " | ")
+		}
+	}
+	return truncateRunes(scrubSecrets(message), probeFailureMaxRunes)
+}
+
+func truncateRunes(text string, max int) string {
+	runes := []rune(text)
+	if len(runes) <= max {
+		return text
+	}
+	if max < 2 {
+		return string(runes[:max])
+	}
+	return string(runes[:max-1]) + "…"
 }
 
 // probeBindings measures every node, at most checkFanout at a time, and returns
@@ -253,9 +546,12 @@ func (d *Daemon) waitForProbeListeners(ctx context.Context, bindings []singbox.P
 // budget still reports the ones it never reached — with no targets, which both
 // Usable and Score already read as "not measured, not usable" — rather than
 // dropping them from the answer or naming them with an empty id.
-func (d *Daemon) probeBindings(ctx context.Context, p profile.Profile, bindings []singbox.ProbeBinding) []nodecheck.NodeResult {
+func (d *Daemon) probeBindings(ctx context.Context, p profile.Profile, bindings []singbox.ProbeBinding, done <-chan error) ([]nodecheck.NodeResult, error) {
+	measureCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	results := make([]nodecheck.NodeResult, len(bindings))
 	servers := make([]profile.Server, len(bindings))
+	var exitErr error
 	for i, b := range bindings {
 		id := b.Tag
 		if b.Index >= 0 && b.Index < len(p.Servers) {
@@ -270,22 +566,52 @@ func (d *Daemon) probeBindings(ctx context.Context, p profile.Profile, bindings 
 	sem := make(chan struct{}, checkFanout)
 	var wg sync.WaitGroup
 
+launch:
 	for i, b := range bindings {
 		// Out of budget: the remaining nodes stay unmeasured rather than the run
 		// carrying on past the deadline its caller was promised.
-		if ctx.Err() != nil {
+		if measureCtx.Err() != nil {
 			break
 		}
-		sem <- struct{}{}
+		select {
+		case err, ok := <-done:
+			exitErr = probeExitedError(err, ok)
+			cancel()
+			break launch
+		case <-measureCtx.Done():
+			break launch
+		case sem <- struct{}{}:
+		}
 		wg.Add(1)
-		go func(i, port int, srv profile.Server) {
+		go func(i int, binding singbox.ProbeBinding, srv profile.Server) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			results[i].Targets = d.probeNode(ctx, port, srv)
-		}(i, b.Port, servers[i])
+			results[i].Targets = d.probeNode(measureCtx, binding, srv)
+		}(i, b, servers[i])
 	}
-	wg.Wait()
-	return results
+	finished := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(finished)
+	}()
+	if exitErr != nil {
+		<-finished
+		return nil, exitErr
+	}
+	select {
+	case err, ok := <-done:
+		cancel()
+		<-finished
+		return nil, probeExitedError(err, ok)
+	case <-finished:
+		// The process may have exited in the instant the last worker completed.
+		select {
+		case err, ok := <-done:
+			return nil, probeExitedError(err, ok)
+		default:
+			return results, nil
+		}
+	}
 }
 
 // probeNode measures one node: every target through its loopback proxy, and a
@@ -297,7 +623,7 @@ func (d *Daemon) probeBindings(ctx context.Context, p profile.Profile, bindings 
 // the state someone is in when they press this. Concurrency changes nothing
 // about the verdict — the ordering carried no information — while the load a
 // node sees, four cheap 204s at once, is less than opening one web page.
-func (d *Daemon) probeNode(ctx context.Context, port int, srv profile.Server) []nodecheck.TargetResult {
+func (d *Daemon) probeNode(ctx context.Context, binding singbox.ProbeBinding, srv profile.Server) []nodecheck.TargetResult {
 	// Whether the node's own address answers at all decides which failure the
 	// targets get reported as: unreachable address is a different problem for the
 	// user (routing, firewall, dead host) than an address that answers and then
@@ -315,7 +641,7 @@ func (d *Daemon) probeNode(ctx context.Context, port int, srv profile.Server) []
 		wg.Add(1)
 		go func(i int, t string) {
 			defer wg.Done()
-			stage, rtt := d.checkProbe(ctx, port, t)
+			stage, rtt := d.checkProbe(ctx, binding, t)
 			probed[i] = nodecheck.TargetResult{Target: t, Stage: stage, RTTMs: rtt}
 			measured[i] = true
 		}(i, t)
@@ -360,7 +686,7 @@ func (d *Daemon) probeNode(ctx context.Context, port int, srv profile.Server) []
 // CONNECT means the tunnel came up and traffic did not survive it. Collapsed into
 // one "request failed" error, a black-hole node and an unreachable one look the
 // same, and the UI can only show a red dot instead of saying what broke.
-func (d *Daemon) defaultCheckProbe(ctx context.Context, port int, target string) (nodecheck.Stage, int64) {
+func (d *Daemon) defaultCheckProbe(ctx context.Context, binding singbox.ProbeBinding, target string) (nodecheck.Stage, int64) {
 	u, err := url.Parse(target)
 	if err != nil || u.Host == "" {
 		return nodecheck.StageProbe, 0
@@ -372,7 +698,7 @@ func (d *Daemon) defaultCheckProbe(ctx context.Context, port int, target string)
 	defer cancel()
 
 	start := d.now()
-	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(binding.Port)))
 	if err != nil {
 		// The listener is ours; failing to reach it is not the node's fault, but the
 		// node cannot be credited either.
@@ -383,7 +709,8 @@ func (d *Daemon) defaultCheckProbe(ctx context.Context, port int, target string)
 		_ = conn.SetDeadline(dl)
 	}
 
-	if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", dest, dest); err != nil {
+	proxyAuth := base64.StdEncoding.EncodeToString([]byte(binding.Username + ":" + binding.Password))
+	if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: Basic %s\r\n\r\n", dest, dest, proxyAuth); err != nil {
 		return nodecheck.StageHandshake, 0
 	}
 	br := bufio.NewReader(conn)

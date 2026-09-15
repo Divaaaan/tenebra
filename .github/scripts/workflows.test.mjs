@@ -130,6 +130,26 @@ test("every Go setup resolves one exact committed patch", () => {
   assert.ok(checked >= 3);
 });
 
+test("Windows desktop validates the authenticated probe config with its fetched engine", () => {
+  const desktop = jobs(workflow("ci.yml")).get("desktop");
+  assert.ok(desktop, "ci.yml has no desktop job");
+  const desktopSteps = steps(desktop);
+  const fetchIndex = desktopSteps.findIndex((step) => step.includes("name: Fetch sing-box and wintun"));
+  assert.notEqual(fetchIndex, -1, "desktop job has no resource fetch step");
+
+  const probeIndexes = desktopSteps
+    .map((step, index) => ({ step, index }))
+    .filter(({ step }) => /^\s*run:\s*go test \.\/core\/singbox -run '\^TestProbeConfigPassesSingBoxCheck\$' -count=1\s*$/m.test(step));
+  assert.deepEqual(
+    probeIndexes.map(({ index }) => index),
+    [fetchIndex + 1],
+    "the mandatory probe schema check must run exactly once, immediately after fetching the pinned engine",
+  );
+  assert.match(probeIndexes[0].step, /name: Validate authenticated probe config/);
+  assert.doesNotMatch(probeIndexes[0].step, /^\s*if:/m);
+  assert.doesNotMatch(probeIndexes[0].step, /continue-on-error:/);
+});
+
 test("the Arch attach step names the repository instead of asking git", () => {
   // The build step chowns the checkout to `builder` so makepkg can run, and this
   // step runs as root: gh's own repository resolution shells out to git, git

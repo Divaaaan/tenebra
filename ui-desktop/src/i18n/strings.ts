@@ -94,6 +94,14 @@ export interface Strings {
   servers: {
     title: string;
     online: string;
+    /** Batch TCP probe is still in flight; no result count is current yet. */
+    tcpChecking: string;
+    /** Batch TCP probe failed locally; prior samples, if any, are stale. */
+    tcpFailed: string;
+    /** No profile is selected, so no TCP batch has run. */
+    tcpNotChecked: string;
+    /** Retry button for a failed batch TCP probe. */
+    retryTcp: string;
     showing: string;
     regionAll: string;
     regionEurope: string;
@@ -949,6 +957,10 @@ const en: Strings = {
   servers: {
     title: "Nodes",
     online: "TCP reachable",
+    tcpChecking: "Checking TCP…",
+    tcpFailed: "Couldn’t check TCP",
+    tcpNotChecked: "Not checked",
+    retryTcp: "Retry TCP check",
     showing: "showing",
     regionAll: "all",
     regionEurope: "europe",
@@ -1553,6 +1565,10 @@ const ru: Strings = {
   servers: {
     title: "Узлы",
     online: "ответили TCP",
+    tcpChecking: "Проверяю TCP…",
+    tcpFailed: "Не удалось проверить TCP",
+    tcpNotChecked: "Не проверено",
+    retryTcp: "Повторить проверку TCP",
     showing: "показано",
     regionAll: "все",
     regionEurope: "европа",

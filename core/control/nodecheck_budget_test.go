@@ -9,6 +9,7 @@ import (
 
 	"github.com/Divaaaan/tenebra/core/model"
 	"github.com/Divaaaan/tenebra/core/nodecheck"
+	"github.com/Divaaaan/tenebra/core/singbox"
 )
 
 // manyNodes builds n distinguishable profile nodes. Their addresses are never
@@ -48,7 +49,7 @@ func TestCheckNodesProbesOneNodesTargetsTogether(t *testing.T) {
 		once     sync.Once
 	)
 	together := make(chan struct{})
-	h.daemon.checkProbe = func(_ context.Context, _ int, _ string) (nodecheck.Stage, int64) {
+	h.daemon.checkProbe = func(_ context.Context, _ singbox.ProbeBinding, _ string) (nodecheck.Stage, int64) {
 		mu.Lock()
 		inFlight++
 		if inFlight > peak {
@@ -114,7 +115,7 @@ func TestCheckNodesAnswersWithinItsBudgetWithWhatItMeasured(t *testing.T) {
 	}
 	// A node that answers nothing: every request through it hangs until it is
 	// abandoned.
-	h.daemon.checkProbe = func(ctx context.Context, _ int, _ string) (nodecheck.Stage, int64) {
+	h.daemon.checkProbe = func(ctx context.Context, _ singbox.ProbeBinding, _ string) (nodecheck.Stage, int64) {
 		select {
 		case <-ctx.Done():
 		case <-time.After(perProbe):
@@ -180,7 +181,7 @@ func TestCheckNodesDoesNotHoldTheRequestLoop(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var once sync.Once
-	h.daemon.checkProbe = func(ctx context.Context, _ int, _ string) (nodecheck.Stage, int64) {
+	h.daemon.checkProbe = func(ctx context.Context, _ singbox.ProbeBinding, _ string) (nodecheck.Stage, int64) {
 		once.Do(func() { close(entered) })
 		select {
 		case <-release:
@@ -207,11 +208,11 @@ func TestCheckNodesDoesNotHoldTheRequestLoop(t *testing.T) {
 	}
 }
 
-// TestCheckNodesRefusesASecondOverlappingRun: the probe process binds a fixed
-// range of loopback ports, so a second run started while the first still holds
-// them would fail to bind and report every node dead. Saying no is the honest
-// answer — a measurement that lies is worse than one that is refused. It matters
-// more now that a check no longer occupies the request loop it was serialised by.
+// TestCheckNodesRefusesASecondOverlappingRun: even with separate reserved port
+// blocks, two probe processes would compete for CPU and network and distort each
+// other's measurements. Saying no is the honest answer — a measurement that
+// lies is worse than one that is refused. It matters more now that a check no
+// longer occupies the request loop it was serialised by.
 func TestCheckNodesRefusesASecondOverlappingRun(t *testing.T) {
 	nodes := []model.Node{vlessNode("A", "a.example.11")}
 	h, pid := newCheckHarness(t, nodes, 24730)
@@ -219,7 +220,7 @@ func TestCheckNodesRefusesASecondOverlappingRun(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var once sync.Once
-	h.daemon.checkProbe = func(ctx context.Context, _ int, _ string) (nodecheck.Stage, int64) {
+	h.daemon.checkProbe = func(ctx context.Context, _ singbox.ProbeBinding, _ string) (nodecheck.Stage, int64) {
 		once.Do(func() { close(entered) })
 		select {
 		case <-release:
@@ -268,7 +269,7 @@ func TestCheckNodesKeepsTheStageAnAnsweringNodeEarned(t *testing.T) {
 	// The node carries two destinations of three, while its own address answers no
 	// dial (the harness fails every one) — the state a UDP-carried node is in
 	// permanently.
-	h.daemon.checkProbe = func(_ context.Context, _ int, target string) (nodecheck.Stage, int64) {
+	h.daemon.checkProbe = func(_ context.Context, _ singbox.ProbeBinding, target string) (nodecheck.Stage, int64) {
 		if target == blocked {
 			return nodecheck.StageProbe, 0
 		}

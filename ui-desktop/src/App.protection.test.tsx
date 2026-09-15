@@ -17,7 +17,14 @@ vi.mock("./api", () => ({
   onTrayConnect: vi.fn(async () => () => {}), onTrayShow: vi.fn(async () => () => {}),
   onDeepLink: vi.fn(async () => () => {}), takeLaunchDeepLinks: vi.fn(async () => []),
 }));
-vi.mock("./lib/useNodePings", () => ({ useNodePings: () => ({ results: m.pings, pinging: false }) }));
+vi.mock("./lib/useNodePings", () => ({
+  useNodePings: () => ({
+    results: m.pings,
+    phase: "ready",
+    error: null,
+    refresh: vi.fn(),
+  }),
+}));
 vi.mock("./lib/useUpdateCheck", () => ({ useUpdateCheck: () => ({ available: null, stalled: false, confirming: false }) }));
 beforeEach(() => {
   localStorage.clear();

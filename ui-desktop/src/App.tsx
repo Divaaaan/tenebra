@@ -291,6 +291,7 @@ export function App() {
   // Latency probes for the browsed profile, feeding the per-row ping + the
   // dead flag, and the live ping stat for the connected node.
   const pings = useNodePings(selectedProfileId);
+  const pingBatchReady = pings.phase === "ready";
   // What actually survives each node, measured on demand — the connect button
   // runs it before choosing an exit (see handlePrimary).
   const nodeCheck = useNodeCheck();
@@ -317,28 +318,30 @@ export function App() {
           city: loc.label,
           region: loc.region,
           protocol: n.protocol,
-          rttMs: probe?.ok && !pings.stale ? probe.rttMs : null,
-          stale: !!probe && pings.stale,
-          dead: probe && !pings.stale ? !probe.ok : false,
+          rttMs: probe?.ok ? probe.rttMs : null,
+          stale: !!probe && !pingBatchReady,
+          dead: pingBatchReady && !!probe ? !probe.ok : false,
           insecure: n.insecure ?? false,
         };
       }),
-    [nodes, pings.results, pings.stale],
+    [nodes, pings.results, pingBatchReady],
   );
 
   // Lowest-ping live node, used as the auto target and the idle "current node".
   const bestNodeId = useMemo(() => {
     let best: string | null = null;
     let bestRtt = Infinity;
-    for (const n of nodes) {
-      const probe = pings.results.get(n.id);
-      if (probe?.ok && probe.rttMs < bestRtt) {
-        bestRtt = probe.rttMs;
-        best = n.id;
+    if (pingBatchReady) {
+      for (const n of nodes) {
+        const probe = pings.results.get(n.id);
+        if (probe?.ok && probe.rttMs < bestRtt) {
+          bestRtt = probe.rttMs;
+          best = n.id;
+        }
       }
     }
     return best ?? nodes[0]?.id ?? null;
-  }, [nodes, pings.results]);
+  }, [nodes, pings.results, pingBatchReady]);
 
   const targetNodeId = selectedNodeId || bestNodeId || "";
   const displayedNode = connected
@@ -347,7 +350,7 @@ export function App() {
 
   const liveNodeId = connected ? state.node : targetNodeId;
   const liveProbe = liveNodeId ? pings.results.get(liveNodeId) : undefined;
-  const livePing = liveProbe?.ok && !pings.stale ? liveProbe.rttMs : undefined;
+  const livePing = pingBatchReady && liveProbe?.ok ? liveProbe.rttMs : undefined;
 
   // Confirm the App-level actions the user takes (reaching connected, arming the
   // kill switch, changing routing) with a toast. The initial status load is
@@ -878,7 +881,9 @@ export function App() {
           onQuery={setQuery}
           onSelectNode={handleSelectNode}
           onAddSubscription={() => setOverlay("profiles")}
-          pinging={pings.pinging}
+          pingPhase={pings.phase}
+          pingError={pings.error}
+          onRefreshPings={pings.refresh}
           disabled={selectionLocked}
         />
       </div>}

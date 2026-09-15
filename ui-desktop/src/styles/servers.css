@@ -8,8 +8,12 @@
 .srv-add:hover { background: var(--signal-faint); border-color: var(--signal); }
 .srv-title { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; }
 .srv-title h2 { font: 600 23px/1.3 var(--ui); color: var(--text); letter-spacing: -.02em; }
-.srv-title .srv-reachability { color: var(--text-dim); font: 13px/1.5 var(--ui); display: block; margin-top: 6px; letter-spacing: normal; }
-.srv-pinging { color: var(--signal); }
+.srv-title .srv-reachability { color: var(--text-dim); font: 13px/1.5 var(--ui); display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-height: 40px; margin-top: 0; letter-spacing: normal; }
+.srv-reachability.is-ready { font-variant-numeric: tabular-nums; }
+.srv-reachability.is-checking { color: var(--signal); }
+.srv-ping-retry { min-width: 40px; min-height: 40px; padding: 0 10px; color: var(--signal); border: 1px solid var(--line); border-radius: 6px; font: 12px/1.3 var(--ui); }
+.srv-ping-retry:hover { background: var(--signal-faint); border-color: var(--signal); }
+.srv-ping-retry:disabled { cursor: default; opacity: .65; }
 .srv-title .count { font-size: 12px; color: var(--text-dim); }
 .srv-title .count b { font-weight: 600; color: var(--text); }
 .srv-insecure-summary { display: flex; align-items: flex-start; gap: 8px; color: var(--warn-soft); background: var(--row-trying-bg); border: 1px solid var(--warn-soft); border-radius: 7px; padding: 9px 12px; font-size: 13px; line-height: 1.5; }

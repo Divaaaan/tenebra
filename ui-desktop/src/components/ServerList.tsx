@@ -4,6 +4,7 @@ import type { NodeProtocol, Profile } from "../api";
 import { useI18n } from "../i18n/I18nContext";
 import type { Strings } from "../i18n/strings";
 import { REGION_CHIPS, type Region } from "../lib/region";
+import type { NodePingPhase } from "../lib/useNodePings";
 import { PingScale } from "./PingScale";
 
 /** A node enriched with derived location and a latency probe, ready to render. */
@@ -38,7 +39,9 @@ interface ServerListProps {
   onQuery: (q: string) => void;
   onSelectNode: (id: string) => void;
   onAddSubscription: () => void;
-  pinging: boolean;
+  pingPhase: NodePingPhase;
+  pingError: string | null;
+  onRefreshPings: () => void;
   disabled?: boolean;
   /**
    * OPTIONAL — for the orchestrator to wire from App. True when the exit is
@@ -105,7 +108,9 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
       onQuery,
       onSelectNode,
       onAddSubscription,
-      pinging,
+      pingPhase,
+      pingError,
+      onRefreshPings,
       disabled = false,
       auto,
       onSelectAuto,
@@ -156,6 +161,7 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
     // as the core does when it picks. Null until something has a ping: shown as a
     // neutral row rather than a guessed name.
     const bestRow = useMemo(() => {
+      if (pingPhase !== "ready") return null;
       let best: ServerRow | null = null;
       let bestRtt = Infinity;
       for (const r of rows) {
@@ -165,14 +171,23 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
         }
       }
       return best;
-    }, [rows]);
+    }, [pingPhase, rows]);
 
     // AUTO is active whenever no node is pinned by hand. The `auto` prop is
     // authoritative once App wires it; until then "no active node" is the honest
     // stand-in (exact while idle; connected-auto needs the prop).
     const isAuto = auto ?? activeNodeId === null;
 
-    const online = rows.filter((r) => !r.dead && !r.stale && r.rttMs !== null).length;
+    const online = pingPhase === "ready"
+      ? rows.filter((r) => !r.dead && !r.stale && r.rttMs !== null).length
+      : 0;
+    const reachabilityLabel = pingPhase === "ready"
+      ? `${online} ${t.servers.online}`
+      : pingPhase === "checking"
+        ? t.servers.tcpChecking
+        : pingPhase === "failed"
+          ? t.servers.tcpFailed
+          : t.servers.tcpNotChecked;
     const insecureCount = rows.filter((r) => r.insecure).length;
     const insecureSummary = t.servers.insecureSummary
       .replace("{n}", String(insecureCount))
@@ -239,8 +254,24 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
           <div className="srv-title">
             <h2>
               {t.servers.title}
-              <span className="srv-reachability">{online} {t.servers.online}
-                {pinging && <span className="srv-pinging"> · …</span>}
+              <span className={`srv-reachability is-${pingPhase}`}>
+                <span
+                  className="srv-reachability-label"
+                  aria-live="polite"
+                  title={pingPhase === "failed" ? pingError ?? undefined : undefined}
+                >
+                  {reachabilityLabel}
+                </span>
+                {pingPhase === "failed" && (
+                  <button
+                    type="button"
+                    className="srv-ping-retry"
+                    disabled={disabled}
+                    onClick={onRefreshPings}
+                  >
+                    {t.servers.retryTcp}
+                  </button>
+                )}
               </span>
             </h2>
             <div className="count">
@@ -352,7 +383,7 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
               const active = !isAuto && s.id === activeNodeId;
               const pingCls = s.dead
                 ? " dead"
-                : s.rttMs !== null && s.rttMs >= 120
+                : !s.stale && s.rttMs !== null && s.rttMs >= 120
                   ? " hi"
                   : "";
               return (
@@ -392,7 +423,7 @@ export const ServerList = forwardRef<HTMLInputElement, ServerListProps>(
                     </span>
                     {s.city && <span className="srv-city">{s.city}</span>}
                   </div>
-                  {!s.dead && s.rttMs !== null ? (
+                  {!s.dead && !s.stale && s.rttMs !== null ? (
                     <PingScale rttMs={s.rttMs} />
                   ) : (
                     <span className="ping-scale" aria-hidden="true">

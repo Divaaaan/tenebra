@@ -42,6 +42,19 @@ func checkNodes() []model.Node {
 	}
 }
 
+func TestFindSingBoxHonorsOverride(t *testing.T) {
+	want := filepath.Join(t.TempDir(), "custom-sing-box")
+	if err := os.WriteFile(want, []byte("test binary placeholder"), 0o700); err != nil {
+		t.Fatalf("write override placeholder: %v", err)
+	}
+	t.Setenv("TENEBRA_SINGBOX", want)
+
+	got, ruleSetDir, ok := findSingBox()
+	if !ok || got != want || ruleSetDir != filepath.Dir(want) {
+		t.Fatalf("findSingBox() = (%q, %q, %t), want (%q, %q, true)", got, ruleSetDir, ok, want, filepath.Dir(want))
+	}
+}
+
 // findSingBox locates a real sing-box binary to validate generated configs
 // against. It walks up from the test's working directory to the bundled
 // resources (where fetch-resources drops sing-box next to the .srs files), then
@@ -50,6 +63,11 @@ func checkNodes() []model.Node {
 // PATH), or ok=false when no binary is available — the caller then skips, so CI
 // without the (gitignored) binary is green rather than failing.
 func findSingBox() (bin, ruleSetDir string, ok bool) {
+	if override := os.Getenv("TENEBRA_SINGBOX"); override != "" {
+		if _, err := os.Stat(override); err == nil {
+			return override, filepath.Dir(override), true
+		}
+	}
 	name := "sing-box"
 	if runtime.GOOS == "windows" {
 		name = "sing-box.exe"
@@ -99,6 +117,22 @@ func singBoxCheck(t *testing.T, bin string, cfg map[string]any) {
 	if err != nil {
 		t.Fatalf("sing-box check rejected the config: %v\n%s\nconfig:\n%s", err, out, raw)
 	}
+}
+
+// TestProbeConfigPassesSingBoxCheck keeps the authenticated mixed-inbound
+// schema pinned to the bundled engine. The unit tests prove which credentials
+// are rendered; the real checker proves sing-box accepts that shape before a
+// release can turn every node check into a local config failure.
+func TestProbeConfigPassesSingBoxCheck(t *testing.T) {
+	bin, _, ok := findSingBox()
+	if !ok {
+		t.Skip("sing-box binary not found (resources/ or bin/ or PATH); skipping real probe config check")
+	}
+	cfg, _, err := BuildProbe(checkNodes(), 24100)
+	if err != nil {
+		t.Fatalf("BuildProbe: %v", err)
+	}
+	singBoxCheck(t, bin, cfg)
 }
 
 // TestRulesConfigPassesSingBoxCheck feeds configs carrying the custom domain
