@@ -57,7 +57,9 @@ function baseProps(overrides: Partial<Parameters<typeof ServerList>[0]> = {}) {
     onQuery: vi.fn(),
     onSelectNode: vi.fn(),
     onAddSubscription: vi.fn(),
-    pinging: false,
+    pingPhase: "ready" as const,
+    pingError: null as string | null,
+    onRefreshPings: vi.fn(),
     ...overrides,
   };
 }
@@ -116,6 +118,80 @@ describe("ServerList", () => {
     renderWithProviders(<ServerList {...baseProps({ rows })} />);
     expect(screen.getByRole("heading", { name: /Nodes\s+1 TCP reachable/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /lowest ping · now fresh/i })).toBeInTheDocument();
+  });
+
+  it("shows an in-progress TCP check without claiming zero reachable nodes", () => {
+    const rows = makeRows().map((row) => ({
+      ...row,
+      rttMs: null,
+      dead: false,
+    }));
+
+    renderWithProviders(
+      <ServerList {...baseProps({ rows, pingPhase: "checking" })} />,
+    );
+
+    expect(screen.getByText("Checking TCP…")).toBeInTheDocument();
+    expect(screen.queryByText(/0 TCP reachable/)).not.toBeInTheDocument();
+  });
+
+  it("shows a failed TCP check and retries it from the header", async () => {
+    const onRefreshPings = vi.fn();
+    const user = userEvent.setup();
+
+    const { rerender } = renderWithProviders(
+      <ServerList
+        {...baseProps({
+          pingPhase: "failed",
+          pingError: "probe process failed on 127.0.0.1:24310",
+          onRefreshPings,
+        })}
+      />,
+    );
+
+    const status = screen.getByText("Couldn’t check TCP");
+    expect(status).toHaveAttribute(
+      "title",
+      "probe process failed on 127.0.0.1:24310",
+    );
+    expect(
+      screen.queryByText("probe process failed on 127.0.0.1:24310"),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry TCP check" }));
+    expect(onRefreshPings).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <ServerList
+        {...baseProps({
+          disabled: true,
+          pingPhase: "failed",
+          pingError: "probe process failed on 127.0.0.1:24310",
+          onRefreshPings,
+        })}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Retry TCP check" })).toBeDisabled();
+  });
+
+  it("shows not checked while no profile batch has started", () => {
+    renderWithProviders(<ServerList {...baseProps({ pingPhase: "idle" })} />);
+
+    expect(screen.getByText("Not checked")).toBeInTheDocument();
+    expect(screen.queryByText(/TCP reachable/)).not.toBeInTheDocument();
+  });
+
+  it("shows a truthful zero after a completed all-failed batch", () => {
+    const rows = makeRows().map((row) => ({
+      ...row,
+      rttMs: null,
+      dead: true,
+    }));
+
+    renderWithProviders(
+      <ServerList {...baseProps({ rows, pingPhase: "ready" })} />,
+    );
+
+    expect(screen.getByText("0 TCP reachable")).toBeInTheDocument();
   });
 
   it("filters rows by region chip and back to all", async () => {
@@ -367,6 +443,19 @@ describe("ServerList", () => {
       const deadRow = screen.getByText("US-NYC-01").closest('[role="button"]')!;
       expect(deadRow.querySelectorAll(".ping-scale-bar")).toHaveLength(5);
       expect(deadRow.querySelectorAll(".ping-scale-bar.on")).toHaveLength(0);
+    });
+
+    it("keeps a stale RTT visible as stale without lighting the meter", () => {
+      const rows = [{ ...makeRows()[0], rttMs: 27, stale: true }];
+
+      renderWithProviders(
+        <ServerList {...baseProps({ rows, pingPhase: "failed" })} />,
+      );
+
+      const staleRow = screen.getByText("DE-FRA-01").closest('[role="button"]')!;
+      expect(staleRow).toHaveTextContent("stale");
+      expect(staleRow.querySelectorAll(".ping-scale-bar")).toHaveLength(5);
+      expect(staleRow.querySelectorAll(".ping-scale-bar.on")).toHaveLength(0);
     });
   });
 
