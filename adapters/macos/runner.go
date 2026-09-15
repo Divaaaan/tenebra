@@ -22,7 +22,6 @@
 package macos
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -37,6 +36,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Divaaaan/tenebra/adapters/internal/processlog"
 )
 
 // defaultClashPort matches singbox.TunOptions' default external controller port,
@@ -53,6 +54,10 @@ const logRingSize = 200
 // statsTimeout keeps a clash API poll from blocking the traffic loop if the API
 // is slow or not yet listening.
 const statsTimeout = 2 * time.Second
+
+// processOutputWaitDelay bounds Cmd.Wait's drain of stdout/stderr after the
+// supervised process exits but a descendant keeps inherited handles open.
+const processOutputWaitDelay = 500 * time.Millisecond
 
 // maxConnectionsBody bounds the read of the /connections document. It has to be
 // generous because the body is parsed as one JSON value: the totals live at the
@@ -178,19 +183,11 @@ func (r *Runner) Start(ctx context.Context, configJSON []byte) error {
 
 	runCtx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(runCtx, bin, "run", "-c", cfgPath)
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		os.Remove(cfgPath)
-		return fmt.Errorf("macos: stdout pipe: %w", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		cancel()
-		os.Remove(cfgPath)
-		return fmt.Errorf("macos: stderr pipe: %w", err)
-	}
+	stdoutLog := processlog.New(r.ring.add)
+	stderrLog := processlog.New(r.ring.add)
+	cmd.Stdout = stdoutLog
+	cmd.Stderr = stderrLog
+	cmd.WaitDelay = processOutputWaitDelay
 
 	if err := cmd.Start(); err != nil {
 		cancel()
@@ -205,15 +202,13 @@ func (r *Runner) Start(ctx context.Context, configJSON []byte) error {
 	r.cfgPath = cfgPath
 	r.clashSecret = secret
 
-	// Drain both streams into the ring buffer; the goroutines end when the pipes
-	// close on process exit.
-	go r.scan(stdout)
-	go r.scan(stderr)
-
 	// One watcher owns Wait. It publishes the exit on done, closes it, and clears
-	// the running state so the Runner can be started again.
+	// the running state so the Runner can be started again. Cmd.Wait owns and
+	// bounds stdout/stderr copying through WaitDelay.
 	go func() {
 		werr := cmd.Wait()
+		stdoutLog.Flush()
+		stderrLog.Flush()
 		cancel()
 		os.Remove(cfgPath)
 
@@ -485,16 +480,6 @@ func (r *Runner) Logs() []string {
 		return nil
 	}
 	return ring.snapshot()
-}
-
-// scan copies a process stream line by line into the ring buffer.
-func (r *Runner) scan(rc io.ReadCloser) {
-	defer rc.Close()
-	sc := bufio.NewScanner(rc)
-	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	for sc.Scan() {
-		r.ring.add(sc.Text())
-	}
 }
 
 // singboxVersionTimeout bounds the `sing-box version` call. The binary answers

@@ -62,6 +62,53 @@ func TestBuildProbeGivesEachNodeItsOwnPort(t *testing.T) {
 	}
 }
 
+// TestBuildProbeRequiresFreshAuthentication catches the listener-ownership bug:
+// a plain TCP connect could be accepted by an unrelated process on the expected
+// port and the daemon would then attribute that process's behaviour to a VPN
+// node. Every listener in one probe run must instead require the same fresh
+// credentials, and the caller must receive those credentials so readiness can
+// authenticate before any node traffic is measured.
+func TestBuildProbeRequiresFreshAuthentication(t *testing.T) {
+	cfg1, bindings1, err := BuildProbe(probeNodes(), 24100)
+	if err != nil {
+		t.Fatalf("first BuildProbe: %v", err)
+	}
+	_, bindings2, err := BuildProbe(probeNodes(), 24200)
+	if err != nil {
+		t.Fatalf("second BuildProbe: %v", err)
+	}
+	if len(bindings1) == 0 || len(bindings2) == 0 {
+		t.Fatal("BuildProbe returned no bindings")
+	}
+
+	user1, pass1 := bindings1[0].Username, bindings1[0].Password
+	if user1 == "" || pass1 == "" {
+		t.Fatal("first probe run has empty listener credentials")
+	}
+	for i, b := range bindings1 {
+		if b.Username != user1 || b.Password != pass1 {
+			t.Errorf("binding %d credentials differ within one run", i)
+		}
+	}
+	if bindings2[0].Username == user1 || bindings2[0].Password == pass1 {
+		t.Error("two probe runs reused listener credentials")
+	}
+
+	ins, _ := cfg1["inbounds"].([]map[string]any)
+	if len(ins) != len(bindings1) {
+		t.Fatalf("got %d inbounds for %d bindings", len(ins), len(bindings1))
+	}
+	for i, in := range ins {
+		users, _ := in["users"].([]map[string]any)
+		if len(users) != 1 {
+			t.Fatalf("inbound %d users = %#v, want one authenticated user", i, in["users"])
+		}
+		if users[0]["username"] != user1 || users[0]["password"] != pass1 {
+			t.Errorf("inbound %d does not carry its binding credentials", i)
+		}
+	}
+}
+
 func TestBuildProbeRoutesEachListenerToItsOwnNode(t *testing.T) {
 	cfg, bindings, err := BuildProbe(probeNodes(), 24100)
 	if err != nil {

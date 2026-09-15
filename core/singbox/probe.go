@@ -1,6 +1,7 @@
 package singbox
 
 import (
+	"crypto/rand"
 	"fmt"
 
 	"github.com/Divaaaan/tenebra/core/model"
@@ -16,6 +17,12 @@ type ProbeBinding struct {
 	Name string
 	// Port is the loopback port whose traffic is pinned to this node.
 	Port int
+	// Username and Password are fresh for this probe process and are required by
+	// every mixed inbound it owns. The daemon authenticates without issuing a
+	// proxy request before trusting Port, so an unrelated listener cannot make a
+	// local start failure look like a dead remote node.
+	Username string `json:"-"`
+	Password string `json:"-"`
 	// Index is the node's position in the slice handed to BuildProbe. It is the
 	// only reliable way back to the caller's own identity for that node: the tag
 	// is derived from the display name and de-duplicated, and names repeat across
@@ -70,6 +77,14 @@ func BuildProbe(nodes []model.Node, basePort int) (map[string]any, []ProbeBindin
 	if basePort+len(sel)-1 > 65535 {
 		return nil, nil, fmt.Errorf("singbox: probe needs %d ports from %d, past 65535", len(sel), basePort)
 	}
+	username, err := randomProbeCredential()
+	if err != nil {
+		return nil, nil, err
+	}
+	password, err := randomProbeCredential()
+	if err != nil {
+		return nil, nil, err
+	}
 
 	bindings := make([]ProbeBinding, 0, len(sel))
 	inbounds := make([]map[string]any, 0, len(sel))
@@ -92,13 +107,20 @@ func BuildProbe(nodes []model.Node, basePort int) (map[string]any, []ProbeBindin
 			// any host on the LAN relay through the user's nodes.
 			"listen":      mixedListen,
 			"listen_port": port,
+			"users": []map[string]any{{
+				"username": username,
+				"password": password,
+			}},
 		})
 		rules = append(rules, map[string]any{
 			"inbound":  []string{inTag},
 			"action":   "route",
 			"outbound": nt.Tag,
 		})
-		bindings = append(bindings, ProbeBinding{Tag: nt.Tag, Name: name, Port: port, Index: nt.Index})
+		bindings = append(bindings, ProbeBinding{
+			Tag: nt.Tag, Name: name, Port: port, Index: nt.Index,
+			Username: username, Password: password,
+		})
 	}
 
 	outbounds := make([]map[string]any, 0, len(outs)+1)
@@ -124,4 +146,19 @@ func BuildProbe(nodes []model.Node, basePort int) (map[string]any, []ProbeBindin
 	}
 
 	return cfg, bindings, nil
+}
+
+// randomProbeCredential returns a UUID-shaped 122-bit random value. UUID shape
+// is deliberate as well as convenient: the daemon's established scrubSecrets
+// policy already masks UUIDs in free-form process output, so a sing-box error
+// that echoes the config cannot leak these short-lived credentials to the UI or
+// support bundle.
+func randomProbeCredential() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("singbox: generate probe credentials: %w", err)
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }

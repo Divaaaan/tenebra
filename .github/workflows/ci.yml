@@ -98,6 +98,8 @@ jobs:
         run: cargo fmt --check
       - name: Fetch sing-box and wintun
         run: powershell -ExecutionPolicy Bypass -File scripts/fetch-resources.ps1
+      - name: Validate authenticated probe config
+        run: go test ./core/singbox -run '^TestProbeConfigPassesSingBoxCheck$' -count=1
       - name: Build core sidecar
         run: go build -o ui-desktop/src-tauri/binaries/tenebra-core-x86_64-pc-windows-msvc.exe ./cmd/tenebra-core
       - name: Lint the Rust backend
