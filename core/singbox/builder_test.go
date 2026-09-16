@@ -702,6 +702,132 @@ func TestShadowsocksPluginSkipped(t *testing.T) {
 	}
 }
 
+// TestUnsupportedTransportSkipped pins the subscription-level failure from
+// Tenebra 0.6.0: one VLESS+xhttp node made sing-box reject the shared config,
+// taking every otherwise healthy node down with it. Unsupported stream
+// transports must be excluded from both the config and selector while the
+// healthy nodes in the same profile remain usable.
+func TestUnsupportedTransportSkipped(t *testing.T) {
+	xhttp := model.Node{
+		Protocol: model.VLESS,
+		Name:     "xhttp",
+		Server:   "xhttp.example.test",
+		Port:     443,
+		UUID:     "44444444-4444-4444-4444-444444444444",
+		TLS:      &model.TLS{Enabled: true, ServerName: "xhttp.example.test"},
+		Transport: &model.Transport{
+			Type: "xhttp",
+			Path: "/split-http",
+		},
+	}
+
+	cfg, err := Build([]model.Node{xhttp, goodSSNode("plain")}, "xhttp",
+		routing.Options{Mode: routing.ModeGlobal}, TunOptions{})
+	if err != nil {
+		t.Fatalf("unsupported transport should be skipped, not poison the profile: %v", err)
+	}
+	by := outboundsByTag(t, cfg)
+	if _, has := by["xhttp"]; has {
+		t.Error("node with unsupported xhttp transport must not appear in outbounds")
+	}
+	if _, has := by["plain"]; !has {
+		t.Errorf("healthy node must survive; tags %v", keys(by))
+	}
+
+	selector := by[proxyTag]
+	members, ok := selector["outbounds"].([]string)
+	if !ok {
+		t.Fatalf("selector outbounds type %T", selector["outbounds"])
+	}
+	if contains(members, "xhttp") {
+		t.Errorf("unsupported transport leaked into selector members %v", members)
+	}
+	if !contains(members, "plain") {
+		t.Errorf("healthy node missing from selector members %v", members)
+	}
+	if selector["default"] != "plain" {
+		t.Errorf("selector default = %v, want surviving node plain", selector["default"])
+	}
+
+	if err := validateNode(xhttp); err == nil || !strings.Contains(err.Error(), "xhttp") {
+		t.Errorf("validateNode(xhttp) = %v, want an error naming xhttp", err)
+	}
+	if ValidateNode(xhttp) {
+		t.Error("ValidateNode should reject an unsupported xhttp transport")
+	}
+}
+
+// TestSupportedQUICTransportSurvives guards the allowlist against rejecting a
+// transport bundled sing-box understands. QUIC has no per-transport options in
+// sing-box 1.13, so unrelated link fields must not leak into its config object.
+func TestSupportedQUICTransportSurvives(t *testing.T) {
+	quic := model.Node{
+		Protocol: model.VLESS,
+		Name:     "quic",
+		Server:   "quic.example.test",
+		Port:     443,
+		UUID:     "55555555-5555-5555-5555-555555555555",
+		TLS:      &model.TLS{Enabled: true, ServerName: "quic.example.test"},
+		Transport: &model.Transport{
+			Type: "quic",
+			Path: "/ignored",
+			Host: "ignored.example.test",
+		},
+	}
+
+	cfg, err := Build([]model.Node{quic}, "quic",
+		routing.Options{Mode: routing.ModeGlobal}, TunOptions{})
+	if err != nil {
+		t.Fatalf("supported quic transport was rejected: %v", err)
+	}
+	outbound := outboundsByTag(t, cfg)["quic"]
+	transport, ok := outbound["transport"].(map[string]any)
+	if !ok {
+		t.Fatalf("quic transport type %T, want object", outbound["transport"])
+	}
+	if len(transport) != 1 || transport["type"] != "quic" {
+		t.Errorf("quic transport = %v, want only type=quic", transport)
+	}
+	if !ValidateNode(quic) {
+		t.Error("ValidateNode should accept a supported quic transport")
+	}
+}
+
+// TestQUICTransportWithoutTLSSkipped covers malformed VLESS/VMess links such
+// as type=quic without security=tls. Bundled sing-box's QUIC client requires a
+// TLS config, so these nodes must not reach the shared config and sink their
+// healthy profile neighbours.
+func TestQUICTransportWithoutTLSSkipped(t *testing.T) {
+	for _, protocol := range []model.Protocol{model.VLESS, model.VMess} {
+		t.Run(string(protocol), func(t *testing.T) {
+			bad := model.Node{
+				Protocol:  protocol,
+				Name:      "quic-no-tls",
+				Server:    "quic.example.test",
+				Port:      443,
+				UUID:      "66666666-6666-6666-6666-666666666666",
+				Transport: &model.Transport{Type: "quic"},
+			}
+
+			cfg, err := Build([]model.Node{bad, goodSSNode("plain")}, "quic-no-tls",
+				routing.Options{Mode: routing.ModeGlobal}, TunOptions{})
+			if err != nil {
+				t.Fatalf("malformed quic node should be skipped, not poison the profile: %v", err)
+			}
+			by := outboundsByTag(t, cfg)
+			if _, has := by["quic-no-tls"]; has {
+				t.Error("quic transport without TLS must not appear in outbounds")
+			}
+			if _, has := by["plain"]; !has {
+				t.Errorf("healthy node must survive; tags %v", keys(by))
+			}
+			if ValidateNode(bad) {
+				t.Error("ValidateNode should reject quic without TLS")
+			}
+		})
+	}
+}
+
 func TestNoUsableNodes(t *testing.T) {
 	_, err := Build(nil, "", routing.Options{Mode: routing.ModeSmart}, TunOptions{})
 	if err == nil {

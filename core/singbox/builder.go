@@ -458,6 +458,11 @@ func SelectorTags(nodes []model.Node) []NodeTag {
 // logged-skip rather than a fatal so one bad node can't poison the shared
 // config. The checks mirror sing-box's own decode-time requirements:
 //   - port must be a valid uint16 (1..65535), for every protocol;
+//   - stream transports are limited to the variants bundled sing-box supports
+//     and transportObject renders safely; an unknown type must be skipped
+//     instead of being passed through and poisoning the shared config; VLESS
+//     and VMess QUIC additionally require TLS because sing-box's QUIC client
+//     cannot be constructed without a TLS config;
 //   - Shadowsocks needs a method AND a password, and must carry no transport
 //     plugin — shadowsocksOutbound emits none of sing-box's plugin/plugin_opts
 //     fields, so a plugin node would build a plain outbound that fails its
@@ -472,6 +477,18 @@ func validateNode(n model.Node) error {
 	}
 	if n.TLS != nil && n.TLS.Reality != nil && n.TLS.Reality.PublicKey == "" {
 		return fmt.Errorf("node %q: reality without public_key", n.Name)
+	}
+	if n.Transport != nil {
+		switch n.Transport.Type {
+		case "", "ws", "grpc", "http", "httpupgrade":
+			// These are the stream transports transportObject renders natively.
+		case "quic":
+			if (n.Protocol == model.VLESS || n.Protocol == model.VMess) && (n.TLS == nil || !n.TLS.Enabled) {
+				return fmt.Errorf("node %q: quic transport requires tls for %s", n.Name, n.Protocol)
+			}
+		default:
+			return fmt.Errorf("node %q: transport %q is not supported", n.Name, n.Transport.Type)
+		}
 	}
 	switch n.Protocol {
 	case model.Shadowsocks:
