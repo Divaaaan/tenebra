@@ -793,6 +793,41 @@ func TestSupportedQUICTransportSurvives(t *testing.T) {
 	}
 }
 
+// TestQUICTransportWithoutTLSSkipped covers malformed VLESS/VMess links such
+// as type=quic without security=tls. Bundled sing-box's QUIC client requires a
+// TLS config, so these nodes must not reach the shared config and sink their
+// healthy profile neighbours.
+func TestQUICTransportWithoutTLSSkipped(t *testing.T) {
+	for _, protocol := range []model.Protocol{model.VLESS, model.VMess} {
+		t.Run(string(protocol), func(t *testing.T) {
+			bad := model.Node{
+				Protocol:  protocol,
+				Name:      "quic-no-tls",
+				Server:    "quic.example.test",
+				Port:      443,
+				UUID:      "66666666-6666-6666-6666-666666666666",
+				Transport: &model.Transport{Type: "quic"},
+			}
+
+			cfg, err := Build([]model.Node{bad, goodSSNode("plain")}, "quic-no-tls",
+				routing.Options{Mode: routing.ModeGlobal}, TunOptions{})
+			if err != nil {
+				t.Fatalf("malformed quic node should be skipped, not poison the profile: %v", err)
+			}
+			by := outboundsByTag(t, cfg)
+			if _, has := by["quic-no-tls"]; has {
+				t.Error("quic transport without TLS must not appear in outbounds")
+			}
+			if _, has := by["plain"]; !has {
+				t.Errorf("healthy node must survive; tags %v", keys(by))
+			}
+			if ValidateNode(bad) {
+				t.Error("ValidateNode should reject quic without TLS")
+			}
+		})
+	}
+}
+
 func TestNoUsableNodes(t *testing.T) {
 	_, err := Build(nil, "", routing.Options{Mode: routing.ModeSmart}, TunOptions{})
 	if err == nil {
