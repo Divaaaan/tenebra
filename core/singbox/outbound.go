@@ -209,7 +209,8 @@ const fragmentFallbackDelay = "500ms"
 
 // transportObject renders a model.Transport into the sing-box transport
 // sub-object, or nil for raw TCP (empty type). Only ws and grpc are commonly
-// used; http/httpupgrade pass through with their path.
+// used; http/httpupgrade carry their path and host. QUIC has no options in the
+// bundled sing-box schema, so only its type is emitted.
 func transportObject(t *model.Transport) map[string]any {
 	if t == nil || t.Type == "" {
 		return nil
@@ -230,6 +231,8 @@ func transportObject(t *model.Transport) map[string]any {
 			o["service_name"] = t.ServiceName
 		}
 		return o
+	case "quic":
+		return map[string]any{"type": "quic"}
 	case "http", "httpupgrade":
 		o := map[string]any{"type": t.Type}
 		if t.Path != "" {
