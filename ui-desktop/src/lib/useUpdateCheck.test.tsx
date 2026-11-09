@@ -50,8 +50,9 @@ describe("useUpdateCheck", () => {
   });
 
   it("does not even check on an install that cannot replace itself", async () => {
-    // A Linux copy owned by a package manager: the banner's only action would
-    // fail, so the check is skipped outright and nothing is offered.
+    // A macOS or Linux package cannot use the GUI updater, even if an old
+    // auto-install preference is still enabled.
+    localStorage.setItem("tenebra.autoInstallUpdates", "1");
     vi.mocked(inAppUpdatesSupported).mockResolvedValue(false);
     vi.mocked(checkForUpdate).mockResolvedValue(fakeUpdate());
 

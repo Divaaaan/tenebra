@@ -1,0 +1,91 @@
+name: macOS package artifact
+
+# This workflow is an artifact builder. It never publishes releases or channels.
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: 'Full 40-character source commit SHA from this repository'
+        required: true
+        type: string
+      architecture:
+        description: 'Package architecture'
+        required: true
+        default: arm64
+        type: choice
+        options: [arm64, universal]
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
+      architecture:
+        required: false
+        default: arm64
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      PACKAGE_ARCH: ${{ inputs.architecture }}
+      GOTOOLCHAIN: local
+      RUSTUP_TOOLCHAIN: stable
+      CARGO_BUILD_JOBS: '4'
+      GOMAXPROCS: '4'
+    steps:
+      - name: Validate explicit source and architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'A full lowercase source SHA is required' >&2; exit 1; }
+          case "$PACKAGE_ARCH" in arm64|universal) ;; *) echo 'Invalid package architecture' >&2; exit 1;; esac
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Require the exact checked-out commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+          [[ -z "$(git status --porcelain=v1 --untracked-files=all --ignore-submodules=none)" ]]
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: .go-version
+          cache: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Prepare Rust compiler and target slices
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup target add --toolchain stable aarch64-apple-darwin
+          if [[ "$PACKAGE_ARCH" == universal ]]; then
+            rustup target add --toolchain stable x86_64-apple-darwin
+          fi
+      - name: Check pipeline protocol
+        run: node --test scripts/macos/build-distribution.test.mjs
+      - name: Build exact-source package and provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/macos/build-distribution.sh \
+            --arch "$PACKAGE_ARCH" \
+            --output-dir "$RUNNER_TEMP/tenebra-macos-output" \
+            --go "$(command -v go)" \
+            --node "$(command -v node)"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: tenebra-macos-${{ inputs.architecture }}-${{ inputs.source_sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tenebra-macos-output/*
+          if-no-files-found: error
+          retention-days: 30
