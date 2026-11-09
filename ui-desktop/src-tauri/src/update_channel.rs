@@ -14,6 +14,9 @@ use tauri::{AppHandle, Manager, ResourceId, Webview};
 use tauri_plugin_updater::UpdaterExt;
 use url::Url;
 
+#[path = "update_policy.rs"]
+mod update_policy;
+
 /// Beta is one file on an atomic Git ref; stable keeps its existing release URL.
 const BETA_MANIFEST: &str =
     "https://raw.githubusercontent.com/Divaaaan/tenebra/update-channels/beta.json";
@@ -65,6 +68,10 @@ pub async fn check_update_for_channel(
     webview: Webview,
     channel: String,
 ) -> Result<Option<ChannelUpdate>, String> {
+    if !in_app_updates_supported(webview.app_handle().clone()) {
+        return Ok(None);
+    }
+
     let endpoints = manifest_urls(&channel)
         .iter()
         .map(|url| Url::parse(url))
@@ -107,19 +114,19 @@ pub async fn check_update_for_channel(
 /// reports the AppImage it is running from (the `APPIMAGE` variable the runtime
 /// sets), and its absence is what tells the two apart.
 ///
-/// Everywhere else the in-app updater is the supported path — the NSIS installer
-/// and the macOS .app both update themselves — so the answer is a plain yes.
+/// macOS must use the full installer package: replacing only the .app leaves
+/// the privileged daemon and engine behind. Keep in-app updates disabled until
+/// those components can be updated together. Windows keeps its NSIS updater.
 #[tauri::command]
 pub fn in_app_updates_supported(app: AppHandle) -> bool {
     #[cfg(target_os = "linux")]
-    {
-        app.env().appimage.is_some()
-    }
+    let has_appimage = app.env().appimage.is_some();
     #[cfg(not(target_os = "linux"))]
-    {
+    let has_appimage = {
         let _ = app;
-        true
-    }
+        false
+    };
+    update_policy::supports_in_app_updates(std::env::consts::OS, has_appimage)
 }
 
 #[cfg(test)]

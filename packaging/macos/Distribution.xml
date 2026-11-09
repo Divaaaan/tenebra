@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+  <title>Tenebra @VERSION@</title>
+  <options customize="never" require-scripts="false" rootVolumeOnly="true" hostArchitectures="@HOST_ARCHITECTURES@"/>
+  <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+  <allowed-os-versions><os-version min="15.0"/></allowed-os-versions>
+  <choices-outline><line choice="default"/></choices-outline>
+  <choice id="default" visible="false"><pkg-ref id="com.tenebra.desktop.personal.pkg"/></choice>
+  <pkg-ref id="com.tenebra.desktop.personal.pkg" version="@VERSION@" onConclusion="none">Tenebra-component.pkg</pkg-ref>
+</installer-gui-script>

@@ -348,8 +348,8 @@ export function SettingsScreen({ tenebra }: SettingsScreenProps) {
   // waits on a confirm; this holds that dialog open.
   const [confirmingInstall, setConfirmingInstall] = useState(false);
   const [appVersion, setAppVersion] = useState("");
-  // Whether this install can replace itself at all. False only for a Linux copy
-  // that came from a package manager, where the whole updater flow is inert and
+  // Whether this install can replace itself at all. False for a macOS package
+  // or a Linux copy from a package manager, where the updater flow is inert and
   // the row says where updates come from instead. Starts optimistic so the
   // controls never flicker from disabled to enabled on the common platforms.
   const [selfUpdating, setSelfUpdating] = useState(true);

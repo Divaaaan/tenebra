@@ -36,10 +36,10 @@ interface UpdateMetadata {
 /** Whether this install can update itself in place, asked of the backend (only
  *  Rust can see how the app was installed).
  *
- *  Everywhere but Linux the answer is always yes. On Linux the updater can only
- *  replace an AppImage — a copy from a package manager is owned by that manager,
- *  and offering to overwrite it would be a button that fails at best. The UI
- *  therefore drops the whole flow and says where updates come from instead; see
+ *  macOS requires its full installer to update the app and daemon together.
+ *  On Linux the updater can only replace an AppImage — a copy from a package
+ *  manager is owned by that manager. The UI drops the whole flow and says where
+ *  updates come from instead; see
  *  `in_app_updates_supported` in `src-tauri/src/update_channel.rs`.
  *
  *  A failed call means no backend answered (an older shell, a test host), which

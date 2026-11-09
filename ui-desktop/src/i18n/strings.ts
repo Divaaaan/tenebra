@@ -592,8 +592,8 @@ export interface Strings {
     updatesNeverChecked: string;
     /**
      * Shown in place of the whole updater flow when the app cannot replace
-     * itself — a Linux install that came from a package manager rather than an
-     * AppImage. The controls are disabled there, so this has to say where
+     * itself — a macOS package or a Linux package rather than an AppImage.
+     * The controls are disabled there, so this has to say where
      * updates do come from instead of leaving a dead button.
      */
     updatesPackaged: string;
@@ -1285,7 +1285,7 @@ const en: Strings = {
     updatesLastCheckFailed: "Last check failed {when}",
     updatesNeverChecked: "Not checked yet",
     updatesPackaged:
-      "This copy was installed by your package manager — update Tenebra through it.",
+      "Update Tenebra using its full installer or your package manager.",
     autoInstall: "Install updates automatically",
     autoInstallHint:
       "When a launch check finds a new version, install it and restart without asking.",
@@ -1894,7 +1894,7 @@ const ru: Strings = {
     updatesLastCheckFailed: "Последняя проверка не удалась: {when}",
     updatesNeverChecked: "Ещё не проверялось",
     updatesPackaged:
-      "Эта копия установлена пакетным менеджером — обновляйте Tenebra через него.",
+      "Обновляйте Tenebra с помощью полного установщика или пакетного менеджера.",
     autoInstall: "Устанавливать обновления автоматически",
     autoInstallHint:
       "Если проверка при запуске нашла новую версию — установить её и перезапустить без вопросов.",

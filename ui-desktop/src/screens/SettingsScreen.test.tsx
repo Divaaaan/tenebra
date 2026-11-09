@@ -1255,17 +1255,16 @@ describe("SettingsScreen", () => {
       expect(tenebra.setCrashReports).toHaveBeenCalledWith(true);
     });
 
-    it("stands the updater down when a package manager owns this install", async () => {
-      // A Linux copy from apt/pacman: the app cannot replace files the package
-      // manager owns, so the row has to say where updates come from rather than
-      // leave a Check button that leads to an install that would fail.
+    it("directs packaged installs to their full installer or package manager", async () => {
+      // macOS must update the GUI and daemon together; Linux packages must go
+      // through their package manager. Neither can use the in-app updater.
       vi.mocked(invoke).mockResolvedValue(false);
       const tenebra = makeTenebra({ state: { state: "idle" } as State });
       renderWithProviders(<SettingsScreen tenebra={tenebra} />);
 
       expect(
         await screen.findByText(
-          "This copy was installed by your package manager — update Tenebra through it.",
+          "Update Tenebra using its full installer or your package manager.",
         ),
       ).toBeInTheDocument();
       expect(
