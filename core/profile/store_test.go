@@ -273,7 +273,10 @@ func TestUpdatePreservesStableServerIDs(t *testing.T) {
 		{Protocol: model.Trojan, Name: "London", Server: "203.0.113.9", Port: 443, Password: "pw-new"},
 	}
 	updated := p
-	updated.Servers = assignServerIDs(refreshed)
+	updated.Servers, err = ReconcileServers(p.Servers, refreshed, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Update(updated); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
@@ -335,7 +338,11 @@ func TestServerIDChangesWhenServerChanges(t *testing.T) {
 	changed := sampleNodes()[:1]
 	changed[0].UUID = "rotated-uuid"
 	upd := p
-	upd.Servers = assignServerIDs(changed)
+	var err error
+	upd.Servers, err = ReconcileServers(p.Servers, changed, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Update(upd); err != nil {
 		t.Fatal(err)
 	}

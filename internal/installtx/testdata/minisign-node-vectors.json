@@ -1,0 +1,14 @@
+[
+  {
+    "algorithm": "Ed",
+    "body": "c3ludGhldGljIE5vZGUgRWQyNTUxOSBhbmQgQkxBS0UyYiBmaXh0dXJlCg==",
+    "signature": "untrusted comment: synthetic signature\nRWRub2RldmVjdCnNPp8qbd7GMCw5JQmAhofgELbNZ+FCi8crS74mD2gxPXFvZ2byn2gSCElqiOYyXWXMu33pjwQYlmZjCHROAwM=\ntrusted comment: timestamp:1 file:synthetic-fixture\nZDN75NJIorMxOCy1FXfNzAahdzHzBnybj0rY1hO8y5h2uzSgmuO/fXrk/SpmbJrS74ABuS1J3cgMGXrXNyhRCg==\n",
+    "public_key": "untrusted comment: synthetic Node cross-library fixture\nRWRub2RldmVjdE4nxwUM9P83q+Isi5jq9IUdg2o+O6z3Cw1B3znlApEI\n"
+  },
+  {
+    "algorithm": "ED",
+    "body": "c3ludGhldGljIE5vZGUgRWQyNTUxOSBhbmQgQkxBS0UyYiBmaXh0dXJlCg==",
+    "signature": "untrusted comment: synthetic signature\nRURub2RldmVjdPy6aR0QUkZ58NZlaScnU7ivN4a6fr+NOJvMYLuc9FoN0rqHx+sR/pUEjTH2tSmETc3cqQAQ0Kqri1gYfsetXwc=\ntrusted comment: timestamp:1 file:synthetic-fixture\nECpepCmEX/Gj+2qmKS9JldCLADNYchR+v4owW6nQNj0mLvvunYRoTEKh860xin1+uORs65xJGOEYhc5k7XDACg==\n",
+    "public_key": "untrusted comment: synthetic Node cross-library fixture\nRWRub2RldmVjdE4nxwUM9P83q+Isi5jq9IUdg2o+O6z3Cw1B3znlApEI\n"
+  }
+]

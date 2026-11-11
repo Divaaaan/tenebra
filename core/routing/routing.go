@@ -283,7 +283,7 @@ type Options struct {
 	// are matched on their executable file name (process_name). SplitMode off
 	// (the zero-equivalent after Normalize) leaves base routing untouched.
 	SplitMode SplitMode
-	SplitApps []string // executable names, normalized to lowercase
+	SplitApps []string // literal executable basenames, preserving display spelling
 
 	// RulesDirect and RulesProxy are user-defined domain-suffix routing rules:
 	// destinations matching RulesDirect are pinned to the direct outbound, those
@@ -363,10 +363,8 @@ func (o Options) Normalize() Options {
 	return n
 }
 
-// normalizeApps lowercases, trims, de-duplicates and sorts executable names so
-// the rule output and persisted state are stable regardless of input order or
-// casing. process_name matching in sing-box is case-insensitive on the file
-// name, so lowercasing here is safe and keeps the config deterministic.
+// normalizeApps preserves the first display spelling and deduplicates using
+// the same case folding as the generated literal process-path patterns.
 func normalizeApps(apps []string) []string {
 	if len(apps) == 0 {
 		return nil
@@ -374,20 +372,21 @@ func normalizeApps(apps []string) []string {
 	seen := make(map[string]struct{}, len(apps))
 	out := make([]string, 0, len(apps))
 	for _, a := range apps {
-		a = strings.ToLower(strings.TrimSpace(a))
+		a = strings.TrimSpace(a)
 		if a == "" {
 			continue
 		}
-		if _, dup := seen[a]; dup {
+		key := foldAppKey(a)
+		if _, dup := seen[key]; dup {
 			continue
 		}
-		seen[a] = struct{}{}
+		seen[key] = struct{}{}
 		out = append(out, a)
 	}
 	if len(out) == 0 {
 		return nil
 	}
-	sort.Strings(out)
+	sort.Slice(out, func(i, j int) bool { return foldAppKey(out[i]) < foldAppKey(out[j]) })
 	return out
 }
 
@@ -409,6 +408,11 @@ func (o Options) Validate() error {
 		// Empty is the unset zero value and means off; Normalize canonicalizes it.
 	default:
 		return fmt.Errorf("routing: unknown split mode %q", o.SplitMode)
+	}
+	for _, name := range o.SplitApps {
+		if !ValidAppName(name) {
+			return fmt.Errorf("routing: expected a literal executable basename")
+		}
 	}
 	// Reject a malformed custom rule suffix so garbage can never reach sing-box.
 	// The control layer already refuses one at the command boundary; this is the

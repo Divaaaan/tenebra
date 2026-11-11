@@ -1,0 +1,36 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+    install|upgrade)
+        standalone=/etc/systemd/system/tenebra.service
+        if [ -e "$standalone" ] || [ -L "$standalone" ]; then
+            echo 'Tenebra standalone service requires migration before package installation.' >&2
+            exit 1
+        fi
+        unit=/usr/lib/systemd/system/tenebra.service
+        if [ -e "$unit" ] || [ -L "$unit" ]; then
+            if [ -L "$unit" ] || [ ! -f "$unit" ] ||
+               [ "$(stat -c %u "$unit")" != 0 ] || [ "$(stat -c %h "$unit")" != 1 ]; then
+                echo 'Tenebra package unit is untrusted.' >&2
+                exit 1
+            fi
+            mode=$(stat -c %a "$unit")
+            if [ "$((0$mode & 022))" -ne 0 ] || [ "$(stat -c %s "$unit")" -gt 65536 ]; then
+                echo 'Tenebra package unit is untrusted.' >&2
+                exit 1
+            fi
+            actual=$(sha256sum "$unit")
+            if [ "${actual%% *}" != 9fa81608eb3d5d0f78250e094518120cc1cd8c03d39601f2a2973580f5ee4a94 ]; then
+                echo 'Tenebra custom service requires migration before package installation.' >&2
+                exit 1
+            fi
+        fi
+        ;;
+    abort-upgrade)
+        ;;
+    *)
+        echo 'Unsupported Tenebra pre-install action.' >&2
+        exit 1
+        ;;
+esac

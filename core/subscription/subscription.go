@@ -24,6 +24,9 @@ var ErrUnsupportedScheme = errors.New("subscription: unsupported link scheme")
 // ParseLink routes a single share link to the parser for its scheme.
 func ParseLink(raw string) (model.Node, error) {
 	raw = strings.TrimSpace(raw)
+	if len(raw) > 4*model.MaxNodeBytes {
+		return model.Node{}, &BudgetError{Kind: "raw_node_bytes", Limit: 4 * model.MaxNodeBytes}
+	}
 	if raw == "" {
 		return model.Node{}, errors.New("subscription: empty link")
 	}

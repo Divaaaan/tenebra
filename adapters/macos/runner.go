@@ -37,6 +37,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Divaaaan/tenebra/adapters/internal/maintenancehost"
 	"github.com/Divaaaan/tenebra/adapters/internal/processlog"
 )
 
@@ -100,9 +101,11 @@ var blocked = make(chan error)
 // not usable; build it with New. It is safe for concurrent use: Stats and Done
 // may be called while Start or Stop runs.
 type Runner struct {
+	maintenance maintenancehost.Host
 	// binOverride, when non-empty, is the sing-box path to run instead of the
 	// one resolved next to the executable. New seeds it from TENEBRA_SINGBOX.
-	binOverride string
+	binOverride     string
+	resolutionError error
 	// ClashPort is the clash API port Stats queries; 0 means defaultClashPort.
 	ClashPort int
 
@@ -128,6 +131,17 @@ func New() *Runner {
 		ClashPort:   defaultClashPort,
 		ring:        newRingBuffer(logRingSize),
 	}
+}
+
+func NewWithBinary(binary string) *Runner {
+	r := New()
+	if !filepath.IsAbs(binary) || strings.ContainsRune(binary, 0) {
+		r.binOverride = ""
+		r.resolutionError = os.ErrInvalid
+	} else {
+		r.binOverride = filepath.Clean(binary)
+	}
+	return r
 }
 
 // Start launches sing-box with configJSON. It returns once the process is
@@ -165,10 +179,32 @@ func (r *Runner) Start(ctx context.Context, configJSON []byte) error {
 		r.ring.add(hint)
 	}
 
-	cfgPath, err := writeConfig(configJSON)
+	launch, err := r.maintenance.Stage(ctx, configJSON)
 	if err != nil {
 		return err
 	}
+	var cfgPath string
+	if launch != nil {
+		cfgPath, err = launch.Path()
+	} else {
+		cfgPath, err = writeConfig(configJSON)
+	}
+	if err != nil {
+		if launch != nil {
+			_ = launch.Close()
+		}
+		return err
+	}
+	started := false
+	defer func() {
+		if !started {
+			if launch != nil {
+				_ = launch.Close()
+			} else {
+				_ = os.Remove(cfgPath)
+			}
+		}
+	}()
 
 	// The clash API secret travels inside the config we were handed; read it back
 	// so Stats/Probe authenticate to the same controller this process exposes.
@@ -177,7 +213,6 @@ func (r *Runner) Start(ctx context.Context, configJSON []byte) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.cmd != nil {
-		os.Remove(cfgPath)
 		return errors.New("macos: sing-box already running")
 	}
 
@@ -189,12 +224,21 @@ func (r *Runner) Start(ctx context.Context, configJSON []byte) error {
 	cmd.Stderr = stderrLog
 	cmd.WaitDelay = processOutputWaitDelay
 
+	if launch != nil {
+		if err := launch.ReleasePort(); err != nil {
+			cancel()
+			return err
+		}
+	}
 	if err := cmd.Start(); err != nil {
 		cancel()
-		os.Remove(cfgPath)
 		return fmt.Errorf("macos: start sing-box: %w", err)
 	}
 
+	started = true
+	if launch != nil {
+		launch.Started()
+	}
 	done := make(chan error, 1)
 	r.cmd = cmd
 	r.cancel = cancel
@@ -210,7 +254,11 @@ func (r *Runner) Start(ctx context.Context, configJSON []byte) error {
 		stdoutLog.Flush()
 		stderrLog.Flush()
 		cancel()
-		os.Remove(cfgPath)
+		if launch != nil {
+			werr = errors.Join(werr, launch.Close())
+		} else {
+			_ = os.Remove(cfgPath)
+		}
 
 		r.mu.Lock()
 		if r.cmd == cmd { // still the current process, not superseded
@@ -519,6 +567,9 @@ func (r *Runner) SingboxVersion() string {
 // resolveSingbox returns the sing-box binary path: the override (env or field)
 // if set, otherwise the platform-named binary sitting next to this executable.
 func (r *Runner) resolveSingbox() (string, error) {
+	if r.resolutionError != nil {
+		return "", r.resolutionError
+	}
 	if r.binOverride != "" {
 		return r.binOverride, nil
 	}

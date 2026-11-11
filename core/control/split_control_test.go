@@ -22,16 +22,16 @@ func TestSetSplitExclude(t *testing.T) {
 	if st.Split != "exclude" {
 		t.Errorf("split = %q, want exclude", st.Split)
 	}
-	if !reflect.DeepEqual(st.SplitApps, []string{"chrome.exe", "steam.exe"}) {
-		t.Errorf("split apps = %v, want [chrome.exe steam.exe] (lowercased, sorted)", st.SplitApps)
+	if !reflect.DeepEqual(st.SplitApps, []string{"Chrome.exe", "steam.exe"}) {
+		t.Errorf("split apps = %v, want [Chrome.exe steam.exe] (first spelling retained, sorted)", st.SplitApps)
 	}
 
 	// Status must reflect the new split.
 	h.send(Request{ID: 2, Cmd: CmdStatus})
 	var st2 State
 	h.dataInto(h.await(), &st2)
-	if st2.Split != "exclude" || !reflect.DeepEqual(st2.SplitApps, []string{"chrome.exe", "steam.exe"}) {
-		t.Errorf("status split = %q %v, want exclude [chrome.exe steam.exe]", st2.Split, st2.SplitApps)
+	if st2.Split != "exclude" || !reflect.DeepEqual(st2.SplitApps, []string{"Chrome.exe", "steam.exe"}) {
+		t.Errorf("status split = %q %v, want exclude [Chrome.exe steam.exe]", st2.Split, st2.SplitApps)
 	}
 
 	// The daemon's live routing options must carry it so the next connect uses it.
@@ -215,7 +215,7 @@ func TestFileSettingsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if err := st.Save(persistedSettings{SplitMode: "exclude", SplitApps: []string{"chrome.exe", "steam.exe"}}); err != nil {
+	if err := st.Save(persistedSettings{SplitMode: "exclude", SplitApps: []string{"Chrome.exe", "steam.exe"}}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
@@ -224,8 +224,8 @@ func TestFileSettingsRoundTrip(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	got := st2.Load()
-	if got.SplitMode != "exclude" || !reflect.DeepEqual(got.SplitApps, []string{"chrome.exe", "steam.exe"}) {
-		t.Errorf("loaded = %q %v, want exclude [chrome.exe steam.exe]", got.SplitMode, got.SplitApps)
+	if got.SplitMode != "exclude" || !reflect.DeepEqual(got.SplitApps, []string{"Chrome.exe", "steam.exe"}) {
+		t.Errorf("loaded = %q %v, want exclude [Chrome.exe steam.exe]", got.SplitMode, got.SplitApps)
 	}
 	if got.Version != settingsVersion {
 		t.Errorf("version = %d, want %d", got.Version, settingsVersion)
@@ -283,8 +283,8 @@ func TestSetSplitPersistsThroughStore(t *testing.T) {
 		t.Fatalf("reopen settings: %v", err)
 	}
 	got := reopened.Load()
-	if got.SplitMode != "include" || !reflect.DeepEqual(got.SplitApps, []string{"brave.exe"}) {
-		t.Errorf("persisted split = %q %v, want include [brave.exe] (deduped, lowercased)", got.SplitMode, got.SplitApps)
+	if got.SplitMode != "include" || !reflect.DeepEqual(got.SplitApps, []string{"Brave.exe"}) {
+		t.Errorf("persisted split = %q %v, want include [Brave.exe] (case-fold deduped, first spelling retained)", got.SplitMode, got.SplitApps)
 	}
 }
 

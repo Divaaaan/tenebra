@@ -148,19 +148,19 @@ func TestGamesPresetPinsLaunchersAndHelpers(t *testing.T) {
 	o := Options{Mode: ModeSmart, GamesDirect: true}.Normalize()
 	rules := o.RouteRules()
 
-	r := ruleFor(rules, "process_name")
+	r := ruleFor(rules, "process_path_regex")
 	if r == nil {
 		t.Fatal("games preset emitted no process rule")
 	}
 	if r["outbound"] != tagDirect {
 		t.Fatalf("games rule targets %v, want direct", r["outbound"])
 	}
-	apps, _ := r["process_name"].([]string)
+	apps, _ := r["process_path_regex"].([]string)
 	// The launchers and service processes are the entries a hand-built list
 	// forgets, and forgetting them breaks the game more confusingly than
 	// forgetting the game itself.
 	for _, want := range []string{"dota2.exe", "cs2.exe", "steam.exe", "steamservice.exe", "minecraftlauncher.exe"} {
-		if !contains(apps, want) {
+		if !matchesProcess(apps, want) {
 			t.Errorf("preset does not cover %q", want)
 		}
 	}
@@ -178,18 +178,18 @@ func TestGamesPresetLeavesLauncherWebHelpersInTheTunnel(t *testing.T) {
 		t.Error("games preset pins steamwebhelper.exe direct; the Steam web layer needs the tunnel")
 	}
 	o := Options{Mode: ModeSmart, GamesDirect: true}.Normalize()
-	apps, _ := ruleFor(o.RouteRules(), "process_name")["process_name"].([]string)
-	if contains(apps, "steamwebhelper.exe") {
+	apps, _ := ruleFor(o.RouteRules(), "process_path_regex")["process_path_regex"].([]string)
+	if matchesProcess(apps, "steamwebhelper.exe") {
 		t.Errorf("steamwebhelper.exe reached the direct rule anyway: %v", apps)
 	}
 	// The game client itself is still direct — dropping the web helper must not
 	// have taken Steam with it.
-	if !contains(apps, "steam.exe") {
+	if !matchesProcess(apps, "steam.exe") {
 		t.Errorf("steam.exe lost its direct pin: %v", apps)
 	}
 }
 
-// process_name matches a bare file name, so a generic one in the preset takes
+// process_path_regex matches a bare file name, so a generic one in the preset takes
 // every program that happens to be called that out of the tunnel. `java.exe` and
 // `javaw.exe` are every JVM program on the machine — an IDE, a corporate client,
 // a build tool — and `launcher.exe` is a name half the industry ships. A user who
@@ -210,7 +210,7 @@ func TestGamesPresetWorksWithoutSplitModeOn(t *testing.T) {
 	if o.SplitMode == SplitExclude {
 		t.Fatalf("test assumes split mode stays off, got %q", o.SplitMode)
 	}
-	if r := ruleFor(o.RouteRules(), "process_name"); r == nil {
+	if r := ruleFor(o.RouteRules(), "process_path_regex"); r == nil {
 		t.Fatal("no games rule with split tunnelling off")
 	}
 }
@@ -224,13 +224,13 @@ func TestGamesPresetMergesWithUserApps(t *testing.T) {
 		GamesDirect: true,
 	}.Normalize()
 
-	apps, _ := ruleFor(o.RouteRules(), "process_name")["process_name"].([]string)
-	if !contains(apps, "mygame.exe") {
+	apps, _ := ruleFor(o.RouteRules(), "process_path_regex")["process_path_regex"].([]string)
+	if !matchesProcess(apps, "mygame.exe") {
 		t.Error("user app dropped by the preset merge")
 	}
 	seen := 0
 	for _, a := range apps {
-		if a == "dota2.exe" {
+		if matchesProcess([]string{a}, "dota2.exe") {
 			seen++
 		}
 	}
@@ -264,7 +264,7 @@ func TestPresetsYieldToTheKillSwitch(t *testing.T) {
 	}.Normalize()
 	rules := o.RouteRules()
 
-	if r := ruleFor(rules, "process_name"); r != nil {
+	if r := ruleFor(rules, "process_path_regex"); r != nil {
 		t.Errorf("games preset emitted a direct rule under the kill switch: %v", r)
 	}
 	if r := ruleFor(rules, "port_range"); r != nil {
@@ -324,7 +324,7 @@ func TestDirectModeStillEmitsNoDirectPins(t *testing.T) {
 	}.Normalize()
 	rules := o.RouteRules()
 
-	if r := ruleFor(rules, "process_name"); r != nil {
+	if r := ruleFor(rules, "process_path_regex"); r != nil {
 		t.Errorf("games preset emitted a rule in direct mode: %v", r)
 	}
 	if r := ruleFor(rules, "port_range"); r != nil {
@@ -383,11 +383,11 @@ func TestKillSwitchKeepsUserChosenExcludedApps(t *testing.T) {
 		GamesDirect: true,
 	}.Normalize()
 
-	apps, _ := ruleFor(o.RouteRules(), "process_name")["process_name"].([]string)
-	if !contains(apps, "myapp.exe") {
+	apps, _ := ruleFor(o.RouteRules(), "process_path_regex")["process_path_regex"].([]string)
+	if !matchesProcess(apps, "myapp.exe") {
 		t.Errorf("the user's own excluded app was dropped: %v", apps)
 	}
-	if contains(apps, "dota2.exe") {
+	if matchesProcess(apps, "dota2.exe") {
 		t.Errorf("the games preset rode into the exclude list under the kill switch: %v", apps)
 	}
 }
@@ -443,15 +443,15 @@ func TestKillSwitchLeavesIncludeSplitToTheUser(t *testing.T) {
 	if got := o.FinalOutbound(); got != tagDirect {
 		t.Errorf("include-mode final = %q under the kill switch, want direct", got)
 	}
-	r := ruleFor(o.RouteRules(), "process_name")
+	r := ruleFor(o.RouteRules(), "process_path_regex")
 	if r == nil {
 		t.Fatal("include split emitted no process rule under the kill switch")
 	}
 	if r["outbound"] != tagProxy {
 		t.Errorf("the listed app is pinned to %v under the kill switch, want the proxy", r["outbound"])
 	}
-	apps, _ := r["process_name"].([]string)
-	if !contains(apps, "work.exe") {
+	apps, _ := r["process_path_regex"].([]string)
+	if !matchesProcess(apps, "work.exe") {
 		t.Errorf("the user's listed app was dropped: %v", apps)
 	}
 }
@@ -459,7 +459,7 @@ func TestKillSwitchLeavesIncludeSplitToTheUser(t *testing.T) {
 func TestPresetsOffByDefault(t *testing.T) {
 	o := Options{Mode: ModeSmart}.Normalize()
 	rules := o.RouteRules()
-	if r := ruleFor(rules, "process_name"); r != nil {
+	if r := ruleFor(rules, "process_path_regex"); r != nil {
 		t.Errorf("games rule emitted without opting in: %v", r)
 	}
 	if r := ruleFor(rules, "port_range"); r != nil {

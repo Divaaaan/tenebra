@@ -2,6 +2,8 @@
 // representation of a proxy server and the pieces of its configuration.
 package model
 
+import "encoding/json"
+
 // Protocol is the proxy protocol a Node speaks.
 type Protocol string
 
@@ -18,10 +20,11 @@ const (
 // parsers produce Nodes; the sing-box config generator consumes them. A
 // protocol field left at its zero value is omitted from the generated outbound.
 type Node struct {
-	Protocol Protocol `json:"protocol"`
-	Name     string   `json:"name"`
-	Server   string   `json:"server"`
-	Port     int      `json:"port"`
+	AdditionalFields map[string]json.RawMessage `json:"-"`
+	Protocol         Protocol                   `json:"protocol"`
+	Name             string                     `json:"name"`
+	Server           string                     `json:"server"`
+	Port             int                        `json:"port"`
 
 	UUID     string `json:"uuid,omitempty"`     // vless, vmess
 	Password string `json:"password,omitempty"` // hysteria2, trojan, shadowsocks
@@ -43,11 +46,12 @@ type Node struct {
 
 // TLS describes the transport security layer.
 type TLS struct {
-	Enabled     bool     `json:"enabled"`
-	ServerName  string   `json:"server_name,omitempty"` // SNI
-	Insecure    bool     `json:"insecure,omitempty"`
-	ALPN        []string `json:"alpn,omitempty"`
-	Fingerprint string   `json:"fingerprint,omitempty"` // uTLS, e.g. chrome
+	AdditionalFields map[string]json.RawMessage `json:"-"`
+	Enabled          bool                       `json:"enabled"`
+	ServerName       string                     `json:"server_name,omitempty"` // SNI
+	Insecure         bool                       `json:"insecure,omitempty"`
+	ALPN             []string                   `json:"alpn,omitempty"`
+	Fingerprint      string                     `json:"fingerprint,omitempty"` // uTLS, e.g. chrome
 	// Fragment splits the TLS ClientHello across multiple TCP segments so DPI that
 	// keys on the plaintext SNI in a single first packet cannot match it. It maps to
 	// the sing-box outbound tls.fragment option (the fallback delay is fixed by the
@@ -58,23 +62,26 @@ type TLS struct {
 
 // Reality holds REALITY handshake parameters (VLESS).
 type Reality struct {
-	PublicKey string `json:"public_key"`
-	ShortID   string `json:"short_id,omitempty"`
-	SpiderX   string `json:"spider_x,omitempty"`
+	AdditionalFields map[string]json.RawMessage `json:"-"`
+	PublicKey        string                     `json:"public_key"`
+	ShortID          string                     `json:"short_id,omitempty"`
+	SpiderX          string                     `json:"spider_x,omitempty"`
 }
 
 // Transport is the stream transport. An empty Type means raw TCP.
 type Transport struct {
-	Type        string `json:"type"`                   // ws, grpc, http, httpupgrade
-	Path        string `json:"path,omitempty"`         // ws, http, httpupgrade
-	Host        string `json:"host,omitempty"`         // Host header
-	ServiceName string `json:"service_name,omitempty"` // grpc
+	AdditionalFields map[string]json.RawMessage `json:"-"`
+	Type             string                     `json:"type"`                   // ws, grpc, http, httpupgrade
+	Path             string                     `json:"path,omitempty"`         // ws, http, httpupgrade
+	Host             string                     `json:"host,omitempty"`         // Host header
+	ServiceName      string                     `json:"service_name,omitempty"` // grpc
 }
 
 // Obfs is Hysteria2 obfuscation (Salamander).
 type Obfs struct {
-	Type     string `json:"type"` // salamander
-	Password string `json:"password,omitempty"`
+	AdditionalFields map[string]json.RawMessage `json:"-"`
+	Type             string                     `json:"type"` // salamander
+	Password         string                     `json:"password,omitempty"`
 }
 
 // Multihop configures a two-hop proxy chain: traffic egresses through the entry
@@ -107,10 +114,11 @@ func (m Multihop) IsZero() bool {
 // WireGuard carries (Amnezia)WG key material and the AmneziaWG obfuscation
 // knobs. Jc/Jmin/Jmax/S1/S2/H1-H4 are zero for plain WireGuard.
 type WireGuard struct {
-	PrivateKey    string   `json:"private_key"`
-	PeerPublicKey string   `json:"peer_public_key"`
-	PreSharedKey  string   `json:"pre_shared_key,omitempty"`
-	LocalAddress  []string `json:"local_address,omitempty"`
+	AdditionalFields map[string]json.RawMessage `json:"-"`
+	PrivateKey       string                     `json:"private_key"`
+	PeerPublicKey    string                     `json:"peer_public_key"`
+	PreSharedKey     string                     `json:"pre_shared_key,omitempty"`
+	LocalAddress     []string                   `json:"local_address,omitempty"`
 
 	Jc   int   `json:"jc,omitempty"`
 	Jmin int   `json:"jmin,omitempty"`

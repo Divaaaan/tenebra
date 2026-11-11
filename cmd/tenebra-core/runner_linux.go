@@ -17,6 +17,8 @@ func newRunner() control.Runner {
 	return linux.New()
 }
 
+func newManagedRunner(binary string) control.Runner { return linux.NewWithBinary(binary) }
+
 // newInterfaceProbe returns nil: the tun-conflict guard has no Linux route
 // enumeration yet, and nil leaves it disabled rather than guessing.
 //

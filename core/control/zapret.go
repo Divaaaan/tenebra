@@ -144,7 +144,11 @@ func (d *Daemon) applyZapretToStateLocked(s *State) {
 	s.ZapretActive = d.routing.ZapretActive
 	s.ZapretStrategy = d.zapretActive
 	s.ZapretAutoUpdate = d.zapretAutoUpdate
-	s.ZapretVersion = zapret.Version(filepath.Join(d.store.Dir(), zapretDirName))
+	if d.canonical != nil {
+		s.ZapretVersion = d.zapretRuntimeVersion
+	} else {
+		s.ZapretVersion = zapret.Version(filepath.Join(d.store.Dir(), zapretDirName))
+	}
 }
 
 // newZapretRunner builds a bypass runner that knows whether a tunnel is up.
@@ -332,6 +336,12 @@ func shortNameList(names []string) []string {
 // reconnect: the config carries the split, so without the rebuild the switch the
 // user just pressed would do nothing until they disconnected and connected again.
 func (d *Daemon) applyZapretState(running bool, strategy string) {
+	if d.canonical != nil && strategy != "" {
+		if err := d.commitZapretPreference(context.Background(), nil, &strategy); err != nil {
+			d.emitLog(LogWarn, "bypass strategy persistence failed")
+			strategy = ""
+		}
+	}
 	dir := filepath.Join(d.store.Dir(), zapretDirName)
 
 	var covered []string
@@ -378,10 +388,21 @@ func (d *Daemon) applyZapretState(running bool, strategy string) {
 //   - restartZapretAfterUpdate puts back whatever was running across a bundle
 //     swap, and repickStrategy puts the services back once some strategy works
 //     again. Both restore a state; neither chooses one.
-func (d *Daemon) applyZapretChoice(running bool, strategy string) {
+func (d *Daemon) applyZapretChoice(running bool, strategy string) error {
 	// A fresh local, addressed once: the pointer is handed to the settings store
 	// as it is, so it must not alias a field a later choice would rewrite.
 	want := running
+	if d.canonical != nil {
+		var chosen *string
+		if strategy != "" {
+			chosen = &strategy
+		}
+		if err := d.commitZapretPreference(context.Background(), &want, chosen); err != nil {
+			return err
+		}
+		d.applyZapretState(running, strategy)
+		return nil
+	}
 	d.mu.Lock()
 	d.zapretWanted = &want
 	d.mu.Unlock()
@@ -389,6 +410,7 @@ func (d *Daemon) applyZapretChoice(running bool, strategy string) {
 	// moved the routing — so the switch and what it did to the routing land in one
 	// save rather than two.
 	d.applyZapretState(running, strategy)
+	return nil
 }
 
 // recordZapretWish stores the user's answer to the bypass switch and persists
@@ -398,12 +420,16 @@ func (d *Daemon) applyZapretChoice(running bool, strategy string) {
 // the next connect raised what they had just switched off. Success paths keep
 // going through applyZapretChoice, which records the same wish and then moves
 // the routing to match; this records only the wish.
-func (d *Daemon) recordZapretWish(want bool) {
+func (d *Daemon) recordZapretWish(want bool) error {
+	if d.canonical != nil {
+		return d.commitZapretPreference(context.Background(), &want, nil)
+	}
 	w := want
 	d.mu.Lock()
 	d.zapretWanted = &w
 	d.mu.Unlock()
 	d.persistSettings()
+	return nil
 }
 
 // zapretSwitchedOff reports that the user has explicitly turned the bypass off,
@@ -851,13 +877,19 @@ func (d *Daemon) handlePickZapret(ctx context.Context, req Request) Response {
 		// Filed against this network before it is started: the measurement is the
 		// thing worth keeping, and it holds whether or not the winner then comes up.
 		d.rememberStrategyForThisNetwork(best.Name)
+		wanted := true
+		if err := d.commitZapretPreference(ctx, &wanted, &best.Name); err != nil {
+			return canonicalError(req.ID, err)
+		}
 		if started, sErr := runner.Start(ctx, best.Strategy); sErr != nil || !started {
 			d.emitLog(LogWarn, fmt.Sprintf("zapret: %s не запустилась после подбора", best.Name))
 		} else {
 			// A pick that ends with its winner running is the user turning the bypass
 			// on — they pressed a button and the switch reads on afterwards — so the
 			// answer is recorded like the switch's own.
-			d.applyZapretChoice(true, best.Name)
+			if err := d.applyZapretChoice(true, best.Name); err != nil {
+				return canonicalError(req.ID, err)
+			}
 			d.emitLog(LogInfo, fmt.Sprintf("zapret: включена %s", best.Name))
 		}
 	}
@@ -973,10 +1005,13 @@ func (d *Daemon) handleStartZapret(ctx context.Context, req Request) Response {
 		}
 	}
 
-	d.excludeNodesFromZapret(dir)
-
 	// A hand-started bypass answers the tunnel question from the live state:
 	// nothing is about to change here, unlike the connect path.
+	wanted := true
+	if err := d.commitZapretPreference(ctx, &wanted, &chosen.Name); err != nil {
+		return canonicalError(req.ID, err)
+	}
+	d.excludeNodesFromZapret(dir)
 	started, err := d.startRunnerFor(dir).Start(ctx, chosen)
 	if err != nil {
 		return newError(req.ID, err.Error())
@@ -991,7 +1026,9 @@ func (d *Daemon) handleStartZapret(ctx context.Context, req Request) Response {
 
 	// The user pressed the switch, so this is the one raise that is also an answer
 	// worth keeping: it is what brings the bypass back after a restart.
-	d.applyZapretChoice(true, chosen.Name)
+	if err := d.applyZapretChoice(true, chosen.Name); err != nil {
+		return canonicalError(req.ID, err)
+	}
 	d.emitLog(LogInfo, fmt.Sprintf("zapret: включена %s", chosen.Name))
 
 	resp, err := newResult(req.ID, struct {
@@ -1127,8 +1164,11 @@ func (d *Daemon) autoStartZapret(ctx context.Context, tunnelUp bool) bool {
 	}
 	d.emitDebug(fmt.Sprintf("zapret: %d стратегий в сборке, беру %s (%s)", len(strategies), chosen.Name, picked))
 
+	if err := d.commitZapretPreference(ctx, nil, &chosen.Name); err != nil {
+		d.emitLog(LogWarn, "bypass strategy persistence failed")
+		return false
+	}
 	d.excludeNodesFromZapret(dir)
-
 	started, err := d.newStartRunner(dir, tunnelUp).Start(ctx, chosen)
 	if err != nil || !started {
 		// The usual cause is elevation: WinDivert loads a driver, which an
@@ -1146,7 +1186,9 @@ func (d *Daemon) autoStartZapret(ctx context.Context, tunnelUp bool) bool {
 	// restore has no connect to ride on and calls applyZapretState itself. Only
 	// which strategy is running gets recorded here.
 	d.mu.Lock()
-	d.zapretActive = chosen.Name
+	if d.canonical == nil {
+		d.zapretActive = chosen.Name
+	}
 	d.routing.ZapretCovered = zapret.Covered(dir)
 	d.routing = d.routing.Normalize()
 	d.mu.Unlock()
@@ -1198,13 +1240,17 @@ func (d *Daemon) handleStopZapret(ctx context.Context, req Request) Response {
 	// the same as declaring the filter stopped: the routing state is still moved
 	// only by applyZapretChoice below on the success path, and a filter that
 	// survived a failed stop is reported to the caller as the error.
-	d.recordZapretWish(false)
+	if err := d.recordZapretWish(false); err != nil {
+		return canonicalError(req.ID, err)
+	}
 
 	runner := zapret.NewRunner(filepath.Join(d.store.Dir(), zapretDirName))
 	if err := runner.Stop(ctx); err != nil {
 		return newError(req.ID, err.Error())
 	}
-	d.applyZapretChoice(false, "")
+	if err := d.applyZapretChoice(false, ""); err != nil {
+		return canonicalError(req.ID, err)
+	}
 	d.emitLog(LogInfo, "zapret: выключен")
 	return newResult0(req.ID)
 }

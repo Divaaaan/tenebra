@@ -38,6 +38,11 @@ const licenseText = (name) =>
 // ---------------------------------------------------------------------------
 const META = {
   // Go modules (go.mod)
+  "filippo.io/edwards25519": {
+    license: "BSD-3-Clause",
+    copyright: "Copyright (c) 2009 The Go Authors. All rights reserved.",
+    licenseTextFile: "bsd-3-clause-edwards25519.txt",
+  },
   "github.com/Microsoft/go-winio": { license: "MIT", copyright: "Copyright (c) 2015 Microsoft" },
   "github.com/sagernet/gomobile": {
     license: "BSD-3-Clause",
@@ -48,6 +53,7 @@ const META = {
       "no desktop binary.",
   },
   "golang.org/x/sys": { license: "BSD-3-Clause", copyright: "Copyright 2009 The Go Authors" },
+  "golang.org/x/crypto": { license: "BSD-3-Clause", copyright: "Copyright 2009 The Go Authors." },
 
   // Rust crates (src-tauri/Cargo.toml)
   tauri: { license: "Apache-2.0 OR MIT", copyright: "Copyright (c) 2017 - Present Tauri Apps Contributors" },
@@ -62,6 +68,10 @@ const META = {
   "tauri-plugin-process": { license: "Apache-2.0 OR MIT", copyright: "Copyright (c) 2017 - Present Tauri Apps Contributors" },
   serde: { license: "MIT OR Apache-2.0", copyright: "The Serde developers" },
   serde_json: { license: "MIT OR Apache-2.0", copyright: "The Serde developers" },
+  sha2: {
+    license: "MIT OR Apache-2.0",
+    copyright: "Copyright (c) 2006-2009 Graydon Hoare, Copyright (c) 2009-2013 Mozilla Foundation, Copyright (c) 2016 Artyom Pavlov",
+  },
   url: { license: "MIT OR Apache-2.0", copyright: "Copyright (c) 2013-2025 The rust-url developers" },
   open: { license: "MIT", copyright: "Copyright (c) 2015 Sebastian Thiel" },
   "windows-sys": { license: "MIT OR Apache-2.0", copyright: "Copyright (c) Microsoft Corporation" },
@@ -320,7 +330,7 @@ function usersOf(groups, token) {
   for (const group of groups) {
     for (const d of group) {
       if (seen.has(d.name)) continue;
-      if (META[d.name].license.split(/\s+OR\s+/).includes(token)) {
+      if (!META[d.name].licenseTextFile && META[d.name].license.split(/\s+OR\s+/).includes(token)) {
         names.push(d.name);
         seen.add(d.name);
       }
@@ -565,6 +575,16 @@ export function renderNotices(inputs = loadInputs()) {
   p();
   p(fenced(licenseText("bsd-3-clause.txt")));
   p();
+
+  for (const dependency of depGroups.flat()) {
+    const file = META[dependency.name].licenseTextFile;
+    if (file) {
+      p(`### ${dependency.name} license`);
+      p();
+      p(fenced(licenseText(file)));
+      p();
+    }
+  }
 
   p("### Apache License 2.0");
   p();

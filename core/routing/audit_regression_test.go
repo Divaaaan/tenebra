@@ -14,11 +14,11 @@ func TestSplitOffGamesPresetIgnoresSavedCustomApps(t *testing.T) {
 			} {
 				custom, game := "", ""
 				for _, rule := range layer.rules {
-					apps, _ := rule["process_name"].([]string)
-					if contains(apps, "chrome.exe") {
+					apps, _ := rule["process_path_regex"].([]string)
+					if matchesProcess(apps, "chrome.exe") {
 						custom, _ = rule[layer.target].(string)
 					}
-					if contains(apps, "steam.exe") {
+					if matchesProcess(apps, "steam.exe") {
 						game, _ = rule[layer.target].(string)
 					}
 				}

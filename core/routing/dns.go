@@ -99,9 +99,9 @@ func (o Options) dnsRules() []map[string]any {
 	// rule; in smart/global it is a harmless restatement of the existing final.
 	if o.SplitMode == SplitInclude && len(o.SplitApps) > 0 {
 		rules = append(rules, map[string]any{
-			"process_name": o.SplitApps,
-			"action":       "route",
-			"server":       dnsRemoteTag,
+			"process_path_regex": processPathPatterns(o.SplitApps),
+			"action":             "route",
+			"server":             dnsRemoteTag,
 		})
 	}
 	// The mirror image: apps pinned to the DIRECT outbound — the exclude list and
@@ -123,9 +123,9 @@ func (o Options) dnsRules() []map[string]any {
 	// what keeps a lookup and the connection it feeds on the same path.
 	if apps := o.directSplitApps(); len(apps) > 0 {
 		rules = append(rules, map[string]any{
-			"process_name": apps,
-			"action":       "route",
-			"server":       dnsDirectTag,
+			"process_path_regex": processPathPatterns(apps),
+			"action":             "route",
+			"server":             dnsDirectTag,
 		})
 	}
 	// Mirror the route-layer custom/preset rules onto DNS so each domain resolves
@@ -172,7 +172,7 @@ func (o Options) dnsRules() []map[string]any {
 	// The smart-mode RU rule drops out with its geodata (smartGeoActive), exactly
 	// like its route-layer twin: without the .srs on disk this would name an
 	// undefined rule-set and sing-box would refuse the config outright.
-	if o.smartGeoActive() {
+	if o.SplitMode != SplitInclude && o.smartGeoActive() {
 		rules = append(rules, map[string]any{
 			"rule_set": []string{ruleSetGeositeRU},
 			"action":   "route",
@@ -300,7 +300,7 @@ func validDNSHost(h string) bool {
 // tunnelling are handled earlier by a process_name rule in dnsRules, so the
 // direct final here never pulls a tunnelled app's DNS out of the tunnel.
 func (o Options) dnsFinal() string {
-	if o.Mode == ModeDirect {
+	if o.FinalOutbound() == tagDirect {
 		return dnsDirectTag
 	}
 	return dnsRemoteTag

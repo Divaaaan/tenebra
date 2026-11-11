@@ -25,6 +25,9 @@ func (d *Daemon) SetProtection(g *protection.Guard) {
 		g = protection.New(nil)
 	}
 	d.protection = g
+	d.mu.Lock()
+	d.protectionEpoch = 0
+	d.mu.Unlock()
 	g.SetNotify(d.emitProtection)
 }
 
@@ -35,7 +38,10 @@ func (d *Daemon) UseLegacyEngineProtection() {
 }
 
 func (d *Daemon) emitProtection() {
-	s := d.snapshotState()
+	snapshot, epoch := d.protection.SnapshotWithEpoch()
+	// A concurrent internal reader may already have projected this epoch. The
+	// callback still publishes the newest view, never its stale captured policy.
+	s, _ := d.applyProtectionSnapshot(snapshot, epoch)
 	d.mu.Lock()
 	emit := d.emit
 	d.mu.Unlock()

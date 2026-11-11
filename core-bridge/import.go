@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/Divaaaan/tenebra/core/profile"
+	"github.com/Divaaaan/tenebra/core/redact"
 	"github.com/Divaaaan/tenebra/core/subscription"
 )
 
@@ -76,10 +77,7 @@ func importSubscription(requestJSON string, fetch fetchFunc) (string, error) {
 		return "", fmt.Errorf("tenebracore: import: no usable nodes in subscription")
 	}
 
-	name := req.Name
-	if name == "" {
-		name = req.URL
-	}
+	name := redact.ProfileName(req.Name, req.URL)
 	p, err := profile.NewProfile(name, profile.SourceSubscription, req.URL, nodes)
 	if err != nil {
 		return "", fmt.Errorf("tenebracore: import: %w", err)

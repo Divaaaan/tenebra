@@ -10,8 +10,10 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Divaaaan/tenebra/core/dnswire"
@@ -55,9 +57,15 @@ var DefaultDoHEndpoints = []DoHEndpoint{
 }
 
 // dohResolver resolves a host through one or more DoH endpoints.
-type dohResolver struct {
+type DoHResolver struct {
 	endpoints []dohEndpointClient
+	dial      dialFunc
+	mu        sync.Mutex
+	closed    bool
+	ctx       context.Context
+	cancel    context.CancelFunc
 }
+type dohResolver = DoHResolver
 
 // dohEndpointClient pairs an endpoint with an HTTP client whose dial is pinned
 // to the endpoint's resolver IP.
@@ -70,11 +78,37 @@ type dohEndpointClient struct {
 // non-nil, overrides the system trust store for the resolver connections; it is
 // nil in production and set by tests to trust a local resolver.
 func newDoHResolver(endpoints []DoHEndpoint, rootCAs *x509.CertPool) *dohResolver {
-	r := &dohResolver{}
+	dialer := &net.Dialer{Timeout: dohTimeout}
+	return newDoHResolverUsingDial(endpoints, rootCAs, dialer.DialContext)
+}
+
+func NewDoHResolver(endpoints []DoHEndpoint, dial func(context.Context, string, string) (net.Conn, error)) (*DoHResolver, error) {
+	if dial == nil {
+		return nil, ErrNetworkRequired
+	}
+	for _, endpoint := range endpoints {
+		value, err := url.Parse(endpoint.URL)
+		if err != nil || value.Scheme != "https" || value.Host == "" || value.User != nil || value.Fragment != "" {
+			return nil, errInvalidOrigin
+		}
+		if _, err := OriginOf(value); err != nil {
+			return nil, err
+		}
+		address, err := netip.ParseAddrPort(endpoint.Addr)
+		if err != nil || address.Port() == 0 || address.Addr().Zone() != "" {
+			return nil, errInvalidOrigin
+		}
+	}
+	return newDoHResolverUsingDial(endpoints, nil, dial), nil
+}
+
+func newDoHResolverUsingDial(endpoints []DoHEndpoint, rootCAs *x509.CertPool, dial dialFunc) *DoHResolver {
+	ctx, cancel := context.WithCancel(context.Background())
+	r := &DoHResolver{dial: dial, ctx: ctx, cancel: cancel}
 	for _, ep := range endpoints {
 		r.endpoints = append(r.endpoints, dohEndpointClient{
 			ep:     ep,
-			client: newDoHClient(ep.Addr, rootCAs),
+			client: newDoHClientUsingDial(ep.Addr, rootCAs, dial),
 		})
 	}
 	return r
@@ -86,15 +120,20 @@ func newDoHResolver(endpoints []DoHEndpoint, rootCAs *x509.CertPool) *dohResolve
 // TCP connection targets a fixed IP the system resolver never sees.
 func newDoHClient(addr string, rootCAs *x509.CertPool) *http.Client {
 	dialer := &net.Dialer{Timeout: dohTimeout}
+	return newDoHClientUsingDial(addr, rootCAs, dialer.DialContext)
+}
+func newDoHClientUsingDial(addr string, rootCAs *x509.CertPool, dial dialFunc) *http.Client {
 	return &http.Client{
-		Timeout: dohTimeout,
+		Timeout:       dohTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return errRedirectForbidden },
 		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-				return dialer.DialContext(ctx, network, addr)
-			},
-			TLSClientConfig:     &tls.Config{RootCAs: rootCAs},
+			DialContext: requestOperationDial(func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return dial(ctx, network, addr)
+			}),
+			TLSClientConfig:     &tls.Config{RootCAs: rootCAs, MinVersion: tls.VersionTLS12},
 			TLSHandshakeTimeout: dohTimeout,
-			ForceAttemptHTTP2:   true,
+			DisableKeepAlives:   true,
+			TLSNextProto:        make(map[string]func(string, *tls.Conn) http.RoundTripper),
 		},
 	}
 }
@@ -102,6 +141,46 @@ func newDoHClient(addr string, rootCAs *x509.CertPool) *http.Client {
 // resolve returns the addresses for host, trying each endpoint in order until
 // one answers. A host that is already an IP literal is returned unchanged.
 func (r *dohResolver) resolve(ctx context.Context, host string) ([]net.IP, error) {
+	if ctx == nil {
+		return nil, ErrNetworkRequired
+	}
+	r.mu.Lock()
+	closed := r.closed
+	root := r.ctx
+	r.mu.Unlock()
+	if closed {
+		return nil, errors.New("subscription DNS resolver closed")
+	}
+	op, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stop := context.AfterFunc(root, cancel)
+	defer stop()
+	return r.resolveIPs(op, host)
+}
+func (r *DoHResolver) LookupIP(ctx context.Context, host string) ([]net.IP, error) {
+	return r.resolve(ctx, host)
+}
+func (r *DoHResolver) Close() error {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return nil
+	}
+	r.closed = true
+	r.cancel()
+	r.mu.Unlock()
+	for _, endpoint := range r.endpoints {
+		endpoint.client.CloseIdleConnections()
+	}
+	return nil
+}
+func (r *dohResolver) resolveIPs(ctx context.Context, host string) ([]net.IP, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if ip := net.ParseIP(host); ip != nil {
 		return []net.IP{ip}, nil
 	}
@@ -154,7 +233,7 @@ func (r *dohResolver) queryOne(ctx context.Context, ec dohEndpointClient, host s
 		return nil, err
 	}
 	reqURL := ec.ep.URL + "?dns=" + base64.RawURLEncoding.EncodeToString(query)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	req, err := http.NewRequestWithContext(operationRequestContext(ctx), http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("subscription: doh: build request: %w", err)
 	}
@@ -163,20 +242,23 @@ func (r *dohResolver) queryOne(ctx context.Context, ec dohEndpointClient, host s
 
 	resp, err := ec.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("subscription: doh: query %s: %w", dohHost(ec.ep.URL), err)
+		return nil, &safeFetchError{message: "subscription DNS query failed", causes: []error{err}}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("subscription: doh: %s returned status %s", dohHost(ec.ep.URL), resp.Status)
+		return nil, fmt.Errorf("subscription: doh: unexpected status %d", resp.StatusCode)
 	}
 	if ct := resp.Header.Get("Content-Type"); ct != "" && !strings.HasPrefix(ct, dohContentType) {
-		return nil, fmt.Errorf("subscription: doh: %s returned content-type %q", dohHost(ec.ep.URL), ct)
+		return nil, errors.New("subscription: doh: unexpected content type")
 	}
 
-	wire, err := io.ReadAll(io.LimitReader(resp.Body, maxDoHResponse))
+	wire, err := io.ReadAll(io.LimitReader(resp.Body, maxDoHResponse+1))
 	if err != nil {
 		return nil, fmt.Errorf("subscription: doh: read response from %s: %w", dohHost(ec.ep.URL), err)
+	}
+	if len(wire) > maxDoHResponse {
+		return nil, &BudgetError{Kind: "doh_body_bytes", Limit: maxDoHResponse}
 	}
 	return dnswire.ParseResponse(wire, host, qtype)
 }
@@ -194,10 +276,9 @@ func (r *dohResolver) dialContext(ctx context.Context, network, address string) 
 	if err != nil {
 		return nil, err
 	}
-	var dialer net.Dialer
 	var errs []error
 	for _, ip := range ips {
-		conn, derr := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		conn, derr := r.dial(ctx, network, net.JoinHostPort(ip.String(), port))
 		if derr == nil {
 			return conn, nil
 		}

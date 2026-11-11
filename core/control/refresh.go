@@ -29,9 +29,19 @@ func (d *Daemon) runAutoRefresh(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if d.refreshAllSubscriptions(ctx) {
-				d.emitProfiles()
-			}
+			d.refreshSubscriptionsTick(ctx)
 		}
+	}
+}
+
+func (d *Daemon) refreshSubscriptionsTick(ctx context.Context) {
+	businessCtx, done, err := d.beginBusiness(ctx)
+	if err != nil {
+		return
+	}
+	defer done()
+	ctx = businessCtx
+	if d.refreshAllSubscriptions(ctx) {
+		d.emitProfiles()
 	}
 }

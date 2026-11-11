@@ -17,6 +17,18 @@ import { renderNotices, bundleRepoFromAPI } from "./generate-notices.mjs";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const doc = renderNotices();
 
+test("the installer and payload hashing dependencies retain their exact attributions", () => {
+  for (const dependency of ["filippo.io/edwards25519", "golang.org/x/crypto", "sha2"]) {
+    assert.ok(doc.includes(`**${dependency}**`));
+  }
+  const variant = readFileSync(join(root, "scripts/licenses/bsd-3-clause-edwards25519.txt"), "utf8").trim();
+  assert.ok(variant.includes("Google Inc."));
+  assert.ok(doc.includes(variant));
+  for (const holder of ["2006-2009 Graydon Hoare", "2009-2013 Mozilla Foundation", "2016 Artyom Pavlov"]) {
+    assert.ok(doc.includes(holder));
+  }
+});
+
 // The runtime section, sliced out so an assertion about it cannot pass on a
 // coincidental match somewhere else in a 30 KB document.
 function runtimeSection() {

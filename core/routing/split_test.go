@@ -21,10 +21,10 @@ func assertSniffHijackFirst(t *testing.T, rules []map[string]any) {
 	}
 }
 
-// processRule finds the first route rule carrying a process_name match.
+// processRule finds the first route rule carrying a process_path_regex match.
 func processRule(rules []map[string]any) (map[string]any, bool) {
 	for _, r := range rules {
-		if _, ok := r["process_name"]; ok {
+		if _, ok := r["process_path_regex"]; ok {
 			return r, true
 		}
 	}
@@ -41,12 +41,12 @@ func TestSplitNormalizeOffByDefault(t *testing.T) {
 	}
 }
 
-func TestSplitNormalizeLowercasesDedupesSorts(t *testing.T) {
+func TestSplitNormalizePreservesDisplayCaseDedupesSorts(t *testing.T) {
 	got := Options{
 		SplitMode: SplitExclude,
 		SplitApps: []string{"Chrome.exe", "  steam.exe ", "CHROME.EXE", "", "discord.exe"},
 	}.Normalize()
-	want := []string{"chrome.exe", "discord.exe", "steam.exe"}
+	want := []string{"Chrome.exe", "discord.exe", "steam.exe"}
 	if !reflect.DeepEqual(got.SplitApps, want) {
 		t.Errorf("normalized apps = %v, want %v", got.SplitApps, want)
 	}
@@ -67,12 +67,12 @@ func TestSplitEmptyListKeepsChosenMode(t *testing.T) {
 }
 
 func TestSplitEmptyListEmitsNoRules(t *testing.T) {
-	// The kept-but-empty mode must stay a config no-op: no process_name rule in
+	// The kept-but-empty mode must stay a config no-op: no process_path_regex rule in
 	// either the route or dns layers.
 	o := Options{SplitMode: SplitInclude}.Normalize()
 	for _, rule := range o.RouteRules() {
-		if _, has := rule["process_name"]; has {
-			t.Fatalf("empty split emitted a route process_name rule: %v", rule)
+		if _, has := rule["process_path_regex"]; has {
+			t.Fatalf("empty split emitted a route process_path_regex rule: %v", rule)
 		}
 	}
 }
@@ -125,14 +125,14 @@ func TestSplitExcludeAddsProcessNameDirectRule(t *testing.T) {
 
 	pr, ok := processRule(rules)
 	if !ok {
-		t.Fatalf("exclude mode missing process_name rule; rules=%v", rules)
+		t.Fatalf("exclude mode missing process_path_regex rule; rules=%v", rules)
 	}
 	if pr["action"] != "route" || pr["outbound"] != tagDirect {
 		t.Errorf("exclude process rule = %v, want action route outbound direct", pr)
 	}
-	names, ok := pr["process_name"].([]string)
-	if !ok || !reflect.DeepEqual(names, []string{"chrome.exe", "steam.exe"}) {
-		t.Errorf("exclude process_name = %v, want [chrome.exe steam.exe]", pr["process_name"])
+	names, ok := pr["process_path_regex"].([]string)
+	if !ok || len(names) != 2 || !matchesProcess(names, "chrome.exe") || !matchesProcess(names, "steam.exe") {
+		t.Errorf("exclude process_path_regex = %v, want [chrome.exe steam.exe]", pr["process_path_regex"])
 	}
 
 	// The base smart RU->direct rule must still be present: exclude only pins the
@@ -153,7 +153,7 @@ func TestSplitExcludeRuleComesBeforeGeoSplit(t *testing.T) {
 		Normalize().RouteRules()
 	procIdx, geoIdx := -1, -1
 	for i, r := range rules {
-		if _, ok := r["process_name"]; ok {
+		if _, ok := r["process_path_regex"]; ok {
 			procIdx = i
 		}
 		if _, ok := r["rule_set"]; ok {
@@ -161,14 +161,14 @@ func TestSplitExcludeRuleComesBeforeGeoSplit(t *testing.T) {
 		}
 	}
 	if procIdx == -1 || geoIdx == -1 {
-		t.Fatalf("expected both a process_name and a rule_set rule; rules=%v", rules)
+		t.Fatalf("expected both a process_path_regex and a rule_set rule; rules=%v", rules)
 	}
 	if procIdx >= geoIdx {
-		t.Errorf("process_name rule (idx %d) must precede geo split (idx %d)", procIdx, geoIdx)
+		t.Errorf("process_path_regex rule (idx %d) must precede geo split (idx %d)", procIdx, geoIdx)
 	}
 	// And both must still sit after sniff/hijack.
 	if procIdx < 2 {
-		t.Errorf("process_name rule at idx %d must come after sniff+hijack", procIdx)
+		t.Errorf("process_path_regex rule at idx %d must come after sniff+hijack", procIdx)
 	}
 }
 
@@ -179,7 +179,7 @@ func TestSplitIncludeSendsListedToProxyOthersDirect(t *testing.T) {
 
 	pr, ok := processRule(rules)
 	if !ok {
-		t.Fatalf("include mode missing process_name rule; rules=%v", rules)
+		t.Fatalf("include mode missing process_path_regex rule; rules=%v", rules)
 	}
 	if pr["action"] != "route" || pr["outbound"] != tagProxy {
 		t.Errorf("include process rule = %v, want action route outbound proxy", pr)
@@ -208,7 +208,7 @@ func TestSplitIncludeFinalDirectForEveryBaseMode(t *testing.T) {
 		// The single proxy-bound rule must be the app rule.
 		pr, ok := processRule(opts.RouteRules())
 		if !ok || pr["outbound"] != tagProxy {
-			t.Errorf("include base %q: expected process_name->proxy rule, got %v", m, pr)
+			t.Errorf("include base %q: expected process_path_regex->proxy rule, got %v", m, pr)
 		}
 	}
 }
@@ -216,14 +216,14 @@ func TestSplitIncludeFinalDirectForEveryBaseMode(t *testing.T) {
 func TestSplitIncludeWithGlobalDropsBlanketProxy(t *testing.T) {
 	// Global normally sends everything to proxy via final. With include, final
 	// becomes direct and only the listed app is proxied, so there must be no
-	// proxy-bound rule other than the process_name one.
+	// proxy-bound rule other than the process_path_regex one.
 	opts := (Options{Mode: ModeGlobal, SplitMode: SplitInclude, SplitApps: []string{"chrome.exe"}}).Normalize()
 	if opts.FinalOutbound() != tagDirect {
 		t.Fatalf("include+global final = %q, want direct", opts.FinalOutbound())
 	}
 	for _, r := range opts.RouteRules() {
 		if r["outbound"] == tagProxy {
-			if _, isProc := r["process_name"]; !isProc {
+			if _, isProc := r["process_path_regex"]; !isProc {
 				t.Errorf("include+global has a non-app proxy rule: %v", r)
 			}
 		}
@@ -256,10 +256,10 @@ func TestSplitBypassLANStillApplies(t *testing.T) {
 	}
 }
 
-// dnsProcessRule finds the first dns rule carrying a process_name match.
+// dnsProcessRule finds the first dns rule carrying a process_path_regex match.
 func dnsProcessRule(rules []map[string]any) (map[string]any, bool) {
 	for _, r := range rules {
-		if _, ok := r["process_name"]; ok {
+		if _, ok := r["process_path_regex"]; ok {
 			return r, true
 		}
 	}
@@ -272,7 +272,7 @@ func dnsProcessRule(rules []map[string]any) (map[string]any, bool) {
 // tunnelling routes its traffic through the proxy. Without a matching dns rule
 // its lookups would go out direct while its traffic went through the tunnel,
 // leaking every domain it visits to the local resolver/ISP. The dns rules must
-// carry a process_name rule that sends the listed apps to dns-remote, so their
+// carry a process_path_regex rule that sends the listed apps to dns-remote, so their
 // DNS follows the tunnel like their traffic does.
 func TestSplitIncludeDNSFollowsTunnelInDirectMode(t *testing.T) {
 	opts := (Options{Mode: ModeDirect, SplitMode: SplitInclude, SplitApps: []string{"Chrome.exe"}}).Normalize()
@@ -286,14 +286,14 @@ func TestSplitIncludeDNSFollowsTunnelInDirectMode(t *testing.T) {
 	rules := opts.dnsRules()
 	pr, ok := dnsProcessRule(rules)
 	if !ok {
-		t.Fatalf("direct+include missing process_name dns rule (DNS would leak); rules=%v", rules)
+		t.Fatalf("direct+include missing process_path_regex dns rule (DNS would leak); rules=%v", rules)
 	}
 	if pr["action"] != "route" || pr["server"] != dnsRemoteTag {
 		t.Errorf("include dns process rule = %v, want action route server %s", pr, dnsRemoteTag)
 	}
-	names, ok := pr["process_name"].([]string)
-	if !ok || !reflect.DeepEqual(names, []string{"chrome.exe"}) {
-		t.Errorf("include dns process_name = %v, want [chrome.exe]", pr["process_name"])
+	names, ok := pr["process_path_regex"].([]string)
+	if !ok || len(names) != 1 || !matchesProcess(names, "chrome.exe") {
+		t.Errorf("include dns process_path_regex = %v, want [chrome.exe]", pr["process_path_regex"])
 	}
 
 	// The traffic for the same app is pinned to the proxy, so DNS and traffic
@@ -315,7 +315,7 @@ func TestSplitIncludeDNSRuleInEveryBaseMode(t *testing.T) {
 		rules := opts.dnsRules()
 		pr, ok := dnsProcessRule(rules)
 		if !ok {
-			t.Errorf("include base %q: missing process_name dns rule; rules=%v", m, rules)
+			t.Errorf("include base %q: missing process_path_regex dns rule; rules=%v", m, rules)
 			continue
 		}
 		if pr["server"] != dnsRemoteTag {
@@ -324,7 +324,7 @@ func TestSplitIncludeDNSRuleInEveryBaseMode(t *testing.T) {
 		// The process rule must come before any RU->direct rule.
 		procIdx, ruIdx := -1, -1
 		for i, r := range rules {
-			if _, has := r["process_name"]; has {
+			if _, has := r["process_path_regex"]; has {
 				procIdx = i
 			}
 			if _, has := r["rule_set"]; has && r["server"] == dnsDirectTag {
@@ -353,15 +353,15 @@ func TestSplitExcludeResolvesThroughTheDirectResolver(t *testing.T) {
 		opts := (Options{Mode: m, SplitMode: SplitExclude, SplitApps: []string{"Chrome.exe"}}).Normalize()
 		pr, ok := dnsProcessRule(opts.dnsRules())
 		if !ok {
-			t.Errorf("exclude base %q: no dns process_name rule; the app resolves from the wrong place", m)
+			t.Errorf("exclude base %q: no dns process_path_regex rule; the app resolves from the wrong place", m)
 			continue
 		}
 		if pr["action"] != "route" || pr["server"] != dnsDirectTag {
 			t.Errorf("exclude base %q: dns process rule = %v, want route to %s", m, pr, dnsDirectTag)
 		}
-		names, _ := pr["process_name"].([]string)
-		if !reflect.DeepEqual(names, []string{"chrome.exe"}) {
-			t.Errorf("exclude base %q: dns process_name = %v, want [chrome.exe]", m, names)
+		names, _ := pr["process_path_regex"].([]string)
+		if len(names) != 1 || !matchesProcess(names, "chrome.exe") {
+			t.Errorf("exclude base %q: dns process_path_regex = %v, want [chrome.exe]", m, names)
 		}
 
 		// The two layers must name the same executables and the opposite ends of the
@@ -370,7 +370,7 @@ func TestSplitExcludeResolvesThroughTheDirectResolver(t *testing.T) {
 		if !ok || route["outbound"] != tagDirect {
 			t.Errorf("exclude base %q: route rule = %v, want the app pinned direct", m, route)
 		}
-		routeNames, _ := route["process_name"].([]string)
+		routeNames, _ := route["process_path_regex"].([]string)
 		if !reflect.DeepEqual(routeNames, names) {
 			t.Errorf("exclude base %q: route names %v and dns names %v disagree", m, routeNames, names)
 		}
@@ -396,14 +396,14 @@ func TestGamesPresetResolvesThroughTheDirectResolver(t *testing.T) {
 	if pr["server"] != dnsDirectTag {
 		t.Errorf("games dns rule server = %v, want %s", pr["server"], dnsDirectTag)
 	}
-	names, _ := pr["process_name"].([]string)
-	if !contains(names, "dota2.exe") {
+	names, _ := pr["process_path_regex"].([]string)
+	if !matchesProcess(names, "dota2.exe") {
 		t.Errorf("games dns rule does not cover the preset's own executables: %v", names)
 	}
 
 	// Whatever the route layer sends direct is exactly what resolves direct.
 	route, _ := processRule(opts.RouteRules())
-	routeNames, _ := route["process_name"].([]string)
+	routeNames, _ := route["process_path_regex"].([]string)
 	if !reflect.DeepEqual(routeNames, names) {
 		t.Errorf("games route names %v and dns names %v disagree", routeNames, names)
 	}
@@ -426,11 +426,11 @@ func TestSplitExcludeDNSMirrorFollowsTheDirectPinRules(t *testing.T) {
 	if !ok {
 		t.Fatal("the user's own excluded app lost its dns rule under the kill switch")
 	}
-	names, _ := pr["process_name"].([]string)
-	if !contains(names, "myapp.exe") {
+	names, _ := pr["process_path_regex"].([]string)
+	if !matchesProcess(names, "myapp.exe") {
 		t.Errorf("user app dropped from the dns mirror: %v", names)
 	}
-	if contains(names, "dota2.exe") {
+	if matchesProcess(names, "dota2.exe") {
 		t.Errorf("the games preset rode into the dns mirror under the kill switch: %v", names)
 	}
 
@@ -444,7 +444,7 @@ func TestSplitExcludeDNSMirrorFollowsTheDirectPinRules(t *testing.T) {
 	// proxy, and the one process rule it emits must still target dns-remote.
 	inc := (Options{Mode: ModeSmart, SplitMode: SplitInclude, SplitApps: []string{"work.exe"}, GamesDirect: true}).Normalize()
 	for _, r := range inc.dnsRules() {
-		if _, has := r["process_name"]; has && r["server"] != dnsRemoteTag {
+		if _, has := r["process_path_regex"]; has && r["server"] != dnsRemoteTag {
 			t.Errorf("include mode emitted a direct-resolver process rule: %v", r)
 		}
 	}

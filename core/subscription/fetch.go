@@ -2,7 +2,6 @@ package subscription
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -15,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Divaaaan/tenebra/core/redact"
 )
 
 // userAgent is a browser-like UA; some subscription panels gate responses on it.
@@ -54,6 +55,11 @@ const ssrfGuardOptOutEnv = "TENEBRA_SUBSCRIPTION_ALLOW_PRIVATE"
 // defaultFetchConfig; tests override the fields to drive the DoH fallback
 // against local servers without touching real DNS.
 type fetchConfig struct {
+	network            Network
+	configurationError error
+	allowHTTP          bool
+	limits             Limits
+	disableFallback    bool
 	// dohEndpoints are the resolvers the fallback tries, in order.
 	dohEndpoints []DoHEndpoint
 	// rootCAs overrides the system trust store for both the subscription and the
@@ -76,8 +82,9 @@ type fetchConfig struct {
 }
 
 func defaultFetchConfig() fetchConfig {
-	cfg := fetchConfig{dohEndpoints: DefaultDoHEndpoints}
-	if !ssrfGuardDisabled() {
+	network, err := newUnprotectedNetwork()
+	cfg := fetchConfig{dohEndpoints: append([]DoHEndpoint(nil), DefaultDoHEndpoints...), network: network, configurationError: err, limits: DefaultLimits()}
+	if !startupAllowPrivate {
 		cfg.blockAddr = blockedByDefaultIP
 	}
 	return cfg
@@ -111,6 +118,17 @@ func fetchWithConfig(ctx context.Context, rawURL string, cfg fetchConfig) ([]byt
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if cfg.configurationError != nil {
+		return nil, nil, cfg.configurationError
+	}
+	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
+	defer cancel()
+	if cfg.limits == (Limits{}) {
+		cfg.limits = DefaultLimits()
+	}
+	if !cfg.limits.valid() {
+		return nil, nil, errInvalidLimits
+	}
 	host := hostForLog(rawURL)
 
 	// Scheme gate. net/http will happily dial anything with a registered
@@ -119,16 +137,21 @@ func fetchWithConfig(ctx context.Context, rawURL string, cfg fetchConfig) ([]byt
 	// http is permitted — some self-hosted panels only speak it — but it exposes
 	// the subscription token on the wire, so it earns a scrubbed warning (host
 	// only, never the token-bearing path).
-	if err := checkScheme(rawURL, host); err != nil {
+	if err := checkScheme(rawURL, host, cfg.allowHTTP); err != nil {
 		log.Printf("tenebra-core: subscription fetch rejected for %s: %v", host, err)
 		return nil, nil, err
 	}
 
-	body, header, err := doFetch(ctx, rawURL, cfg.primaryDial, cfg.rootCAs, cfg.blockAddr, cfg.headers)
+	dial, block := cfg.primaryDial, cfg.blockAddr
+	if cfg.network != nil {
+		dial = networkDial(cfg.network, block)
+		block = nil
+	}
+	body, header, err := doFetchPolicy(ctx, rawURL, dial, cfg.rootCAs, block, cfg.headers, cfg.allowHTTP, cfg.limits)
 	if err == nil {
 		return body, header, nil
 	}
-	if !dohEligible(ctx, err) {
+	if cfg.disableFallback || !dohEligible(ctx, err) {
 		log.Printf("tenebra-core: subscription fetch failed for %s: %v", host, err)
 		return nil, header, err
 	}
@@ -137,11 +160,21 @@ func fetchWithConfig(ctx context.Context, rawURL string, cfg fetchConfig) ([]byt
 	// would. Retry once through DoH, dialing the resolved IP while preserving the
 	// original SNI/Host.
 	log.Printf("tenebra-core: subscription fetch via system resolver failed for %s: %v; trying DoH fallback", host, err)
-	resolver := newDoHResolver(cfg.dohEndpoints, cfg.rootCAs)
-	dohBody, dohHeader, dohErr := doFetch(ctx, rawURL, resolver.dialContext, cfg.rootCAs, cfg.blockAddr, cfg.headers)
+	block = cfg.blockAddr
+	var resolver *DoHResolver
+	if cfg.network != nil {
+		resolver = newDoHResolverUsingDial(cfg.dohEndpoints, cfg.rootCAs, cfg.network.DialContext)
+		dial = networkDial(resolverNetwork{resolver: resolver.resolve, dial: cfg.network.DialContext}, block)
+		block = nil
+	} else {
+		resolver = newDoHResolver(cfg.dohEndpoints, cfg.rootCAs)
+		dial = resolver.dialContext
+	}
+	defer resolver.Close()
+	dohBody, dohHeader, dohErr := doFetchPolicy(ctx, rawURL, dial, cfg.rootCAs, block, cfg.headers, cfg.allowHTTP, cfg.limits)
 	if dohErr != nil {
 		log.Printf("tenebra-core: subscription DoH fallback failed for %s: %v", host, dohErr)
-		return nil, header, fmt.Errorf("subscription: fetch: system resolver and DoH fallback failed for %s [%v]: %w", host, err, dohErr)
+		return nil, header, &safeFetchError{message: "subscription: system resolver and doh fallback failed for " + host, causes: []error{err, dohErr}}
 	}
 	log.Printf("tenebra-core: subscription fetch for %s recovered via DoH fallback", host)
 	return dohBody, dohHeader, nil
@@ -159,7 +192,7 @@ func dohEligible(ctx context.Context, err error) bool {
 // TLSClientConfig.ServerName is deliberately left unset so the transport still
 // derives the SNI and Host header from rawURL: dialing an IP while keeping the
 // original SNI is what keeps TLS/REALITY working through the fallback.
-func doFetch(ctx context.Context, rawURL string, dial dialFunc, rootCAs *x509.CertPool, blockAddr func(net.IP) bool, headers map[string]string) (body []byte, header http.Header, err error) {
+func doFetchPolicy(ctx context.Context, rawURL string, dial dialFunc, rootCAs *x509.CertPool, blockAddr func(net.IP) bool, headers map[string]string, allowHTTP bool, limits Limits) (body []byte, header http.Header, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("subscription: fetch: %s", scrub(err, rawURL))
@@ -171,20 +204,16 @@ func doFetch(ctx context.Context, rawURL string, dial dialFunc, rootCAs *x509.Ce
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
+	req.Header.Del("Referer")
+	initialOrigin, err := OriginOf(req.URL)
+	if err != nil {
+		return nil, nil, err
+	}
 
-	// Cloudflare and some subscription panels ask for a TLS renegotiation
-	// mid-handshake. Go's default is RenegotiateNever, which fails the request
-	// with "tls: no renegotiation" — so a URL that loads fine in curl or a
-	// browser fails here. Clone the default transport (keeping its proxy, HTTP/2
-	// and dial defaults) and permit a single client-initiated renegotiation.
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if transport.TLSClientConfig == nil {
-		transport.TLSClientConfig = &tls.Config{}
-	}
-	transport.TLSClientConfig.Renegotiation = tls.RenegotiateOnceAsClient
-	if rootCAs != nil {
-		transport.TLSClientConfig.RootCAs = rootCAs
-	}
+	// A fresh transport cannot inherit an ambient DialTLSContext, custom
+	// verification hook or proxy that could bypass the authorized Network.
+	transport := newFetchTransport(rootCAs)
+	defer transport.CloseIdleConnections()
 	// Route the actual dial through the SSRF guard. base is the cloned default
 	// dialer (or the caller's override — the DoH fallback's IP-pinned dialer);
 	// guardDial wraps whichever it is, so every hop of the request, including
@@ -195,30 +224,66 @@ func doFetch(ctx context.Context, rawURL string, dial dialFunc, rootCAs *x509.Ce
 	if dial != nil {
 		base = dial
 	}
-	transport.DialContext = guardDial(base, blockAddr)
+	transport.DialContext = bindOperationDial(ctx, guardDial(base, blockAddr))
 
-	client := &http.Client{Timeout: fetchTimeout, Transport: transport}
+	client := &http.Client{Timeout: fetchTimeout, Transport: transport, CheckRedirect: func(next *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errRedirectForbidden
+		}
+		origin, err := OriginOf(next.URL)
+		if err != nil {
+			return err
+		}
+		previous, err := OriginOf(via[len(via)-1].URL)
+		if err != nil {
+			return err
+		}
+		if previous.Scheme == "https" && origin.Scheme != "https" {
+			return errHTTPSDowngrade
+		}
+		if origin.Scheme == "http" && !allowHTTP {
+			return ErrHTTPNotAllowed
+		}
+		next.Header = make(http.Header)
+		next.Header.Set("User-Agent", userAgent)
+		next.Header.Set("Accept", "*/*")
+		if origin == initialOrigin {
+			for key, value := range headers {
+				next.Header.Set(key, value)
+			}
+		} else {
+			next.URL.User = nil
+		}
+		next.Header.Del("Referer")
+		return nil
+	}}
 	resp, err := client.Do(req)
 	if err != nil {
+		if errors.Is(err, errHTTPSDowngrade) || errors.Is(err, ErrHTTPNotAllowed) || errors.Is(err, errRedirectForbidden) || errors.Is(err, errInvalidOrigin) {
+			return nil, nil, &safeFetchError{message: "subscription redirect refused", causes: []error{err}}
+		}
 		if errors.Is(err, errBlockedAddress) {
 			// The SSRF guard tripped. This is not a resolver fault, so it is
 			// reported as-is (never wrapped in errTransport) and never retried
 			// through DoH. scrub still runs in case the offending URL was the
 			// token-bearing original rather than a redirect target.
-			return nil, nil, fmt.Errorf("subscription: fetch: %s", scrub(err, rawURL))
+			return nil, nil, &safeFetchError{message: "subscription: blocked address", causes: []error{errBlockedAddress}}
 		}
 		// Transport-level failure (DNS, dial, TLS): the one class DoH can fix.
-		return nil, nil, fmt.Errorf("subscription: fetch: %w: %s", errTransport, scrub(err, rawURL))
+		return nil, nil, &safeFetchError{message: "subscription: connection failed", causes: []error{errTransport, err}}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, resp.Header, fmt.Errorf("subscription: fetch: unexpected status %s", resp.Status)
+		return nil, resp.Header, fmt.Errorf("subscription: fetch: unexpected status %d", resp.StatusCode)
 	}
 
-	body, err = io.ReadAll(io.LimitReader(resp.Body, maxBody))
+	body, err = io.ReadAll(io.LimitReader(resp.Body, limits.BodyBytes+1))
 	if err != nil {
-		return nil, resp.Header, fmt.Errorf("subscription: fetch: read body: %w", err)
+		return nil, resp.Header, &safeFetchError{message: "subscription: body read failed", causes: []error{err}}
+	}
+	if int64(len(body)) > limits.BodyBytes {
+		return nil, resp.Header, &BudgetError{Kind: "body_bytes", Limit: limits.BodyBytes}
 	}
 	return body, resp.Header, nil
 }
@@ -241,13 +306,13 @@ func scrub(err error, rawURL string) string {
 	if rawURL != "" {
 		msg = strings.ReplaceAll(msg, rawURL, hostForLog(rawURL))
 	}
-	return msg
+	return redact.Text(msg)
 }
 
 // checkScheme rejects any URL whose scheme is not http or https, and warns
 // (host only) on cleartext http since the token travels unencrypted. host is the
 // pre-scrubbed value so the warning never carries the token-bearing path.
-func checkScheme(rawURL, host string) error {
+func checkScheme(rawURL, host string, approval ...bool) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return fmt.Errorf("subscription: fetch: invalid URL for %s: %s", host, scrub(err, rawURL))
@@ -256,10 +321,13 @@ func checkScheme(rawURL, host string) error {
 	case "https":
 		return nil
 	case "http":
+		if len(approval) == 0 || !approval[0] {
+			return ErrHTTPNotAllowed
+		}
 		log.Printf("tenebra-core: subscription fetch for %s uses cleartext http; the subscription token is exposed in transit", host)
 		return nil
 	default:
-		return fmt.Errorf("subscription: fetch: unsupported URL scheme %q for %s (only http and https are allowed)", u.Scheme, host)
+		return errors.New("subscription: fetch: unsupported URL scheme")
 	}
 }
 
@@ -324,6 +392,21 @@ func connRemoteIP(conn net.Conn) net.IP {
 //   - private            10/8, 172.16/12, 192.168/16,
 //     fc00::/7 (ULA)                                      (IsPrivate)
 func blockedByDefaultIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	ip = ip.To16()
+	if ip == nil {
+		return true
+	}
+	if v4 := ip.To4(); v4 != nil {
+		if v4[0] == 100 && v4[1]&0xc0 == 64 {
+			return true
+		}
+		if v4[0] == 198 && v4[1]&0xfe == 18 {
+			return true
+		}
+	}
 	return ip.IsLoopback() ||
 		ip.IsUnspecified() ||
 		ip.IsLinkLocalUnicast() ||

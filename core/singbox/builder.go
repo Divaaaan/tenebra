@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/Divaaaan/tenebra/core/maintenance"
 	"github.com/Divaaaan/tenebra/core/model"
 	"github.com/Divaaaan/tenebra/core/routing"
 )
@@ -117,6 +118,8 @@ func ValidStack(s string) bool {
 // TunOptions configures the single tun inbound and the clash API. The zero
 // value is filled with defaults by Build.
 type TunOptions struct {
+	// Maintenance is private per-run material and is never a public config DTO.
+	Maintenance *maintenance.InboundConfig `json:"-"`
 	// Mode selects the inbound family: ModeTun (default) emits the tun inbound
 	// below; ModeSystemProxy emits a loopback mixed inbound instead and none of the
 	// tun/auto_route fields. It is named on TunOptions because the inbound is the
@@ -171,6 +174,10 @@ type TunOptions struct {
 // interfaces it scans — read the name from the one place that assigns it,
 // instead of re-deriving it and drifting.
 func DefaultTUNName() string { return platformTUNName }
+
+// Normalized returns the same effective defaults used by Build. Callers that
+// compare desired configurations can then discard their runtime bindings.
+func (t TunOptions) Normalized() TunOptions { return t.normalize() }
 
 func (t TunOptions) normalize() TunOptions {
 	if t.Mode == "" {
@@ -311,6 +318,11 @@ func Build(nodes []model.Node, selectedTag string, ro routing.Options, tun TunOp
 			"cache_file": cacheFileBlock(tun.CacheDir),
 		},
 	}
+	if tun.Maintenance != nil {
+		if err := appendMaintenance(cfg, *tun.Maintenance); err != nil {
+			return nil, err
+		}
+	}
 
 	// Endpoints (WireGuard/AmneziaWG) live in their own top-level array in
 	// sing-box 1.11+. Only emit the key when there's something in it.
@@ -374,29 +386,16 @@ type NodeTag struct {
 // is reserved for genuinely fatal conditions; today it is always nil and the
 // caller turns an empty selection into the "no usable nodes" error.
 func buildNodes(nodes []model.Node) (outs, endpoints []map[string]any, sel []NodeTag, err error) {
-	seen := map[string]int{}
-	uniq := func(name string) string {
-		base := sanitizeTag(name)
-		if seen[base] == 0 {
-			seen[base] = 1
-			return base
-		}
-		// Collision: suffix with an incrementing counter until free.
-		for {
-			seen[base]++
-			cand := fmt.Sprintf("%s-%d", base, seen[base])
-			if seen[cand] == 0 {
-				seen[cand] = 1
-				return cand
-			}
-		}
+	if err := model.ValidateNodeRecords(nodes); err != nil {
+		return nil, nil, nil, err
 	}
+	tags := newTagAllocator(len(nodes))
 
 	for i, n := range nodes {
 		if n.Protocol == "" {
 			continue // skip zero-protocol entries
 		}
-		tag := uniq(n.Name)
+		tag := tags.Allocate(n.Name)
 
 		// A semantically-invalid node (bad port, missing credentials, keyless
 		// REALITY) must not be emitted: the connect path builds one config from
@@ -405,7 +404,7 @@ func buildNodes(nodes []model.Node) (outs, endpoints []map[string]any, sel []Nod
 		// it. Skip the offender exactly like an unknown protocol, freeing its tag,
 		// so one bad entry doesn't sink a whole subscription.
 		if err := validateNode(n); err != nil {
-			delete(seen, tag)
+			tags.Release(tag)
 			continue
 		}
 
@@ -415,7 +414,7 @@ func buildNodes(nodes []model.Node) (outs, endpoints []map[string]any, sel []Nod
 				// validateNode already vetted the key material; treat any residual
 				// endpoint error as a skip, not a fatal, to keep the blast radius
 				// to the single node.
-				delete(seen, tag)
+				tags.Release(tag)
 				continue
 			}
 			endpoints = append(endpoints, ep)
@@ -426,7 +425,7 @@ func buildNodes(nodes []model.Node) (outs, endpoints []map[string]any, sel []Nod
 		obj, ok, oErr := outbound(n, tag)
 		if oErr != nil {
 			// Unknown protocol: skip rather than abort, freeing the tag.
-			delete(seen, tag)
+			tags.Release(tag)
 			continue
 		}
 		if !ok {

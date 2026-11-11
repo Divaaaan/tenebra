@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+    remove|purge|disappear)
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl --system --no-ask-password daemon-reload
+        fi
+        ;;
+    upgrade|failed-upgrade|abort-install|abort-upgrade)
+        ;;
+    *)
+        echo 'Unsupported Tenebra post-remove action.' >&2
+        exit 1
+        ;;
+esac

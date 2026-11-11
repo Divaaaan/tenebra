@@ -16,6 +16,8 @@ func newRunner() control.Runner {
 	return macos.New()
 }
 
+func newManagedRunner(binary string) control.Runner { return macos.NewWithBinary(binary) }
+
 // newInterfaceProbe returns nil: the tun-conflict guard has no macOS route
 // enumeration yet, and nil leaves it disabled rather than guessing.
 //

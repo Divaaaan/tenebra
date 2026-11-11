@@ -1,0 +1,23 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+    remove|deconfigure)
+        operation=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+        if [ "${#operation}" -ne 32 ]; then
+            echo 'Could not create Tenebra removal operation.' >&2
+            exit 1
+        fi
+        case "$operation" in
+            *[!0-9a-f]*) exit 1 ;;
+        esac
+        printf '{"schema":1,"operation_id":"so1_%s","action":"remove","keep_profiles":true}\n' "$operation" |
+            /usr/lib/tenebra/tenebra-helper remove --keep-profiles --request-stdin
+        ;;
+    upgrade|failed-upgrade)
+        ;;
+    *)
+        echo 'Unsupported Tenebra pre-remove action.' >&2
+        exit 1
+        ;;
+esac

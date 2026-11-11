@@ -136,7 +136,7 @@ func TestRulesValidate(t *testing.T) {
 }
 
 // TestRulesBetweenSplitAndGeo locks the emission order: the custom rules sit
-// after the per-app split (process_name) and before the geo split (rule_set), so
+// after the per-app split (process_path_regex) and before the geo split (rule_set), so
 // an app rule still wins and a user rule beats the RU geo preset.
 func TestRulesBetweenSplitAndGeo(t *testing.T) {
 	opts := (Options{
@@ -151,7 +151,7 @@ func TestRulesBetweenSplitAndGeo(t *testing.T) {
 
 	procIdx, geoIdx := -1, -1
 	for i, r := range rules {
-		if _, ok := r["process_name"]; ok {
+		if _, ok := r["process_path_regex"]; ok {
 			procIdx = i
 		}
 		if _, ok := r["rule_set"]; ok {
@@ -165,7 +165,7 @@ func TestRulesBetweenSplitAndGeo(t *testing.T) {
 		t.Fatalf("missing an expected rule; rules=%v", rules)
 	}
 	if !(procIdx < directIdx && procIdx < proxyIdx) {
-		t.Errorf("custom rules (direct %d, proxy %d) must come after the process_name split (%d)", directIdx, proxyIdx, procIdx)
+		t.Errorf("custom rules (direct %d, proxy %d) must come after the process_path_regex split (%d)", directIdx, proxyIdx, procIdx)
 	}
 	if !(directIdx < geoIdx && proxyIdx < geoIdx) {
 		t.Errorf("custom rules (direct %d, proxy %d) must come before the geo split (%d)", directIdx, proxyIdx, geoIdx)

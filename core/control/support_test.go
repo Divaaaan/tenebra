@@ -26,22 +26,22 @@ func TestScrubSecretsMasksWhatTheDesktopMasks(t *testing.T) {
 		{
 			name: "managed subscription token",
 			in:   "refresh https://vpsxd.pro/sub/9f8a7b6c5d4e failed",
-			want: "refresh https://vpsxd.pro/sub/*** failed",
+			want: "refresh https://vpsxd.pro failed",
 		},
 		{
 			name: "second managed host",
 			in:   "GET https://vpnxd.pro/api/v1/sub/TOKEN-VALUE",
-			want: "GET https://vpnxd.pro/api/v1/sub/***",
+			want: "GET https://vpnxd.pro",
 		},
 		{
 			name: "share link userinfo",
 			in:   "imported vless://d0a1b2c3@node.example:443?sni=x",
-			want: "imported vless://***@node.example:443?sni=x",
+			want: "imported vless://node.example:443",
 		},
 		{
 			name: "trojan password",
 			in:   "trojan://hunter2@edge.example:8443",
-			want: "trojan://***@edge.example:8443",
+			want: "trojan://edge.example:8443",
 		},
 		{
 			name: "bare uuid",

@@ -49,6 +49,15 @@ const zapretManualUpdateBudget = 45 * time.Second
 // on disk and then raises the bypass again for a user who had it on (see
 // raiseZapretOnStart) before settling into the update cadence.
 func (d *Daemon) RunZapretAutoUpdate(ctx context.Context) {
+	if !d.waitForBusinessAdmission(ctx) {
+		return
+	}
+	businessCtx, done, err := d.beginBusiness(ctx)
+	if err != nil {
+		return
+	}
+	defer done()
+	ctx = businessCtx
 	// Put the embedded bundle down before anything else, and before the startup
 	// delay rather than after it.
 	//
@@ -83,7 +92,7 @@ func (d *Daemon) RunZapretAutoUpdate(ctx context.Context) {
 		d.mu.Lock()
 		enabled := d.zapretAutoUpdate
 		d.mu.Unlock()
-		if enabled {
+		if enabled && d.BusinessReady() == nil {
 			if from, to, updated, err := d.updateZapret(ctx); err != nil {
 				d.reportZapretUpdateOutcome(from, to, err)
 			} else if updated {
@@ -270,6 +279,10 @@ func (d *Daemon) restartZapretAfterUpdate(ctx context.Context, dir, strategy str
 	}
 
 	d.excludeNodesFromZapret(dir)
+	if err := d.commitZapretPreference(ctx, nil, &chosen.Name); err != nil {
+		d.emitLog(LogWarn, "bypass strategy persistence failed")
+		return
+	}
 	started, err := d.startRunnerFor(dir).Start(ctx, chosen)
 	if err != nil || !started {
 		d.emitLog(LogWarn, fmt.Sprintf("zapret: %s не запустилась после обновления", chosen.Name))

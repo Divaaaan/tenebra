@@ -62,6 +62,9 @@ func (o Options) RouteRules() []map[string]any {
 		{"action": "sniff"},
 		{"protocol": "dns", "action": "hijack-dns"},
 	}
+	if o.lanBypassActive() {
+		rules = append(rules, route(map[string]any{"ip_is_private": true}, tagDirect))
+	}
 
 	// Per-app split tunnelling. process_name matches the executable file name,
 	// e.g. "chrome.exe". Placed before the geo split so an app rule wins.
@@ -75,13 +78,13 @@ func (o Options) RouteRules() []map[string]any {
 	case SplitInclude:
 		if len(o.SplitApps) > 0 {
 			rules = append(rules,
-				route(map[string]any{"process_name": o.SplitApps}, tagProxy),
+				route(map[string]any{"process_path_regex": processPathPatterns(o.SplitApps)}, tagProxy),
 			)
 		}
 	default:
 		if apps := o.directSplitApps(); len(apps) > 0 {
 			rules = append(rules,
-				route(map[string]any{"process_name": apps}, tagDirect),
+				route(map[string]any{"process_path_regex": processPathPatterns(apps)}, tagDirect),
 			)
 		}
 	}
@@ -99,7 +102,7 @@ func (o Options) RouteRules() []map[string]any {
 	// In include mode the route final is direct and only the listed apps are
 	// pinned to the proxy above, so the base proxy split must not run — it would
 	// otherwise hand unlisted traffic to the proxy and defeat "only these apps".
-	includeOnly := o.SplitMode == SplitInclude && len(o.SplitApps) > 0
+	includeOnly := o.SplitMode == SplitInclude
 
 	// Custom and preset domain rules sit here: after the per-app split (an app
 	// rule still wins) and before the geo split (a user rule beats the RU geo
@@ -141,15 +144,6 @@ func (o Options) RouteRules() []map[string]any {
 	if !includeOnly && o.smartGeoActive() {
 		rules = append(rules,
 			route(map[string]any{"rule_set": []string{ruleSetGeoIPRU, ruleSetGeositeRU}}, tagDirect),
-		)
-	}
-
-	if o.lanBypassActive() {
-		// Private/LAN destinations should never traverse the tunnel. Match the
-		// well-known private ranges directly instead of relying on a rule-set, so
-		// this keeps working on an install that is missing its geodata.
-		rules = append(rules,
-			route(map[string]any{"ip_is_private": true}, tagDirect),
 		)
 	}
 
@@ -212,7 +206,7 @@ func (o Options) DefaultDomainResolver() map[string]any {
 // it fails closed if the tunnel drops; the kill switch protects that, which is
 // the traffic its promise is about.
 func (o Options) FinalOutbound() string {
-	if o.SplitMode == SplitInclude && len(o.SplitApps) > 0 {
+	if o.SplitMode == SplitInclude {
 		return tagDirect
 	}
 	if o.Mode == ModeDirect {

@@ -207,6 +207,11 @@ func (d *Daemon) repickStrategy(ctx context.Context, gen uint64) {
 	d.rememberStrategyForThisNetwork(best.Name)
 
 	d.zapretOpMu.Lock()
+	if err := d.commitZapretPreference(ctx, nil, &best.Name); err != nil {
+		d.zapretOpMu.Unlock()
+		d.emitLog(LogWarn, "bypass strategy persistence failed")
+		return
+	}
 	started, startErr := runner.Start(ctx, best.Strategy)
 	d.zapretOpMu.Unlock()
 	if startErr != nil || !started || !d.isCurrent(gen) {
@@ -215,7 +220,9 @@ func (d *Daemon) repickStrategy(ctx context.Context, gen uint64) {
 	}
 
 	d.mu.Lock()
-	d.zapretActive = best.Name
+	if d.canonical == nil {
+		d.zapretActive = best.Name
+	}
 	d.routing.ZapretActive = true
 	d.routing.ZapretCovered = zapret.Covered(dir)
 	d.refreshZapretStateLocked()

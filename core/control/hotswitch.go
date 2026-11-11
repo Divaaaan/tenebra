@@ -9,6 +9,7 @@ import (
 
 	"github.com/Divaaaan/tenebra/core/nodecheck"
 	"github.com/Divaaaan/tenebra/core/profile"
+	"github.com/Divaaaan/tenebra/core/redact"
 )
 
 // Live-switch timings and thresholds.
@@ -543,7 +544,7 @@ func (d *Daemon) nodeLabel(profileID, nodeID string) string {
 	if p, ok := d.store.Get(profileID); ok {
 		for _, srv := range p.Servers {
 			if srv.ID == nodeID && srv.Name != "" {
-				return srv.Name
+				return redact.NodeName(srv.Node)
 			}
 		}
 	}

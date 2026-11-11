@@ -1,6 +1,7 @@
 package subscription
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -19,7 +20,18 @@ var parseSubscriptionHook func()
 // Clash/Mihomo YAML config (servers under a top-level "proxies:" key), base64 of
 // a newline-separated link list, or a plaintext link list. Entries that fail to
 // parse are counted in skipped rather than failing the whole call.
-func ParseSubscription(body []byte) (nodes []model.Node, skipped int, err error) {
+func ParseSubscription(body []byte) ([]model.Node, int, error) {
+	return ParseSubscriptionWithLimits(body, DefaultLimits())
+}
+
+func ParseSubscriptionWithLimits(body []byte, limits Limits) (nodes []model.Node, skipped int, err error) {
+	if !limits.valid() {
+		return nil, 0, errInvalidLimits
+	}
+	if int64(len(body)) > limits.BodyBytes {
+		return nil, 0, &BudgetError{Kind: "body_bytes", Limit: limits.BodyBytes}
+	}
+	budget := &parseBudget{limits: limits}
 	// Belt-and-suspenders around the hand-written decoders below: the depth cap
 	// in the YAML reader already bounds recursion, but a future parser bug must
 	// never be able to panic the process — ParseSubscription runs inside the
@@ -47,26 +59,45 @@ func ParseSubscription(body []byte) (nodes []model.Node, skipped int, err error)
 	// unchanged for them. A leading UTF-8 BOM (which TrimSpace does not remove)
 	// is stripped for this path only, since some servers prepend one.
 	if clash := stripBOM(text); looksLikeClashConfig(clash) {
-		return parseClashSubscription(clash)
+		return parseClashSubscriptionWithLimits(clash, budget)
 	}
 
 	if dec, derr := decodeBase64(text); derr == nil && looksLikeLinks(dec) {
 		text = string(dec)
 	}
 
-	for _, line := range strings.Split(text, "\n") {
+	for len(text) > 0 {
+		line, rest, _ := strings.Cut(text, "\n")
+		text = rest
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "//") || strings.HasPrefix(line, "#") {
 			continue
 		}
+		if err := budget.takeEntry(); err != nil {
+			return nil, 0, err
+		}
+		if err := budget.rawRecord(len(line)); err != nil {
+			return nil, 0, err
+		}
 		node, perr := ParseLink(line)
 		if perr != nil {
+			var budget *BudgetError
+			if errors.As(perr, &budget) {
+				return nil, 0, perr
+			}
 			skipped++
 			continue
 		}
+		if err := validateRecord(node, limits); err != nil {
+			return nil, 0, err
+		}
 		nodes = append(nodes, node)
 	}
-	return nodes, skipped, nil
+	validated, err := ValidateNodes(nodes, limits)
+	if err != nil {
+		return nil, 0, err
+	}
+	return validated, skipped, nil
 }
 
 // stripBOM removes a leading UTF-8 byte-order mark (EF BB BF). TrimSpace leaves
@@ -82,7 +113,9 @@ func stripBOM(s string) string {
 // that is, it has a top-level (unindented) "proxies:" key. An indented "proxies"
 // (e.g. nested under a proxy-provider) or a "#"-commented line does not count.
 func looksLikeClashConfig(text string) bool {
-	for _, line := range strings.Split(text, "\n") {
+	for len(text) > 0 {
+		line, remaining, _ := strings.Cut(text, "\n")
+		text = remaining
 		line = strings.TrimRight(line, " \t\r")
 		if line == "" || line[0] == ' ' || line[0] == '\t' {
 			continue // blank or indented: not a top-level key
@@ -104,17 +137,30 @@ func looksLikeClashConfig(text string) bool {
 // maps each entry to a Node. A proxy of an unsupported type, or one missing the
 // fields its protocol needs, is counted in skipped just like an unparseable link;
 // the call never fails as a whole.
-func parseClashSubscription(text string) (nodes []model.Node, skipped int, err error) {
-	proxies, _ := clashProxyMaps([]byte(text))
-	for _, p := range proxies {
-		node, ok := clashProxyToNode(p)
+func parseClashSubscription(text string) ([]model.Node, int, error) {
+	return parseClashSubscriptionWithLimits(text, &parseBudget{limits: DefaultLimits()})
+}
+func parseClashSubscriptionWithLimits(text string, budget *parseBudget) (nodes []model.Node, skipped int, err error) {
+	proxies, err := clashProxyMapsWithLimits([]byte(text), budget)
+	if err != nil {
+		return nil, 0, err
+	}
+	for _, proxy := range proxies {
+		node, ok := clashProxyToNode(proxy)
 		if !ok {
 			skipped++
 			continue
 		}
+		if err := validateRecord(node, budget.limits); err != nil {
+			return nil, 0, err
+		}
 		nodes = append(nodes, node)
 	}
-	return nodes, skipped, nil
+	validated, err := ValidateNodes(nodes, budget.limits)
+	if err != nil {
+		return nil, 0, err
+	}
+	return validated, skipped, nil
 }
 
 // looksLikeLinks reports whether decoded bytes plausibly hold share links,

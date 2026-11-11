@@ -14,6 +14,7 @@ import (
 	"github.com/Divaaaan/tenebra/core/protection"
 	"github.com/Divaaaan/tenebra/core/routing"
 	"github.com/Divaaaan/tenebra/core/singbox"
+	"github.com/Divaaaan/tenebra/core/state"
 )
 
 // trafficPollInterval is how often the daemon polls cumulative byte counters and
@@ -119,6 +120,12 @@ func (d *Daemon) handleConnect(ctx context.Context, req Request) Response {
 	// lock and yields to this connect. A user command is the one connect whose
 	// success records the last-connect intent for autoconnect (remember=true).
 	d.connMu.Lock()
+	latest, exists := d.store.Get(req.Profile)
+	if !exists {
+		d.connMu.Unlock()
+		return d.refuseConnect(req, profile.ErrNotFound.Error(), "connect refused: profile was removed while queued")
+	}
+	p = latest
 	st, err := d.startConnect(ctx, p, req.Node, req.Auto, true, "")
 	d.connMu.Unlock()
 	if err != nil {
@@ -212,9 +219,41 @@ func (d *Daemon) logConnectPlan(p profile.Profile, m *fallback.Machine, explicit
 // reconnecting the one it just abandoned. It is ignored for an explicit-node
 // connect (the user pinned that exact exit) and when empty.
 func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNode string, auto, remember bool, avoid string) (State, error) {
+	return d.startConnectTracked(ctx, p, explicitNode, auto, remember, avoid, nil)
+}
+
+func (d *Daemon) startConnectTracked(ctx context.Context, p profile.Profile, explicitNode string, auto, remember bool, avoid string, phase *string) (State, error) {
+	businessCtx, done, err := d.beginBusiness(ctx)
+	if err != nil {
+		return State{}, err
+	}
+	defer done()
+	ctx = businessCtx
+	if err := ctx.Err(); err != nil {
+		return State{}, err
+	}
+	if phase != nil {
+		*phase = "preflight"
+	}
+	d.mu.Lock()
+	removing := d.removingProfiles[p.ID]
+	d.mu.Unlock()
+	if removing {
+		return State{}, profile.ErrNotFound
+	}
+	if _, exists := d.store.Get(p.ID); !exists {
+		return State{}, profile.ErrNotFound
+	}
 	d.mu.Lock()
 	mh := d.multihop
 	d.mu.Unlock()
+	if d.canonical != nil {
+		var err error
+		mh, err = d.canonicalMultihop(p.ID)
+		if err != nil {
+			return State{}, err
+		}
+	}
 	if err := validateMultihopProfile(p, mh); err != nil {
 		return State{}, err
 	}
@@ -244,6 +283,10 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 	// That is what made a live re-apply look like a tunnel that died on its own
 	// twenty seconds in.
 	d.pickFreeTunAddress()
+	ro, tun, intent, configRevision, err := d.captureConnectionInputs(p, requestedNode, remember, mh)
+	if err != nil {
+		return State{}, err
+	}
 	// A health failover asks to avoid the node it is leaving; drop it so the walk
 	// picks a different exit. If that empties the set (a single-node profile has
 	// nowhere else to go) fail here, before any teardown, so the current tunnel is
@@ -254,12 +297,14 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 			return State{}, fmt.Errorf("connect: no alternative node to fail over to")
 		}
 	}
+	// Rendering is a pure refusal boundary. A bad retained node or new option
+	// must fail before host lockdown or replacement touches the live process.
+	if _, err := makeConnectPlan(p, candidates[0].NodeID, resolveMultihop(ro, mh, serverTags(p)), tun, configRevision); err != nil {
+		return State{}, err
+	}
 	// Lock down before candidate pings or any process replacement. Validation
 	// above remains a read-only refusal; errors here never start an engine.
-	d.mu.Lock()
-	protectionRouting := d.routing
-	d.mu.Unlock()
-	if err := d.prepareProtection(protectionRouting); err != nil {
+	if err := d.prepareProtection(ro); err != nil {
 		return State{}, fmt.Errorf("host protection: %w", err)
 	}
 
@@ -296,11 +341,6 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 
 	// Snapshot routing/tun under lock so the loop builds every per-candidate
 	// config against a consistent view even if set_routing runs meanwhile.
-	d.mu.Lock()
-	ro := d.routing
-	tun := d.tun
-	d.mu.Unlock()
-
 	nodes := profileNodes(p)
 	nodeIDs := serverIDs(p)
 	tags := serverTags(p)
@@ -322,6 +362,9 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 
 	// Tear down any existing connection (and any in-flight loop) before starting a
 	// new one so we never run two sing-box processes at once.
+	if phase != nil {
+		*phase = "swapped"
+	}
 	if err := d.teardown(StateConnecting, p.ID, ""); err != nil {
 		return State{}, err
 	}
@@ -338,16 +381,18 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 	// owns Start/Probe/Stop per candidate and promotes the state to connected (or
 	// error) itself.
 	loop := fallbackLoop{
-		gen:           gen,
-		profileID:     p.ID,
-		nodes:         nodes,
-		nodeIDs:       nodeIDs,
-		tags:          tags,
-		ro:            ro,
-		tun:           tun,
-		machine:       m,
-		remember:      remember,
-		requestedNode: requestedNode,
+		intent:         intent,
+		configRevision: configRevision,
+		gen:            gen,
+		profileID:      p.ID,
+		nodes:          nodes,
+		nodeIDs:        nodeIDs,
+		tags:           tags,
+		ro:             ro,
+		tun:            tun,
+		machine:        m,
+		remember:       remember,
+		requestedNode:  requestedNode,
 	}
 	// Publish the initial phase before the worker can finish, so a fast result
 	// cannot be followed by a stale Connecting event. The caller holds connMu
@@ -377,34 +422,6 @@ func (d *Daemon) startConnect(ctx context.Context, p profile.Profile, explicitNo
 // store, the running tunnel is left untouched (old options and all) and the
 // change is logged as deferred — a settings toggle must never kill a working
 // tunnel without bringing one back.
-func (d *Daemon) reapplyLive() {
-	// Serialize with the off-command relaunch/reconcile connects (connMu), same as
-	// the connect command, so the hot-swap can't race one of them.
-	d.connMu.Lock()
-	defer d.connMu.Unlock()
-	cur := d.snapshotState()
-	if cur.State != StateConnected || cur.Profile == "" || cur.Node == "" {
-		return
-	}
-	p, ok := d.store.Get(cur.Profile)
-	if !ok {
-		d.emitLog(LogWarn, "re-apply: connected profile no longer stored; the change applies on the next connect")
-		return
-	}
-	if _, err := d.startConnect(context.Background(), p, cur.Node, false, false, ""); err != nil {
-		// Say the tunnel is down, because it is. startConnect stops the running
-		// process before it tries to bring the new one up, so a failure here is not
-		// "nothing changed" — the old tunnel is already gone. Logging "the change
-		// applies on the next connect" and leaving the state at connected is how a
-		// dead tunnel keeps a green light: the app reports a healthy connection, the
-		// user's traffic goes nowhere, and every diagnosis starts from a lie. Seen
-		// exactly that way on a live machine, for hours.
-		d.emitLog(LogError, fmt.Sprintf("re-apply: %v; the tunnel is down", err))
-		d.setState(State{State: StateError, Profile: cur.Profile, Node: cur.Node,
-			Error: "re-apply failed: " + err.Error(), Routing: d.snapshotState().Routing})
-	}
-}
-
 // pingCandidates measures the TCP round-trip to each candidate's server and
 // returns a nodeID -> RTT(ms) map holding only the reachable ones; an
 // unreachable or unmeasurable candidate is simply omitted, which NewByLatency
@@ -509,7 +526,7 @@ func (d *Daemon) teardown(newState ConnState, profileID, nodeID string) error {
 	// any watcher/poller it started) to finish before we declare the new state, so
 	// events don't interleave across connections. The loop also stops the runner
 	// itself on cancel; Stop is idempotent.
-	_ = d.runner.Stop()
+	stopErr := d.runner.Stop()
 	d.wg.Wait()
 	d.protection.Interrupted()
 
@@ -520,8 +537,15 @@ func (d *Daemon) teardown(newState ConnState, profileID, nodeID string) error {
 	// be arming the proxy as it unwinds, and a disarm that ran earlier would leave
 	// that late arm standing. It is idempotent and a no-op unless we armed it, so
 	// tun-mode teardowns and the pre-start teardown of a fresh connect pay nothing.
+	var cleanupErr error
+	if stopErr != nil {
+		cleanupErr = fmt.Errorf("engine stop failed: %w", stopErr)
+	}
 	if err := d.disarmSystemProxy(); err != nil {
-		msg := fmt.Errorf("system proxy cleanup failed: %w", err)
+		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("system proxy cleanup failed: %w", err))
+	}
+	if cleanupErr != nil {
+		msg := cleanupErr
 		d.setState(State{State: StateError, Error: msg.Error(), Routing: d.snapshotState().Routing})
 		return msg
 	}
@@ -540,9 +564,11 @@ func (d *Daemon) teardown(newState ConnState, profileID, nodeID string) error {
 // fallbackLoop bundles the immutable inputs of one connect's fallback walk so
 // runFallback's signature stays readable.
 type fallbackLoop struct {
-	gen       uint64
-	profileID string
-	nodes     []model.Node
+	intent         configIntent
+	configRevision uint64
+	gen            uint64
+	profileID      string
+	nodes          []model.Node
 	// nodeIDs is the server ID of each entry in nodes, at the same index, so the
 	// loop can find which node an attempt selects when it folds a transport
 	// strategy into that one node before building the config.
@@ -936,6 +962,7 @@ func (d *Daemon) recordSuccess(ctx context.Context, loop fallbackLoop, attempt f
 	// Capture the connected instant before publishing it, so the uptime the
 	// relaunch budget reads later is measured from a fixed point.
 	connectedAt := d.now()
+	d.recordAppliedConfig(loop)
 	d.protection.Accepted()
 	d.setState(State{State: StateConnected, Profile: loop.profileID,
 		Node: attempt.NodeID, Routing: d.snapshotState().Routing})
@@ -1247,6 +1274,19 @@ func (d *Daemon) startConnectIfCurrent(gen uint64, p profile.Profile, node, avoi
 		if !d.isCurrent(gen) {
 			return // a user action superseded us between the death and this claim
 		}
+		// Queued work owns an intent, never a captured profile payload. Removal
+		// or replacement may have completed while it waited for connMu.
+		d.mu.Lock()
+		removing := d.removingProfiles[p.ID]
+		d.mu.Unlock()
+		latest, exists := d.store.Get(p.ID)
+		if removing || !exists {
+			if onErr != nil {
+				onErr(profile.ErrNotFound)
+			}
+			return
+		}
+		p = latest
 		if beforeStart != nil {
 			beforeStart()
 		}
@@ -1262,6 +1302,11 @@ func (d *Daemon) startConnectIfCurrent(gen uint64, p profile.Profile, node, avoi
 // unchanged intent skips the disk write, mirroring how last-good avoids
 // rewriting an identical value on every reconnect.
 func (d *Daemon) rememberLastConn(profileID, requestedNode string) {
+	if d.canonical != nil {
+		// connect_v2 committed it before Start. A delayed acceptance owns no
+		// authority to replace a newer request, and performs no Store IO here.
+		return
+	}
 	d.mu.Lock()
 	changed := d.lastProfile != profileID || d.lastNode != requestedNode
 	d.lastProfile = profileID
@@ -1287,6 +1332,21 @@ func (d *Daemon) rememberLastConn(profileID, requestedNode string) {
 // profile or node leaves the daemon honestly idle — logged, with no error state
 // and never a different exit than the user last chose.
 func (d *Daemon) AutoconnectOnStart() bool {
+	if d.canonical != nil {
+		if err := d.canonical.Ready(); err != nil {
+			return false
+		}
+		snapshot := d.canonical.View()
+		if snapshot.Connection.Selection.Ref.Resolution == state.NeedsSelection {
+			d.emitLog(LogWarn, "autoconnect: explicit selection required")
+			return false
+		}
+		if snapshot.Multihop.Enabled {
+			if _, err := snapshot.BindingFor(snapshot.Connection.ProfileID); err != nil {
+				return false
+			}
+		}
+	}
 	d.mu.Lock()
 	on := d.autoconnect
 	profileID := d.lastProfile
@@ -1369,27 +1429,37 @@ func (d *Daemon) AutoconnectOnStart() bool {
 // itself applies.
 func (d *Daemon) reconcileConnectingOptions(loop fallbackLoop, nodeID string) {
 	d.mu.Lock()
-	curRo := d.routing
-	curTun := d.tun
-	curMh := d.multihop
-	d.mu.Unlock()
-	// Resolve the current multihop selection against this profile's tags, the same
-	// way the loop resolved its own snapshot, so a multihop toggle landing mid-connect
-	// is compared like for like and, when it differs, hot-swapped in.
-	curRo = resolveMultihop(curRo, curMh, loop.tags)
-	if loop.ro.KillSwitch == curRo.KillSwitch &&
-		loop.ro.TLSFragment == curRo.TLSFragment &&
-		loop.tun.Stack == curTun.Stack &&
-		multihopResolved(loop.ro, curRo) {
-		return // nothing that applies live changed during the connecting window
+	if d.generation != loop.gen || d.state.State != StateConnected {
+		d.mu.Unlock()
+		return
 	}
+	d.syncDesiredOptionsLocked()
+	if loop.intent.Equal(d.desiredConfig) {
+		// A change followed by a revert needs a current acknowledgement, not
+		// another process with byte-equivalent effective configuration.
+		before := d.publicRevision
+		d.appliedConfigRevision = d.configRevision
+		view := d.commitViewLocked(nil)
+		emit := d.emit
+		d.mu.Unlock()
+		if emit != nil && view.StateRevision != before {
+			emit(EventState, stateEventBody(view))
+		}
+		return
+	}
+	d.mu.Unlock()
 	p, ok := d.store.Get(loop.profileID)
 	if !ok {
 		d.emitLog(LogWarn, "re-apply: connected profile no longer stored; the change applies on the next connect")
 		return
 	}
+	node, err := d.desiredReconnectNode(loop.profileID, nodeID)
+	if err != nil {
+		d.emitLog(LogWarn, "re-apply deferred: current selection requires a new connection")
+		return
+	}
 	d.emitLog(LogInfo, "re-apply: options changed while connecting; hot-swapping to apply them")
-	d.startConnectIfCurrent(loop.gen, p, nodeID, "", nil, func(err error) {
+	d.startConnectIfCurrent(loop.gen, p, node, "", nil, func(err error) {
 		d.emitLog(LogWarn, fmt.Sprintf("re-apply: %v; the change applies on the next connect", err))
 	})
 }
@@ -1491,25 +1561,32 @@ func (d *Daemon) isCurrent(gen uint64) bool {
 
 // setState replaces the connection state and emits a state event reflecting it.
 func (d *Daemon) setState(s State) {
-	s.Protection = d.protection.Snapshot()
-	d.mu.Lock()
-	// Preserve the routing label if the new state didn't set one.
-	if s.Routing == "" {
-		s.Routing = d.state.Routing
-	}
-	// The split/kill-switch/tun/autoconnect preferences are daemon-wide
-	// settings, not per-connection ones, so they always track the live options
-	// rather than whatever the transient State value carried. This keeps status
-	// reporting them correctly across connect/disconnect transitions without
-	// every call site restating them.
-	applySettingsToState(&s, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
-	// The bypass fields are daemon-wide in the same way and have to be carried
-	// forward for the same reason; they take a separate call because they are read
-	// off the daemon's own bookkeeping rather than the routing options.
-	d.applyZapretToStateLocked(&s)
-	d.state = s
-	emit := d.emit
-	d.mu.Unlock()
+	protectionSnapshot, epoch := d.protection.SnapshotWithEpoch()
+	var emit func(string, any)
+	s = func() State {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		d.applyProtectionLocked(protectionSnapshot, epoch)
+		s.Protection = d.state.Protection
+		// Preserve the routing label if the new state didn't set one.
+		if s.Routing == "" {
+			s.Routing = d.state.Routing
+		}
+		// The split/kill-switch/tun/autoconnect preferences are daemon-wide
+		// settings, not per-connection ones, so they always track the live options
+		// rather than whatever the transient State value carried. This keeps status
+		// reporting them correctly across connect/disconnect transitions without
+		// every call site restating them.
+		applySettingsToState(&s, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
+		// The bypass fields are daemon-wide in the same way and have to be carried
+		// forward for the same reason; they take a separate call because they are read
+		// off the daemon's own bookkeeping rather than the routing options.
+		d.applyZapretToStateLocked(&s)
+		d.state = s
+		d.syncDesiredOptionsLocked()
+		emit = d.emit
+		return d.commitViewLocked(nil)
+	}()
 
 	if emit != nil {
 		body := stateEventBody(s)
@@ -1520,11 +1597,17 @@ func (d *Daemon) setState(s State) {
 // stateEventBody projects a State into the state event payload (which omits the
 // profile field — the protocol carries state/node/error and protection).
 func stateEventBody(s State) stateEvent {
-	return stateEvent{State: s.State, Node: s.Node, Error: s.Error, Protection: s.Protection}
+	event := stateEvent{State: s.State, Node: s.Node, Error: s.Error, Protection: s.Protection}
+	if s.DaemonInstanceID != "" {
+		full := cloneIdentityView(s)
+		event.snapshot = &full
+	}
+	return event
 }
 
 // stateEvent is the wire body of a state event.
 type stateEvent struct {
+	snapshot   *State
 	State      ConnState        `json:"state"`
 	Node       string           `json:"node,omitempty"`
 	Error      string           `json:"error,omitempty"`
@@ -1552,6 +1635,7 @@ func (d *Daemon) emitTraffic(ev TrafficEvent) {
 // which is when the interesting failures happen — so a line that went only there
 // was a line that did not exist.
 func (d *Daemon) emitLog(level, msg string) {
+	msg = scrubSecrets(msg)
 	d.mu.Lock()
 	if logSeverity(level) < logSeverity(d.logLevel) {
 		d.mu.Unlock()
@@ -1619,6 +1703,11 @@ func (d *Daemon) emitProfiles() {
 
 // Close tears down any active connection. The server calls it on shutdown.
 func (d *Daemon) Close() error {
+	d.closeMu.Lock()
+	defer d.closeMu.Unlock()
+	if d.subscriptionOps != nil {
+		d.subscriptionOps.close()
+	}
 	// Cancel any in-flight background entitlement lookups so a slow endpoint
 	// doesn't hold shutdown; they only read the store and re-emit, so cutting
 	// them short loses nothing but a badge update.

@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -291,7 +292,7 @@ func TestFetchGuardBlocksRedirectIntoMetadata(t *testing.T) {
 	// URL. The guard must catch the redirect hop, so the guard predicate here
 	// blocks only the metadata IP (leaving the loopback origin reachable).
 	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "http://169.254.169.254/latest/meta-data/", http.StatusFound)
+		http.Redirect(w, r, "https://169.254.169.254/latest/meta-data/", http.StatusFound)
 	}))
 	t.Cleanup(origin.Close)
 	pool := x509.NewCertPool()
@@ -305,8 +306,8 @@ func TestFetchGuardBlocksRedirectIntoMetadata(t *testing.T) {
 	if err == nil {
 		t.Fatal("fetchWithConfig() error = nil, want the redirect into metadata refused")
 	}
-	if !strings.Contains(err.Error(), "blocked") || !strings.Contains(err.Error(), "169.254.169.254") {
-		t.Fatalf("error = %q, want a blocked-address error naming the metadata IP", err)
+	if !errors.Is(err, errBlockedAddress) {
+		t.Fatalf("error = %q, want a typed blocked-address error", err)
 	}
 }
 
@@ -339,7 +340,7 @@ func TestFetchHTTPSchemeWarnsWithoutLeakingToken(t *testing.T) {
 
 	// blockAddr nil keeps the guard off so the loopback origin is reachable; the
 	// point of this test is the cleartext-http warning, not the guard.
-	body, _, err := fetchWithConfig(context.Background(), sub.URL+"/sub?token=secret", fetchConfig{})
+	body, _, err := fetchWithConfig(context.Background(), sub.URL+"/sub?token=secret", fetchConfig{allowHTTP: true})
 	if err != nil {
 		t.Fatalf("fetchWithConfig() over http error = %v, want plain http to still work", err)
 	}
@@ -369,7 +370,7 @@ func TestFetchAppliesCustomHeaders(t *testing.T) {
 	// blockAddr nil keeps the guard off so the loopback origin is reachable; the
 	// point here is that the extra headers reach the request, one of them overriding
 	// the default User-Agent.
-	cfg := fetchConfig{headers: map[string]string{
+	cfg := fetchConfig{allowHTTP: true, headers: map[string]string{
 		"X-Sub-Token": "abc123",
 		"User-Agent":  "custom-agent",
 	}}
@@ -389,16 +390,17 @@ func TestFetchAppliesCustomHeaders(t *testing.T) {
 }
 
 func TestFetchGuardOptOutEnvDisablesGuard(t *testing.T) {
+	before := defaultFetchConfig().blockAddr == nil
 	t.Setenv(ssrfGuardOptOutEnv, "1")
 	if ssrfGuardDisabled() != true {
 		t.Fatal("ssrfGuardDisabled() = false with opt-out set, want true")
 	}
-	if defaultFetchConfig().blockAddr != nil {
-		t.Fatal("defaultFetchConfig().blockAddr non-nil with opt-out set, want guard disabled")
+	if (defaultFetchConfig().blockAddr == nil) != before {
+		t.Fatal("request-time environment mutation changed the startup SSRF policy")
 	}
 	t.Setenv(ssrfGuardOptOutEnv, "")
-	if defaultFetchConfig().blockAddr == nil {
-		t.Fatal("defaultFetchConfig().blockAddr nil by default, want the guard on")
+	if (defaultFetchConfig().blockAddr == nil) != before {
+		t.Fatal("request-time environment mutation changed the startup SSRF policy")
 	}
 }
 

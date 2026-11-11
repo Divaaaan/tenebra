@@ -26,16 +26,23 @@ import (
 
 // Command names. These are the cmd values a Request may carry.
 const (
-	CmdStatus             = "status"
-	CmdListProfiles       = "list_profiles"
-	CmdImportSubscription = "import_subscription"
-	CmdImportLink         = "import_link"
-	CmdImportLinks        = "import_links"
-	CmdRemoveProfile      = "remove_profile"
-	CmdRefreshSub         = "refresh_subscription"
-	CmdConnect            = "connect"
-	CmdDisconnect         = "disconnect"
-	CmdPing               = "ping"
+	CmdStatus                        = "status"
+	CmdListProfiles                  = "list_profiles"
+	CmdImportSubscription            = "import_subscription"
+	CmdImportLink                    = "import_link"
+	CmdImportLinks                   = "import_links"
+	CmdRemoveProfile                 = "remove_profile"
+	CmdRefreshSub                    = "refresh_subscription"
+	CmdConnect                       = "connect"
+	CmdConnectV2                     = "connect_v2"
+	CmdSetMultihopV2                 = "set_multihop_v2"
+	CmdSetSubscriptionHTTPPolicy     = "set_subscription_http_policy"
+	CmdStartSubscriptionOperation    = "start_subscription_operation"
+	CmdContinueSubscriptionOperation = "continue_subscription_operation"
+	CmdSubscriptionOperationStatus   = "subscription_operation_status"
+	CmdCancelSubscriptionOperation   = "cancel_subscription_operation"
+	CmdDisconnect                    = "disconnect"
+	CmdPing                          = "ping"
 	// CmdCheckNodes measures what actually survives each node end to end, rather
 	// than whether its address accepts TCP (which CmdPing does). See
 	// core/nodecheck for why a TCP-reachable node can still be a black hole.
@@ -150,8 +157,15 @@ const (
 // stay zero. Raw payloads are decoded straight into this flat struct because the
 // command set is small and the fields don't collide.
 type Request struct {
-	ID  int64  `json:"id"`
-	Cmd string `json:"cmd"`
+	Kind            string         `json:"kind,omitempty"`
+	OperationID     string         `json:"operation_id,omitempty"`
+	Decision        string         `json:"decision,omitempty"`
+	ChallengeID     string         `json:"challenge_id,omitempty"`
+	Selection       *SelectionView `json:"selection,omitempty"`
+	AllowHTTP       *bool          `json:"allow_http,omitempty"`
+	ProfileRevision uint64         `json:"profile_revision,omitempty"`
+	ID              int64          `json:"id"`
+	Cmd             string         `json:"cmd"`
 
 	// Profile is the target profile ID for connect, disconnect (ignored),
 	// remove_profile, refresh_subscription and ping.
@@ -290,11 +304,26 @@ type Event struct {
 
 // State is the connection status object. It is both the status command's result
 // and the body of a state event, matching the State type in the protocol doc.
+type Capabilities struct {
+	StateRevisionsV1         bool `json:"state_revisions_v1"`
+	IdentitySelectionV2      bool `json:"identity_selection_v2"`
+	SubscriptionOperationsV1 bool `json:"subscription_operations_v1"`
+	MaintenanceV1            bool `json:"maintenance_v1"`
+}
+
 type State struct {
-	State   ConnState `json:"state"`
-	Node    string    `json:"node,omitempty"`
-	Profile string    `json:"profile,omitempty"`
-	Routing string    `json:"routing,omitempty"`
+	DaemonInstanceID      string         `json:"daemon_instance_id,omitempty"`
+	StateRevision         uint64         `json:"state_revision,omitempty"`
+	ConfigRevision        uint64         `json:"config_revision,omitempty"`
+	AppliedConfigRevision uint64         `json:"applied_config_revision,omitempty"`
+	SettingsPending       bool           `json:"settings_pending,omitempty"`
+	Capabilities          *Capabilities  `json:"capabilities,omitempty"`
+	Selection             *SelectionView `json:"selection,omitempty"`
+	MultihopV2            *MultihopView  `json:"multihop_v2,omitempty"`
+	State                 ConnState      `json:"state"`
+	Node                  string         `json:"node,omitempty"`
+	Profile               string         `json:"profile,omitempty"`
+	Routing               string         `json:"routing,omitempty"`
 	// DaemonVersion is the release version of the daemon build (buildinfo.Version),
 	// carried in every snapshot so a GUI can detect a version skew against its own.
 	// The skew is real on macOS: the in-app updater refreshes only the .app, while

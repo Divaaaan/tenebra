@@ -920,7 +920,7 @@ func TestDirectModeFinalIsDirect(t *testing.T) {
 	}
 }
 
-// routeProcessRule finds the first route rule carrying a process_name match in a
+// routeProcessRule finds the first route rule carrying a process_path_regex match in a
 // built config's route block.
 func routeProcessRule(t *testing.T, cfg map[string]any) map[string]any {
 	t.Helper()
@@ -930,7 +930,7 @@ func routeProcessRule(t *testing.T, cfg map[string]any) map[string]any {
 		t.Fatalf("route rules wrong type: %T", route["rules"])
 	}
 	for _, r := range rules {
-		if _, has := r["process_name"]; has {
+		if _, has := r["process_path_regex"]; has {
 			return r
 		}
 	}
@@ -948,7 +948,7 @@ func TestBuildSplitExcludeEmitsProcessNameDirect(t *testing.T) {
 	}
 	pr := routeProcessRule(t, cfg)
 	if pr == nil {
-		t.Fatal("exclude build is missing a process_name route rule")
+		t.Fatal("exclude build is missing a process_path_regex route rule")
 	}
 	if pr["outbound"] != directTag || pr["action"] != "route" {
 		t.Errorf("exclude process rule = %v, want action route outbound direct", pr)
@@ -970,7 +970,7 @@ func TestBuildSplitIncludeFinalDirectAppToProxy(t *testing.T) {
 	}
 	pr := routeProcessRule(t, cfg)
 	if pr == nil {
-		t.Fatal("include build is missing a process_name route rule")
+		t.Fatal("include build is missing a process_path_regex route rule")
 	}
 	if pr["outbound"] != proxyTag {
 		t.Errorf("include process rule outbound = %v, want proxy", pr["outbound"])

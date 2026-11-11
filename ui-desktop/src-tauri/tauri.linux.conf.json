@@ -17,7 +17,19 @@
     "linux": {
       "deb": {
         "section": "net",
-        "desktopTemplate": "linux/tenebra.desktop"
+        "depends": ["systemd", "pkexec"],
+        "desktopTemplate": "linux/tenebra.desktop",
+        "files": {
+          "/usr/lib/tenebra/tenebra-helper": "resources/service-payload/package/tenebra-helper",
+          "/usr/lib/tenebra/package-payload": "resources/service-payload/package/payload",
+          "/usr/lib/systemd/system/tenebra.service": "../../internal/installtx/systemd/tenebra.service",
+          "/usr/share/polkit-1/actions/ru.tenebra.maintenance.policy": "../../deploy/linux/ru.tenebra.maintenance.policy",
+          "/usr/lib/modules-load.d/tenebra.conf": "../../deploy/linux/tenebra.conf"
+        },
+        "preInstallScript": "../../packaging/debian/preinst",
+        "postInstallScript": "../../packaging/debian/postinst",
+        "preRemoveScript": "../../packaging/debian/prerm",
+        "postRemoveScript": "../../packaging/debian/postrm"
       }
     }
   }

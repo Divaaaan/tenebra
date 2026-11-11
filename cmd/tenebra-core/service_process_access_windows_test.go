@@ -32,6 +32,9 @@ func TestServicePublishesQueryableProcessBeforeDaemon(t *testing.T) {
 	guard, daemon := token.NoPos, token.NoPos
 	ast.Inspect(execute, func(node ast.Node) bool {
 		if call, ok := node.(*ast.CallExpr); ok {
+			if name, ok := call.Fun.(*ast.SelectorExpr); ok && name.Sel.Name == "Prepare" {
+				daemon = call.Pos()
+			}
 			if name, ok := call.Fun.(*ast.Ident); ok {
 				switch name.Name {
 				case "enableServiceProcessQuery":

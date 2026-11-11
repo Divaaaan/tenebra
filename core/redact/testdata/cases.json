@@ -1,0 +1,7 @@
+[
+  {"input":"https://user:PASS_CANARY@provider.test/sub/PATH_CANARY?key=QUERY_CANARY#FRAGMENT_CANARY","expected":"https://provider.test"},
+  {"input":"request failed (https://provider.test/private?token=CANARY).","expected":"request failed (https://provider.test)."},
+  {"input":"vmess://BASE64_CANARY","expected":"vmess://[redacted]"},
+  {"input":"trojan://PASS_CANARY@provider.test:443#CANARY","expected":"trojan://provider.test:443"},
+  {"input":"ordinary display label","expected":"ordinary display label"}
+]

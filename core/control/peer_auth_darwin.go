@@ -58,3 +58,7 @@ func consoleUserUID() (string, error) {
 	}
 	return strconv.FormatUint(uint64(st.Uid), 10), nil
 }
+
+func unixPeerAllowed(peer, self int, warn func(string)) bool {
+	return peerAllowed(strconv.Itoa(peer), strconv.Itoa(self), consoleUserUID, warn)
+}

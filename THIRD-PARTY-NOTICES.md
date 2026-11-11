@@ -270,8 +270,10 @@ move them.
 Direct dependencies from `go.mod`. Everything else `go.sum` carries is pulled
 in by the gomobile bind tool listed here and runs only at build time.
 
+- **filippo.io/edwards25519** `v1.1.0` — BSD-3-Clause — Copyright (c) 2009 The Go Authors. All rights reserved.
 - **github.com/Microsoft/go-winio** `v0.6.2` — MIT — Copyright (c) 2015 Microsoft
 - **github.com/sagernet/gomobile** `v0.1.12` — BSD-3-Clause — Copyright (c) 2009 The Go Authors. All rights reserved. — a fork of golang.org/x/mobile, pinned so the Android/iOS bind resolves; its `bind` support package is compiled into the mobile artifacts and into no desktop binary.
+- **golang.org/x/crypto** `v0.48.0` — BSD-3-Clause — Copyright 2009 The Go Authors.
 - **golang.org/x/sys** `v0.41.0` — BSD-3-Clause — Copyright 2009 The Go Authors
 
 ## 4. Rust (Tauri) dependencies
@@ -280,6 +282,9 @@ Direct dependencies from `ui-desktop/src-tauri/Cargo.toml` (including the build
 and Windows-target dependencies). Each is dual-licensed; a distributor may use
 either of the listed licenses.
 
+- **serde** `1` — MIT OR Apache-2.0 — The Serde developers
+- **serde_json** `1` — MIT OR Apache-2.0 — The Serde developers
+- **sha2** `=0.10.9` — MIT OR Apache-2.0 — Copyright (c) 2006-2009 Graydon Hoare, Copyright (c) 2009-2013 Mozilla Foundation, Copyright (c) 2016 Artyom Pavlov
 - **tauri-build** `2` — Apache-2.0 OR MIT — Copyright (c) 2017 - Present Tauri Apps Contributors
 - **tauri** `2` — Apache-2.0 OR MIT — Copyright (c) 2017 - Present Tauri Apps Contributors
 - **tauri-plugin-dialog** `2` — Apache-2.0 OR MIT — Copyright (c) 2017 - Present Tauri Apps Contributors
@@ -333,7 +338,7 @@ GPL-3.0 text that covers Tenebra and the bundled sing-box components is in
 
 ### MIT License
 
-Applies to: github.com/Microsoft/go-winio, tauri-build, tauri, tauri-plugin-dialog, tauri-plugin-shell, tauri-plugin-autostart, tauri-plugin-single-instance, tauri-plugin-deep-link, tauri-plugin-notification, tauri-plugin-updater, tauri-plugin-process, serde, serde_json, url, open, windows-sys, @tauri-apps/api, @tauri-apps/plugin-autostart, @tauri-apps/plugin-dialog, @tauri-apps/plugin-process, @tauri-apps/plugin-shell, @tauri-apps/plugin-updater, react, react-dom, zapret, zapret-discord-youtube.
+Applies to: github.com/Microsoft/go-winio, serde, serde_json, sha2, tauri-build, tauri, tauri-plugin-dialog, tauri-plugin-shell, tauri-plugin-autostart, tauri-plugin-single-instance, tauri-plugin-deep-link, tauri-plugin-notification, tauri-plugin-updater, tauri-plugin-process, url, open, windows-sys, @tauri-apps/api, @tauri-apps/plugin-autostart, @tauri-apps/plugin-dialog, @tauri-apps/plugin-process, @tauri-apps/plugin-shell, @tauri-apps/plugin-updater, react, react-dom, zapret, zapret-discord-youtube.
 
 ```text
 MIT License
@@ -537,7 +542,7 @@ Library.
 
 ### BSD 3-Clause License
 
-Applies to: github.com/sagernet/gomobile, golang.org/x/sys.
+Applies to: github.com/sagernet/gomobile, golang.org/x/crypto, golang.org/x/sys.
 
 ```text
 Copyright 2009 The Go Authors.
@@ -569,9 +574,41 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
+### filippo.io/edwards25519 license
+
+```text
+Copyright (c) 2009 The Go Authors. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+   * Neither the name of Google Inc. nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
 ### Apache License 2.0
 
-Applies to: tauri-build, tauri, tauri-plugin-dialog, tauri-plugin-shell, tauri-plugin-autostart, tauri-plugin-single-instance, tauri-plugin-deep-link, tauri-plugin-notification, tauri-plugin-updater, tauri-plugin-process, serde, serde_json, url, windows-sys, @tauri-apps/api, @tauri-apps/plugin-autostart, @tauri-apps/plugin-dialog, @tauri-apps/plugin-process, @tauri-apps/plugin-shell, @tauri-apps/plugin-updater.
+Applies to: serde, serde_json, sha2, tauri-build, tauri, tauri-plugin-dialog, tauri-plugin-shell, tauri-plugin-autostart, tauri-plugin-single-instance, tauri-plugin-deep-link, tauri-plugin-notification, tauri-plugin-updater, tauri-plugin-process, url, windows-sys, @tauri-apps/api, @tauri-apps/plugin-autostart, @tauri-apps/plugin-dialog, @tauri-apps/plugin-process, @tauri-apps/plugin-shell, @tauri-apps/plugin-updater.
 
 ```text
                                  Apache License

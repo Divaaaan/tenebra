@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,8 +21,10 @@ import (
 	"github.com/Divaaaan/tenebra/core/nodecheck"
 	"github.com/Divaaaan/tenebra/core/profile"
 	"github.com/Divaaaan/tenebra/core/protection"
+	"github.com/Divaaaan/tenebra/core/redact"
 	"github.com/Divaaaan/tenebra/core/routing"
 	"github.com/Divaaaan/tenebra/core/singbox"
+	"github.com/Divaaaan/tenebra/core/state"
 	"github.com/Divaaaan/tenebra/core/subscription"
 	"github.com/Divaaaan/tenebra/core/tunguard"
 	"github.com/Divaaaan/tenebra/core/zapret"
@@ -100,10 +103,27 @@ const defaultClientWriteTimeout = 30 * time.Second
 // lifecycle also spawns goroutines (traffic poll, process watch) that mutate
 // state, so every field touched from more than one goroutine is guarded by mu.
 type Daemon struct {
-	store        *profile.Store
-	runner       Runner
-	protection   *protection.Guard
-	protectionOp sync.Mutex // serializes desired-setting changes with apply/activate
+	business              businessAdmission
+	closeMu               sync.Mutex
+	store                 ProfileStore
+	canonical             *state.Store
+	removingProfiles      map[string]bool // d.mu; spans profile removal without holding connMu across Store I/O
+	lastProjectedRevision uint64
+	canonicalSelection    *SelectionView
+	canonicalMultihopView *MultihopView
+	zapretRuntimeVersion  string
+	runner                Runner
+	protection            *protection.Guard
+	protectionEpoch       uint64
+	runtimeInstanceID     string
+	publicRevision        uint64
+	configRevision        uint64
+	appliedConfigRevision uint64
+	desiredConfig         configIntent
+	desiredConfigSet      bool
+	lastPublicView        *State
+	runtimeRevisionsReady bool
+	protectionOp          sync.Mutex // serializes desired-setting changes with apply/activate
 
 	// proxy applies and clears the OS-wide system proxy for ModeSystemProxy. It is
 	// set once at construction (realSystemProxy in production, a fake in tests) and
@@ -495,15 +515,16 @@ type Daemon struct {
 	// tracks the in-flight lookups so Close waits for them to unwind. The lookups
 	// only ever read the store and re-emit the profile list, never touch the
 	// tunnel, so they are kept off d.wg (whose Wait a disconnect blocks on).
-	entCtx    context.Context
-	entCancel context.CancelFunc
-	entWG     sync.WaitGroup
+	entCtx          context.Context
+	entCancel       context.CancelFunc
+	entWG           sync.WaitGroup
+	subscriptionOps *subscriptionOperations
 }
 
 // NewDaemon builds a Daemon over a profile store and runner. Routing defaults to
 // smart with normalized DNS; the tun options default to the singbox defaults,
 // with the stack pinned explicitly so the reported state always names it.
-func NewDaemon(store *profile.Store, runner Runner) *Daemon {
+func NewDaemon(store ProfileStore, runner Runner) *Daemon {
 	d := &Daemon{
 		store:      store,
 		runner:     runner,
@@ -672,6 +693,8 @@ func NewDaemon(store *profile.Store, runner Runner) *Daemon {
 	// Background entitlement lookups run under this context so Close can cancel a
 	// slow one instead of blocking shutdown on it.
 	d.entCtx, d.entCancel = context.WithCancel(context.Background())
+	d.subscriptionOps = newSubscriptionOperations(d)
+	d.initializeRuntimeView()
 	return d
 }
 
@@ -687,6 +710,9 @@ func (d *Daemon) SetEmitter(emit emitFunc) {
 // the fallback walk on the next launch; tests keep the in-memory one. Call it
 // before serving — it is not synchronised against an in-flight connect.
 func (d *Daemon) SetLastGood(lg fallback.LastGood) {
+	if d.canonical != nil {
+		return
+	}
 	d.lastGood = lg
 }
 
@@ -710,10 +736,18 @@ func (d *Daemon) SetNetStrategies(s netStrategyStore) {
 // serving — it is not synchronised against an in-flight connect. Loading never
 // starts a connection; that is AutoconnectOnStart's, and only its, job.
 func (d *Daemon) SetSettings(store settingsStore) {
+	if d.canonical != nil || store == nil {
+		return
+	}
 	d.settings = store
 	ps := store.Load()
 
 	d.mu.Lock()
+	d.applyPersistedSettingsLocked(ps)
+	d.mu.Unlock()
+}
+
+func (d *Daemon) applyPersistedSettingsLocked(ps persistedSettings) {
 	mode, apps := splitFromSettings(ps)
 	d.routing.SplitMode = mode
 	d.routing.SplitApps = apps
@@ -794,7 +828,6 @@ func (d *Daemon) SetSettings(store settingsStore) {
 	d.lastProfile = ps.LastProfile
 	d.lastNode = ps.LastNode
 	applySettingsToState(&d.state, d.routing, d.tun, d.autoconnect, d.autoFailover, d.crashReports, d.multihop)
-	d.mu.Unlock()
 }
 
 // SetZapretUpdater installs everything this daemon may use to put a bypass
@@ -863,7 +896,7 @@ func (d *Daemon) SetRuleSetDir(dir string) {
 // logged via the daemon's log event but never fails the originating command,
 // mirroring how last-good tolerates a failed write.
 func (d *Daemon) persistSettings() {
-	if d.settings == nil {
+	if d.canonical != nil || d.settings == nil {
 		return
 	}
 	d.mu.Lock()
@@ -942,6 +975,19 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 		d.emitLog(LogWarn, fmt.Sprintf("control: refusing %s: the peer holds no administrative rights", req.Cmd))
 		return newError(req.ID, fmt.Sprintf(
 			"%s: нужны права администратора — команда ставит или запускает код от имени службы", req.Cmd))
+	}
+	if !maintenanceAllowedCommand(req.Cmd) {
+		businessCtx, done, err := d.beginBusiness(ctx)
+		if err != nil {
+			return canonicalError(req.ID, err)
+		}
+		defer done()
+		ctx = businessCtx
+	}
+	if d.canonical != nil {
+		if response, handled := d.handleCanonicalRequest(ctx, req); handled {
+			return response
+		}
 	}
 	switch req.Cmd {
 	case CmdStatus:
@@ -1023,11 +1069,12 @@ func (d *Daemon) Handle(ctx context.Context, req Request) Response {
 
 // snapshotState returns a copy of the current state under lock.
 func (d *Daemon) snapshotState() State {
+	protectionSnapshot, epoch := d.protection.SnapshotWithEpoch()
 	d.mu.Lock()
-	s := d.state
-	d.mu.Unlock()
-	s.Protection = d.protection.Snapshot()
-	return s
+	defer d.mu.Unlock()
+	d.applyProtectionLocked(protectionSnapshot, epoch)
+	d.syncDesiredOptionsLocked()
+	return d.commitViewLocked(nil)
 }
 
 // snapshotRouting returns a copy of the live routing options under lock. The
@@ -1108,14 +1155,17 @@ type redactedNode struct {
 // anticipate. Everything the UI does render — the ID, name, source, refresh
 // timestamp, and the subscription quota/expiry — is preserved verbatim.
 type redactedProfile struct {
-	ID           string         `json:"id"`
-	Name         string         `json:"name"`
-	Source       string         `json:"source"`
-	Nodes        []redactedNode `json:"nodes"`
-	UpdatedAt    time.Time      `json:"updatedAt"`
-	ExpiresAt    *time.Time     `json:"expiresAt,omitempty"`
-	TrafficUsed  int64          `json:"trafficUsed,omitempty"`
-	TrafficTotal int64          `json:"trafficTotal,omitempty"`
+	IdentityVersion int            `json:"identityVersion,omitempty"`
+	Revision        uint64         `json:"revision,omitempty"`
+	HTTPAllowed     bool           `json:"httpAllowed"`
+	ID              string         `json:"id"`
+	Name            string         `json:"name"`
+	Source          string         `json:"source"`
+	Nodes           []redactedNode `json:"nodes"`
+	UpdatedAt       time.Time      `json:"updatedAt"`
+	ExpiresAt       *time.Time     `json:"expiresAt,omitempty"`
+	TrafficUsed     int64          `json:"trafficUsed,omitempty"`
+	TrafficTotal    int64          `json:"trafficTotal,omitempty"`
 	// Managed and Tier are safe to surface: neither is a secret (unlike the URL,
 	// which is dropped), and the UI needs both to draw the managed/premium badge.
 	Managed bool   `json:"managed,omitempty"`
@@ -1129,18 +1179,23 @@ type redactedProfile struct {
 func redactProfile(p profile.Profile) redactedProfile {
 	nodes := make([]redactedNode, len(p.Servers))
 	for i, s := range p.Servers {
+		nodeID := s.ID
+		if legacyProfileID(nodeID) {
+			nodeID = ""
+		}
 		nodes[i] = redactedNode{
-			ID:       s.ID,
+			ID:       nodeID,
 			Protocol: s.Protocol,
-			Name:     s.Name,
+			Name:     redact.NodeName(s.Node),
 			Server:   s.Server,
 			Port:     s.Port,
 			Insecure: s.TLS != nil && s.TLS.Insecure,
 		}
 	}
 	return redactedProfile{
+		IdentityVersion: p.IdentityVersion, Revision: p.Revision, HTTPAllowed: p.HTTPAllowed,
 		ID:           p.ID,
-		Name:         p.Name,
+		Name:         redact.ProfileName(p.Name, p.URL),
 		Source:       p.Source,
 		Nodes:        nodes,
 		UpdatedAt:    p.UpdatedAt,
@@ -1180,6 +1235,9 @@ func (d *Daemon) handleListProfiles(req Request) Response {
 // handleImportSubscription fetches a subscription URL, parses its nodes into a
 // new profile, applies any Subscription-Userinfo quota, and stores it.
 func (d *Daemon) handleImportSubscription(ctx context.Context, req Request) Response {
+	if d.canonical != nil {
+		return d.handleCanonicalLegacyNetwork(ctx, req)
+	}
 	if req.URL == "" {
 		return newError(req.ID, "import_subscription: missing url")
 	}
@@ -1286,6 +1344,13 @@ func (d *Daemon) handleImportLinks(req Request) Response {
 // the same local socket as list_profiles, so it must not carry the node
 // credentials or a token-bearing URL either.
 func (d *Daemon) importLinksResult(id int64, p profile.Profile, imported, skipped int) Response {
+	if d.canonical != nil {
+		snapshot := d.canonical.View()
+		d.projectRepository(snapshot)
+		if latest, ok := snapshot.Profiles[p.ID]; ok {
+			p = latest
+		}
+	}
 	out := struct {
 		Profile  redactedProfile `json:"profile"`
 		Imported int             `json:"imported"`
@@ -1304,16 +1369,33 @@ func (d *Daemon) handleRemoveProfile(req Request) Response {
 	if req.Profile == "" {
 		return newError(req.ID, "remove_profile: missing profile")
 	}
-	// If we're connected to this profile, tear the tunnel down first so we don't
-	// leave an orphaned process bound to a profile that no longer exists. Under
-	// connMu so the transition is authoritative over an in-flight relaunch/reconcile.
-	if cur := d.snapshotState(); cur.Profile == req.Profile && cur.State != StateIdle {
-		d.connMu.Lock()
-		d.teardown(StateIdle, "", "")
-		d.connMu.Unlock()
+	// Reserve this profile against queued starts, then release the lifecycle
+	// lane before entering the repository writer. No Store I/O under connMu.
+	d.connMu.Lock()
+	d.mu.Lock()
+	if d.removingProfiles == nil {
+		d.removingProfiles = make(map[string]bool)
 	}
+	if d.removingProfiles[req.Profile] {
+		d.mu.Unlock()
+		d.connMu.Unlock()
+		return newError(req.ID, "profile_busy")
+	}
+	d.removingProfiles[req.Profile] = true
+	d.mu.Unlock()
+	defer func() { d.mu.Lock(); delete(d.removingProfiles, req.Profile); d.mu.Unlock() }()
+	if cur := d.snapshotState(); cur.Profile == req.Profile && cur.State != StateIdle {
+		if err := d.teardown(StateIdle, "", ""); err != nil {
+			d.connMu.Unlock()
+			return newError(req.ID, "profile_teardown_failed")
+		}
+	}
+	d.connMu.Unlock()
 	if err := d.store.Remove(req.Profile); err != nil {
 		return newError(req.ID, err.Error())
+	}
+	if d.canonical != nil {
+		d.projectRepository(d.canonical.View())
 	}
 	return newResult0(req.ID)
 }
@@ -1321,6 +1403,9 @@ func (d *Daemon) handleRemoveProfile(req Request) Response {
 // handleRefreshSubscription re-fetches one subscription profile's nodes from its
 // source URL. It rejects manual profiles, which have no URL to refresh from.
 func (d *Daemon) handleRefreshSubscription(ctx context.Context, req Request) Response {
+	if d.canonical != nil {
+		return d.handleCanonicalLegacyNetwork(ctx, req)
+	}
 	if req.Profile == "" {
 		return newError(req.ID, "refresh_subscription: missing profile")
 	}
@@ -1350,6 +1435,9 @@ func (d *Daemon) handleRefreshSubscription(ctx context.Context, req Request) Res
 // the UI). The profile must be a subscription with a non-empty URL; callers
 // guarantee that.
 func (d *Daemon) refreshProfile(ctx context.Context, p profile.Profile) (profile.Profile, bool, error) {
+	if d.canonical != nil {
+		return d.refreshCanonicalProfile(ctx, p)
+	}
 	body, header, err := d.fetch(ctx, p.URL)
 	if err != nil {
 		return profile.Profile{}, false, err
@@ -1362,21 +1450,35 @@ func (d *Daemon) refreshProfile(ctx context.Context, p profile.Profile) (profile
 		return profile.Profile{}, false, fmt.Errorf("refresh: no usable nodes in subscription %q", p.Name)
 	}
 
-	// Rebuild a profile to get fresh, stably-IDed servers, then graft the new
-	// content onto the existing profile so its ID and creation identity persist.
-	rebuilt, err := profile.NewProfile(p.Name, profile.SourceSubscription, p.URL, nodes)
+	// Preserve persisted opaque identities by full-spec matching. A fresh import
+	// deliberately gets different IDs, so it cannot stand in for a refresh.
+	d.mu.Lock()
+	mh := d.multihop
+	var required []string
+	if d.lastProfile == p.ID && d.lastNode != "" {
+		required = append(required, d.lastNode)
+	}
+	if d.state.Profile == p.ID && d.state.Node != "" {
+		required = append(required, d.state.Node)
+	}
+	if mh.Enabled {
+		for _, id := range []string{mh.EntryID, mh.ExitID} {
+			if hasServer(p, id) {
+				required = append(required, id)
+			}
+		}
+	}
+	d.mu.Unlock()
+	servers, err := profile.ReconcileServers(p.Servers, nodes, required)
 	if err != nil {
 		return profile.Profile{}, false, err
 	}
 	before := p
-	p.Servers = rebuilt.Servers
-	p.UpdatedAt = rebuilt.UpdatedAt
+	p.Servers = servers
+	p.UpdatedAt = d.now().UTC()
 	// Keep the last valid profile if this refresh removes an enabled hop. The
 	// refresh command returns the error, and background refresh logs it; neither
 	// may replace a promised chain with a silently downgraded next connection.
-	d.mu.Lock()
-	mh := d.multihop
-	d.mu.Unlock()
 	if mh.Enabled && (hasServer(before, mh.EntryID) || hasServer(before, mh.ExitID)) {
 		if err := validateMultihopProfile(p, mh); err != nil {
 			return profile.Profile{}, false, fmt.Errorf("refresh refused: %w", err)
@@ -1465,6 +1567,11 @@ func (d *Daemon) lookupTier(ctx context.Context, subURL string, managed bool) st
 // nothing), while a confirmed premium answer is written back and the UI is
 // signalled to reload. A non-managed import is a no-op.
 func (d *Daemon) startEntitlementLookup(id, subURL string, managed bool) {
+	if d.canonical != nil {
+		// Canonical subscription operations resolve entitlement on the same
+		// revocable lease before committing any candidate. No detached lookup.
+		return
+	}
 	if !managed {
 		return
 	}
@@ -1497,29 +1604,10 @@ func (d *Daemon) startEntitlementLookup(id, subURL string, managed bool) {
 // refresh always bumps). It drives whether the UI is told to reload: an
 // identical subscription should not churn the list.
 func profileChanged(before, after profile.Profile) bool {
-	if before.TrafficUsed != after.TrafficUsed ||
-		before.TrafficTotal != after.TrafficTotal {
-		return true
-	}
-	// A managed/tier flip changes the badge, so the UI must reload for it.
-	if before.Managed != after.Managed || before.Tier != after.Tier {
-		return true
-	}
-	if (before.ExpiresAt == nil) != (after.ExpiresAt == nil) {
-		return true
-	}
-	if before.ExpiresAt != nil && !before.ExpiresAt.Equal(*after.ExpiresAt) {
-		return true
-	}
-	if len(before.Servers) != len(after.Servers) {
-		return true
-	}
-	for i := range before.Servers {
-		if before.Servers[i].ID != after.Servers[i].ID {
-			return true
-		}
-	}
-	return false
+	left, right := redactProfile(before), redactProfile(after)
+	left.UpdatedAt, right.UpdatedAt = time.Time{}, time.Time{}
+	left.Revision, right.Revision = 0, 0
+	return !reflect.DeepEqual(left, right)
 }
 
 // handleSetRouting validates and stores the routing mode (smart/global/direct).
@@ -2255,6 +2343,13 @@ func (d *Daemon) pingOne(ctx context.Context, srv profile.Server) PingResult {
 // stored profile would hand its node credentials and token-bearing subscription
 // URL to any unprivileged reader — exactly what redacting list_profiles closed.
 func (d *Daemon) profileResult(id int64, p profile.Profile) Response {
+	if d.canonical != nil {
+		snapshot := d.canonical.View()
+		d.projectRepository(snapshot)
+		if latest, ok := snapshot.Profiles[p.ID]; ok {
+			p = latest
+		}
+	}
 	out := struct {
 		Profile redactedProfile `json:"profile"`
 	}{Profile: redactProfile(p)}

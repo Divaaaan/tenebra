@@ -3,14 +3,15 @@ package subscription
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"time"
 )
 
 // entitlementPath is the endpoint, relative to a managed subscription's origin,
@@ -57,6 +58,11 @@ type entitlementRequest struct {
 // uses defaultEntitlementConfig; tests override the fields to reach a local
 // httptest server (the SSRF guard would otherwise refuse loopback).
 type entitlementConfig struct {
+	network            Network
+	configurationError error
+	allowHTTP          bool
+	limits             Limits
+	headers            map[string]string
 	// blockAddr is the SSRF guard predicate, screening every dialled address
 	// (and redirect hop) the same way the subscription fetch does. Production
 	// sets it to blockedByDefaultIP unless the operator opted out; nil disables
@@ -68,8 +74,9 @@ type entitlementConfig struct {
 }
 
 func defaultEntitlementConfig() entitlementConfig {
-	cfg := entitlementConfig{}
-	if !ssrfGuardDisabled() {
+	network, err := newUnprotectedNetwork()
+	cfg := entitlementConfig{network: network, configurationError: err, limits: DefaultLimits()}
+	if !startupAllowPrivate {
 		cfg.blockAddr = blockedByDefaultIP
 	}
 	return cfg
@@ -90,16 +97,41 @@ func FetchEntitlement(ctx context.Context, origin, key string) (Entitlement, err
 	return fetchEntitlementWithConfig(ctx, origin, key, defaultEntitlementConfig())
 }
 
+func FetchEntitlementWithOptions(ctx context.Context, origin, key string, opts FetchOptions) (Entitlement, error) {
+	if opts.Network == nil {
+		return Entitlement{}, ErrNetworkRequired
+	}
+	if !opts.Limits.valid() {
+		return Entitlement{}, errInvalidLimits
+	}
+	cfg := entitlementConfig{network: opts.Network, allowHTTP: opts.AllowHTTP, headers: opts.Headers, limits: opts.Limits}
+	if !startupAllowPrivate {
+		cfg.blockAddr = blockedByDefaultIP
+	}
+	return fetchEntitlementWithConfig(ctx, origin, key, cfg)
+}
+
 func fetchEntitlementWithConfig(ctx context.Context, origin, key string, cfg entitlementConfig) (Entitlement, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if cfg.configurationError != nil {
+		return Entitlement{}, cfg.configurationError
+	}
+	if cfg.limits == (Limits{}) {
+		cfg.limits = DefaultLimits()
+	}
+	if !cfg.limits.valid() {
+		return Entitlement{}, errInvalidLimits
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
 	endpoint, err := entitlementURL(origin)
 	if err != nil {
 		return Entitlement{}, err
 	}
 	host := hostForLog(endpoint)
-	if err := checkScheme(endpoint, host); err != nil {
+	if err := checkScheme(endpoint, host, cfg.allowHTTP); err != nil {
 		return Entitlement{}, err
 	}
 	reqBody, err := json.Marshal(entitlementRequest{Key: key})
@@ -114,38 +146,39 @@ func fetchEntitlementWithConfig(ctx context.Context, origin, key string, cfg ent
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	for key, value := range cfg.headers {
+		req.Header.Set(key, value)
+	}
+	req.Header.Del("Referer")
 
-	// Clone the default transport (keeping its proxy/HTTP2 defaults) and permit
-	// the single client-initiated TLS renegotiation, matching doFetch. Route the
-	// dial through the same SSRF guard so a crafted origin cannot pivot to
-	// loopback/metadata/private space.
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if transport.TLSClientConfig == nil {
-		transport.TLSClientConfig = &tls.Config{}
-	}
-	transport.TLSClientConfig.Renegotiation = tls.RenegotiateOnceAsClient
-	if cfg.rootCAs != nil {
-		transport.TLSClientConfig.RootCAs = cfg.rootCAs
-	}
+	transport := newFetchTransport(cfg.rootCAs)
+	defer transport.CloseIdleConnections()
 	transport.DialContext = guardDial(transport.DialContext, cfg.blockAddr)
+	if cfg.network != nil {
+		transport.DialContext = networkDial(cfg.network, cfg.blockAddr)
+	}
+	transport.DialContext = bindOperationDial(ctx, transport.DialContext)
 
-	client := &http.Client{Timeout: fetchTimeout, Transport: transport}
+	client := &http.Client{Timeout: 15 * time.Second, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return errRedirectForbidden }}
 	resp, err := client.Do(req)
 	if err != nil {
-		return Entitlement{}, fmt.Errorf("subscription: entitlement: %s", scrub(err, endpoint))
+		return Entitlement{}, &safeFetchError{message: "subscription entitlement request failed", causes: []error{err}}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return Entitlement{}, fmt.Errorf("subscription: entitlement: unexpected status %s", resp.Status)
+		return Entitlement{}, fmt.Errorf("subscription: entitlement: unexpected status %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, cfg.limits.BodyBytes+1))
 	if err != nil {
-		return Entitlement{}, fmt.Errorf("subscription: entitlement: read body: %w", err)
+		return Entitlement{}, &safeFetchError{message: "subscription entitlement body failed", causes: []error{err}}
+	}
+	if int64(len(body)) > cfg.limits.BodyBytes {
+		return Entitlement{}, &BudgetError{Kind: "body_bytes", Limit: cfg.limits.BodyBytes}
 	}
 	var ent Entitlement
 	if err := json.Unmarshal(body, &ent); err != nil {
-		return Entitlement{}, fmt.Errorf("subscription: entitlement: decode response: %w", err)
+		return Entitlement{}, errors.New("subscription: invalid entitlement response")
 	}
 	return ent, nil
 }
@@ -159,6 +192,7 @@ func entitlementURL(origin string) (string, error) {
 		return "", fmt.Errorf("subscription: entitlement: invalid origin %q", hostForLog(origin))
 	}
 	u.Path = entitlementPath
+	u.RawPath = ""
 	u.RawQuery = ""
 	u.Fragment = ""
 	return u.String(), nil

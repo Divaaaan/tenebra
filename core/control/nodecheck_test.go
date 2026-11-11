@@ -491,7 +491,9 @@ func TestCheckNodesAbortsWhenProbeDiesDuringMeasurement(t *testing.T) {
 func TestCheckNodesBudgetDoesNotOwnProbeProcessLifetime(t *testing.T) {
 	const (
 		preferred = 24850
-		budget    = 100 * time.Millisecond
+		// Leave room for authenticated fixture startup on emulated race builds;
+		// the callbacks still exhaust the budget before returning any probes.
+		budget = 5 * time.Second
 	)
 	h, pid := newCheckHarness(t, manyNodes(12), preferred)
 	h.probe.exitOnStartContext = true

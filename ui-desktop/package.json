@@ -14,7 +14,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "tauri": "tauri"
+    "tauri": "node ../scripts/tauri-build.mjs"
   },
   "dependencies": {
     "@fontsource-variable/jetbrains-mono": "5.2.8",

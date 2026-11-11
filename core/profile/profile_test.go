@@ -55,7 +55,7 @@ func TestProfileJSONShape(t *testing.T) {
 		Name:         "Work",
 		Source:       SourceSubscription,
 		URL:          "https://example.test/s",
-		Servers:      assignServerIDs(sampleNodes()[:1]),
+		Servers:      mustServers(t, sampleNodes()[:1]),
 		UpdatedAt:    time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC),
 		ExpiresAt:    &expires,
 		TrafficUsed:  1024,
@@ -96,7 +96,7 @@ func TestProfileJSONShape(t *testing.T) {
 }
 
 func TestProfileOmitemptyURL(t *testing.T) {
-	p := Profile{ID: "x", Name: "n", Source: SourceManual, Servers: assignServerIDs(sampleNodes()[:1])}
+	p := Profile{ID: "x", Name: "n", Source: SourceManual, Servers: mustServers(t, sampleNodes()[:1])}
 	data, err := json.Marshal(p)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -156,35 +156,45 @@ func TestServerInsecureFlagSurfaced(t *testing.T) {
 	}
 }
 
-func TestAssignServerIDsNilAndEmpty(t *testing.T) {
-	if got := assignServerIDs(nil); got != nil {
-		t.Errorf("assignServerIDs(nil) = %v, want nil", got)
+func mustServers(t *testing.T, nodes []model.Node) []Server {
+	t.Helper()
+	servers, err := ReconcileServers(nil, nodes, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := assignServerIDs([]model.Node{}); len(got) != 0 {
-		t.Errorf("assignServerIDs(empty) = %v, want len 0", got)
+	return servers
+}
+func refreshKeepsIdentity(t *testing.T, previous, candidate model.Node) bool {
+	t.Helper()
+	old := []Server{{ID: "n2_11111111111111111111111111111111", Node: previous}}
+	next, err := ReconcileServers(old, []model.Node{candidate}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(next) == 1 && next[0].ID == old[0].ID
+}
+func TestReconcileNilAndEmpty(t *testing.T) {
+	if got := mustServers(t, nil); got != nil {
+		t.Fatal("nil input lost nil distinction")
+	}
+	if got := mustServers(t, []model.Node{}); got == nil || len(got) != 0 {
+		t.Fatal("empty input lost empty distinction")
 	}
 }
-
-func TestServerIDStable(t *testing.T) {
+func TestServerIDStableAcrossRefresh(t *testing.T) {
 	n := sampleNodes()[0]
-	if a, b := serverID(n), serverID(n); a != b {
-		t.Errorf("serverID not deterministic: %q vs %q", a, b)
-	}
-	// Length: 8 bytes -> 16 hex chars.
-	if got := serverID(n); len(got) != 16 {
-		t.Errorf("serverID len = %d, want 16", len(got))
+	if !refreshKeepsIdentity(t, n, n) {
+		t.Fatal("unchanged refresh changed ID")
 	}
 }
-
 func TestServerIDNameIndependent(t *testing.T) {
 	n := sampleNodes()[0]
 	renamed := n
 	renamed.Name = "Different label"
-	if serverID(n) != serverID(renamed) {
-		t.Error("serverID changed when only Name changed; should be stable")
+	if !refreshKeepsIdentity(t, n, renamed) {
+		t.Fatal("rename changed persisted ID")
 	}
 }
-
 func TestServerIDChangesOnIdentityFields(t *testing.T) {
 	base := sampleNodes()[0]
 	tests := []struct {
@@ -198,13 +208,12 @@ func TestServerIDChangesOnIdentityFields(t *testing.T) {
 		{"password", func(n *model.Node) { n.Password = "new-pw" }},
 		{"method", func(n *model.Node) { n.Method = "chacha20-poly1305" }},
 	}
-	baseID := serverID(base)
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
 			n := base
-			tt.mutate(&n)
-			if got := serverID(n); got == baseID {
-				t.Errorf("serverID unchanged after %s change", tt.name)
+			test.mutate(&n)
+			if refreshKeepsIdentity(t, base, n) {
+				t.Fatal("changed connection reused ID")
 			}
 		})
 	}
@@ -213,7 +222,7 @@ func TestServerIDChangesOnIdentityFields(t *testing.T) {
 // TestServerIDDistinguishesStructFields covers fix #6: two servers on the same
 // host:port that differ only in WireGuard keys, REALITY material, or transport
 // details must get distinct IDs. Before the fix these collided to one ID because
-// serverID hashed only protocol/server/port/uuid/password/method.
+// the old matcher included only protocol/server/port/uuid/password/method.
 func TestServerIDDistinguishesStructFields(t *testing.T) {
 	tests := []struct {
 		name string
@@ -271,41 +280,41 @@ func TestServerIDDistinguishesStructFields(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if serverID(tt.a) == serverID(tt.b) {
-				t.Errorf("serverID collision: %s and %s hash equal", tt.name, tt.name)
+			if refreshKeepsIdentity(t, tt.a, tt.b) {
+				t.Errorf("serverID collision: %s and %s identity reused", tt.name, tt.name)
 			}
 		})
 	}
 }
 
 // TestServerIDStableWithStructFields confirms the extra fields don't break
-// determinism: the same populated node still hashes to itself, and an absent
+// refresh continuity: the same populated node still matches its persisted ID, and an absent
 // sub-struct hashes the same as one whose relevant fields are empty.
 func TestServerIDStableWithStructFields(t *testing.T) {
 	n := model.Node{Protocol: model.AmneziaWG, Server: "wg.test", Port: 51820,
 		WireGuard: &model.WireGuard{PrivateKey: "PRIV", PeerPublicKey: "PEER"}}
-	if first, second := serverID(n), serverID(n); first != second {
-		t.Error("serverID not deterministic for WG node")
+	if !refreshKeepsIdentity(t, n, n) {
+		t.Error("unchanged WG refresh changed ID")
 	}
 	// A relabelled WG node keeps its ID (name still excluded).
 	renamed := n
 	renamed.Name = "elsewhere"
-	if serverID(n) != serverID(renamed) {
+	if !refreshKeepsIdentity(t, n, renamed) {
 		t.Error("serverID changed when only Name changed on a WG node")
 	}
 }
 
-// TestServerIDNoCollisionAcrossBoundary guards the length-prefix scheme:
+// TestServerIDNoCollisionAcrossBoundary guards separate fields in the matcher:
 // splitting a value across fields must not collide.
 func TestServerIDNoCollisionAcrossBoundary(t *testing.T) {
 	a := model.Node{Server: "ab", Port: 1}
 	b := model.Node{Server: "a", Port: 1} // "b" would have to migrate elsewhere
-	if serverID(a) == serverID(b) {
+	if refreshKeepsIdentity(t, a, b) {
 		t.Error("unexpected serverID collision")
 	}
 	c := model.Node{UUID: "x", Password: "yz"}
 	d := model.Node{UUID: "xy", Password: "z"}
-	if serverID(c) == serverID(d) {
+	if refreshKeepsIdentity(t, c, d) {
 		t.Error("field boundary collision between uuid and password")
 	}
 }

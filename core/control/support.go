@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Divaaaan/tenebra/core/buildinfo"
+	"github.com/Divaaaan/tenebra/core/redact"
 	"github.com/Divaaaan/tenebra/core/tunguard"
 )
 
@@ -74,6 +75,14 @@ func (d *Daemon) CollectDiagnostics() SupportBundle {
 	tun := d.snapshotTun()
 
 	var b strings.Builder
+	var profileSpans [][2]int
+	writeProfileID := func(format, value string) {
+		start := b.Len()
+		fmt.Fprintf(&b, format, value)
+		if legacyProfileID(value) {
+			profileSpans = append(profileSpans, [2]int{start, b.Len()})
+		}
+	}
 	section := func(title string) {
 		b.WriteString("\n")
 		b.WriteString(title)
@@ -91,12 +100,14 @@ func (d *Daemon) CollectDiagnostics() SupportBundle {
 	fmt.Fprintf(&b, "Platform:      %s/%s\n", runtime.GOOS, runtime.GOARCH)
 	fmt.Fprintf(&b, "Log level:     %s\n", level)
 	if d.store != nil {
-		fmt.Fprintf(&b, "Store:         %s\n", d.store.Dir())
+		b.WriteString("Store:         local repository\n")
 	}
 
 	section("State")
 	fmt.Fprintf(&b, "State:         %s\n", st.State)
-	fmt.Fprintf(&b, "Profile:       %s\n", orNone(st.Profile))
+	b.WriteString("Profile:       ")
+	writeProfileID("%s", orNone(st.Profile))
+	b.WriteString("\n")
 	fmt.Fprintf(&b, "Node:          %s\n", orNone(st.Node))
 	if st.Error != "" {
 		fmt.Fprintf(&b, "Error:         %s\n", st.Error)
@@ -126,8 +137,9 @@ func (d *Daemon) CollectDiagnostics() SupportBundle {
 		b.WriteString("(none)\n")
 	}
 	for _, p := range profiles {
-		fmt.Fprintf(&b, "%-20s %-28s nodes=%-3d managed=%-5t tier=%s updated=%s\n",
-			p.ID, truncate(p.Name, 28), len(p.Servers), p.Managed, orNone(p.Tier),
+		writeProfileID("%-20s", p.ID)
+		fmt.Fprintf(&b, " %-28s nodes=%-3d managed=%-5t tier=%s updated=%s\n",
+			truncate(redact.ProfileName(p.Name, p.URL), 28), len(p.Servers), p.Managed, orNone(p.Tier),
 			p.UpdatedAt.UTC().Format(time.RFC3339))
 	}
 
@@ -192,7 +204,7 @@ func (d *Daemon) CollectDiagnostics() SupportBundle {
 	}
 
 	return SupportBundle{
-		Text:     scrubSecrets(ensureUTF8(b.String())),
+		Text:     ensureUTF8(scrubDiagnosticText(b.String(), profileSpans)),
 		Filename: fmt.Sprintf("tenebra-diagnostics-%s.txt", now.UTC().Format("20060102-150405")),
 	}
 }

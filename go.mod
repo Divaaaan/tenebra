@@ -3,8 +3,10 @@ module github.com/Divaaaan/tenebra
 go 1.24.0
 
 require (
+	filippo.io/edwards25519 v1.1.0
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/sagernet/gomobile v0.1.12
+	golang.org/x/crypto v0.48.0
 	golang.org/x/sys v0.41.0
 )
 

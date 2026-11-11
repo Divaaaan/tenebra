@@ -46,7 +46,10 @@ type yamlLine struct {
 // blank lines and recording each line's indentation.
 func tokenizeYAML(body []byte) []yamlLine {
 	var out []yamlLine
-	for _, raw := range strings.Split(string(body), "\n") {
+	text := string(body)
+	for len(text) > 0 {
+		raw, rest, _ := strings.Cut(text, "\n")
+		text = rest
 		raw = strings.TrimRight(stripYAMLComment(raw), " \t\r")
 		col := 0
 		for col < len(raw) && (raw[col] == ' ' || raw[col] == '\t') {

@@ -272,6 +272,9 @@ func (s *Server) Serve(ctx context.Context) error {
 // daemon's connection state and background work belong to the caller, which is
 // what lets ServeListener run many streams against one daemon.
 func (s *Server) serveStream(ctx context.Context) error {
+	ctx, subscriptionSession := s.daemon.newSubscriptionSession(ctx)
+	defer subscriptionSession.cancel()
+	defer s.daemon.subscriptionOps.endSession(subscriptionSession)
 	scan := newRequestScanner(s.r)
 
 	// The lane for the few commands that must not hold the loop (see
@@ -358,7 +361,11 @@ func (b *backgroundLane) run(fn func(context.Context)) {
 // writes nothing back; its own single-flight guard keeps two runs from
 // overlapping, including across a session displacement. Anything else that grows
 // a long budget wants its own audit before it joins this list, not an entry.
-func runsInBackground(cmd string) bool { return cmd == CmdCheckNodes }
+func runsInBackground(cmd string) bool {
+	// Cancellation drains only its own operation lane. Keep its bounded F
+	// wait off the stream so status/disconnect remain available meanwhile.
+	return cmd == CmdCheckNodes || cmd == CmdCancelSubscriptionOperation
+}
 
 // handleLine parses one request line and writes its response. A malformed line
 // gets an error response with id 0 (the id is unknown), so the UI still sees a
@@ -374,7 +381,7 @@ func (s *Server) handleLine(ctx context.Context, bg *backgroundLane, line []byte
 		s.writeResponse(newError(0, err.Error()))
 		return
 	}
-	if runsInBackground(req.Cmd) {
+	if runsInBackground(req.Cmd) || (s.daemon.canonical != nil && (req.Cmd == CmdImportSubscription || req.Cmd == CmdRefreshSub)) {
 		bg.run(func(bgCtx context.Context) {
 			s.writeResponse(dispatchRequest(bgCtx, req, s.daemon.Handle))
 		})

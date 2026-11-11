@@ -21,8 +21,9 @@ import (
 	"syscall"
 
 	"github.com/Divaaaan/tenebra/core/control"
-	"github.com/Divaaaan/tenebra/core/profile"
+	"github.com/Divaaaan/tenebra/core/state"
 	"github.com/Divaaaan/tenebra/core/zapret"
+	"github.com/Divaaaan/tenebra/internal/securefs"
 )
 
 // pipeMode switches the console process from stdin/stdout to the named-pipe
@@ -115,17 +116,29 @@ func run(usePipe, useSocket bool) error {
 	// Windows service uses for configureServicePaths. This is a no-op for a
 	// non-root --socket dev run and on platforms where serveSocket rejects
 	// --socket outright.
-	if useSocket {
+	authority, err := selectRunAuthority(useSocket, unixServiceRoot(), *maintenanceTx, *maintenanceLaunch)
+	if err != nil {
+		return err
+	}
+	if useSocket && !authority.managed {
 		if err := configureSocketPaths(); err != nil {
 			return err
 		}
 	}
 
-	daemon, err := buildDaemon()
+	open := openDevelopmentFilesystem
+	if authority.managed {
+		open = func(ctx context.Context) (daemonFilesystem, error) { return openManagedFilesystem(ctx, authority) }
+	}
+	bootstrap := daemonBootstrap{Open: open, Build: buildDaemonWithFilesystem}
+	daemon, filesystem, err := bootstrap.Prepare(context.Background())
 	if err != nil {
 		return err
 	}
-	startProductionConnection(daemon)
+	defer filesystem.Close()
+	if filesystem.managed == nil {
+		startProductionConnection(daemon)
+	}
 	// Belt-and-suspenders for the system-proxy guard: Serve already calls
 	// daemon.Close() (which clears any armed OS proxy) on a clean or signalled exit,
 	// but a defer here also covers the --pipe/--socket paths and any early return,
@@ -137,13 +150,25 @@ func run(usePipe, useSocket bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if filesystem.managed != nil {
+		closePrivate, err := startManagedPrivate(ctx, daemon, &filesystem)
+		if err != nil {
+			return err
+		}
+		defer closePrivate()
+	}
+
 	startBackgroundJobs(ctx, daemon)
 
 	switch {
 	case usePipe:
 		err = servePipe(ctx, daemon)
 	case useSocket:
-		err = serveSocket(ctx, daemon)
+		if filesystem.managed != nil {
+			err = serveManagedSocket(ctx, daemon, filesystem.managed.paths.BusinessSocket)
+		} else {
+			err = serveSocket(ctx, daemon)
+		}
 	default:
 		server := control.NewServer(daemon, os.Stdin, os.Stdout)
 		err = server.Serve(ctx)
@@ -156,20 +181,51 @@ func run(usePipe, useSocket bool) error {
 	return err
 }
 
-// buildDaemon opens the profile store and wires a daemon with its persisted
-// state — the setup shared by the console (stdio or --pipe) and the Windows
-// service entry points.
-func buildDaemon() (*control.Daemon, error) {
-	dir := configDir()
-	store, err := profile.Open(dir)
+// Both entry points retain the verified roots for the full daemon lifetime.
+// Canonical state readers are composed here; nil roots never select legacy IO.
+func buildDaemonWithFilesystem(filesystem *daemonFilesystem) (*control.Daemon, error) {
+	if filesystem == nil || filesystem.State == nil || filesystem.Private == nil {
+		return nil, securefs.ErrUntrusted
+	}
+	backup, err := filesystem.Private.OpenDir("state-backups", filesystem.privatePolicy, true)
+	if err != nil {
+		return nil, err
+	}
+	filesystem.closers = append(filesystem.closers, backup)
+	store, err := state.Open(context.Background(), filesystem.State, backup)
 	if err != nil {
 		return nil, fmt.Errorf("open profile store: %w", err)
 	}
+	filesystem.closers = append(filesystem.closers, store)
+	filesystem.canonical = store
 
 	// newRunner is chosen at build time per platform (runner_darwin.go for macOS,
 	// runner_linux.go for Linux, runner_other.go for Windows).
 	runner := newRunner()
-	daemon := control.NewDaemon(store, runner)
+	if filesystem.managed != nil {
+		path, err := filesystem.managed.runtimeRoot.Path()
+		if err != nil {
+			return nil, err
+		}
+		runner = newManagedRunner(filepath.Join(path, "sing-box"))
+	}
+	if runner == nil {
+		return nil, securefs.ErrUnsupported
+	}
+	runtimeRoot, err := filesystem.Private.OpenDir("engine-runtime", filesystem.privatePolicy, true)
+	if err != nil {
+		return nil, err
+	}
+	filesystem.closers = append(filesystem.closers, runtimeRoot)
+	if capability, ok := runner.(control.MaintenanceRunner); ok {
+		if err := capability.SetRuntimeRoot(runtimeRoot); err != nil {
+			return nil, err
+		}
+	}
+	daemon := control.NewDaemon(store.Profiles(), runner)
+	if err := daemon.SetCanonicalState(store); err != nil {
+		return nil, err
+	}
 	// Mirror the daemon's own log into this process's log destination — stderr
 	// for the sidecar and console runs, the rotating service.log for the Windows
 	// service. Until now those lines went only to an attached UI, which meant the
@@ -190,7 +246,25 @@ func buildDaemon() (*control.Daemon, error) {
 	// A node check runs its own short-lived sing-box beside the tunnel (no tun, no
 	// auto_route), so it gets a fresh supervisor per run rather than sharing the
 	// tunnel's — a check must never be able to stop the tunnel.
-	daemon.SetProbeRunner(func() control.Runner { return newRunner() })
+	daemon.SetProbeRunner(func() control.Runner {
+		probe := newRunner()
+		if filesystem.managed != nil {
+			path, err := filesystem.managed.runtimeRoot.Path()
+			if err == nil {
+				probe = newManagedRunner(filepath.Join(path, "sing-box"))
+			} else {
+				probe = newManagedRunner("")
+			}
+		}
+		if capability, ok := probe.(control.MaintenanceRunner); ok {
+			if err := capability.SetRuntimeRoot(runtimeRoot); err != nil {
+				// A configured host records this failure and refuses Start; it
+				// cannot fall back to an ambient temporary configuration.
+				log.Print("tenebra-core: private probe runtime is unavailable")
+			}
+		}
+		return probe
+	})
 	// Searching the bundle for a working strategy takes minutes: every candidate
 	// needs the packet filter attached, five control requests and a clean detach,
 	// and while it runs the machine has whichever strategy is being tried — which
@@ -211,50 +285,36 @@ func buildDaemon() (*control.Daemon, error) {
 		},
 		zapret.InstallEmbedded,
 	)
-	// Persist last-good per profile next to the store so the node that last
-	// connected leads the fallback walk on the next launch. A failure to open it
-	// is non-fatal: fall back to the in-memory default rather than refuse to run.
-	if lg, err := control.OpenFileLastGood(dir); err != nil {
-		log.Printf("tenebra-core: persistent last-good unavailable (%v); using in-memory", err)
-	} else {
-		daemon.SetLastGood(lg)
+	// Measurements remain a separate cache, but trust/read errors never become
+	// a silent in-memory fallback. Preferences and last-good have one Store.
+	ns, err := control.OpenRootNetStrategies(filesystem.State, func(error) { log.Print("tenebra-core: network strategy cache persistence failed") })
+	if err != nil {
+		return nil, err
 	}
-	// Persist the bypass strategy per network, next to the store, so a machine
-	// that moves between an ISP at home and one at a cafe starts each of them on
-	// the strategy measured there rather than on the other's. A failure to open it
-	// is non-fatal: the cache then lives only for this session.
-	if ns, err := control.OpenFileNetStrategies(dir); err != nil {
-		log.Printf("tenebra-core: per-network bypass cache unavailable (%v); using in-memory", err)
-	} else {
-		daemon.SetNetStrategies(ns)
-	}
-	// Persist user routing preferences (the per-app split config) next to the
-	// store so a split choice survives a restart. A failure to open it is
-	// non-fatal: preferences then live only for this session.
-	if st, err := control.OpenFileSettings(dir); err != nil {
-		log.Printf("tenebra-core: persistent settings unavailable (%v); using session defaults", err)
-	} else {
-		daemon.SetSettings(st)
-	}
+	daemon.SetNetStrategies(ns)
 	// Point the routing layer at the bundled rule-sets. This is a hint, not a
 	// guarantee: routing re-checks each file when it builds a config, so a
 	// directory that is emptied by an update later still degrades cleanly instead
 	// of handing sing-box a path it cannot open.
-	if rsDir := ruleSetDir(); rsDir != "" {
+	rsDir := ""
+	if filesystem.managed != nil {
+		rsDir, err = filesystem.managed.runtimeRoot.Path()
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		rsDir = ruleSetDir()
+	}
+	if rsDir != "" {
 		log.Printf("tenebra-core: loading rule-sets locally from %s", rsDir)
 		daemon.SetRuleSetDir(rsDir)
 	} else {
 		log.Printf("tenebra-core: bundled RU rule-sets not found; smart mode will route like global until they are installed")
 	}
-	// System-proxy backstop: clear any OS proxy a previous run left pointing at our
-	// loopback mixed inbound (a hard kill can't run the in-process cleanup). It only
-	// clears a proxy matching our exact loopback address, never a corporate one, and
-	// runs before autoconnect so a stale pointer is gone before a fresh tunnel may
-	// re-arm it.
-	if cleared, err := daemon.ReconcileSystemProxyAtStartup(); err != nil {
-		log.Printf("tenebra-core: system-proxy startup check: %v", err)
-	} else if cleared {
-		log.Printf("tenebra-core: cleared a stale system proxy left by a previous run")
+	if filesystem.Development {
+		if err := store.Admit(); err != nil {
+			return nil, err
+		}
 	}
 	return daemon, nil
 }
@@ -262,10 +322,22 @@ func buildDaemon() (*control.Daemon, error) {
 // Kept outside buildDaemon so ordinary constructor/unit fixtures never apply
 // native policy or change the process resolver. Recovery precedes autoconnect.
 func startProductionConnection(daemon *control.Daemon) {
+	startProductionConnectionWithIntent(daemon, true)
+}
+func startProductionConnectionWithIntent(daemon *control.Daemon, autoconnect bool) {
+	if err := daemon.CanonicalReady(); err != nil {
+		log.Print("tenebra-core: business admission remains closed")
+		return
+	}
+	if cleared, err := daemon.ReconcileSystemProxyAtStartup(); err != nil {
+		log.Print("tenebra-core: system-proxy startup check failed")
+	} else if cleared {
+		log.Print("tenebra-core: cleared a stale system proxy left by a previous run")
+	}
 	configureHostProtection(daemon)
 	// Sidecar, --pipe console and service share this one startup attempt. It
 	// runs in the background; clients attaching during it see connecting.
-	if daemon.AutoconnectOnStart() {
+	if autoconnect && daemon.AutoconnectOnStart() {
 		log.Printf("tenebra-core: autoconnect: reconnecting the last profile")
 	}
 }

@@ -334,6 +334,8 @@ func (r *retryPinRunner) Select(ctx context.Context, group, tag string) error {
 
 func TestCoreAuditSelectorRetriesBeforeTestingTraffic(t *testing.T) {
 	d, r, _ := coreAuditDaemon(t)
+	// Exercise retry ordering without imposing a 30 ms scheduling benchmark.
+	d.probeBudget, d.probeTimeout = 5*time.Second, time.Second
 	_ = r.Start(context.Background(), nil)
 	d.runner = &retryPinRunner{fakeRunner: r, failures: 2}
 	up, _ := d.probeUntilUp(context.Background(), 0, "Exit")

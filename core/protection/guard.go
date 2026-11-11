@@ -28,6 +28,7 @@ type Guard struct {
 	mu               sync.Mutex
 	backend          Backend
 	state            State
+	epoch            uint64 // captured with state, before any out-of-lock callback
 	notify           func()
 	tunnel           *verifiedTunnel
 	legacyEngineOnly bool // immutable, explicitly selected by non-Windows composition
@@ -39,7 +40,7 @@ type verifiedTunnel struct {
 }
 
 func New(b Backend) *Guard {
-	g := &Guard{backend: b, state: State{Status: "off"}}
+	g := &Guard{backend: b, state: State{Status: "off"}, epoch: 1}
 	if b == nil {
 		g.state.Status = "unavailable"
 	}
@@ -61,8 +62,23 @@ func (g *Guard) LegacyEngineOnly() bool { return g.legacyEngineOnly }
 // Guard.mu and may safely read Snapshot; it must not perform another operation.
 func (g *Guard) SetNotify(f func()) { g.notify = f }
 func (g *Guard) Snapshot() State    { g.mu.Lock(); defer g.mu.Unlock(); return g.state }
+
+// SnapshotWithEpoch lets a delayed observer reject an older policy snapshot.
+// Reading never advances the stamp; each mutation owns its stamp under mu.
+func (g *Guard) SnapshotWithEpoch() (State, uint64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.state, g.epoch
+}
+func (g *Guard) advanceEpochLocked() {
+	if g.epoch == ^uint64(0) {
+		panic("protection epoch exhausted")
+	}
+	g.epoch++
+}
 func (g *Guard) set(s State) {
 	g.mu.Lock()
+	g.advanceEpochLocked()
 	g.state = s
 	g.mu.Unlock()
 	if g.notify != nil {
@@ -71,6 +87,7 @@ func (g *Guard) set(s State) {
 }
 func (g *Guard) confirm(s State, tunnel *verifiedTunnel) {
 	g.mu.Lock()
+	g.advanceEpochLocked()
 	g.state, g.tunnel = s, tunnel
 	g.mu.Unlock()
 	if g.notify != nil {
@@ -189,6 +206,7 @@ func (g *Guard) Accepted() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.state.Status == "blocked" && g.state.Enforced && g.tunnel != nil {
+		g.advanceEpochLocked()
 		g.state.Status = "active"
 	}
 }
@@ -199,6 +217,7 @@ func (g *Guard) Interrupted() {
 	g.mu.Lock()
 	changed := g.state.Status == "active"
 	if changed {
+		g.advanceEpochLocked()
 		g.state.Status = "blocked"
 	}
 	g.mu.Unlock()

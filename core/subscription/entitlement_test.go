@@ -59,7 +59,7 @@ func newEntitlementServer(t *testing.T, status int, body string) *entitlementSer
 func (es *entitlementServer) fetch(t *testing.T, key string) (Entitlement, error) {
 	t.Helper()
 	// blockAddr is left nil so the SSRF guard permits the loopback httptest server.
-	return fetchEntitlementWithConfig(context.Background(), es.origin, key, entitlementConfig{})
+	return fetchEntitlementWithConfig(context.Background(), es.origin, key, entitlementConfig{allowHTTP: true})
 }
 
 func TestFetchEntitlementParsesPremium(t *testing.T) {

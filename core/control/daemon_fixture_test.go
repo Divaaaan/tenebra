@@ -16,7 +16,7 @@ import (
 // though the fake engine has no listening proxy. Unit fixtures must opt into
 // fakes before starting any connection; individual tests may replace them with
 // a different scripted implementation when exercising an error path.
-func newUnitTestDaemon(store *profile.Store, runner Runner) *Daemon {
+func newUnitTestDaemon(store ProfileStore, runner Runner) *Daemon {
 	d := NewDaemon(store, runner)
 	d.proxy = &fakeProxyController{}
 	return d

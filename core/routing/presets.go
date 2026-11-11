@@ -224,6 +224,9 @@ func (o Options) zapretDirectSuffixes() []string {
 // bypass does not cover stays here, in the tunnel, which is the whole point of
 // running the two together.
 func (o Options) proxySuffixesWithPresets() []string {
+	if o.SplitMode == SplitInclude {
+		return nil
+	}
 	base := o.proxyRuleSuffixes()
 	if !o.unblockActive() {
 		return base

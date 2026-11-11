@@ -1,0 +1,473 @@
+name: Unsigned Ubuntu GUI build from frozen a9202160
+'on':
+  push:
+    branches:
+    - ci/tenebra-gui-a9202160
+permissions:
+  contents: read
+concurrency:
+  group: tenebra-gui-build-a9202160
+  cancel-in-progress: false
+jobs:
+  gui:
+    if: github.repository == 'Divaaaan/tenebra' && github.ref == 'refs/heads/ci/tenebra-gui-a9202160' && github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      GOTOOLCHAIN: local
+      GOFLAGS: -mod=readonly
+      GOMAXPROCS: '3'
+      CARGO_BUILD_JOBS: '3'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+      PYTHONDONTWRITEBYTECODE: '1'
+      PROOF_DIR: ${{ runner.temp }}/tenebra-gui-proof
+    steps:
+    - name: Checkout exact candidate without persisting credentials
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 1
+        persist-credentials: false
+        submodules: false
+        lfs: false
+    - name: Verify all frozen payload bytes and actual candidate identity
+      id: source_before
+      timeout-minutes: 2
+      run: |
+        python3 - before <<'PY'
+        """This file is embedded verbatim into the single public validation workflow."""
+        import hashlib
+        import io
+        import json
+        import os
+        from pathlib import Path, PurePosixPath
+        import re
+        import stat
+        import subprocess
+        import sys
+        import tarfile
+
+        SOURCE_SHA = 'a92021606f1ca10c7f7740dccfe24d67a808ec9a4c8891a47eabaacee36ef945'
+        GO_SHA = '71f7cc3875c85f1b137af6edfbc3dc904beab0453ad665b62cf07da72fe8e0d6'
+        CONTROLS = {'.github/workflows/gui-build-only.yml', '.github/ci/gui-build-source.json'}
+
+        def safe_relative(name):
+            p = PurePosixPath(name)
+            if not name or '\\' in name or ':' in name or p.is_absolute() or str(p) != name:
+                raise ValueError('unsafe source path')
+            if any(part in ('.', '..', '.git') for part in p.parts):
+                raise ValueError('unsafe source component')
+            return name
+
+        def normalized_archive(names, contents):
+            stream = io.BytesIO()
+            with tarfile.open(fileobj=stream, mode='w', format=tarfile.PAX_FORMAT) as archive:
+                for name in names:
+                    info = tarfile.TarInfo(name)
+                    info.size = len(contents[name])
+                    info.mode = 0o644
+                    info.mtime = 0
+                    archive.addfile(info, io.BytesIO(contents[name]))
+            return stream.getvalue()
+
+        def prove_snapshot(root, manifest, tracked):
+            root = root.resolve()
+            rows = manifest['files']
+            names = [safe_relative(row['path']) for row in rows]
+            if len(names) != len(set(names)):
+                raise ValueError('duplicate manifest path')
+            if set(tracked) != set(names) | CONTROLS:
+                raise ValueError('tracked tree differs from frozen payload plus two CI controls')
+            contents = {}
+            for row in rows:
+                path = root / row['path']
+                if not path.resolve().is_relative_to(root) or not stat.S_ISREG(path.lstat().st_mode):
+                    raise ValueError('source path is not an owned regular file')
+                content = path.read_bytes()
+                if len(content) != row['bytes'] or hashlib.sha256(content).hexdigest() != row['sha256']:
+                    raise ValueError('source file bytes changed: ' + row['path'])
+                contents[row['path']] = content
+            go_paths = [safe_relative(name) for name in manifest['go_paths']]
+            if len(go_paths) != len(set(go_paths)) or not set(go_paths) <= set(names):
+                raise ValueError('invalid Go archive membership')
+            source = normalized_archive(names, contents)
+            go = normalized_archive(go_paths, contents)
+            if hashlib.sha256(source).hexdigest() != manifest['source_archive_sha256']:
+                raise ValueError('normalized source archive mismatch')
+            if hashlib.sha256(go).hexdigest() != manifest['go_archive_sha256']:
+                raise ValueError('normalized Go archive mismatch')
+            return {'source_archive_sha256': hashlib.sha256(source).hexdigest(),
+                    'go_archive_sha256': hashlib.sha256(go).hexdigest(),
+                    'source_archive_bytes': len(source), 'go_archive_bytes': len(go),
+                    'source_files': len(names), 'go_files': len(go_paths)}
+
+        def main():
+            root = Path.cwd()
+            stage = sys.argv[1]
+            if stage not in ('before', 'after'):
+                raise ValueError('invalid proof stage')
+            manifest_path = root / '.github/ci/gui-build-source.json'
+            manifest = json.loads(manifest_path.read_text('utf-8'))
+            if manifest['source_archive_sha256'] != SOURCE_SHA or manifest['go_archive_sha256'] != GO_SHA:
+                raise ValueError('unexpected frozen source identity')
+            if len(manifest['files']) != 954 or len(manifest['go_paths']) != 590:
+                raise ValueError('unexpected snapshot size')
+            if manifest['go_baseline343_sha256'] != '1ef38188e18c82a0b392ffe822638dbf842981b7ef795b0e1f3ede2bb24e3984':
+                raise ValueError('unexpected reviewed Go baseline')
+            if manifest['go_changed_since343'] != [
+                'adapters/internal/maintenancehost/host_test.go',
+                'core/control/core_audit_regression_test.go',
+                'core/control/nodecheck_test.go',
+                'internal/installtx/journal_test.go',
+                'internal/installtx/service_host_loop_linux_test.go',
+            ]:
+                raise ValueError('unexpected reviewed Go test-only delta')
+            tracked = subprocess.check_output(['git', 'ls-files', '-z']).decode('utf-8').rstrip('\0').split('\0')
+            commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+            if not re.fullmatch('[0-9a-f]{40}', commit) or commit != os.environ['GITHUB_SHA']:
+                raise ValueError('checkout does not match the actual published candidate commit')
+            result = prove_snapshot(root, manifest, tracked)
+            result.update(published_commit=commit, run_id=os.environ.get('GITHUB_RUN_ID'),
+                          run_attempt=os.environ.get('GITHUB_RUN_ATTEMPT'), stage=stage,
+                          workflow_sha256=hashlib.sha256((root / '.github/workflows/gui-build-only.yml').read_bytes()).hexdigest(),
+                          public_manifest_sha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+                          go_baseline343_sha256=manifest['go_baseline343_sha256'],
+                          go_changed_since343=manifest['go_changed_since343'],
+                          baseline_note='Go archive exactness is verified here; baseline343 delta comes from reviewed native provenance.',
+                          unsigned_build_only=True, native_install_or_hardware_acceptance=False)
+            proof = Path(os.environ['PROOF_DIR'])
+            proof.mkdir(parents=True, exist_ok=True)
+            (proof / ('source-proof-' + stage + '.json')).write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+            (proof / 'source-files.sha256').write_text(''.join(row['sha256'] + '  ' + row['path'] + '\n' for row in manifest['files']), encoding='utf-8')
+            (proof / 'gui-build-source.json').write_bytes(manifest_path.read_bytes())
+            print(json.dumps(result))
+
+        if __name__ == '__main__':
+            main()
+
+        PY
+    - name: Set up pinned Go compiler
+      timeout-minutes: 8
+      uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+      with:
+        go-version-file: .go-version
+        cache: false
+        check-latest: false
+    - name: Set up Node
+      timeout-minutes: 5
+      uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+      with:
+        node-version: 24
+    - name: Set up Rust
+      timeout-minutes: 8
+      uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+    - name: Record actual toolchains and require bounded free disk
+      timeout-minutes: 1
+      run: |
+        set -euo pipefail
+        python3 - <<'PY'
+        import shutil
+        assert shutil.disk_usage('.').free >= 10*1024**3, 'Less than 10 GiB free; do not expand resource use'
+        PY
+        {
+          go version
+          node --version
+          npm --version
+          rustc -vV
+          cargo --version
+          cc --version
+          df -h .
+        } > "$PROOF_DIR/tool-versions.txt"
+        test "$(go version | awk '{print $3}')" = "go$(cat .go-version)"
+    - name: Install GUI build dependencies
+      timeout-minutes: 8
+      run: |
+        set -euo pipefail
+        sudo apt-get update 2>&1 | tee "$PROOF_DIR/apt-update.log"
+        sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf file pkg-config build-essential libssl-dev 2>&1 | tee "$PROOF_DIR/apt-install.log"
+    - name: Fresh source-bound Go race suite
+      timeout-minutes: 10
+      run: |
+        set -euo pipefail
+        set +e
+        go test -race -json -timeout=8m ./... > "$PROOF_DIR/go-race.jsonl" 2> "$PROOF_DIR/go-race.stderr.log"
+        test_exit_code=$?
+        set -e
+        export TEST_EXIT_CODE="$test_exit_code"
+        python3 -  <<'PY'
+
+        import json,os,sys
+        from pathlib import Path
+        proof=Path(os.environ['PROOF_DIR'])
+        counts={'test_pass':0,'test_fail':0,'test_skip':0,'package_pass':0,'package_fail':0,'invalid_json_lines':0}
+        skips=[]
+        for line in (proof/'go-race.jsonl').read_text('utf-8').splitlines():
+            if not line.strip():continue
+            try:event=json.loads(line)
+            except ValueError:
+                counts['invalid_json_lines']+=1
+                continue
+            action=event.get('Action')
+            if action not in ('pass','fail','skip'):continue
+            kind='test' if event.get('Test') else 'package'
+            key=kind+'_'+action
+            if key in counts:counts[key]+=1
+            if kind=='test' and action=='skip':skips.append({'package':event.get('Package'),'test':event['Test']})
+        exit_code=int(os.environ['TEST_EXIT_CODE'])
+        passed=exit_code==0 and counts['test_pass']>0 and counts['package_pass']>0 and not counts['test_fail'] and not counts['package_fail'] and not counts['invalid_json_lines']
+        summary={'exit_code':exit_code,'passed':passed,'counts':counts,'skipped_tests':skips,'hardware_or_install_acceptance':False}
+        (proof/'go-race-summary.json').write_text(json.dumps(summary,indent=2)+'\n',encoding='utf-8')
+        print(json.dumps(summary))
+        sys.exit(0 if passed else exit_code or 1)
+
+        PY
+    - name: Fetch only source-pinned engine and rules
+      timeout-minutes: 6
+      run: |
+        set -euo pipefail
+        test ! -e ui-desktop/src-tauri/binaries/tenebra-core-x86_64-unknown-linux-gnu
+        bash scripts/fetch-resources.sh --arch amd64 2>&1 | tee "$PROOF_DIR/resource-fetch.log"
+        test ! -e ui-desktop/src-tauri/binaries/tenebra-core-x86_64-unknown-linux-gnu
+    - name: Compile and verify the exact committed Go core
+      timeout-minutes: 6
+      run: |
+        set -euo pipefail
+        core=ui-desktop/src-tauri/binaries/tenebra-core-x86_64-unknown-linux-gnu
+        mkdir -p ui-desktop/src-tauri/binaries
+        test ! -e "$core"
+        go build -buildvcs=true -mod=readonly -o "$core" ./cmd/tenebra-core 2>&1 | tee "$PROOF_DIR/core-build.log"
+        go version -m "$core" > "$PROOF_DIR/core-buildinfo.txt"
+        node scripts/verify-core-build.mjs "$core" linux amd64 "$PROOF_DIR/core-buildinfo.json" 2>&1 | tee "$PROOF_DIR/core-verification.log"
+        sha256sum "$core" > "$PROOF_DIR/compiled-core.sha256"
+    - name: Install locked frontend dependencies
+      timeout-minutes: 6
+      working-directory: ui-desktop
+      run: |
+        set -euo pipefail
+        npm ci 2>&1 | tee "$PROOF_DIR/npm-ci.log"
+    - name: Build unsigned GUI and locally compiled bound helper
+      id: gui
+      timeout-minutes: 40
+      working-directory: ui-desktop
+      run: |
+        set -euo pipefail
+        test -z "${TAURI_SIGNING_PRIVATE_KEY:-}"
+        test -z "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
+        npm run tauri build -- --bundles deb --config src-tauri/tauri.ci.conf.json -- --locked 2>&1 | tee "$PROOF_DIR/tauri-build.log"
+    - name: Verify compiled helper binding and unsigned package hashes
+      timeout-minutes: 3
+      run: |
+        python3 -  <<'PY'
+        """Verify unsigned package output and the source-built core/helper payload."""
+        import gzip
+        import hashlib
+        import json
+        import os
+        from pathlib import Path
+        import subprocess
+
+        def sha(path):
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+
+        def main():
+            root = Path.cwd()
+            proof = Path(os.environ['PROOF_DIR'])
+            expected = os.environ['GITHUB_SHA']
+            go_version = 'go' + (root / '.go-version').read_text().strip()
+            core = root / 'ui-desktop/src-tauri/binaries/tenebra-core-x86_64-unknown-linux-gnu'
+            compiler = subprocess.check_output(['go', 'version'], text=True).split()[2]
+            if compiler != go_version:
+                raise ValueError('actual Go compiler changed')
+            built_core_sha = (proof / 'compiled-core.sha256').read_text().split()[0]
+            if sha(core) != built_core_sha:
+                raise ValueError('compiled core changed after local compilation')
+            locations = list((root / 'ui-desktop/src-tauri/resources/service-payload').glob('build-*/package/binding.json'))
+            if len(locations) != 1:
+                raise ValueError('expected exactly one fresh build-owned helper payload')
+            package = locations[0].parent
+            binding = json.loads(locations[0].read_text())
+            payload_path = package / 'payload/payload.json'
+            payload = json.loads(payload_path.read_text())
+            if payload['source_sha'] != expected or payload['target'] != 'linux-amd64':
+                raise ValueError('payload is not bound to this published candidate')
+            if {row['name'] for row in payload['files']} != {'geoip-ru.srs', 'geosite-ads.srs', 'geosite-ru.srs', 'sing-box', 'tenebra-core'}:
+                raise ValueError('unexpected payload roles')
+            hashes = []
+            for row in payload['files']:
+                path = package / 'payload' / row['name']
+                if path.is_symlink() or not path.is_file() or path.stat().st_size != row['size'] or sha(path) != row['sha256']:
+                    raise ValueError('payload role hash mismatch')
+                hashes.append({'path': str(path.relative_to(root)), 'bytes': path.stat().st_size, 'sha256': sha(path)})
+            if sha(package / 'payload/tenebra-core') != built_core_sha:
+                raise ValueError('package uses a different or prebuilt core')
+            bindings = {'helper_sha256': package / 'tenebra-helper', 'helper_blob_sha256': package / 'helper.gz',
+                        'payload_sha256': payload_path, 'payload_archive_sha256': package / 'payload.tar.gz'}
+            for key, path in bindings.items():
+                if sha(path) != binding[key]:
+                    raise ValueError('compiled helper/payload binding mismatch')
+                hashes.append({'path': str(path.relative_to(root)), 'bytes': path.stat().st_size, 'sha256': sha(path)})
+            hashes.append({'path': str(locations[0].relative_to(root)), 'bytes': locations[0].stat().st_size, 'sha256': sha(locations[0])})
+            if gzip.decompress((package / 'helper.gz').read_bytes()) != (package / 'tenebra-helper').read_bytes():
+                raise ValueError('helper blob does not contain the compiled helper')
+            helper_info = subprocess.check_output(['go', 'version', '-m', str(package / 'tenebra-helper')], text=True)
+            if go_version not in helper_info.splitlines()[0] or '/cmd/tenebra-helper' not in helper_info or 'CGO_ENABLED=0' not in helper_info:
+                raise ValueError('helper compiler/path/CGO provenance mismatch')
+            if binding['payload_sha256'] not in helper_info or binding['payload_archive_sha256'] not in helper_info:
+                raise ValueError('helper build flags lack the exact payload/archive binding')
+            (proof / 'helper-buildinfo.txt').write_text(helper_info, encoding='utf-8')
+            (proof / 'payload-binding.json').write_bytes(locations[0].read_bytes())
+            (proof / 'payload-manifest.json').write_bytes(payload_path.read_bytes())
+            debs = list((root / 'ui-desktop/src-tauri/target/release/bundle/deb').glob('*.deb'))
+            if len(debs) != 1 or debs[0].stat().st_size < 1024:
+                raise ValueError('expected exactly one nonempty unsigned Debian package')
+            # Read package metadata only. No install or service command is executed.
+            contents = subprocess.check_output(['dpkg-deb', '--contents', str(debs[0])], text=True)
+            for required in ['usr/lib/tenebra/tenebra-helper', 'usr/lib/tenebra/package-payload/payload.json',
+                             'usr/lib/systemd/system/tenebra.service']:
+                if required not in contents:
+                    raise ValueError('required packaged build payload missing: ' + required)
+            (proof / 'deb-contents.txt').write_text(contents, encoding='utf-8')
+            hashes.append({'path': str(debs[0].relative_to(root)), 'bytes': debs[0].stat().st_size, 'sha256': sha(debs[0])})
+            result = {'published_commit': expected, 'actual_go_compiler': compiler, 'compiled_core_sha256': built_core_sha,
+                      'helper_buildvcs': False, 'helper_source_binding': 'payload source_sha plus linked payload/archive hashes',
+                      'unsigned': True, 'installed_or_executed': False, 'files': hashes}
+            (proof / 'package-proof.json').write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+            (proof / 'payload-and-package.sha256').write_text(''.join(row['sha256'] + '  ' + row['path'] + '\n' for row in hashes), encoding='utf-8')
+            print(json.dumps({'deb_sha256': sha(debs[0]), 'bound_files': len(hashes), 'published_commit': expected}))
+
+        if __name__ == '__main__':
+            main()
+
+        PY
+    - name: Verify frozen inputs stayed identical
+      if: ${{ always() && steps.source_before.outcome == 'success' }}
+      timeout-minutes: 2
+      run: |
+        python3 - after <<'PY'
+        """This file is embedded verbatim into the single public validation workflow."""
+        import hashlib
+        import io
+        import json
+        import os
+        from pathlib import Path, PurePosixPath
+        import re
+        import stat
+        import subprocess
+        import sys
+        import tarfile
+
+        SOURCE_SHA = 'a92021606f1ca10c7f7740dccfe24d67a808ec9a4c8891a47eabaacee36ef945'
+        GO_SHA = '71f7cc3875c85f1b137af6edfbc3dc904beab0453ad665b62cf07da72fe8e0d6'
+        CONTROLS = {'.github/workflows/gui-build-only.yml', '.github/ci/gui-build-source.json'}
+
+        def safe_relative(name):
+            p = PurePosixPath(name)
+            if not name or '\\' in name or ':' in name or p.is_absolute() or str(p) != name:
+                raise ValueError('unsafe source path')
+            if any(part in ('.', '..', '.git') for part in p.parts):
+                raise ValueError('unsafe source component')
+            return name
+
+        def normalized_archive(names, contents):
+            stream = io.BytesIO()
+            with tarfile.open(fileobj=stream, mode='w', format=tarfile.PAX_FORMAT) as archive:
+                for name in names:
+                    info = tarfile.TarInfo(name)
+                    info.size = len(contents[name])
+                    info.mode = 0o644
+                    info.mtime = 0
+                    archive.addfile(info, io.BytesIO(contents[name]))
+            return stream.getvalue()
+
+        def prove_snapshot(root, manifest, tracked):
+            root = root.resolve()
+            rows = manifest['files']
+            names = [safe_relative(row['path']) for row in rows]
+            if len(names) != len(set(names)):
+                raise ValueError('duplicate manifest path')
+            if set(tracked) != set(names) | CONTROLS:
+                raise ValueError('tracked tree differs from frozen payload plus two CI controls')
+            contents = {}
+            for row in rows:
+                path = root / row['path']
+                if not path.resolve().is_relative_to(root) or not stat.S_ISREG(path.lstat().st_mode):
+                    raise ValueError('source path is not an owned regular file')
+                content = path.read_bytes()
+                if len(content) != row['bytes'] or hashlib.sha256(content).hexdigest() != row['sha256']:
+                    raise ValueError('source file bytes changed: ' + row['path'])
+                contents[row['path']] = content
+            go_paths = [safe_relative(name) for name in manifest['go_paths']]
+            if len(go_paths) != len(set(go_paths)) or not set(go_paths) <= set(names):
+                raise ValueError('invalid Go archive membership')
+            source = normalized_archive(names, contents)
+            go = normalized_archive(go_paths, contents)
+            if hashlib.sha256(source).hexdigest() != manifest['source_archive_sha256']:
+                raise ValueError('normalized source archive mismatch')
+            if hashlib.sha256(go).hexdigest() != manifest['go_archive_sha256']:
+                raise ValueError('normalized Go archive mismatch')
+            return {'source_archive_sha256': hashlib.sha256(source).hexdigest(),
+                    'go_archive_sha256': hashlib.sha256(go).hexdigest(),
+                    'source_archive_bytes': len(source), 'go_archive_bytes': len(go),
+                    'source_files': len(names), 'go_files': len(go_paths)}
+
+        def main():
+            root = Path.cwd()
+            stage = sys.argv[1]
+            if stage not in ('before', 'after'):
+                raise ValueError('invalid proof stage')
+            manifest_path = root / '.github/ci/gui-build-source.json'
+            manifest = json.loads(manifest_path.read_text('utf-8'))
+            if manifest['source_archive_sha256'] != SOURCE_SHA or manifest['go_archive_sha256'] != GO_SHA:
+                raise ValueError('unexpected frozen source identity')
+            if len(manifest['files']) != 954 or len(manifest['go_paths']) != 590:
+                raise ValueError('unexpected snapshot size')
+            if manifest['go_baseline343_sha256'] != '1ef38188e18c82a0b392ffe822638dbf842981b7ef795b0e1f3ede2bb24e3984':
+                raise ValueError('unexpected reviewed Go baseline')
+            if manifest['go_changed_since343'] != [
+                'adapters/internal/maintenancehost/host_test.go',
+                'core/control/core_audit_regression_test.go',
+                'core/control/nodecheck_test.go',
+                'internal/installtx/journal_test.go',
+                'internal/installtx/service_host_loop_linux_test.go',
+            ]:
+                raise ValueError('unexpected reviewed Go test-only delta')
+            tracked = subprocess.check_output(['git', 'ls-files', '-z']).decode('utf-8').rstrip('\0').split('\0')
+            commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+            if not re.fullmatch('[0-9a-f]{40}', commit) or commit != os.environ['GITHUB_SHA']:
+                raise ValueError('checkout does not match the actual published candidate commit')
+            result = prove_snapshot(root, manifest, tracked)
+            result.update(published_commit=commit, run_id=os.environ.get('GITHUB_RUN_ID'),
+                          run_attempt=os.environ.get('GITHUB_RUN_ATTEMPT'), stage=stage,
+                          workflow_sha256=hashlib.sha256((root / '.github/workflows/gui-build-only.yml').read_bytes()).hexdigest(),
+                          public_manifest_sha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+                          go_baseline343_sha256=manifest['go_baseline343_sha256'],
+                          go_changed_since343=manifest['go_changed_since343'],
+                          baseline_note='Go archive exactness is verified here; baseline343 delta comes from reviewed native provenance.',
+                          unsigned_build_only=True, native_install_or_hardware_acceptance=False)
+            proof = Path(os.environ['PROOF_DIR'])
+            proof.mkdir(parents=True, exist_ok=True)
+            (proof / ('source-proof-' + stage + '.json')).write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+            (proof / 'source-files.sha256').write_text(''.join(row['sha256'] + '  ' + row['path'] + '\n' for row in manifest['files']), encoding='utf-8')
+            (proof / 'gui-build-source.json').write_bytes(manifest_path.read_bytes())
+            print(json.dumps(result))
+
+        if __name__ == '__main__':
+            main()
+
+        PY
+    - name: Retain exact build provenance and available diagnostics
+      if: ${{ always() }}
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+      with:
+        name: tenebra-gui-linux-a9202160-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          ${{ runner.temp }}/tenebra-gui-proof/
+          ui-desktop/src-tauri/target/release/bundle/deb/*.deb
+        retention-days: 1
+        compression-level: 0
+        if-no-files-found: error
+        include-hidden-files: false
