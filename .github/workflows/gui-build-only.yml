@@ -24,7 +24,6 @@ jobs:
       CARGO_INCREMENTAL: '0'
       CARGO_TERM_COLOR: never
       PYTHONDONTWRITEBYTECODE: '1'
-      PROOF_DIR: ${{ runner.temp }}/tenebra-gui-proof
     steps:
     - name: Checkout exact candidate without persisting credentials
       uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -34,6 +33,14 @@ jobs:
         persist-credentials: false
         submodules: false
         lfs: false
+    - name: Initialize an owned proof directory after runner allocation
+      timeout-minutes: 1
+      run: |
+        set -euo pipefail
+        proof_path="${RUNNER_TEMP:?}/tenebra-gui-proof"
+        test ! -e "$proof_path"
+        mkdir -m 700 "$proof_path"
+        printf 'PROOF_DIR=%s\n' "$proof_path" >> "$GITHUB_ENV"
     - name: Verify all frozen payload bytes and actual candidate identity
       id: source_before
       timeout-minutes: 2
