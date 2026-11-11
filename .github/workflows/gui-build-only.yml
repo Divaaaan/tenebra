@@ -1,18 +1,19 @@
-name: Unsigned Ubuntu GUI build from frozen a9202160
+name: Verify immutable Ubuntu GUI artifact from producer37d
 'on':
   push:
     branches:
     - ci/tenebra-gui-a9202160
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: tenebra-gui-build-a9202160
   cancel-in-progress: false
 jobs:
-  gui:
+  verify:
     if: github.repository == 'Divaaaan/tenebra' && github.ref == 'refs/heads/ci/tenebra-gui-a9202160' && github.event_name == 'push'
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
@@ -20,12 +21,9 @@ jobs:
       GOTOOLCHAIN: local
       GOFLAGS: -mod=readonly
       GOMAXPROCS: '3'
-      CARGO_BUILD_JOBS: '3'
-      CARGO_INCREMENTAL: '0'
-      CARGO_TERM_COLOR: never
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
-    - name: Checkout exact candidate without persisting credentials
+    - name: Checkout exact verifier without persisting credentials
       uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       with:
         ref: ${{ github.sha }}
@@ -41,7 +39,7 @@ jobs:
         test ! -e "$proof_path"
         mkdir -m 700 "$proof_path"
         printf 'PROOF_DIR=%s\n' "$proof_path" >> "$GITHUB_ENV"
-    - name: Verify all frozen payload bytes and actual candidate identity
+    - name: Verify all frozen payload bytes and actual verifier identity
       id: source_before
       timeout-minutes: 2
       run: |
@@ -157,194 +155,307 @@ jobs:
             main()
 
         PY
-    - name: Set up pinned Go compiler
+    - name: Set up the exact helper compiler
       timeout-minutes: 8
       uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
       with:
         go-version-file: .go-version
         cache: false
         check-latest: false
-    - name: Set up Node
+    - name: Set up Node for the unchanged source payload builder
       timeout-minutes: 5
       uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
       with:
         node-version: 24
-    - name: Set up Rust
-      timeout-minutes: 8
-      uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
-    - name: Record actual toolchains and require bounded free disk
+    - name: Record verifier toolchains
       timeout-minutes: 1
       run: |
         set -euo pipefail
-        python3 - <<'PY'
-        import shutil
-        assert shutil.disk_usage('.').free >= 10*1024**3, 'Less than 10 GiB free; do not expand resource use'
-        PY
         {
           go version
           node --version
-          npm --version
-          rustc -vV
-          cargo --version
-          cc --version
-          df -h .
-        } > "$PROOF_DIR/tool-versions.txt"
+          python3 --version
+          gh --version
+        } > "$PROOF_DIR/verifier-tool-versions.txt"
         test "$(go version | awk '{print $3}')" = "go$(cat .go-version)"
-    - name: Install GUI build dependencies
-      timeout-minutes: 8
-      run: |
-        set -euo pipefail
-        sudo apt-get update 2>&1 | tee "$PROOF_DIR/apt-update.log"
-        sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf file pkg-config build-essential libssl-dev 2>&1 | tee "$PROOF_DIR/apt-install.log"
-    - name: Fresh source-bound Go race suite
+    - name: Verify immutable producer and reproduce only its packaged helper
+      id: verify_artifact
       timeout-minutes: 10
-      run: |
-        set -euo pipefail
-        set +e
-        go test -race -json -timeout=8m ./... > "$PROOF_DIR/go-race.jsonl" 2> "$PROOF_DIR/go-race.stderr.log"
-        test_exit_code=$?
-        set -e
-        export TEST_EXIT_CODE="$test_exit_code"
-        python3 -  <<'PY'
-
-        import json,os,sys
-        from pathlib import Path
-        proof=Path(os.environ['PROOF_DIR'])
-        counts={'test_pass':0,'test_fail':0,'test_skip':0,'package_pass':0,'package_fail':0,'invalid_json_lines':0}
-        skips=[]
-        for line in (proof/'go-race.jsonl').read_text('utf-8').splitlines():
-            if not line.strip():continue
-            try:event=json.loads(line)
-            except ValueError:
-                counts['invalid_json_lines']+=1
-                continue
-            action=event.get('Action')
-            if action not in ('pass','fail','skip'):continue
-            kind='test' if event.get('Test') else 'package'
-            key=kind+'_'+action
-            if key in counts:counts[key]+=1
-            if kind=='test' and action=='skip':skips.append({'package':event.get('Package'),'test':event['Test']})
-        exit_code=int(os.environ['TEST_EXIT_CODE'])
-        passed=exit_code==0 and counts['test_pass']>0 and counts['package_pass']>0 and not counts['test_fail'] and not counts['package_fail'] and not counts['invalid_json_lines']
-        summary={'exit_code':exit_code,'passed':passed,'counts':counts,'skipped_tests':skips,'hardware_or_install_acceptance':False}
-        (proof/'go-race-summary.json').write_text(json.dumps(summary,indent=2)+'\n',encoding='utf-8')
-        print(json.dumps(summary))
-        sys.exit(0 if passed else exit_code or 1)
-
-        PY
-    - name: Fetch only source-pinned engine and rules
-      timeout-minutes: 6
-      run: |
-        set -euo pipefail
-        test ! -e ui-desktop/src-tauri/binaries/tenebra-core-x86_64-unknown-linux-gnu
-        bash scripts/fetch-resources.sh --arch amd64 2>&1 | tee "$PROOF_DIR/resource-fetch.log"
-        test ! -e ui-desktop/src-tauri/binaries/tenebra-core-x86_64-unknown-linux-gnu
-    - name: Compile and verify the exact committed Go core
-      timeout-minutes: 6
-      run: |
-        set -euo pipefail
-        core=ui-desktop/src-tauri/binaries/tenebra-core-x86_64-unknown-linux-gnu
-        mkdir -p ui-desktop/src-tauri/binaries
-        test ! -e "$core"
-        go build -buildvcs=true -mod=readonly -o "$core" ./cmd/tenebra-core 2>&1 | tee "$PROOF_DIR/core-build.log"
-        go version -m "$core" > "$PROOF_DIR/core-buildinfo.txt"
-        node scripts/verify-core-build.mjs "$core" linux amd64 "$PROOF_DIR/core-buildinfo.json" 2>&1 | tee "$PROOF_DIR/core-verification.log"
-        sha256sum "$core" > "$PROOF_DIR/compiled-core.sha256"
-    - name: Install locked frontend dependencies
-      timeout-minutes: 6
-      working-directory: ui-desktop
-      run: |
-        set -euo pipefail
-        npm ci 2>&1 | tee "$PROOF_DIR/npm-ci.log"
-    - name: Build unsigned GUI and locally compiled bound helper
-      id: gui
-      timeout-minutes: 40
-      working-directory: ui-desktop
-      run: |
-        set -euo pipefail
-        test -z "${TAURI_SIGNING_PRIVATE_KEY:-}"
-        test -z "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
-        npm run tauri build -- --bundles deb --config src-tauri/tauri.ci.conf.json -- --locked 2>&1 | tee "$PROOF_DIR/tauri-build.log"
-    - name: Verify compiled helper binding and unsigned package hashes
-      timeout-minutes: 3
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: |
         python3 -  <<'PY'
-        """Verify unsigned package output and the source-built core/helper payload."""
-        import gzip
+        """Verify one immutable producer artifact; never run an installer or helper."""
         import hashlib
+        import io
         import json
         import os
-        from pathlib import Path
+        from pathlib import Path, PurePosixPath
+        import re
+        import shutil
+        import stat
         import subprocess
+        import tarfile
+        import tempfile
+        import zipfile
+
+        REPOSITORY = 'Divaaaan/tenebra'
+        PRODUCER_RUN = 43027623219
+        PRODUCER_COMMIT = '37d27393490a464f1360c3fc9fc166ba80f03830'
+        PRODUCER_WORKFLOW_SHA = '7fc201c9c3eac830ee812b9a400c5ac3954f186e3fa4454fca3ece07e8ae116d'
+        ARTIFACT_ID = 13860321019
+        ARTIFACT_DIGEST = '0a66c1b1773985a07e13d441f6b6750a2baaeec15e3180254fa347f6d25bcac2'
+        DEB_DIGEST = '13aa055f289f844673e57db031a1be6c0ab5d701786a032715cef0d6ab4a42f8'
+        HELPER_DIGEST = '5ee2c1ef8e2b19f3dd380f622c6a814aec0e22c01707007bdbfdfb9b6dda458d'
+        SOURCE_DIGEST = 'a92021606f1ca10c7f7740dccfe24d67a808ec9a4c8891a47eabaacee36ef945'
+        GO_DIGEST = '71f7cc3875c85f1b137af6edfbc3dc904beab0453ad665b62cf07da72fe8e0d6'
+        RECEIPT_PINS = {
+            'source-proof-before.json': 'b1f8cb7522e480efa5e63050eed644f3d796a1919a1516b42136481f0cd7428c',
+            'source-proof-after.json': '2c266d27fbb93196f0c1baf2e85860063991edf24605bd0547ca2cd73b2671cb',
+            'core-buildinfo.json': 'c4e506a717e62933ff0b363edeb182ab27d8f512b7b683e471b2440738ed6b30',
+            'core-buildinfo.txt': '9b9803305afaac0221ab6b8cdda404bb955329e9e3e9a873ba9da61f79900a51',
+            'compiled-core.sha256': '47f019af166ef247fc84eedb75935da0c4e24cf24bb9cfc0f9813606a20ed001',
+            'go-race.jsonl': '412717ae28c16dd455222c2fcd58ccb5c557dbb1e8cacba3d3e81a7ccceababc',
+            'go-race-summary.json': '5ecf0de98bba210df4e681aa6b2e0350d40d62d2190be521f85dfcd3cc8a043f',
+            'gui-build-source.json': '32a647af1f79c0dba83f6d28a8ab0bfa86166b5bdc8e73dc2205ea739b25dac8',
+            'source-files.sha256': '42ad18fa5f06a87a46044399216fffab19cce8e2a4b41e473a3cb351662412a1',
+            'tool-versions.txt': '2fec957da8445ec7b0856ef7d35169c33768924dd223f56547c08463e8c04279',
+        }
+        ROLES = {'geoip-ru.srs', 'geosite-ads.srs', 'geosite-ru.srs', 'sing-box', 'tenebra-core'}
+        EXPECTED_FAILED_STEP = 'Verify compiled helper binding and unsigned package hashes'
 
         def sha(path):
-            return hashlib.sha256(path.read_bytes()).hexdigest()
+            digest = hashlib.sha256()
+            with path.open('rb') as stream:
+                for data in iter(lambda: stream.read(1048576), b''):
+                    digest.update(data)
+            return digest.hexdigest()
+
+        def require(condition, message):
+            if not condition:
+                raise ValueError(message)
+
+        def validate_producer(run, jobs, artifact):
+            require(run['id'] == PRODUCER_RUN and run['head_sha'] == PRODUCER_COMMIT, 'producer identity mismatch')
+            require(run['event'] == 'push' and run['run_attempt'] == 1, 'unexpected producer event or attempt')
+            require(run['status'] == 'completed' and run['conclusion'] == 'failure', 'unexpected producer conclusion')
+            require(run['repository']['full_name'] == REPOSITORY, 'producer repository mismatch')
+            require(len(jobs['jobs']) == 1, 'unexpected producer job fanout')
+            steps = jobs['jobs'][0]['steps']
+            require([s['name'] for s in steps if s['conclusion'] == 'failure'] == [EXPECTED_FAILED_STEP], 'producer contains a different failure')
+            for name in ['Verify all frozen payload bytes and actual candidate identity', 'Fresh source-bound Go race suite',
+                         'Compile and verify the exact committed Go core', 'Build unsigned GUI and locally compiled bound helper',
+                         'Verify frozen inputs stayed identical']:
+                require(any(s['name'] == name and s['conclusion'] == 'success' for s in steps), 'producer stage not successful: ' + name)
+            require(artifact['id'] == ARTIFACT_ID and not artifact['expired'], 'artifact identity/expiry mismatch')
+            require(artifact['digest'] == 'sha256:' + ARTIFACT_DIGEST, 'artifact digest mismatch')
+            require(artifact['workflow_run']['id'] == PRODUCER_RUN and artifact['workflow_run']['head_sha'] == PRODUCER_COMMIT, 'artifact producer link mismatch')
+            require(artifact['size_in_bytes'] <= 80 * 1024**2, 'unexpected artifact size')
+
+        def unpack_zip(archive_path, destination):
+            require(sha(archive_path) == ARTIFACT_DIGEST, 'downloaded artifact bytes mismatch')
+            with zipfile.ZipFile(archive_path) as archive:
+                entries = archive.infolist()
+                require(len(entries) <= 100 and sum(r.file_size for r in entries) <= 256 * 1024**2, 'artifact expansion limit')
+                seen = set()
+                for row in entries:
+                    name = PurePosixPath(row.filename)
+                    require(not name.is_absolute() and '..' not in name.parts and '\\' not in row.filename and ':' not in row.filename, 'unsafe artifact path')
+                    require(row.filename not in seen and not stat.S_ISLNK(row.external_attr >> 16), 'duplicate or linked artifact entry')
+                    seen.add(row.filename)
+                    target = destination / row.filename
+                    require(target.resolve().is_relative_to(destination.resolve()), 'artifact path escapes temporary root')
+                    if row.is_dir():
+                        target.mkdir(parents=True, exist_ok=True)
+                        continue
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with archive.open(row) as source, target.open('xb') as output:
+                        shutil.copyfileobj(source, output, 1048576)
+
+        def verify_receipts(artifact_root, current_manifest):
+            files = {}
+            for name, digest in RECEIPT_PINS.items():
+                candidates = list(artifact_root.rglob(name))
+                require(len(candidates) == 1 and sha(candidates[0]) == digest, 'producer receipt bytes mismatch: ' + name)
+                files[name] = candidates[0]
+            require(files['gui-build-source.json'].read_bytes() == current_manifest.read_bytes(), 'producer and verifier frozen manifests differ')
+            for stage in ['before', 'after']:
+                evidence = json.loads(files['source-proof-' + stage + '.json'].read_text())
+                require(evidence['published_commit'] == PRODUCER_COMMIT and evidence['run_id'] == str(PRODUCER_RUN) and evidence['run_attempt'] == '1', 'source proof producer mismatch')
+                require(evidence['stage'] == stage and evidence['workflow_sha256'] == PRODUCER_WORKFLOW_SHA, 'producer workflow/stage mismatch')
+                require(evidence['source_archive_sha256'] == SOURCE_DIGEST and evidence['go_archive_sha256'] == GO_DIGEST, 'producer frozen source mismatch')
+                require(evidence['source_files'] == 954 and evidence['go_files'] == 590, 'producer source membership mismatch')
+            summary = json.loads(files['go-race-summary.json'].read_text())
+            counts = {'test_pass': 0, 'test_fail': 0, 'test_skip': 0, 'package_pass': 0, 'package_fail': 0, 'invalid_json_lines': 0}
+            skips = []
+            for line in files['go-race.jsonl'].read_text('utf-8').splitlines():
+                if not line.strip():
+                    continue
+                event = json.loads(line)
+                action = event.get('Action')
+                if action not in ['pass', 'fail', 'skip']:
+                    continue
+                kind = 'test' if event.get('Test') else 'package'
+                if kind + '_' + action in counts:
+                    counts[kind + '_' + action] += 1
+                if kind == 'test' and action == 'skip':
+                    skips.append({'package': event.get('Package'), 'test': event['Test']})
+            require(summary['exit_code'] == 0 and summary['passed'] is True and summary['counts'] == counts and summary['skipped_tests'] == skips, 'race receipt does not match actual JSON events')
+            require(counts == {'test_pass': 2192, 'test_fail': 0, 'test_skip': 56, 'package_pass': 28, 'package_fail': 0, 'invalid_json_lines': 0}, 'unexpected producer race coverage')
+            core = json.loads(files['core-buildinfo.json'].read_text())
+            require(core['revision'] == PRODUCER_COMMIT and core['goVersion'] == '1.26.8' and core['os'] == 'linux' and core['arch'] == 'amd64', 'core build receipt identity mismatch')
+            require(files['compiled-core.sha256'].read_text().split()[0] == core['sha256'], 'producer core digest receipts differ')
+            return files, summary, core
+
+        def extract_deb(deb, destination):
+            require(sha(deb) == DEB_DIGEST, 'immutable Debian artifact mismatch')
+            raw = deb.read_bytes()
+            require(raw[:8] == b'!<arch>\n', 'invalid Debian ar header')
+            offset = 8
+            content = None
+            while offset < len(raw):
+                header = raw[offset:offset + 60]
+                require(len(header) == 60 and header[58:60] == b'`\n', 'invalid Debian ar member')
+                size = int(header[48:58])
+                offset += 60
+                require(0 <= size <= 200 * 1024**2 and offset + size <= len(raw), 'Debian member exceeds bounds')
+                name = header[:16].decode().strip().rstrip('/')
+                if name.startswith('data.tar'):
+                    require(content is None, 'duplicate Debian payload archive')
+                    content = raw[offset:offset + size]
+                offset += size + size % 2
+            require(content is not None, 'Debian data archive missing')
+            wanted = {'usr/lib/tenebra/tenebra-helper': 'packaged-helper',
+                      'usr/lib/tenebra/package-payload/payload.json': 'payload.json'}
+            wanted.update({'usr/lib/tenebra/package-payload/' + name: name for name in ROLES})
+            found = {}
+            with tarfile.open(fileobj=io.BytesIO(content), mode='r|*') as archive:
+                for row in archive:
+                    name = row.name.removeprefix('./')
+                    if name not in wanted:
+                        continue
+                    require(row.isfile() and name not in found and row.size <= 128 * 1024**2, 'invalid or duplicate packaged role')
+                    target = destination / wanted[name]
+                    with archive.extractfile(row) as source, target.open('xb') as output:
+                        shutil.copyfileobj(source, output, 1048576)
+                    found[name] = target
+            require(set(found) == set(wanted), 'packaged helper or payload role missing')
+            payload = json.loads((destination / 'payload.json').read_text())
+            require(payload['source_sha'] == PRODUCER_COMMIT and payload['target'] == 'linux-amd64', 'packaged payload source mismatch')
+            require({r['name'] for r in payload['files']} == ROLES and len(payload['files']) == 5, 'packaged role membership mismatch')
+            for row in payload['files']:
+                path = destination / row['name']
+                require(path.stat().st_size == row['size'] and sha(path) == row['sha256'], 'packaged payload file hash mismatch')
+            require(sha(destination / 'packaged-helper') == HELPER_DIGEST, 'packaged helper differs from immutable producer')
+            return payload
+
+        def gh_read(endpoint, output=None):
+            args = ['gh', 'api', '--hostname', 'github.com', endpoint]
+            if output is None:
+                run = subprocess.run(args, capture_output=True, timeout=45)
+            else:
+                with output.open('xb') as stream:
+                    run = subprocess.run(args, stdout=stream, stderr=subprocess.PIPE, timeout=90)
+            # Do not write auth headers or a redirect's temporary signed query to artifacts.
+            if run.returncode != 0:
+                # Persist status only: CLI stderr may contain a signed redirect URL.
+                status = re.search(rb'HTTP\s+(\d{3})', run.stderr or b'')
+                code = int(status.group(1)) if status else None
+                error = {'endpoint': endpoint, 'exit_code': run.returncode, 'http_status': code,
+                         'classification': 'artifact_read_http_failure' if code else 'artifact_read_transport_or_cli_failure',
+                         'product_test_failure': False}
+                (Path(os.environ['PROOF_DIR']) / 'artifact-read-error.json').write_text(json.dumps(error, indent=2), encoding='utf-8')
+                raise ValueError('GitHub artifact read failed; HTTP ' + str(code) if code else 'GitHub artifact read transport/CLI failure')
+            return json.loads(run.stdout) if output is None else None
+
+        def verify_rebuilt_stage(stage, roles):
+            require(sha(stage / 'tenebra-helper') == sha(roles / 'packaged-helper') == HELPER_DIGEST, 'source-rebuilt helper is not byte-identical to packaged producer helper')
+            require((stage / 'payload/payload.json').read_bytes() == (roles / 'payload.json').read_bytes(), 'rebuilt payload manifest differs from immutable Debian package')
+            binding = json.loads((stage / 'binding.json').read_text())
+            for key, path in {'helper_sha256': stage / 'tenebra-helper', 'helper_blob_sha256': stage / 'helper.gz',
+                              'payload_sha256': stage / 'payload/payload.json', 'payload_archive_sha256': stage / 'payload.tar.gz'}.items():
+                require(binding[key] == sha(path), 'reconstructed stage binding mismatch')
+            rows = []
+            for role in sorted(ROLES):
+                require(sha(stage / 'payload' / role) == sha(roles / role), 'rebuilt role differs from Debian package')
+                rows.append({'role': role, 'bytes': (roles / role).stat().st_size, 'sha256': sha(roles / role)})
+            return binding, rows
 
         def main():
             root = Path.cwd()
             proof = Path(os.environ['PROOF_DIR'])
-            expected = os.environ['GITHUB_SHA']
-            go_version = 'go' + (root / '.go-version').read_text().strip()
-            core = root / 'ui-desktop/src-tauri/binaries/tenebra-core-x86_64-unknown-linux-gnu'
-            compiler = subprocess.check_output(['go', 'version'], text=True).split()[2]
-            if compiler != go_version:
-                raise ValueError('actual Go compiler changed')
-            built_core_sha = (proof / 'compiled-core.sha256').read_text().split()[0]
-            if sha(core) != built_core_sha:
-                raise ValueError('compiled core changed after local compilation')
-            locations = list((root / 'ui-desktop/src-tauri/resources/service-payload').glob('build-*/package/binding.json'))
-            if len(locations) != 1:
-                raise ValueError('expected exactly one fresh build-owned helper payload')
-            package = locations[0].parent
-            binding = json.loads(locations[0].read_text())
-            payload_path = package / 'payload/payload.json'
-            payload = json.loads(payload_path.read_text())
-            if payload['source_sha'] != expected or payload['target'] != 'linux-amd64':
-                raise ValueError('payload is not bound to this published candidate')
-            if {row['name'] for row in payload['files']} != {'geoip-ru.srs', 'geosite-ads.srs', 'geosite-ru.srs', 'sing-box', 'tenebra-core'}:
-                raise ValueError('unexpected payload roles')
-            hashes = []
-            for row in payload['files']:
-                path = package / 'payload' / row['name']
-                if path.is_symlink() or not path.is_file() or path.stat().st_size != row['size'] or sha(path) != row['sha256']:
-                    raise ValueError('payload role hash mismatch')
-                hashes.append({'path': str(path.relative_to(root)), 'bytes': path.stat().st_size, 'sha256': sha(path)})
-            if sha(package / 'payload/tenebra-core') != built_core_sha:
-                raise ValueError('package uses a different or prebuilt core')
-            bindings = {'helper_sha256': package / 'tenebra-helper', 'helper_blob_sha256': package / 'helper.gz',
-                        'payload_sha256': payload_path, 'payload_archive_sha256': package / 'payload.tar.gz'}
-            for key, path in bindings.items():
-                if sha(path) != binding[key]:
-                    raise ValueError('compiled helper/payload binding mismatch')
-                hashes.append({'path': str(path.relative_to(root)), 'bytes': path.stat().st_size, 'sha256': sha(path)})
-            hashes.append({'path': str(locations[0].relative_to(root)), 'bytes': locations[0].stat().st_size, 'sha256': sha(locations[0])})
-            if gzip.decompress((package / 'helper.gz').read_bytes()) != (package / 'tenebra-helper').read_bytes():
-                raise ValueError('helper blob does not contain the compiled helper')
-            helper_info = subprocess.check_output(['go', 'version', '-m', str(package / 'tenebra-helper')], text=True)
-            if go_version not in helper_info.splitlines()[0] or '/cmd/tenebra-helper' not in helper_info or 'CGO_ENABLED=0' not in helper_info:
-                raise ValueError('helper compiler/path/CGO provenance mismatch')
-            if binding['payload_sha256'] not in helper_info or binding['payload_archive_sha256'] not in helper_info:
-                raise ValueError('helper build flags lack the exact payload/archive binding')
-            (proof / 'helper-buildinfo.txt').write_text(helper_info, encoding='utf-8')
-            (proof / 'payload-binding.json').write_bytes(locations[0].read_bytes())
-            (proof / 'payload-manifest.json').write_bytes(payload_path.read_bytes())
-            debs = list((root / 'ui-desktop/src-tauri/target/release/bundle/deb').glob('*.deb'))
-            if len(debs) != 1 or debs[0].stat().st_size < 1024:
-                raise ValueError('expected exactly one nonempty unsigned Debian package')
-            # Read package metadata only. No install or service command is executed.
-            contents = subprocess.check_output(['dpkg-deb', '--contents', str(debs[0])], text=True)
-            for required in ['usr/lib/tenebra/tenebra-helper', 'usr/lib/tenebra/package-payload/payload.json',
-                             'usr/lib/systemd/system/tenebra.service']:
-                if required not in contents:
-                    raise ValueError('required packaged build payload missing: ' + required)
-            (proof / 'deb-contents.txt').write_text(contents, encoding='utf-8')
-            hashes.append({'path': str(debs[0].relative_to(root)), 'bytes': debs[0].stat().st_size, 'sha256': sha(debs[0])})
-            result = {'published_commit': expected, 'actual_go_compiler': compiler, 'compiled_core_sha256': built_core_sha,
-                      'helper_buildvcs': False, 'helper_source_binding': 'payload source_sha plus linked payload/archive hashes',
-                      'unsigned': True, 'installed_or_executed': False, 'files': hashes}
-            (proof / 'package-proof.json').write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
-            (proof / 'payload-and-package.sha256').write_text(''.join(row['sha256'] + '  ' + row['path'] + '\n' for row in hashes), encoding='utf-8')
-            print(json.dumps({'deb_sha256': sha(debs[0]), 'bound_files': len(hashes), 'published_commit': expected}))
+            verifier = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+            require(verifier == os.environ['GITHUB_SHA'] and re.fullmatch('[0-9a-f]{40}', verifier), 'verifier checkout identity mismatch')
+            version = (root / '.go-version').read_text().strip()
+            require(subprocess.check_output(['go', 'version'], text=True).split()[2] == 'go' + version == 'go1.26.8', 'actual helper compiler mismatch')
+            run = gh_read('repos/' + REPOSITORY + '/actions/runs/' + str(PRODUCER_RUN))
+            jobs = gh_read('repos/' + REPOSITORY + '/actions/runs/' + str(PRODUCER_RUN) + '/jobs')
+            artifact = gh_read('repos/' + REPOSITORY + '/actions/artifacts/' + str(ARTIFACT_ID))
+            validate_producer(run, jobs, artifact)
+            with tempfile.TemporaryDirectory(prefix='tenebra-immutable-verify-', dir=proof.parent) as temporary:
+                temp = Path(temporary)
+                archive = temp / 'producer.zip'
+                gh_read('repos/' + REPOSITORY + '/actions/artifacts/' + str(ARTIFACT_ID) + '/zip', archive)
+                unpacked = temp / 'artifact'
+                unpacked.mkdir()
+                unpack_zip(archive, unpacked)
+                receipts, summary, core_receipt = verify_receipts(unpacked, root / '.github/ci/gui-build-source.json')
+                debs = list(unpacked.rglob('*.deb'))
+                require(len(debs) == 1, 'unexpected Debian artifact count')
+                roles = temp / 'roles'
+                roles.mkdir()
+                payload = extract_deb(debs[0], roles)
+                require(sha(roles / 'tenebra-core') == core_receipt['sha256'], 'packaged core differs from source-built producer core')
+                helper_info = subprocess.check_output(['go', 'version', '-m', str(roles / 'packaged-helper')], text=True)
+                require('go1.26.8' in helper_info.splitlines()[0] and '/cmd/tenebra-helper' in helper_info and 'CGO_ENABLED=0' in helper_info and 'GOOS=linux' in helper_info and 'GOARCH=amd64' in helper_info and '-trimpath=true' in helper_info, 'packaged helper toolchain/target mismatch')
+                core_info = subprocess.check_output(['go', 'version', '-m', str(roles / 'tenebra-core')], text=True)
+                stage = temp / 'rebuilt-stage'
+                # Unchanged frozen builder performs the real source-bound Go compilation.
+                node = r'''
+        import { execFileSync } from 'node:child_process';
+        import { readFileSync } from 'node:fs';
+        import { prepareServicePayload } from './scripts/prepare-service-payload.mjs';
+        import { verifyBuildInfo } from './scripts/verify-core-build.mjs';
+        const [input, core, output, sourceSha, version] = process.argv.slice(1);
+        const info = execFileSync('go', ['version', '-m', core], { encoding: 'utf8' });
+        verifyBuildInfo(info, { goVersion: readFileSync('.go-version', 'utf8').trim(), revision: sourceSha, os: 'linux', arch: 'amd64' });
+        await prepareServicePayload({ input, core, output, target: 'linux-amd64', version, sourceSha });
+        '''
+                build_env = {key: value for key, value in os.environ.items() if key not in ['GH_TOKEN', 'GITHUB_TOKEN']}
+                cache = temp / 'fresh-go-build-cache'
+                cache.mkdir()
+                build_env.update(GOCACHE=str(cache), GOAMD64='v1')
+                with (proof / 'helper-rebuild.stdout.log').open('wb') as stdout, (proof / 'helper-rebuild.stderr.log').open('wb') as stderr:
+                    subprocess.run(['node', '--input-type=module', '-e', node, str(roles), str(roles / 'tenebra-core'), str(stage), PRODUCER_COMMIT, payload['version']],
+                                   cwd=root, env=build_env, stdout=stdout, stderr=stderr, check=True, timeout=360)
+                binding, rows = verify_rebuilt_stage(stage, roles)
+                rebuilt_info = subprocess.check_output(['go', 'version', '-m', str(stage / 'tenebra-helper')], text=True, env=build_env)
+                (proof / 'source-rebuilt-helper-buildinfo.txt').write_text(rebuilt_info, encoding='utf-8')
+                for name, path in receipts.items():
+                    shutil.copyfile(path, proof / ('producer-' + name))
+                (proof / 'packaged-helper-buildinfo.txt').write_text(helper_info, encoding='utf-8')
+                (proof / 'packaged-core-buildinfo.txt').write_text(core_info, encoding='utf-8')
+                shutil.copyfile(stage / 'binding.json', proof / 'reconstructed-stage-binding.json')
+                shutil.copyfile(roles / 'payload.json', proof / 'verified-payload-manifest.json')
+                shutil.copyfile(debs[0], proof / debs[0].name)
+                result = {'verifier_commit': verifier, 'verifier_run_id': os.environ['GITHUB_RUN_ID'],
+                          'producer_commit': PRODUCER_COMMIT, 'producer_run_id': PRODUCER_RUN, 'producer_artifact_id': ARTIFACT_ID,
+                          'producer_artifact_sha256': ARTIFACT_DIGEST, 'producer_workflow_sha256': PRODUCER_WORKFLOW_SHA,
+                          'frozen_source_sha256': SOURCE_DIGEST, 'go_source_sha256': GO_DIGEST, 'actual_helper_compiler': 'go' + version,
+                          'packaged_helper_sha256': HELPER_DIGEST, 'source_rebuilt_helper_sha256': sha(stage / 'tenebra-helper'),
+                          'packaged_core_sha256': sha(roles / 'tenebra-core'), 'deb_sha256': sha(debs[0]), 'payload_roles': rows,
+                          'reconstructed_stage_binding': binding, 'producer_race_reused': summary,
+                          'reconstructed_stage_is_original_unretained_archive': False,
+                          'helper_build_recipe': 'unchanged nativePorts.buildHelper: -mod=readonly -p2 -trimpath -buildvcs=false, CGO_ENABLED=0, linux/amd64, pinned Go1.26.8',
+                          'fresh_isolated_go_build_cache': True,
+                          'gui_rebuilt_in_verifier': False, 'race_reran_in_verifier': False,
+                          'helper_compiled_from_frozen_source_in_verifier': True, 'helper_executed': False, 'deb_installed': False,
+                          'linux_contract': 'package-manager trust; source identity verified by byte-identical helper rebuild, not Darwin-release globals',
+                          'signing_or_release_authorization': False, 'native_or_hardware_acceptance': False}
+                (proof / 'immutable-artifact-verification.json').write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+                (proof / 'verified-files.sha256').write_text(HELPER_DIGEST + '  packaged-and-source-rebuilt-helper\n' + sha(debs[0]) + '  ' + debs[0].name + '\n' + ''.join(row['sha256'] + '  ' + row['role'] + '\n' for row in rows), encoding='utf-8')
+                print(json.dumps({'producer_commit': PRODUCER_COMMIT, 'verifier_commit': verifier, 'verified_original_deb_sha256': sha(debs[0]),
+                                  'source_rebuilt_helper_sha256': HELPER_DIGEST, 'producer_race_pass': 2192, 'producer_race_skip': 56, 'gui_rebuilt': False}))
 
         if __name__ == '__main__':
             main()
@@ -466,14 +577,12 @@ jobs:
             main()
 
         PY
-    - name: Retain exact build provenance and available diagnostics
+    - name: Retain unchanged Debian bytes and explicit producer versus verifier evidence
       if: ${{ always() }}
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
       with:
-        name: tenebra-gui-linux-a9202160-${{ github.run_id }}-${{ github.run_attempt }}
-        path: |
-          ${{ runner.temp }}/tenebra-gui-proof/
-          ui-desktop/src-tauri/target/release/bundle/deb/*.deb
+        name: tenebra-verified-linux-producer37d-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/tenebra-gui-proof/
         retention-days: 1
         compression-level: 0
         if-no-files-found: error
